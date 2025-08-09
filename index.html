@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>个人小说阅读平台</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/mammoth@1.4.2/mammoth.browser.min.js"></script>
+</head>
+<body>
+    <!-- 书架页面 -->
+    <div id="bookshelf-page" class="page active">
+        <header class="header">
+            <h1>我的书架</h1>
+            <button id="add-novel-btn" class="add-btn">+ 添加小说</button>
+        </header>
+        
+        <div id="novels-grid" class="novels-grid">
+            <!-- 小说卡片将在这里动态生成 -->
+        </div>
+        
+        <div id="empty-state" class="empty-state" style="display: none;">
+            <p>书架空空如也，快来添加第一本小说吧！</p>
+        </div>
+    </div>
+
+    <!-- 添加小说页面 -->
+    <div id="add-novel-page" class="page">
+        <header class="header">
+            <button id="back-to-shelf" class="back-btn">← 返回书架</button>
+            <h1>添加小说</h1>
+        </header>
+        
+        <div class="add-novel-form">
+            <div class="form-group">
+                <label for="novel-title">小说标题 *</label>
+                <input type="text" id="novel-title" placeholder="请输入小说标题" required>
+            </div>
+            
+            <div class="form-group">
+                <label>导入方式</label>
+                <div class="import-tabs">
+                    <button id="text-tab" class="tab-btn active">文本粘贴</button>
+                    <button id="file-tab" class="tab-btn">文件上传</button>
+                </div>
+            </div>
+            
+            <div id="text-import" class="import-section">
+                <textarea id="novel-content" placeholder="请粘贴小说内容...\n\n支持任意文本格式：\n• 有章节标识符的小说（如：第一章、Chapter 1等）\n• 无章节标识符的纯文本内容\n• 系统会自动识别并适配显示格式\n\n直接粘贴任何文本内容即可！"></textarea>
+            </div>
+            
+            <div id="file-import" class="import-section" style="display: none;">
+                <div class="file-upload-area">
+                    <input type="file" id="file-input" accept=".txt,.md,.docx" style="display: none;">
+                    <div id="file-drop-zone" class="file-drop-zone">
+                        <p>点击选择文件或拖拽文件到此处</p>
+                        <p class="file-hint">支持 .txt、.md 和 .docx 格式</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-actions">
+                <button id="create-novel-btn" class="create-btn">创建小说</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 阅读页面 -->
+    <div id="reading-page" class="page">
+        <header class="reading-header">
+            <button id="back-to-shelf-reading" class="back-btn">← 返回书架</button>
+            <div class="reading-controls">
+                <select id="chapter-select" class="chapter-select">
+                    <!-- 章节选项将动态生成 -->
+                </select>
+                <div class="reading-mode-toggle">
+                    <button id="scroll-mode" class="mode-btn active">滚动</button>
+                    <button id="page-mode" class="mode-btn">翻页</button>
+                </div>
+                <button id="settings-btn" class="settings-btn">设置</button>
+            </div>
+        </header>
+        
+        <div id="reading-content" class="reading-content">
+            <!-- 章节内容将在这里显示 -->
+        </div>
+        
+        <div class="chapter-nav">
+            <button id="prev-chapter" class="nav-btn">上一章</button>
+            <div id="page-nav" class="page-nav" style="display: none;">
+                <button id="prev-page" class="nav-btn">上一页</button>
+                <span id="page-info" class="page-info">第 1 页 / 共 1 页</span>
+                <button id="next-page" class="nav-btn">下一页</button>
+            </div>
+            <button id="next-chapter" class="nav-btn">下一章</button>
+        </div>
+    </div>
+
+    <!-- 编辑页面 -->
+    <div id="edit-page" class="page">
+        <header class="header">
+            <button id="back-to-shelf-edit" class="back-btn">← 返回书架</button>
+            <h1>编辑小说</h1>
+            <button id="save-edit-btn" class="save-btn">保存</button>
+        </header>
+        
+        <div class="edit-container">
+            <div class="edit-sidebar">
+                <div class="form-group">
+                    <label for="edit-title">小说标题</label>
+                    <input type="text" id="edit-title" placeholder="请输入小说标题">
+                </div>
+                <div class="chapters-list">
+                    <h3>章节列表</h3>
+                    <ul id="edit-chapters-list">
+                        <!-- 章节列表将动态生成 -->
+                    </ul>
+                    <button id="add-chapter-btn" class="add-chapter-btn">+ 添加新章节</button>
+                </div>
+            </div>
+            <div class="edit-content">
+                <div class="edit-content-header">
+                    <span class="word-count">字数统计: <span id="word-count-display">0</span> 字</span>
+                </div>
+                <textarea id="edit-chapter-content" placeholder="选择左侧章节进行编辑..."></textarea>
+            </div>
+        </div>
+    </div>
+
+    <!-- 设置面板 -->
+    <div id="settings-panel" class="settings-panel">
+        <div class="settings-content">
+            <h3>阅读设置</h3>
+            
+            <div class="setting-group">
+                <label>字体大小</label>
+                <div class="font-size-controls">
+                    <button id="font-smaller">A-</button>
+                    <span id="font-size-display">16px</span>
+                    <button id="font-larger">A+</button>
+                </div>
+            </div>
+            
+            <div class="setting-group">
+                <label>背景主题</label>
+                <div class="theme-options">
+                    <button class="theme-btn" data-theme="light">标准</button>
+                    <button class="theme-btn" data-theme="dark">夜间</button>
+                    <button class="theme-btn" data-theme="sepia">护眼</button>
+                </div>
+            </div>
+            
+            <div class="setting-group">
+                <label>行间距</label>
+                <input type="range" id="line-height-slider" min="1.2" max="2.5" step="0.1" value="1.6">
+                <span id="line-height-display">1.6</span>
+            </div>
+            
+            <div class="setting-group">
+                <label>页边距</label>
+                <input type="range" id="margin-slider" min="20" max="100" step="10" value="40">
+                <span id="margin-display">40px</span>
+            </div>
+            
+            <button id="close-settings" class="close-settings-btn">关闭</button>
+        </div>
+    </div>
+
+    <!-- 确认对话框 -->
+    <div id="confirm-dialog" class="modal">
+        <div class="modal-content">
+            <h3 id="confirm-title">确认操作</h3>
+            <p id="confirm-message">您确定要执行此操作吗？</p>
+            <div class="modal-actions">
+                <button id="confirm-cancel" class="cancel-btn">取消</button>
+                <button id="confirm-ok" class="confirm-btn">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 小说选项菜单 -->
+    <div id="novel-options" class="context-menu">
+        <button id="edit-novel" class="menu-item">编辑</button>
+        <button id="export-novel" class="menu-item">导出为 .txt</button>
+        <button id="delete-novel" class="menu-item delete">删除</button>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
