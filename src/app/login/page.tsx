@@ -3,7 +3,7 @@
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Loader2, AlertCircle, ArrowRight, Gift } from 'lucide-react';
+import { Loader2, ArrowLeft, Gift } from 'lucide-react';
 
 function LoginForm() {
   const [username, setUsername] = useState('');
@@ -35,101 +35,157 @@ function LoginForm() {
         setError(data.message || '登录失败');
       }
     } catch (err) {
-      setError('网络请求失败');
+      setError('网络错误，请稍后重试');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 relative overflow-hidden">
-      {/* Decorative background elements */}
-      <div className="absolute inset-0 z-0">
-        <div className="absolute top-0 left-0 w-full h-full bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px]"></div>
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-300/20 rounded-full blur-3xl mix-blend-multiply filter animate-blob"></div>
-        <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-purple-300/20 rounded-full blur-3xl mix-blend-multiply filter animate-blob animation-delay-2000"></div>
-        <div className="absolute bottom-1/4 left-1/3 w-96 h-96 bg-pink-300/20 rounded-full blur-3xl mix-blend-multiply filter animate-blob animation-delay-4000"></div>
-      </div>
+    <div style={{ 
+      minHeight: '100vh', 
+      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 24
+    }}>
+      <Link 
+        href="/" 
+        style={{ 
+          position: 'fixed',
+          top: 24,
+          left: 24,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          color: 'white',
+          textDecoration: 'none',
+          fontSize: 14,
+          fontWeight: 500,
+          padding: '10px 16px',
+          background: 'rgba(255,255,255,0.15)',
+          borderRadius: 10
+        }}
+      >
+        <ArrowLeft style={{ width: 18, height: 18 }} />
+        返回首页
+      </Link>
 
-      <div className="max-w-md w-full mx-4 z-10">
-        <div className="bg-white/80 backdrop-blur-xl p-8 sm:p-10 rounded-2xl shadow-2xl border border-white/50">
-          <div className="text-center mb-8">
-            <Link href="/" className="inline-flex items-center justify-center mb-6 group">
-              <div className="w-14 h-14 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/30 group-hover:scale-105 transition-transform duration-300">
-                <Gift className="w-7 h-7 text-white" />
-              </div>
-            </Link>
-            <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">
-              欢迎回来
-            </h2>
-            <p className="mt-2 text-sm text-gray-600">
-              登录以领取您的专属兑换码
-            </p>
+      <div style={{ 
+        width: '100%',
+        maxWidth: 420,
+        background: 'rgba(255,255,255,0.95)',
+        borderRadius: 24,
+        padding: 40,
+        boxShadow: '0 25px 80px rgba(0,0,0,0.25)'
+      }}>
+        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <div style={{ 
+            width: 64, 
+            height: 64, 
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            borderRadius: 18,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 20px',
+            boxShadow: '0 10px 30px rgba(102, 126, 234, 0.4)'
+          }}>
+            <Gift style={{ width: 32, height: 32, color: 'white' }} />
           </div>
-
-          <form className="space-y-6" onSubmit={handleSubmit}>
-            {error && (
-              <div className="bg-red-50/80 backdrop-blur-sm border border-red-100 text-red-600 px-4 py-3 rounded-xl text-sm flex items-start animate-in slide-in-from-top-2 duration-200">
-                <AlertCircle className="w-5 h-5 mr-2 flex-shrink-0 mt-0.5" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="username" className="block text-sm font-semibold text-gray-700 mb-1.5 ml-1">
-                  用户名
-                </label>
-                <input
-                  id="username"
-                  name="username"
-                  type="text"
-                  required
-                  className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:bg-white transition-all duration-200"
-                  placeholder="输入用户名"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                />
-              </div>
-              <div>
-                <label htmlFor="password" className="block text-sm font-semibold text-gray-700 mb-1.5 ml-1">
-                  密码
-                </label>
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  required
-                  className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:bg-white transition-all duration-200"
-                  placeholder="输入密码"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="group w-full flex justify-center py-3.5 px-4 border border-transparent text-sm font-semibold rounded-xl text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:-translate-y-0.5"
-            >
-              {loading ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <span className="flex items-center">
-                  立即登录
-                  <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
-                </span>
-              )}
-            </button>
-          </form>
-          
-          <div className="mt-8 text-center">
-            <p className="text-xs text-gray-400">
-              没有账号？请联系管理员获取
-            </p>
-          </div>
+          <h1 style={{ fontSize: 26, fontWeight: 700, color: '#1f2937', marginBottom: 8 }}>
+            欢迎回来
+          </h1>
+          <p style={{ color: '#6b7280', fontSize: 15 }}>
+            使用 API 账号登录
+          </p>
         </div>
+
+        {error && (
+          <div style={{ 
+            background: '#fef2f2',
+            border: '1px solid #fecaca',
+            color: '#dc2626',
+            padding: '14px 18px',
+            borderRadius: 12,
+            marginBottom: 24,
+            fontSize: 14,
+            textAlign: 'center'
+          }}>
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600, color: '#374151' }}>
+              用户名
+            </label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="请输入用户名"
+              required
+              style={{ 
+                width: '100%',
+                padding: '14px 18px',
+                border: '2px solid #e5e7eb',
+                borderRadius: 12,
+                fontSize: 15,
+                outline: 'none',
+                boxSizing: 'border-box'
+              }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 28 }}>
+            <label style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600, color: '#374151' }}>
+              密码
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="请输入密码"
+              required
+              style={{ 
+                width: '100%',
+                padding: '14px 18px',
+                border: '2px solid #e5e7eb',
+                borderRadius: 12,
+                fontSize: 15,
+                outline: 'none',
+                boxSizing: 'border-box'
+              }}
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            style={{ 
+              width: '100%',
+              padding: '16px',
+              background: loading ? '#9ca3af' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: 12,
+              fontSize: 16,
+              fontWeight: 600,
+              cursor: loading ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 10,
+              boxShadow: loading ? 'none' : '0 10px 30px rgba(102, 126, 234, 0.35)'
+            }}
+          >
+            {loading && <Loader2 style={{ width: 20, height: 20 }} className="animate-spin" />}
+            {loading ? '登录中...' : '登录'}
+          </button>
+        </form>
       </div>
     </div>
   );
@@ -138,8 +194,14 @@ function LoginForm() {
 export default function LoginPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <Loader2 className="w-10 h-10 animate-spin text-indigo-600" />
+      <div style={{ 
+        minHeight: '100vh', 
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        <Loader2 style={{ width: 40, height: 40, color: 'white' }} className="animate-spin" />
       </div>
     }>
       <LoginForm />
