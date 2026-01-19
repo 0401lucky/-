@@ -25,10 +25,23 @@ export async function loginToNewApi(username: string, password: string): Promise
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ username, password }),
+      credentials: "include",
     });
 
-    const cookies = response.headers.get("set-cookie") || "";
+    // 尝试多种方式获取 cookie
+    let cookies = response.headers.get("set-cookie") || "";
+    
+    // 如果 set-cookie 为空，尝试从 headers 遍历获取
+    if (!cookies) {
+      const setCookieHeader = response.headers.getSetCookie?.();
+      if (setCookieHeader && setCookieHeader.length > 0) {
+        cookies = setCookieHeader.join("; ");
+      }
+    }
+    
     const data = await response.json();
+
+    console.log("Login response:", { success: data.success, hasCookies: !!cookies, cookiesLength: cookies.length });
 
     if (data.success) {
       return {
