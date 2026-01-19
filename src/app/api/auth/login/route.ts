@@ -21,29 +21,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 从 cookies 中提取 session
-    const sessionMatch = result.cookies?.match(/session=([^;]+)/);
-    const sessionValue = sessionMatch?.[1];
-
-    if (!sessionValue) {
+    if (!result.user) {
       return NextResponse.json(
-        { success: false, message: "登录失败：无法获取会话" },
+        { success: false, message: "登录失败：无法获取用户信息" },
         { status: 500 }
       );
     }
+
+    // 创建自己的 session token，包含用户信息
+    const sessionData = {
+      id: result.user.id,
+      username: result.user.username,
+      displayName: result.user.display_name || result.user.username,
+      exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 天过期
+    };
+
+    // 使用 base64 编码存储（简单实现，生产环境建议使用 JWT）
+    const sessionToken = Buffer.from(JSON.stringify(sessionData)).toString("base64");
 
     const response = NextResponse.json({
       success: true,
       message: "登录成功",
       user: {
-        id: result.user?.id,
-        username: result.user?.username,
-        displayName: result.user?.display_name || result.user?.username,
+        id: result.user.id,
+        username: result.user.username,
+        displayName: result.user.display_name || result.user.username,
       },
     });
 
-    // 设置 session cookie
-    response.cookies.set("session", sessionValue, {
+    // 设置我们自己的 session cookie
+    response.cookies.set("app_session", sessionToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",

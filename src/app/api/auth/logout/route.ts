@@ -6,7 +6,7 @@ export async function POST() {
     message: "已退出登录",
   });
 
-  response.cookies.set("session", "", {
+  response.cookies.set("app_session", "", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
