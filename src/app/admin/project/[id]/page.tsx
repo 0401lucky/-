@@ -3,10 +3,7 @@
 import { useEffect, useState, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { 
-  ArrowLeft, Upload, Loader2, AlertCircle, Users, Package, Clock, 
-  User as UserIcon, Check, FileText, ChevronRight, Hash, LogOut
-} from 'lucide-react';
+import { ArrowLeft, Upload, Loader2, AlertCircle, Users, Package, Clock, User as UserIcon, Check, X, Gift, FileText } from 'lucide-react';
 
 interface Project {
   id: string;
@@ -109,17 +106,12 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
     }
   };
 
-  const handleLogout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    router.push('/');
-  };
-
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50/50 backdrop-blur-sm">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-10 h-10 animate-spin text-indigo-600" />
-          <p className="text-gray-500 text-sm font-medium">加载项目数据...</p>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
+        <div style={{ textAlign: 'center', color: 'white' }}>
+          <Loader2 style={{ width: 48, height: 48, animation: 'spin 1s linear infinite' }} />
+          <p style={{ marginTop: 16 }}>加载项目数据...</p>
         </div>
       </div>
     );
@@ -127,18 +119,15 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
 
   if (!project) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
-        <div className="bg-white/80 backdrop-blur-xl p-8 rounded-2xl shadow-xl border border-white/50 text-center max-w-md w-full">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <AlertCircle className="w-8 h-8 text-red-500" />
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', padding: 24 }}>
+        <div style={{ background: 'white', borderRadius: 24, padding: 40, textAlign: 'center', maxWidth: 400, width: '100%', boxShadow: '0 25px 80px rgba(0,0,0,0.25)' }}>
+          <div style={{ width: 64, height: 64, background: '#fef2f2', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
+            <AlertCircle style={{ width: 32, height: 32, color: '#ef4444' }} />
           </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-2">出错了</h2>
-          <p className="text-gray-600 mb-6">{error || '找不到该项目'}</p>
-          <Link 
-            href="/admin" 
-            className="inline-flex items-center justify-center px-5 py-2.5 border border-transparent text-sm font-medium rounded-xl text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-500/20 w-full"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
+          <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1f2937', marginBottom: 8 }}>出错了</h2>
+          <p style={{ color: '#6b7280', marginBottom: 24 }}>{error || '找不到该项目'}</p>
+          <Link href="/admin" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '14px 28px', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white', borderRadius: 12, textDecoration: 'none', fontWeight: 600, width: '100%' }}>
+            <ArrowLeft style={{ width: 18, height: 18, marginRight: 8 }} />
             返回管理后台
           </Link>
         </div>
@@ -149,187 +138,158 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
   const remaining = Math.max(0, project.maxClaims - project.claimedCount);
 
   return (
-    <div className="min-h-screen bg-gray-50 selection:bg-indigo-100 selection:text-indigo-900">
-      <div className="fixed inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px] pointer-events-none z-0"></div>
-
-      <nav className="sticky top-0 z-10 bg-white/80 backdrop-blur-xl border-b border-gray-200/50 transition-all duration-300">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center space-x-2">
-              <Link href="/admin" className="flex items-center text-gray-500 hover:text-indigo-600 transition-colors group">
-                <ArrowLeft className="w-5 h-5 mr-1 group-hover:-translate-x-1 transition-transform" />
-                <span className="font-medium hidden sm:inline">返回管理后台</span>
+    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
+      {/* 导航栏 */}
+      <nav style={{ background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(10px)', boxShadow: '0 4px 20px rgba(0,0,0,0.1)', position: 'sticky', top: 0, zIndex: 100 }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 70 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Link href="/admin" style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#6b7280', textDecoration: 'none' }}>
+                <ArrowLeft style={{ width: 20, height: 20 }} />
+                <span style={{ fontWeight: 500 }}>返回管理后台</span>
               </Link>
-              <ChevronRight className="w-4 h-4 text-gray-300 hidden sm:block" />
-              <span className="text-gray-900 font-medium truncate max-w-[150px] sm:max-w-xs">{project.name}</span>
+              <span style={{ color: '#d1d5db' }}>/</span>
+              <span style={{ fontWeight: 600, color: '#1f2937' }}>{project.name}</span>
             </div>
-            <button 
-              onClick={handleLogout}
-              className="p-2 rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-              title="退出登录"
-            >
-              <LogOut className="w-5 h-5" />
-            </button>
           </div>
         </div>
       </nav>
 
-      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* 主内容 */}
+      <main style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
+        {/* 提示消息 */}
         {success && (
-          <div className="mb-6 bg-emerald-50/80 backdrop-blur-sm border border-emerald-200 text-emerald-700 px-4 py-3 rounded-xl flex items-center justify-between shadow-sm animate-in slide-in-from-top-2">
-            <div className="flex items-center">
-              <div className="w-5 h-5 bg-emerald-100 rounded-full flex items-center justify-center mr-2">
-                <Check className="w-3 h-3 text-emerald-600" />
-              </div>
-              <span>{success}</span>
+          <div style={{ marginBottom: 24, padding: '16px 20px', background: 'rgba(255,255,255,0.95)', borderRadius: 16, border: '2px solid #10b981', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#059669' }}>
+              <Check style={{ width: 20, height: 20 }} />
+              <span style={{ fontWeight: 600 }}>{success}</span>
             </div>
-            <button onClick={() => setSuccess(null)} className="text-emerald-500 hover:text-emerald-700 p-1 rounded-full hover:bg-emerald-100/50 transition-colors">
-              <Check className="w-4 h-4" />
+            <button onClick={() => setSuccess(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}>
+              <X style={{ width: 20, height: 20 }} />
             </button>
           </div>
         )}
         {error && (
-          <div className="mb-6 bg-red-50/80 backdrop-blur-sm border border-red-200 text-red-700 px-4 py-3 rounded-xl flex items-center justify-between shadow-sm animate-in slide-in-from-top-2">
-            <div className="flex items-center">
-               <AlertCircle className="w-5 h-5 mr-2" />
-              <span>{error}</span>
+          <div style={{ marginBottom: 24, padding: '16px 20px', background: 'rgba(255,255,255,0.95)', borderRadius: 16, border: '2px solid #ef4444', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#dc2626' }}>
+              <AlertCircle style={{ width: 20, height: 20 }} />
+              <span style={{ fontWeight: 600 }}>{error}</span>
             </div>
-            <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100/50 transition-colors">
-              <Check className="w-4 h-4" />
+            <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}>
+              <X style={{ width: 20, height: 20 }} />
             </button>
           </div>
         )}
 
-        {/* Project Info */}
-        <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-xl border border-white/50 p-6 sm:p-8 mb-8">
-          <div className="flex flex-col md:flex-row justify-between gap-6 mb-8">
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                <h1 className="text-3xl font-bold text-gray-900 tracking-tight">{project.name}</h1>
-                {project.status === 'active' && <span className="px-2.5 py-0.5 text-xs font-bold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 animate-pulse">进行中</span>}
-                {project.status === 'paused' && <span className="px-2.5 py-0.5 text-xs font-bold rounded-full bg-amber-100 text-amber-800 border border-amber-200">已暂停</span>}
-                {project.status === 'exhausted' && <span className="px-2.5 py-0.5 text-xs font-bold rounded-full bg-gray-100 text-gray-800 border border-gray-200">已领完</span>}
+        {/* 项目信息 */}
+        <div style={{ background: 'rgba(255,255,255,0.95)', borderRadius: 24, boxShadow: '0 20px 60px rgba(0,0,0,0.15)', padding: 32, marginBottom: 32 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 24, marginBottom: 32 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div style={{ width: 56, height: 56, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Gift style={{ width: 28, height: 28, color: 'white' }} />
               </div>
-              <p className="text-gray-500 max-w-2xl leading-relaxed">{project.description || '暂无描述信息'}</p>
-            </div>
-            
-            <div className="flex-shrink-0">
-               <label className="group relative inline-flex items-center justify-center px-6 py-3 border border-indigo-200 text-sm font-medium rounded-xl text-indigo-700 bg-indigo-50 hover:bg-indigo-100 hover:border-indigo-300 cursor-pointer transition-all shadow-sm overflow-hidden">
-                <div className="absolute inset-0 w-full h-full bg-indigo-100/50 scale-x-0 group-hover:scale-x-100 transition-transform origin-left duration-500"></div>
-                <div className="relative flex items-center">
-                   <Upload className={`w-5 h-5 mr-2 ${uploading ? 'animate-bounce' : ''}`} />
-                   {uploading ? '正在上传...' : '追加兑换码'}
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <h1 style={{ fontSize: 28, fontWeight: 800, color: '#1f2937' }}>{project.name}</h1>
+                  <span style={{ padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, background: project.status === 'active' ? '#d1fae5' : project.status === 'paused' ? '#fef3c7' : '#f3f4f6', color: project.status === 'active' ? '#059669' : project.status === 'paused' ? '#d97706' : '#6b7280' }}>
+                    {project.status === 'active' ? '进行中' : project.status === 'paused' ? '已暂停' : '已领完'}
+                  </span>
                 </div>
-                <input type="file" accept=".txt" onChange={handleUploadCodes} disabled={uploading} className="sr-only" />
-              </label>
-              <p className="mt-2 text-xs text-center text-gray-400">支持 .txt 格式导入</p>
+                <p style={{ color: '#6b7280', marginTop: 4 }}>{project.description || '暂无描述'}</p>
+              </div>
             </div>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: '14px 24px', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white', borderRadius: 14, fontSize: 14, fontWeight: 600, cursor: uploading ? 'not-allowed' : 'pointer', opacity: uploading ? 0.7 : 1 }}>
+              <Upload style={{ width: 18, height: 18 }} />
+              {uploading ? '上传中...' : '追加兑换码'}
+              <input type="file" accept=".txt" onChange={handleUploadCodes} disabled={uploading} style={{ display: 'none' }} />
+            </label>
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-            <div className="bg-gradient-to-br from-indigo-50 to-white rounded-xl p-5 border border-indigo-100/50 shadow-sm relative overflow-hidden group hover:shadow-md transition-shadow">
-              <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
-                 <Users className="w-16 h-16 text-indigo-600 transform rotate-12 translate-x-4 -translate-y-4" />
+          {/* 统计卡片 */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 20 }}>
+            <div style={{ background: 'linear-gradient(135deg, #f0f4ff 0%, #e8e0ff 100%)', borderRadius: 16, padding: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#667eea', marginBottom: 8 }}>
+                <Users style={{ width: 18, height: 18 }} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>已领取</span>
               </div>
-              <div className="flex items-center text-indigo-600/70 mb-2 font-medium">
-                <Users className="w-4 h-4 mr-2" />
-                <span className="text-sm">已领取人数</span>
-              </div>
-              <p className="text-3xl font-bold text-gray-900">{project.claimedCount}</p>
+              <p style={{ fontSize: 32, fontWeight: 800, color: '#1f2937' }}>{project.claimedCount}</p>
             </div>
-            
-            <div className="bg-gradient-to-br from-purple-50 to-white rounded-xl p-5 border border-purple-100/50 shadow-sm relative overflow-hidden group hover:shadow-md transition-shadow">
-              <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
-                 <Package className="w-16 h-16 text-purple-600 transform rotate-12 translate-x-4 -translate-y-4" />
+            <div style={{ background: 'linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%)', borderRadius: 16, padding: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#ec4899', marginBottom: 8 }}>
+                <Users style={{ width: 18, height: 18 }} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>剩余名额</span>
               </div>
-              <div className="flex items-center text-purple-600/70 mb-2 font-medium">
-                <Package className="w-4 h-4 mr-2" />
-                <span className="text-sm">剩余名额</span>
-              </div>
-              <p className="text-3xl font-bold text-gray-900">{remaining}</p>
+              <p style={{ fontSize: 32, fontWeight: 800, color: '#1f2937' }}>{remaining}</p>
             </div>
-            
-            <div className="bg-gradient-to-br from-pink-50 to-white rounded-xl p-5 border border-pink-100/50 shadow-sm relative overflow-hidden group hover:shadow-md transition-shadow">
-               <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
-                 <Hash className="w-16 h-16 text-pink-600 transform rotate-12 translate-x-4 -translate-y-4" />
+            <div style={{ background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)', borderRadius: 16, padding: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#10b981', marginBottom: 8 }}>
+                <Package style={{ width: 18, height: 18 }} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>库存总量</span>
               </div>
-              <div className="flex items-center text-pink-600/70 mb-2 font-medium">
-                <Hash className="w-4 h-4 mr-2" />
-                <span className="text-sm">库存总量</span>
-              </div>
-              <p className="text-3xl font-bold text-gray-900">{project.codesCount}</p>
+              <p style={{ fontSize: 32, fontWeight: 800, color: '#1f2937' }}>{project.codesCount}</p>
             </div>
-            
-            <div className="bg-gradient-to-br from-blue-50 to-white rounded-xl p-5 border border-blue-100/50 shadow-sm relative overflow-hidden group hover:shadow-md transition-shadow">
-               <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
-                 <Clock className="w-16 h-16 text-blue-600 transform rotate-12 translate-x-4 -translate-y-4" />
+            <div style={{ background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', borderRadius: 16, padding: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#3b82f6', marginBottom: 8 }}>
+                <Clock style={{ width: 18, height: 18 }} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>创建时间</span>
               </div>
-              <div className="flex items-center text-blue-600/70 mb-2 font-medium">
-                <Clock className="w-4 h-4 mr-2" />
-                <span className="text-sm">创建时间</span>
-              </div>
-              <p className="text-sm font-semibold text-gray-900 mt-2">{new Date(project.createdAt).toLocaleDateString()}</p>
-              <p className="text-xs text-gray-500">{new Date(project.createdAt).toLocaleTimeString()}</p>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#1f2937' }}>{new Date(project.createdAt).toLocaleString()}</p>
             </div>
           </div>
         </div>
 
-        {/* Claim Records */}
-        <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-xl border border-white/50 overflow-hidden">
-          <div className="px-6 py-5 border-b border-gray-100 bg-gray-50/30">
-            <h2 className="text-lg font-bold text-gray-900 flex items-center">
-              <FileText className="w-5 h-5 mr-2 text-indigo-500" />
-              分发记录
-              <span className="ml-2 px-2.5 py-0.5 rounded-full bg-gray-100 text-xs font-medium text-gray-600 border border-gray-200">
-                {records.length} 条记录
-              </span>
-            </h2>
+        {/* 分发记录 */}
+        <div style={{ background: 'rgba(255,255,255,0.95)', borderRadius: 24, boxShadow: '0 20px 60px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+          <div style={{ padding: '20px 32px', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <FileText style={{ width: 20, height: 20, color: '#667eea' }} />
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1f2937' }}>分发记录</h2>
+            <span style={{ padding: '4px 12px', background: '#f3f4f6', borderRadius: 20, fontSize: 12, fontWeight: 600, color: '#6b7280' }}>{records.length} 条</span>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-100">
-              <thead className="bg-gray-50/50">
-                <tr>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">领取用户</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">兑换码</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">领取时间</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-50">
-                {records.map((record) => (
-                  <tr key={record.id} className="hover:bg-gray-50/80 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center text-indigo-600 mr-3 border border-indigo-200/50">
-                          <UserIcon className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold text-gray-900">{record.username}</p>
-                          <p className="text-xs text-gray-400">ID: {record.userId}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <code className="text-sm font-mono text-indigo-600 bg-indigo-50 px-3 py-1 rounded-lg border border-indigo-100">{record.code}</code>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(record.claimedAt).toLocaleString()}
-                    </td>
+
+          {records.length === 0 ? (
+            <div style={{ padding: '80px 40px', textAlign: 'center' }}>
+              <div style={{ width: 64, height: 64, background: '#f3f4f6', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
+                <Users style={{ width: 32, height: 32, color: '#9ca3af' }} />
+              </div>
+              <h3 style={{ fontSize: 18, fontWeight: 600, color: '#1f2937', marginBottom: 8 }}>暂无分发记录</h3>
+              <p style={{ color: '#6b7280' }}>该项目尚未被领取过</p>
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#f9fafb' }}>
+                    <th style={{ padding: '16px 32px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase' }}>用户</th>
+                    <th style={{ padding: '16px 32px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase' }}>兑换码</th>
+                    <th style={{ padding: '16px 32px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase' }}>领取时间</th>
                   </tr>
-                ))}
-                {records.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-6 py-16 text-center">
-                      <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <Users className="w-8 h-8 text-gray-300" />
-                      </div>
-                      <p className="text-gray-900 font-medium">暂无分发记录</p>
-                      <p className="text-gray-500 text-sm mt-1">该项目尚未被领取过</p>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {records.map((record) => (
+                    <tr key={record.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '20px 32px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <UserIcon style={{ width: 16, height: 16, color: 'white' }} />
+                          </div>
+                          <div>
+                            <p style={{ fontWeight: 600, color: '#1f2937' }}>{record.username}</p>
+                            <p style={{ fontSize: 12, color: '#9ca3af' }}>ID: {record.userId}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td style={{ padding: '20px 32px' }}>
+                        <code style={{ padding: '6px 12px', background: '#f0f4ff', borderRadius: 8, fontFamily: 'monospace', fontSize: 14, color: '#667eea' }}>{record.code}</code>
+                      </td>
+                      <td style={{ padding: '20px 32px', color: '#6b7280', fontSize: 14 }}>
+                        {new Date(record.claimedAt).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </main>
     </div>
