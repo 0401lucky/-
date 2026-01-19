@@ -109,10 +109,10 @@ export default function HomePage() {
                   {user.isAdmin && (
                     <Link
                       href="/admin"
-                      className="hidden sm:flex items-center px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-gray-50 transition-colors"
+                      className="flex items-center px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-gray-50 transition-colors"
                     >
                       <LayoutDashboard className="w-4 h-4 mr-2" />
-                      管理后台
+                      <span className="hidden sm:inline">管理后台</span>
                     </Link>
                   )}
                   <div className="flex items-center space-x-3 pl-4 border-l border-gray-200">
