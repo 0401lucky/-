@@ -19,6 +19,7 @@ interface Project {
   status: 'active' | 'paused' | 'exhausted';
   createdAt: number;
   createdBy: string;
+  newUserOnly?: boolean;
 }
 
 interface UserData {
@@ -42,6 +43,7 @@ export default function AdminPage() {
   const [description, setDescription] = useState('');
   const [maxClaims, setMaxClaims] = useState('100');
   const [codesFile, setCodesFile] = useState<File | null>(null);
+  const [newUserOnly, setNewUserOnly] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -90,6 +92,7 @@ export default function AdminPage() {
       formData.append('name', name.trim());
       formData.append('description', description.trim());
       formData.append('maxClaims', maxClaims);
+      formData.append('newUserOnly', newUserOnly.toString());
       if (codesFile) {
         formData.append('codes', codesFile);
       }
@@ -108,6 +111,7 @@ export default function AdminPage() {
         setDescription('');
         setMaxClaims('100');
         setCodesFile(null);
+        setNewUserOnly(false);
         fetchData();
         setTimeout(() => setSuccess(null), 5000);
       } else {
@@ -189,6 +193,14 @@ export default function AdminPage() {
               >
                 <Sparkles className="w-4 h-4" />
                 <span className="hidden sm:inline">抽奖管理</span>
+              </Link>
+              {/* 用户管理入口 */}
+              <Link 
+                href="/admin/users" 
+                className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-blue-200"
+              >
+                <Users className="w-4 h-4" />
+                <span className="hidden sm:inline">用户管理</span>
               </Link>
             </div>
             
@@ -284,7 +296,12 @@ export default function AdminPage() {
                         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-50 to-stone-100 flex items-center justify-center border border-stone-200 group-hover:border-orange-200 transition-colors">
                           <Gift className="w-5 h-5 text-orange-500" />
                         </div>
-                        <span className="font-bold text-stone-700 text-[15px] truncate pr-4 group-hover:text-orange-600 transition-colors">{project.name}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-stone-700 text-[15px] truncate group-hover:text-orange-600 transition-colors">{project.name}</span>
+                          {project.newUserOnly && (
+                            <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-600 rounded text-xs font-bold border border-emerald-200">🆕</span>
+                          )}
+                        </div>
                       </div>
 
                       {/* Status */}
@@ -364,7 +381,12 @@ export default function AdminPage() {
                             <Gift className="w-5 h-5 text-orange-500" />
                           </div>
                           <div>
-                            <h3 className="font-bold text-stone-800 text-base">{project.name}</h3>
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-bold text-stone-800 text-base">{project.name}</h3>
+                              {project.newUserOnly && (
+                                <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-600 rounded text-xs font-bold border border-emerald-200">🆕</span>
+                              )}
+                            </div>
                             <div className="flex items-center gap-2 text-xs text-stone-400 mt-0.5">
                               <span>{new Date(project.createdAt).toLocaleDateString()}</span>
                             </div>
@@ -531,6 +553,30 @@ export default function AdminPage() {
                     </p>
                     <p className="text-xs text-stone-400 mt-1">每行一个兑换码</p>
                   </div>
+                </div>
+
+                {/* 仅限新用户开关 */}
+                <div className="flex items-center justify-between p-4 bg-emerald-50/50 border border-emerald-100 rounded-xl">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
+                      <span className="text-lg">🆕</span>
+                    </div>
+                    <div>
+                      <p className="font-bold text-stone-800 text-sm">仅限新用户</p>
+                      <p className="text-xs text-stone-500">只有未领取过任何福利的用户才能领取</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNewUserOnly(!newUserOnly)}
+                    className={`relative w-12 h-7 rounded-full transition-colors duration-200 ${
+                      newUserOnly ? 'bg-emerald-500' : 'bg-stone-300'
+                    }`}
+                  >
+                    <span className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-sm transition-all duration-200 ${
+                      newUserOnly ? 'left-6' : 'left-1'
+                    }`} />
+                  </button>
                 </div>
               </div>
 

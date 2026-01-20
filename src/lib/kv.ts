@@ -11,6 +11,14 @@ export interface Project {
   status: "active" | "paused" | "exhausted";
   createdAt: number;
   createdBy: string;
+  newUserOnly?: boolean;  // 仅限未领取过福利的用户
+}
+
+// 用户接口
+export interface User {
+  id: number;
+  username: string;
+  firstSeen: number;
 }
 
 // 领取记录
@@ -145,4 +153,58 @@ export async function getClaimRecord(projectId: string, userId: number): Promise
 
 export async function getProjectRecords(projectId: string, start = 0, end = 49): Promise<ClaimRecord[]> {
   return await kv.lrange<ClaimRecord>(`records:${projectId}`, start, end);
+}
+
+// 检查用户是否领取过任何福利（包括兑换码和抽奖）
+export async function hasUserClaimedAny(userId: number): Promise<boolean> {
+  // 检查所有项目的领取记录
+  const projects = await getAllProjects();
+  for (const project of projects) {
+    const record = await getClaimRecord(project.id, userId);
+    if (record) return true;
+  }
+  // 检查抽奖记录
+  const lotteryRecords = await kv.lrange(`lottery:user:records:${userId}`, 0, 0);
+  if (lotteryRecords && lotteryRecords.length > 0) return true;
+  return false;
+}
+
+// 记录用户（首次登录时调用）
+export async function recordUser(userId: number, username: string): Promise<void> {
+  const existing = await kv.get(`user:${userId}`);
+  if (!existing) {
+    await kv.set(`user:${userId}`, { 
+      id: userId, 
+      username, 
+      firstSeen: Date.now() 
+    });
+    await kv.sadd('users:all', userId);
+  }
+}
+
+// 获取所有用户
+export async function getAllUsers(): Promise<User[]> {
+  const userIds = await kv.smembers('users:all') as number[];
+  const users: User[] = [];
+  for (const id of userIds) {
+    const user = await kv.get<User>(`user:${id}`);
+    if (user) users.push(user);
+  }
+  return users;
+}
+
+// 获取用户的所有领取记录
+export async function getUserAllClaims(userId: number): Promise<ClaimRecord[]> {
+  const projects = await getAllProjects();
+  const records: ClaimRecord[] = [];
+  for (const project of projects) {
+    const record = await getClaimRecord(project.id, userId);
+    if (record) records.push(record);
+  }
+  return records;
+}
+
+// 获取用户的抽奖记录数
+export async function getUserLotteryCount(userId: number): Promise<number> {
+  return await kv.llen(`lottery:user:records:${userId}`);
 }

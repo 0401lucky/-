@@ -47,6 +47,7 @@ export async function POST(request: NextRequest) {
     const description = formData.get("description") as string || "";
     const maxClaims = parseInt(formData.get("maxClaims") as string) || 100;
     const codesFile = formData.get("codes") as File | null;
+    const newUserOnly = formData.get("newUserOnly") === "true";
 
     if (!name) {
       return NextResponse.json(
@@ -76,6 +77,7 @@ export async function POST(request: NextRequest) {
       status: "active",
       createdAt: Date.now(),
       createdBy: user!.username,
+      newUserOnly,
     };
 
     await createProject(project);

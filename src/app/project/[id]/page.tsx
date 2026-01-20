@@ -15,6 +15,7 @@ interface Project {
   status: 'active' | 'paused' | 'exhausted';
   createdAt: number;
   createdBy: string;
+  newUserOnly?: boolean;
 }
 
 interface UserData {
@@ -217,6 +218,11 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                 <div>
                   <h1 className="text-2xl sm:text-3xl font-bold text-stone-800 mb-2 tracking-tight">{project.name}</h1>
                   <div className="flex flex-wrap gap-2">
+                    {project.newUserOnly && (
+                      <span className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-100 rounded-full text-xs font-bold text-emerald-600 border border-emerald-200">
+                        🆕 新用户专享
+                      </span>
+                    )}
                     <span className="flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 rounded-full text-xs font-bold text-stone-500">
                       <Package className="w-3.5 h-3.5" />
                       剩余 {remaining} / {project.maxClaims}
