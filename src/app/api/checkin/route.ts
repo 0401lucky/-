@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import { checkinToNewApi } from "@/lib/new-api";
-import { hasCheckedInToday, setCheckedInToday, addExtraSpinCount } from "@/lib/kv";
+import { hasCheckedInToday, setCheckedInToday, addExtraSpinCount, getExtraSpinCount } from "@/lib/kv";
 import { cookies } from "next/headers";
 
 export const dynamic = "force-dynamic";
@@ -13,11 +13,15 @@ export async function GET() {
       return NextResponse.json({ checkedIn: false }, { status: 401 });
     }
 
-    const checkedIn = await hasCheckedInToday(user.id);
-    return NextResponse.json({ checkedIn });
+    const [checkedIn, extraSpins] = await Promise.all([
+      hasCheckedInToday(user.id),
+      getExtraSpinCount(user.id)
+    ]);
+    
+    return NextResponse.json({ checkedIn, extraSpins });
   } catch (error) {
     console.error("Check status error:", error);
-    return NextResponse.json({ checkedIn: false }, { status: 500 });
+    return NextResponse.json({ checkedIn: false, extraSpins: 0 }, { status: 500 });
   }
 }
 
@@ -76,10 +80,19 @@ export async function POST() {
     // 3. 签到成功处理
     await setCheckedInToday(user.id);
     await addExtraSpinCount(user.id, 1); // 奖励1次额外抽奖机会
+    
+    const extraSpins = await getExtraSpinCount(user.id);
+    
+    // 格式化额度显示（new-api 的 quota 单位通常是 1/500000 美元）
+    const quotaAwarded = result.quotaAwarded || 0;
+    const quotaDisplay = quotaAwarded > 0 ? (quotaAwarded / 500000).toFixed(4) : "0";
 
     return NextResponse.json({
       success: true,
       message: "签到成功！获得1次额外抽奖机会",
+      quotaAwarded,
+      quotaDisplay: `$${quotaDisplay}`,
+      extraSpins,
     });
 
   } catch (error) {

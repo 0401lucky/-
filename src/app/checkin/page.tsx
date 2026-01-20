@@ -3,14 +3,21 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Check, CalendarDays, Gift, ChevronLeft, Loader2, PartyPopper } from 'lucide-react';
+import { Check, CalendarDays, Gift, ChevronLeft, Loader2, PartyPopper, Sparkles } from 'lucide-react';
 import confetti from 'canvas-confetti';
+
+interface CheckinResult {
+  quotaDisplay?: string;
+  extraSpins?: number;
+}
 
 export default function CheckinPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [checkedIn, setCheckedIn] = useState(false);
+  const [extraSpins, setExtraSpins] = useState(0);
+  const [checkinResult, setCheckinResult] = useState<CheckinResult | null>(null);
   const [user, setUser] = useState<{ id: number; username: string } | null>(null);
 
   useEffect(() => {
@@ -37,6 +44,7 @@ export default function CheckinPage() {
       if (statusRes.ok) {
         const statusData = await statusRes.json();
         setCheckedIn(statusData.checkedIn);
+        setExtraSpins(statusData.extraSpins || 0);
       }
     } catch (error) {
       console.error('Failed to fetch status:', error);
@@ -57,6 +65,11 @@ export default function CheckinPage() {
 
       if (data.success) {
         setCheckedIn(true);
+        setExtraSpins(data.extraSpins || extraSpins + 1);
+        setCheckinResult({
+          quotaDisplay: data.quotaDisplay,
+          extraSpins: data.extraSpins,
+        });
         // 触发彩带特效
         confetti({
           particleCount: 100,
@@ -119,6 +132,26 @@ export default function CheckinPage() {
                 ? '明天记得再来哦！' 
                 : '签到可获得一次额外抽奖机会'}
             </p>
+            
+            {/* 显示奖励信息 */}
+            {checkedIn && checkinResult?.quotaDisplay && (
+              <div className="mt-4 p-3 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200">
+                <div className="flex items-center justify-center gap-2 text-amber-700">
+                  <Sparkles className="w-4 h-4" />
+                  <span className="text-sm font-medium">
+                    获得额度：{checkinResult.quotaDisplay}
+                  </span>
+                </div>
+              </div>
+            )}
+            
+            {/* 显示抽奖次数 */}
+            {extraSpins > 0 && (
+              <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-100 text-orange-700 rounded-full text-sm font-medium">
+                <Gift className="w-3.5 h-3.5" />
+                剩余 {extraSpins} 次额外抽奖
+              </div>
+            )}
           </div>
 
           <div className="space-y-4">

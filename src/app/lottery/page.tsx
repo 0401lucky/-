@@ -39,6 +39,8 @@ export default function LotteryPage() {
   const [loading, setLoading] = useState(true);
   const [records, setRecords] = useState<LotteryRecord[]>([]);
   const [canSpin, setCanSpin] = useState(false);
+  const [hasSpunToday, setHasSpunToday] = useState(false);
+  const [extraSpins, setExtraSpins] = useState(0);
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [result, setResult] = useState<{ name: string; code: string } | null>(null);
@@ -79,6 +81,8 @@ export default function LotteryPage() {
         const data = await lotteryRes.json();
         if (data.success) {
           setCanSpin(data.canSpin);
+          setHasSpunToday(data.hasSpunToday || false);
+          setExtraSpins(data.extraSpins || 0);
         }
       }
     } catch (err) {
@@ -118,7 +122,17 @@ export default function LotteryPage() {
             setSpinning(false);
             setResult({ name: prize.name, code: data.record.code });
             setShowResultModal(true);
-            setCanSpin(false);
+            // 更新抽奖次数状态
+            if (!hasSpunToday) {
+              setHasSpunToday(true);
+            } else if (extraSpins > 0) {
+              setExtraSpins(prev => prev - 1);
+            }
+            // 检查是否还能继续抽
+            const newDailyAvailable = hasSpunToday ? 0 : 0; // 抽完后每日次数归0
+            const newExtraSpins = hasSpunToday ? extraSpins - 1 : extraSpins;
+            setCanSpin(newDailyAvailable > 0 || newExtraSpins > 0);
+            
             setRecords(prev => [{
               id: data.record.id,
               tierName: prize.name,
@@ -276,6 +290,23 @@ export default function LotteryPage() {
                 </div>
               )}
               
+              {/* 抽奖次数显示 */}
+              <div className="flex items-center justify-center gap-3 text-sm">
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${
+                  hasSpunToday ? 'bg-stone-100 text-stone-400' : 'bg-green-100 text-green-700'
+                }`}>
+                  <span className="font-medium">每日次数:</span>
+                  <span className="font-bold">{hasSpunToday ? '0' : '1'}</span>
+                </div>
+                {extraSpins > 0 && (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-100 text-orange-700 rounded-full">
+                    <Gift className="w-3.5 h-3.5" />
+                    <span className="font-medium">额外:</span>
+                    <span className="font-bold">{extraSpins}</span>
+                  </div>
+                )}
+              </div>
+              
               <button
                 onClick={handleSpin}
                 disabled={!canSpin || spinning}
@@ -297,7 +328,9 @@ export default function LotteryPage() {
               </button>
               
               <p className="text-sm text-stone-400 font-medium">
-                {canSpin ? '今日剩余次数: 1次' : '明天再来试试运气吧！'}
+                {canSpin 
+                  ? `可抽奖 ${(hasSpunToday ? 0 : 1) + extraSpins} 次` 
+                  : '明天再来试试运气吧！签到可获得额外次数'}
               </p>
             </div>
           </div>

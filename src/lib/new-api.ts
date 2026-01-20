@@ -85,7 +85,7 @@ export async function getUserFromNewApi(sessionCookie: string): Promise<NewApiUs
   }
 }
 
-export async function checkinToNewApi(sessionCookie: string, userId?: number): Promise<{ success: boolean; message: string }> {
+export async function checkinToNewApi(sessionCookie: string, userId?: number): Promise<{ success: boolean; message: string; quotaAwarded?: number }> {
   try {
     const headers: Record<string, string> = {
       Cookie: sessionCookie,
@@ -104,9 +104,12 @@ export async function checkinToNewApi(sessionCookie: string, userId?: number): P
     const data = await response.json();
     
     if (data.success) {
+      // new-api 返回 { success: true, message: "签到成功", data: { quota_awarded: 12345 } }
+      const quotaAwarded = data.data?.quota_awarded || data.data?.QuotaAwarded || 0;
       return {
         success: true,
         message: data.message || "签到成功",
+        quotaAwarded,
       };
     } else {
       return {
