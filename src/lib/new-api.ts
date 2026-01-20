@@ -85,13 +85,20 @@ export async function getUserFromNewApi(sessionCookie: string): Promise<NewApiUs
   }
 }
 
-export async function checkinToNewApi(sessionCookie: string): Promise<{ success: boolean; message: string }> {
+export async function checkinToNewApi(sessionCookie: string, username?: string): Promise<{ success: boolean; message: string }> {
   try {
+    const headers: Record<string, string> = {
+      Cookie: sessionCookie,
+    };
+    
+    // 添加 New-Api-User header（某些 new-api 版本需要）
+    if (username) {
+      headers["New-Api-User"] = username;
+    }
+    
     const response = await fetch(`${NEW_API_URL}/api/user/checkin`, {
       method: "POST",
-      headers: {
-        Cookie: sessionCookie,
-      },
+      headers,
     });
 
     const data = await response.json();
