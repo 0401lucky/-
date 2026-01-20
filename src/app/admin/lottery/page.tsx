@@ -11,28 +11,31 @@ import {
 
 // 档位定义
 const TIERS = [
-  { id: '1', name: '1刀福利', color: 'text-amber-500', bg: 'bg-amber-50' },
-  { id: '3', name: '3刀福利', color: 'text-orange-400', bg: 'bg-orange-50' },
-  { id: '5', name: '5刀福利', color: 'text-orange-500', bg: 'bg-orange-100' },
-  { id: '10', name: '10刀福利', color: 'text-orange-600', bg: 'bg-orange-200' },
-  { id: '15', name: '15刀福利', color: 'text-red-500', bg: 'bg-red-50' },
-  { id: '20', name: '20刀福利', color: 'text-red-600', bg: 'bg-red-100' },
+  { id: 'tier_1', name: '1刀福利', color: 'text-amber-500', bg: 'bg-amber-50' },
+  { id: 'tier_3', name: '3刀福利', color: 'text-orange-400', bg: 'bg-orange-50' },
+  { id: 'tier_5', name: '5刀福利', color: 'text-orange-500', bg: 'bg-orange-100' },
+  { id: 'tier_10', name: '10刀福利', color: 'text-orange-600', bg: 'bg-orange-200' },
+  { id: 'tier_15', name: '15刀福利', color: 'text-red-500', bg: 'bg-red-50' },
+  { id: 'tier_20', name: '20刀福利', color: 'text-red-600', bg: 'bg-red-100' },
 ];
 
 interface TierStats {
   id: string;
   name: string;
-  total: number;
-  used: number;
-  available: number;
+  value: number;
   probability: number;
+  color: string;
+  codesCount: number;
+  usedCount: number;
+  available: number;
 }
 
 interface LotteryRecord {
   id: string;
   username: string;
-  userId: number;
-  prizeName: string;
+  oderId: string;
+  tierName: string;
+  tierValue: number;
   code: string;
   createdAt: number;
 }
@@ -90,10 +93,15 @@ export default function AdminLotteryPage() {
       if (dataRes.ok) {
         const data = await dataRes.json();
         if (data.success) {
-          setStats(data.stats);
-          setRecords(data.records);
-          setConfig(data.config);
-          setProbabilities(data.config.probabilities);
+          setStats(data.tiers || []);
+          setRecords(data.records || []);
+          setConfig(data.config || { enabled: true, probabilities: {} });
+          // 从 tiers 数组构建 probabilities 对象
+          const probs: Record<string, number> = {};
+          (data.tiers || []).forEach((tier: TierStats) => {
+            probs[tier.id] = tier.probability;
+          });
+          setProbabilities(probs);
         }
       }
     } catch (err) {
@@ -245,14 +253,14 @@ export default function AdminLotteryPage() {
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             {stats.map((stat) => {
               const tierConfig = TIERS.find(t => t.id === stat.id) || TIERS[0];
-              const progress = stat.total > 0 ? (stat.used / stat.total) * 100 : 0;
+              const progress = stat.codesCount > 0 ? (stat.usedCount / stat.codesCount) * 100 : 0;
               const isLowStock = stat.available === 0;
 
               return (
                 <div key={stat.id} className={`glass-card p-4 rounded-2xl border ${isLowStock ? 'border-red-200 bg-red-50/30' : 'border-white/60'}`}>
                   <div className={`text-xs font-bold uppercase mb-2 ${tierConfig.color}`}>{tierConfig.name}</div>
                   <div className="text-2xl font-bold text-stone-800 mb-1">{stat.available}</div>
-                  <div className="text-xs text-stone-400 mb-3">可用 / 总量 {stat.total}</div>
+                  <div className="text-xs text-stone-400 mb-3">可用 / 总量 {stat.codesCount}</div>
                   <div className="h-1.5 bg-stone-100 rounded-full overflow-hidden">
                     <div 
                       className={`h-full rounded-full transition-all duration-500 ${isLowStock ? 'bg-red-500' : 'bg-orange-500'}`}
@@ -405,11 +413,11 @@ export default function AdminLotteryPage() {
                       <tr key={record.id} className="hover:bg-orange-50/30 transition-colors">
                         <td className="px-6 py-4">
                           <div className="font-bold text-stone-700 text-sm">{record.username}</div>
-                          <div className="text-[10px] text-stone-400">ID: {record.userId}</div>
+                          <div className="text-[10px] text-stone-400">ID: {record.oderId}</div>
                         </td>
                         <td className="px-6 py-4">
                           <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-bold bg-stone-100 text-stone-600">
-                            {record.prizeName}
+                            {record.tierName}
                           </span>
                         </td>
                         <td className="px-6 py-4 font-mono text-sm text-stone-500">{record.code}</td>
