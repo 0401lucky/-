@@ -55,7 +55,7 @@ export async function POST() {
     // 构造请求头需要的 cookie 格式
     const cookieHeader = `session=${newApiSession}`;
 
-    const result = await checkinToNewApi(cookieHeader, user.username);
+    const result = await checkinToNewApi(cookieHeader, user.id);
 
     if (!result.success) {
       // 如果 API 返回失败，但消息是"已签到"，我们也视为本地成功并同步状态
