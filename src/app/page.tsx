@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LogOut, User, LayoutDashboard, Loader2, Gift, ChevronRight } from 'lucide-react';
+import { LogOut, User, LayoutDashboard, Loader2, Gift, ChevronRight, Sparkles } from 'lucide-react';
 
 interface Project {
   id: string;
@@ -73,27 +73,26 @@ export default function HomePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#667eea] to-[#764ba2]">
-        <div className="text-center text-white">
-          <Loader2 className="w-12 h-12 animate-spin mx-auto" />
-          <p className="mt-4 text-sm font-medium">加载中...</p>
+      <div className="min-h-screen flex items-center justify-center bg-[#fafaf9]">
+        <div className="text-center text-orange-500">
+          <Loader2 className="w-10 h-10 animate-spin mx-auto" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2]">
+    <div className="min-h-screen">
       {/* 导航栏 */}
-      <nav className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm shadow-sm transition-all duration-300">
+      <nav className="sticky top-0 z-50 glass transition-all duration-300">
         <div className="max-w-[1200px] mx-auto px-6">
-          <div className="flex justify-between items-center h-[70px]">
+          <div className="flex justify-between items-center h-[72px]">
             {/* Logo */}
             <Link href="/" className="flex items-center gap-3 group">
-              <div className="w-11 h-11 bg-gradient-to-br from-[#667eea] to-[#764ba2] rounded-xl flex items-center justify-center shadow-lg shadow-[#667eea]/40 transition-transform group-hover:scale-105">
-                <Gift className="w-6 h-6 text-white" />
+              <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center transition-transform group-hover:scale-105 group-hover:rotate-3">
+                <Gift className="w-5 h-5 text-orange-600" />
               </div>
-              <span className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight">兑换码中心</span>
+              <span className="text-xl font-bold text-stone-800 tracking-tight group-hover:text-orange-600 transition-colors">福利中心</span>
             </Link>
 
             {/* 用户区域 */}
@@ -103,30 +102,30 @@ export default function HomePage() {
                   {user.isAdmin && (
                     <Link 
                       href="/admin" 
-                      className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-xl text-sm font-semibold shadow-lg shadow-[#667eea]/30 hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300"
+                      className="flex items-center gap-2 px-4 py-2 bg-stone-100 text-stone-600 rounded-xl text-sm font-semibold hover:bg-orange-50 hover:text-orange-600 transition-all duration-300"
                     >
-                      <LayoutDashboard className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
-                      <span className="hidden sm:inline">管理后台</span>
+                      <LayoutDashboard className="w-4 h-4" />
+                      <span className="hidden sm:inline">后台管理</span>
                     </Link>
                   )}
-                  <div className="flex items-center gap-3 pl-4 border-l border-gray-200">
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-50 to-purple-50 flex items-center justify-center border-2 border-[#667eea]/20">
-                      <User className="w-[18px] h-[18px] text-[#667eea]" />
+                  <div className="flex items-center gap-3 pl-4 border-l border-stone-200">
+                    <div className="w-9 h-9 rounded-full bg-stone-100 flex items-center justify-center border border-white shadow-sm">
+                      <User className="w-4 h-4 text-stone-500" />
                     </div>
-                    <span className="hidden md:block font-semibold text-gray-700">{user.displayName || user.username}</span>
+                    <span className="hidden md:block font-semibold text-stone-700 text-sm">{user.displayName || user.username}</span>
                     <button
                       onClick={handleLogout}
-                      className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 hover:text-red-600 transition-colors duration-200 flex items-center justify-center"
+                      className="p-2 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all duration-200"
                       title="退出登录"
                     >
-                      <LogOut className="w-[18px] h-[18px]" />
+                      <LogOut className="w-4 h-4" />
                     </button>
                   </div>
                 </>
               ) : (
                 <Link
                   href="/login"
-                  className="px-7 py-3 bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-xl text-sm font-semibold shadow-lg shadow-[#667eea]/40 hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300"
+                  className="px-6 py-2.5 gradient-warm text-white rounded-xl text-sm font-semibold shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 hover:-translate-y-0.5 transition-all duration-300"
                 >
                   登录
                 </Link>
@@ -137,81 +136,89 @@ export default function HomePage() {
       </nav>
 
       {/* 主内容 */}
-      <main className="max-w-[1200px] mx-auto px-6 py-12">
-        <div className="mb-12 text-center">
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-white mb-4 drop-shadow-md">
-            发现专属福利
+      <main className="max-w-[1200px] mx-auto px-6 py-16">
+        <div className="mb-16 text-center animate-fade-in">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-orange-50 border border-orange-100 text-orange-600 text-xs font-bold uppercase tracking-wider mb-4">
+            <Sparkles className="w-3 h-3" />
+            <span>Exclusive Rewards</span>
+          </div>
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-stone-800 mb-6 tracking-tight">
+            发现您的<span className="text-gradient-primary">专属福利</span>
           </h1>
-          <p className="text-base sm:text-lg text-white/90 max-w-lg mx-auto font-medium">
-            领取独家兑换码，限时限量，先到先得
+          <p className="text-lg text-stone-500 max-w-lg mx-auto leading-relaxed">
+            精选优质资源，限时限量免费领取。
+            <br className="hidden sm:block" />
+            登录即可获取您的专属兑换码。
           </p>
         </div>
 
         {projects.length === 0 ? (
-          <div className="bg-white/95 backdrop-blur-sm rounded-3xl p-10 sm:p-20 text-center shadow-2xl shadow-black/5 mx-auto max-w-2xl">
-            <div className="w-20 h-20 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-full flex items-center justify-center mx-auto mb-6">
-              <Gift className="w-10 h-10 text-[#667eea]" />
+          <div className="glass rounded-3xl p-10 sm:p-20 text-center mx-auto max-w-2xl">
+            <div className="w-20 h-20 bg-stone-50 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Gift className="w-9 h-9 text-stone-300" />
             </div>
-            <h2 className="text-2xl font-bold text-gray-800 mb-3">暂无项目</h2>
-            <p className="text-gray-500">当前没有可用的兑换码项目，请稍后再来</p>
+            <h2 className="text-xl font-bold text-stone-800 mb-2">暂无活动</h2>
+            <p className="text-stone-500">当前没有可进行的兑换活动，请稍后再来。</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-7">
-            {projects.map((project) => {
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {projects.map((project, index) => {
               const remaining = Math.max(0, project.maxClaims - project.claimedCount);
               const progress = Math.min(100, (project.claimedCount / project.maxClaims) * 100);
               
-              const statusColors = {
-                active: { bg: 'bg-emerald-100', text: 'text-emerald-600', label: '进行中' },
-                paused: { bg: 'bg-amber-100', text: 'text-amber-600', label: '已暂停' },
-                exhausted: { bg: 'bg-gray-100', text: 'text-gray-500', label: '已领完' }
+              const statusConfig = {
+                active: { bg: 'bg-emerald-50', text: 'text-emerald-600', dot: 'bg-emerald-500', label: '进行中' },
+                paused: { bg: 'bg-amber-50', text: 'text-amber-600', dot: 'bg-amber-500', label: '已暂停' },
+                exhausted: { bg: 'bg-stone-100', text: 'text-stone-500', dot: 'bg-stone-400', label: '已领完' }
               };
 
-              const currentStatus = statusColors[project.status];
+              const currentStatus = statusConfig[project.status];
 
               return (
                 <Link
                   key={project.id}
                   href={`/project/${project.id}`}
-                  className="group block bg-white/95 backdrop-blur-sm rounded-2xl p-7 shadow-lg shadow-black/5 hover:shadow-2xl hover:shadow-black/10 hover:-translate-y-1 transition-all duration-300"
+                  className="glass-card rounded-2xl p-6 group block"
+                  style={{ animationDelay: `${index * 100}ms` }}
                 >
                   <div className="flex justify-between items-start mb-5">
-                    <div className="p-3 bg-gradient-to-br from-[#667eea] to-[#764ba2] rounded-xl text-white shadow-md shadow-[#667eea]/20">
-                      <Gift className="w-6 h-6" />
+                    <div className="w-12 h-12 bg-gradient-to-br from-orange-50 to-stone-50 rounded-xl flex items-center justify-center border border-orange-100/50 group-hover:scale-110 transition-transform duration-300">
+                      <Gift className="w-6 h-6 text-orange-500" />
                     </div>
-                    <span className={`px-3.5 py-1.5 rounded-full text-xs font-bold ${currentStatus.bg} ${currentStatus.text}`}>
+                    <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border border-transparent ${currentStatus.bg} ${currentStatus.text}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${currentStatus.dot}`}></span>
                       {currentStatus.label}
                     </span>
                   </div>
 
-                  <h3 className="text-xl font-bold text-gray-800 mb-2.5 line-clamp-1 group-hover:text-[#667eea] transition-colors">
+                  <h3 className="text-lg font-bold text-stone-800 mb-2 line-clamp-1 group-hover:text-orange-600 transition-colors">
                     {project.name}
                   </h3>
-                  <p className="text-sm text-gray-500 mb-6 h-10 line-clamp-2 leading-relaxed">
+                  <p className="text-sm text-stone-500 mb-6 h-10 line-clamp-2 leading-relaxed">
                     {project.description || '暂无描述'}
                   </p>
 
                   <div className="mb-5">
-                    <div className="flex justify-between mb-2 text-xs text-gray-500 font-medium">
-                      <span>已领取 {project.claimedCount}</span>
-                      <span className={remaining < 10 ? 'text-red-500 font-bold' : 'text-gray-500'}>
-                        剩余 {remaining} / {project.maxClaims}
+                    <div className="flex justify-between mb-2 text-xs font-medium">
+                      <span className="text-stone-400">已领 {project.claimedCount}</span>
+                      <span className={remaining < 10 ? 'text-orange-600 font-bold' : 'text-stone-500'}>
+                        剩 {remaining}
                       </span>
                     </div>
-                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-1.5 bg-stone-100 rounded-full overflow-hidden">
                       <div 
-                        className="h-full bg-gradient-to-r from-[#667eea] to-[#764ba2] rounded-full transition-all duration-500"
+                        className="h-full bg-gradient-to-r from-orange-400 to-orange-600 rounded-full transition-all duration-500"
                         style={{ width: `${progress}%` }}
                       />
                     </div>
                   </div>
 
-                  <div className="flex justify-between items-center pt-5 border-t border-gray-100">
-                    <span className="text-xs text-gray-400 bg-gray-50 px-2.5 py-1 rounded-md font-medium">
+                  <div className="flex justify-between items-center pt-5 border-t border-stone-100">
+                    <span className="text-xs text-stone-400 font-medium px-2 py-1 bg-stone-50 rounded">
                       库存: {project.codesCount}
                     </span>
-                    <span className="text-sm font-bold text-[#667eea] flex items-center gap-1 group-hover:gap-2 transition-all">
-                      立即领取 <ChevronRight className="w-[18px] h-[18px]" />
+                    <span className="text-sm font-bold text-stone-800 flex items-center gap-1 group-hover:gap-2 group-hover:text-orange-600 transition-all">
+                      去领取 <ChevronRight className="w-4 h-4" />
                     </span>
                   </div>
                 </Link>

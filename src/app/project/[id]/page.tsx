@@ -3,7 +3,7 @@
 import { useEffect, useState, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Loader2, ArrowLeft, Copy, Check, Package, AlertCircle, LogOut, User as UserIcon, Gift } from 'lucide-react';
+import { Loader2, ArrowLeft, Copy, Check, Package, AlertCircle, LogOut, User as UserIcon, Gift, Sparkles } from 'lucide-react';
 
 interface Project {
   id: string;
@@ -132,25 +132,25 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white">
-        <Loader2 className="w-12 h-12 animate-spin mb-4" />
-        <p className="text-lg font-medium opacity-90">加载项目详情...</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#fafaf9]">
+        <Loader2 className="w-10 h-10 animate-spin mb-4 text-orange-500" />
+        <p className="text-sm font-medium text-stone-500">加载中...</p>
       </div>
     );
   }
 
   if (!project) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#667eea] to-[#764ba2] p-6">
-        <div className="bg-white rounded-3xl p-10 text-center max-w-md w-full shadow-2xl">
+      <div className="min-h-screen flex items-center justify-center bg-[#fafaf9] p-6">
+        <div className="glass rounded-3xl p-10 text-center max-w-md w-full shadow-2xl">
           <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-5">
             <AlertCircle className="w-8 h-8 text-red-500" />
           </div>
-          <h2 className="text-2xl font-bold text-gray-800 mb-2">出错了</h2>
-          <p className="text-gray-500 mb-6">{error || '找不到该项目'}</p>
+          <h2 className="text-xl font-bold text-stone-800 mb-2">出错了</h2>
+          <p className="text-stone-500 mb-6 text-sm">{error || '找不到该项目'}</p>
           <Link 
             href="/" 
-            className="inline-flex items-center justify-center px-7 py-3.5 bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-xl font-semibold w-full hover:shadow-lg transition-shadow"
+            className="inline-flex items-center justify-center px-7 py-3 gradient-warm text-white rounded-xl font-semibold w-full hover:shadow-lg shadow-orange-500/20 transition-all active:scale-95"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
             返回首页
@@ -167,32 +167,36 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const progress = Math.min(100, (project.claimedCount / project.maxClaims) * 100);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2]">
+    <div className="min-h-screen bg-[#fafaf9] relative overflow-hidden">
+      {/* 装饰背景 */}
+      <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-orange-100/40 rounded-full blur-3xl -z-10 translate-x-1/3 -translate-y-1/3"></div>
+      <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-stone-200/40 rounded-full blur-3xl -z-10 -translate-x-1/3 translate-y-1/3"></div>
+
       {/* 导航栏 */}
-      <nav className="bg-white/95 backdrop-blur-md shadow-sm sticky top-0 z-50">
+      <nav className="glass sticky top-0 z-50 shadow-sm/50">
         <div className="max-w-4xl mx-auto px-4 sm:px-6">
-          <div className="flex justify-between items-center h-[70px]">
-            <Link href="/" className="flex items-center gap-2 text-gray-500 hover:text-gray-700 transition-colors group">
-              <ArrowLeft className="w-5 h-5 group-hover:-translate-x-0.5 transition-transform" />
-              <span className="font-medium">返回首页</span>
+          <div className="flex justify-between items-center h-[72px]">
+            <Link href="/" className="flex items-center gap-2 text-stone-500 hover:text-stone-800 transition-colors group">
+              <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+              <span className="font-medium text-sm">首页</span>
             </Link>
             
             {user && (
               <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-full">
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center shadow-sm">
-                    <UserIcon className="w-3.5 h-3.5 text-white" />
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-white/60 rounded-full border border-white/50 shadow-sm">
+                  <div className="w-6 h-6 rounded-full bg-gradient-to-br from-orange-100 to-stone-100 flex items-center justify-center border border-white">
+                    <UserIcon className="w-3 h-3 text-stone-500" />
                   </div>
-                  <span className="font-semibold text-gray-700 text-sm hidden sm:block truncate max-w-[120px]">
+                  <span className="font-semibold text-stone-600 text-sm hidden sm:block truncate max-w-[120px]">
                     {user.displayName}
                   </span>
                 </div>
                 <button 
                   onClick={handleLogout} 
-                  className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 transition-colors"
+                  className="p-2 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                   aria-label="退出登录"
                 >
-                  <LogOut className="w-[18px] h-[18px]" />
+                  <LogOut className="w-4 h-4" />
                 </button>
               </div>
             )}
@@ -201,31 +205,31 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       </nav>
 
       {/* 主内容 */}
-      <main className="max-w-4xl mx-auto px-4 py-8 sm:px-6 sm:py-10">
-        <div className="bg-white/95 backdrop-blur-sm rounded-3xl shadow-xl overflow-hidden">
+      <main className="max-w-4xl mx-auto px-4 py-8 sm:px-6 sm:py-12">
+        <div className="glass rounded-[2rem] shadow-xl shadow-stone-200/50 overflow-hidden animate-fade-in">
           {/* 头部 */}
-          <div className="p-6 sm:p-8 border-b border-gray-100">
+          <div className="p-6 sm:p-10 border-b border-stone-100 bg-white/30">
             <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 bg-gradient-to-br from-[#667eea] to-[#764ba2] rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-indigo-200">
-                  <Gift className="w-7 h-7 text-white" />
+              <div className="flex items-center gap-5">
+                <div className="w-16 h-16 bg-gradient-to-br from-orange-50 to-stone-50 rounded-2xl flex items-center justify-center shrink-0 shadow-sm border border-white">
+                  <Gift className="w-8 h-8 text-orange-500" />
                 </div>
                 <div>
-                  <h1 className="text-2xl sm:text-3xl font-bold text-gray-800 mb-2">{project.name}</h1>
+                  <h1 className="text-2xl sm:text-3xl font-bold text-stone-800 mb-2 tracking-tight">{project.name}</h1>
                   <div className="flex flex-wrap gap-2">
-                    <span className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 rounded-full text-xs font-medium text-gray-500">
+                    <span className="flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 rounded-full text-xs font-bold text-stone-500">
                       <Package className="w-3.5 h-3.5" />
                       剩余 {remaining} / {project.maxClaims}
                     </span>
                   </div>
                 </div>
               </div>
-              <span className={`px-4 py-2 rounded-full text-xs font-bold self-start sm:self-center ${
+              <span className={`px-3 py-1 rounded-full text-xs font-bold self-start sm:self-center border ${
                 isPaused 
-                  ? 'bg-amber-100 text-amber-600' 
+                  ? 'bg-amber-50 text-amber-600 border-amber-100' 
                   : isSoldOut 
-                    ? 'bg-gray-100 text-gray-500' 
-                    : 'bg-emerald-100 text-emerald-600'
+                    ? 'bg-stone-100 text-stone-500 border-stone-200' 
+                    : 'bg-emerald-50 text-emerald-600 border-emerald-100'
               }`}>
                 {isPaused ? '已暂停' : isSoldOut ? '已领完' : '进行中'}
               </span>
@@ -233,51 +237,50 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           </div>
 
           {/* 内容 */}
-          <div className="p-6 sm:p-8">
+          <div className="p-6 sm:p-10">
             {/* 描述 */}
-            <div className="mb-8">
-              <h3 className="text-base font-bold text-gray-700 mb-3">项目详情</h3>
-              <div className="bg-gray-50 rounded-2xl p-5 text-gray-500 leading-relaxed text-sm sm:text-base">
+            <div className="mb-10">
+              <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wide mb-3">活动详情</h3>
+              <div className="bg-stone-50/50 rounded-2xl p-6 text-stone-600 leading-relaxed text-sm sm:text-base border border-stone-100">
                 {project.description || '该项目暂无详细描述。'}
               </div>
             </div>
 
             {/* 进度 */}
-            <div className="mb-8 bg-gray-50 rounded-2xl p-6">
-              <div className="flex justify-between mb-3">
-                <span className="text-sm font-semibold text-gray-700">领取进度</span>
-                <span className="text-lg font-bold text-[#667eea]">{Math.round(progress)}%</span>
+            <div className="mb-10">
+              <div className="flex justify-between mb-2">
+                <span className="text-sm font-bold text-stone-400 uppercase tracking-wide">领取进度</span>
+                <span className="text-sm font-bold text-orange-600">{Math.round(progress)}%</span>
               </div>
-              <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+              <div className="h-2.5 bg-stone-100 rounded-full overflow-hidden">
                 <div 
-                  className="h-full bg-gradient-to-r from-[#667eea] to-[#764ba2] rounded-full transition-all duration-500 ease-out"
+                  className="h-full bg-gradient-to-r from-orange-400 to-orange-600 rounded-full transition-all duration-700 ease-out shadow-[0_0_10px_rgba(249,115,22,0.3)]"
                   style={{ width: `${progress}%` }} 
                 />
-              </div>
-              <div className="flex justify-between mt-2 text-xs text-gray-400">
-                <span>已领取 {project.claimedCount}</span>
-                <span>总数 {project.maxClaims}</span>
               </div>
             </div>
 
             {/* 操作区域 */}
-            <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl p-6 sm:p-10 text-center border border-indigo-100/50">
+            <div className="bg-gradient-to-br from-orange-50/50 to-stone-50/50 rounded-[2rem] p-8 sm:p-12 text-center border border-orange-100/50 relative overflow-hidden">
+              {/* 背景装饰 */}
+              <div className="absolute top-0 right-0 w-64 h-64 bg-white/40 rounded-full blur-3xl -z-10 translate-x-1/2 -translate-y-1/2"></div>
+              
               {claimedInfo ? (
-                <div>
-                  <div className="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl shadow-emerald-100">
+                <div className="animate-fade-in">
+                  <div className="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-100/50 animate-[bounce_1s_ease-out]">
                     <Check className="w-8 h-8 sm:w-10 sm:h-10 text-emerald-600" />
                   </div>
-                  <h3 className="text-2xl sm:text-3xl font-bold text-gray-800 mb-2">领取成功!</h3>
-                  <p className="text-gray-500 mb-6 text-sm sm:text-base">这是您的专属兑换码，请妥善保管</p>
+                  <h3 className="text-2xl sm:text-3xl font-bold text-stone-800 mb-2">领取成功!</h3>
+                  <p className="text-stone-500 mb-8 text-sm sm:text-base">这是您的专属兑换码，请妥善保管</p>
                   
                   <div className="relative max-w-md mx-auto group">
-                    <div className="bg-white border-2 border-[#667eea] rounded-2xl py-4 pl-6 pr-14 font-mono text-xl sm:text-2xl font-bold text-[#667eea] break-all shadow-lg shadow-indigo-100">
+                    <div className="bg-white border-2 border-orange-200 rounded-2xl py-5 pl-8 pr-16 font-mono text-xl sm:text-2xl font-bold text-stone-800 break-all shadow-xl shadow-orange-900/5 tracking-wider">
                       {claimedInfo.code}
                     </div>
                     <button 
                       onClick={handleCopy} 
-                      className={`absolute right-3 top-1/2 -translate-y-1/2 p-2.5 rounded-xl transition-all hover:scale-110 active:scale-95 ${
-                        copied ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                      className={`absolute right-3 top-1/2 -translate-y-1/2 p-3 rounded-xl transition-all hover:scale-105 active:scale-95 ${
+                        copied ? 'bg-emerald-100 text-emerald-600' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'
                       }`}
                       aria-label="复制兑换码"
                     >
@@ -285,7 +288,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                     </button>
                   </div>
                   
-                  <p className="mt-4 text-xs text-gray-400">
+                  <p className="mt-6 text-xs text-stone-400 font-medium">
                     领取时间: {new Date(claimedInfo.claimedAt).toLocaleString()}
                   </p>
                 </div>
@@ -293,14 +296,14 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                 <div>
                   {!user ? (
                     <div>
-                      <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto mb-5 border-2 border-gray-100 shadow-sm">
-                        <UserIcon className="w-8 h-8 text-gray-400" />
+                      <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto mb-6 border border-stone-100 shadow-sm">
+                        <UserIcon className="w-8 h-8 text-stone-300" />
                       </div>
-                      <h3 className="text-xl font-bold text-gray-800 mb-2">请先登录</h3>
-                      <p className="text-gray-500 mb-8 text-sm sm:text-base">登录账号后即可领取专属兑换码</p>
+                      <h3 className="text-xl font-bold text-stone-800 mb-2">请先登录</h3>
+                      <p className="text-stone-500 mb-8 text-sm sm:text-base">登录账号后即可领取专属兑换码</p>
                       <Link 
                         href={`/login?redirect=/project/${id}`} 
-                        className="inline-flex items-center px-8 py-4 bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-2xl text-base font-bold shadow-lg shadow-indigo-200 hover:shadow-xl hover:scale-105 transition-all"
+                        className="inline-flex items-center px-8 py-3.5 gradient-warm text-white rounded-xl text-base font-bold shadow-lg shadow-orange-500/25 hover:shadow-orange-500/35 hover:-translate-y-0.5 transition-all active:translate-y-0 active:shadow-sm"
                       >
                         立即登录
                       </Link>
@@ -308,7 +311,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                   ) : (
                     <div>
                       {error && (
-                        <div className="flex items-center justify-center gap-2 p-3 mb-6 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm">
+                        <div className="flex items-center justify-center gap-2 p-3 mb-6 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm font-medium">
                           <AlertCircle className="w-4 h-4" />
                           <span>{error}</span>
                         </div>
@@ -316,31 +319,35 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                       
                       {canClaim ? (
                         <div className="flex flex-col items-center">
-                          <p className="text-gray-500 mb-6 text-sm sm:text-base">点击下方按钮即可领取，每人限领一次</p>
+                          <p className="text-stone-500 mb-8 text-sm sm:text-base font-medium">点击下方按钮即可领取，每人限领一次</p>
                           <button 
                             onClick={handleClaim} 
                             disabled={claiming} 
-                            className="inline-flex items-center justify-center px-10 py-4 bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-2xl text-lg font-bold shadow-lg shadow-indigo-200 hover:shadow-xl hover:-translate-y-0.5 transition-all disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:shadow-none w-full sm:w-auto min-w-[200px]"
+                            className="group relative inline-flex items-center justify-center px-12 py-4 gradient-warm text-white rounded-2xl text-lg font-bold shadow-xl shadow-orange-500/30 hover:shadow-2xl hover:shadow-orange-500/40 hover:-translate-y-0.5 transition-all disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:shadow-none w-full sm:w-auto min-w-[240px] overflow-hidden"
                           >
+                            <span className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:animate-[shimmer_1.5s_infinite]"></span>
                             {claiming ? (
                               <>
                                 <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                                 正在领取...
                               </>
                             ) : (
-                              '立即领取兑换码'
+                              <span className="flex items-center gap-2">
+                                <Sparkles className="w-5 h-5" />
+                                立即领取兑换码
+                              </span>
                             )}
                           </button>
                         </div>
                       ) : (
                         <div>
-                          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-5">
-                            <Package className="w-8 h-8 text-gray-400" />
+                          <div className="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-5 border border-stone-200">
+                            <Package className="w-8 h-8 text-stone-400" />
                           </div>
-                          <button disabled className="px-8 py-4 bg-gray-100 text-gray-400 rounded-2xl text-base font-semibold cursor-not-allowed w-full sm:w-auto">
+                          <button disabled className="px-8 py-3.5 bg-stone-100 text-stone-400 rounded-xl text-base font-bold cursor-not-allowed w-full sm:w-auto border border-stone-200">
                             {isPaused ? '项目暂停中' : '已领完'}
                           </button>
-                          <p className="mt-4 text-sm text-gray-400">
+                          <p className="mt-4 text-sm text-stone-400 font-medium">
                             {isPaused ? '管理员暂停了该项目的领取' : '手慢了，下次早点来哦'}
                           </p>
                         </div>

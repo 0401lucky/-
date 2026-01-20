@@ -42,37 +42,41 @@ function LoginForm() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center p-6">
+    <div className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
+      {/* 装饰背景圆 */}
+      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-orange-200/20 rounded-full blur-3xl -z-10 animate-blob"></div>
+      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-stone-200/40 rounded-full blur-3xl -z-10 animate-blob animation-delay-2000"></div>
+
       <Link 
         href="/" 
-        className="fixed top-6 left-6 flex items-center gap-2 text-white text-sm font-medium py-2.5 px-4 bg-white/15 hover:bg-white/25 backdrop-blur-sm rounded-xl transition-colors"
+        className="fixed top-6 left-6 flex items-center gap-2 text-stone-500 hover:text-stone-800 text-sm font-medium py-2.5 px-4 bg-white/50 hover:bg-white/80 backdrop-blur-sm rounded-xl transition-all border border-white/20 hover:shadow-sm"
       >
-        <ArrowLeft className="w-[18px] h-[18px]" />
+        <ArrowLeft className="w-4 h-4" />
         返回首页
       </Link>
 
-      <div className="w-full max-w-md bg-white/95 backdrop-blur-sm rounded-3xl p-6 sm:p-8 md:p-10 shadow-2xl">
+      <div className="w-full max-w-[400px] glass rounded-3xl p-8 sm:p-10 shadow-2xl shadow-orange-900/5 animate-fade-in">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-br from-[#667eea] to-[#764ba2] rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-lg shadow-[#667eea]/40">
-            <Gift className="w-8 h-8 text-white" />
+          <div className="w-16 h-16 bg-gradient-to-br from-orange-100 to-stone-100 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-inner border border-white">
+            <Gift className="w-8 h-8 text-orange-500" />
           </div>
-          <h1 className="text-2xl sm:text-[26px] font-bold text-gray-800 mb-2">
+          <h1 className="text-2xl font-bold text-stone-800 mb-2 tracking-tight">
             欢迎回来
           </h1>
-          <p className="text-gray-500 text-[15px]">
-            使用 API 账号登录
+          <p className="text-stone-500 text-sm">
+            使用您的 API 账号登录系统
           </p>
         </div>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3.5 rounded-xl mb-6 text-sm text-center">
+          <div className="bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl mb-6 text-sm text-center font-medium">
             {error}
           </div>
         )}
 
-        <form onSubmit={handleSubmit}>
-          <div className="mb-5">
-            <label className="block mb-2 text-sm font-semibold text-gray-700">
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label className="block mb-2 text-xs font-bold text-stone-500 uppercase tracking-wide">
               用户名
             </label>
             <input
@@ -81,12 +85,12 @@ function LoginForm() {
               onChange={(e) => setUsername(e.target.value)}
               placeholder="请输入用户名"
               required
-              className="w-full px-4 py-3.5 border-2 border-gray-200 rounded-xl text-[15px] outline-none focus:border-[#667eea] focus:ring-4 focus:ring-[#667eea]/10 transition-all placeholder:text-gray-400"
+              className="w-full px-4 py-3.5 bg-stone-50/50 border border-stone-200 rounded-xl text-stone-800 text-[15px] outline-none focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition-all placeholder:text-stone-400"
             />
           </div>
 
-          <div className="mb-7">
-            <label className="block mb-2 text-sm font-semibold text-gray-700">
+          <div>
+            <label className="block mb-2 text-xs font-bold text-stone-500 uppercase tracking-wide">
               密码
             </label>
             <input
@@ -95,17 +99,17 @@ function LoginForm() {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="请输入密码"
               required
-              className="w-full px-4 py-3.5 border-2 border-gray-200 rounded-xl text-[15px] outline-none focus:border-[#667eea] focus:ring-4 focus:ring-[#667eea]/10 transition-all placeholder:text-gray-400"
+              className="w-full px-4 py-3.5 bg-stone-50/50 border border-stone-200 rounded-xl text-stone-800 text-[15px] outline-none focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition-all placeholder:text-stone-400"
             />
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-4 bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-xl text-base font-semibold flex items-center justify-center gap-2.5 shadow-lg shadow-[#667eea]/35 hover:shadow-xl hover:shadow-[#667eea]/45 hover:-translate-y-0.5 transition-all active:translate-y-0 disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
+            className="w-full py-3.5 gradient-warm text-white rounded-xl text-base font-bold flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 hover:-translate-y-0.5 transition-all active:translate-y-0 disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none mt-2"
           >
             {loading && <Loader2 className="w-5 h-5 animate-spin" />}
-            {loading ? '登录中...' : '登录'}
+            {loading ? '登录中...' : '登 录'}
           </button>
         </form>
       </div>
@@ -116,8 +120,8 @@ function LoginForm() {
 export default function LoginPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center">
-        <Loader2 className="w-10 h-10 text-white animate-spin" />
+      <div className="min-h-screen flex items-center justify-center bg-[#fafaf9]">
+        <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
       </div>
     }>
       <LoginForm />
