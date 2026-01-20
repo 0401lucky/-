@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, Plus, Pause, Play, Trash2, Upload, 
   Loader2, AlertCircle, Users, Package, LayoutDashboard,
-  ChevronRight, LogOut, User as UserIcon, X, Check, Gift
+  ChevronRight, LogOut, User as UserIcon, X, Check, Gift, Sparkles
 } from 'lucide-react';
 
 interface Project {
@@ -182,6 +182,14 @@ export default function AdminPage() {
                 </div>
                 <span className="text-lg font-bold text-stone-800 tracking-tight">管理后台</span>
               </div>
+              {/* 抽奖管理入口 */}
+              <Link 
+                href="/admin/lottery" 
+                className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-orange-200"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span className="hidden sm:inline">抽奖管理</span>
+              </Link>
             </div>
             
             {user && (
