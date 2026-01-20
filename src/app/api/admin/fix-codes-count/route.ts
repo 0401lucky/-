@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  */
 export async function POST() {
   try {
-    // 环境变量开关检查
+    // 环境变量开关检查（数据已修复，此接口已禁用）
     if (process.env.ENABLE_FIX_CODES_COUNT !== "true") {
       return NextResponse.json(
         { success: false, message: "此接口已禁用。请设置环境变量 ENABLE_FIX_CODES_COUNT=true 启用。" },
