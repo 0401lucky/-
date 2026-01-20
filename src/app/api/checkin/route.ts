@@ -41,11 +41,19 @@ export async function POST() {
     }
 
     // 2. 调用 New API 签到
-    // 需要获取原始 cookie
+    // 获取 new-api 的原始 session cookie
     const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get("session")?.value || "";
+    const newApiSession = cookieStore.get("new_api_session")?.value;
+    
+    if (!newApiSession) {
+      return NextResponse.json(
+        { success: false, message: "请重新登录以启用签到功能" },
+        { status: 401 }
+      );
+    }
+    
     // 构造请求头需要的 cookie 格式
-    const cookieHeader = `session=${sessionCookie}`;
+    const cookieHeader = `session=${newApiSession}`;
 
     const result = await checkinToNewApi(cookieHeader);
 

@@ -58,6 +58,21 @@ export async function POST(request: NextRequest) {
       path: "/",
     });
 
+    // 保存 new-api 的原始 session cookie（用于签到等需要调用 new-api 的功能）
+    if (result.cookies) {
+      // 从 set-cookie 头解析出 session 值
+      const sessionMatch = result.cookies.match(/session=([^;]+)/);
+      if (sessionMatch) {
+        response.cookies.set("new_api_session", sessionMatch[1], {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: "lax",
+          maxAge: 60 * 60 * 24 * 7, // 7 天
+          path: "/",
+        });
+      }
+    }
+
     return response;
   } catch (error) {
     console.error("Login error:", error);
