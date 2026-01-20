@@ -9,14 +9,14 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
-// 奖品配置
+// 奖品配置 - id 需与后端 tier id 一致
 const PRIZES = [
-  { id: '1', name: '1刀福利', color: '#fbbf24', startAngle: 0, endAngle: 144, probability: 0.4 },
-  { id: '3', name: '3刀福利', color: '#fb923c', startAngle: 144, endAngle: 252, probability: 0.3 },
-  { id: '5', name: '5刀福利', color: '#f97316', startAngle: 252, endAngle: 316.8, probability: 0.18 },
-  { id: '10', name: '10刀福利', color: '#ea580c', startAngle: 316.8, endAngle: 345.6, probability: 0.08 },
-  { id: '15', name: '15刀福利', color: '#dc2626', startAngle: 345.6, endAngle: 356.4, probability: 0.03 },
-  { id: '20', name: '20刀福利', color: '#b91c1c', startAngle: 356.4, endAngle: 360, probability: 0.01 },
+  { id: 'tier_1', name: '1刀福利', value: 1, color: '#fbbf24', startAngle: 0, endAngle: 144 },
+  { id: 'tier_3', name: '3刀福利', value: 3, color: '#fb923c', startAngle: 144, endAngle: 252 },
+  { id: 'tier_5', name: '5刀福利', value: 5, color: '#f97316', startAngle: 252, endAngle: 316.8 },
+  { id: 'tier_10', name: '10刀福利', value: 10, color: '#ea580c', startAngle: 316.8, endAngle: 345.6 },
+  { id: 'tier_15', name: '15刀福利', value: 15, color: '#dc2626', startAngle: 345.6, endAngle: 356.4 },
+  { id: 'tier_20', name: '20刀福利', value: 20, color: '#b91c1c', startAngle: 356.4, endAngle: 360 },
 ];
 
 interface UserData {
@@ -27,7 +27,8 @@ interface UserData {
 
 interface LotteryRecord {
   id: string;
-  prizeName: string;
+  tierName: string;
+  tierValue: number;
   code: string;
   createdAt: number;
 }
@@ -99,24 +100,18 @@ export default function LotteryPage() {
       const data = await res.json();
 
       if (data.success) {
-        // 计算目标角度
-        // 确保后端返回的 record 包含 tierId (1, 3, 5, etc)
-        const prizeId = data.record.tierId || '1'; // 默认1
-        const prize = PRIZES.find(p => p.id === prizeId);
+        // 根据后端返回的 tierValue 找到对应的奖品
+        const prize = PRIZES.find(p => p.value === data.record.tierValue);
         
         if (prize) {
-          // 在扇区范围内随机选一个角度，预留缓冲避免压线
-          const buffer = 2; 
-          const randomAngleInSector = Math.random() * (prize.endAngle - prize.startAngle - 2 * buffer) + buffer;
-          const targetAngleOnWheel = prize.startAngle + randomAngleInSector;
-          
-          // 计算旋转终点 (至少转5圈 + 目标角度修正)
-          // 指针在顶部(0度)，转盘顺时针旋转，需要让目标角度转到顶部
-          // 目标位置 = 360 - targetAngleOnWheel
-          const fullRotations = 360 * 8; // 8圈
-          const finalRotation = rotation + fullRotations + (360 - targetAngleOnWheel) - (rotation % 360);
-          
-          setRotation(finalRotation);
+          // 计算这个奖品区域的中心角度
+          const centerAngle = (prize.startAngle + prize.endAngle) / 2;
+          // 转盘需要停在指针指向的位置（顶部 = 0度）
+          // 所以需要旋转 (360 - centerAngle) 度让中心对准顶部
+          const targetAngle = 360 - centerAngle;
+          // 加上多圈旋转
+          const totalRotation = 360 * 8 + targetAngle;
+          setRotation(prev => prev + totalRotation);
 
           // 动画结束后显示结果 (6秒后)
           setTimeout(() => {
@@ -126,7 +121,8 @@ export default function LotteryPage() {
             setCanSpin(false);
             setRecords(prev => [{
               id: data.record.id,
-              prizeName: prize.name,
+              tierName: prize.name,
+              tierValue: prize.value,
               code: data.record.code,
               createdAt: Date.now()
             }, ...prev]);
@@ -329,7 +325,7 @@ export default function LotteryPage() {
                         🎁
                       </div>
                       <div>
-                        <div className="font-bold text-stone-700 text-sm">{record.prizeName}</div>
+                        <div className="font-bold text-stone-700 text-sm">{record.tierName}</div>
                         <div className="text-xs text-stone-400 mt-0.5 font-mono">
                           {new Date(record.createdAt).toLocaleDateString()}
                         </div>
