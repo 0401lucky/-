@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import {
   getLotteryConfig,
-  checkDailyLimit,
   checkAllTiersHaveCodes,
   getTiersStats,
 } from "@/lib/lottery";
+import { checkDailyLimit, getExtraSpinCount } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +22,7 @@ export async function GET() {
 
     const config = await getLotteryConfig();
     const hasSpunToday = await checkDailyLimit(user.id);
+    const extraSpins = await getExtraSpinCount(user.id);
     const allTiersHaveCodes = await checkAllTiersHaveCodes();
     const tiersStats = await getTiersStats();
 
@@ -41,8 +42,9 @@ export async function GET() {
       success: true,
       enabled: config.enabled,
       tiers: tiersWithStats,
-      canSpin: config.enabled && !hasSpunToday && allTiersHaveCodes,
+      canSpin: config.enabled && (!hasSpunToday || extraSpins > 0) && allTiersHaveCodes,
       hasSpunToday,
+      extraSpins,
       allTiersHaveCodes,
     });
   } catch (error) {

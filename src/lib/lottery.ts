@@ -1,4 +1,5 @@
 import { kv } from "@vercel/kv";
+import { useExtraSpinCount, getExtraSpinCount, addExtraSpinCount, setDailyLimit, checkDailyLimit } from "./kv";
 
 // 抽奖档位
 export interface LotteryTier {
@@ -46,27 +47,9 @@ const DEFAULT_CONFIG: LotteryConfig = {
 // KV Keys
 const LOTTERY_CONFIG_KEY = "lottery:config";
 const LOTTERY_CODES_PREFIX = "lottery:codes:";
-const LOTTERY_DAILY_PREFIX = "lottery:daily:";
+// const LOTTERY_DAILY_PREFIX = "lottery:daily:"; // Moved to kv.ts
 const LOTTERY_RECORDS_KEY = "lottery:records";
 const LOTTERY_USER_RECORDS_PREFIX = "lottery:user:records:";
-
-// 获取今天日期字符串 (YYYY-MM-DD)
-function getTodayDateString(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-// 获取距离次日0点的秒数
-function getSecondsUntilMidnight(): number {
-  const now = new Date();
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(0, 0, 0, 0);
-  return Math.ceil((tomorrow.getTime() - now.getTime()) / 1000);
-}
 
 // 获取抽奖配置
 export async function getLotteryConfig(): Promise<LotteryConfig> {
@@ -146,21 +129,6 @@ export async function getTiersStats(): Promise<{ id: string; available: number }
   return stats;
 }
 
-// 检查今日是否已抽
-export async function checkDailyLimit(userId: number): Promise<boolean> {
-  const today = getTodayDateString();
-  const key = `${LOTTERY_DAILY_PREFIX}${userId}:${today}`;
-  const result = await kv.get(key);
-  return result !== null;
-}
-
-// 设置今日已抽
-export async function setDailyLimit(userId: number): Promise<void> {
-  const today = getTodayDateString();
-  const key = `${LOTTERY_DAILY_PREFIX}${userId}:${today}`;
-  const ttl = getSecondsUntilMidnight();
-  await kv.set(key, true, { ex: ttl });
-}
 
 // 加权随机选择档位
 function weightedRandomSelect(tiers: LotteryTier[]): LotteryTier {
@@ -183,15 +151,24 @@ export async function spinLottery(
   userId: number,
   username: string
 ): Promise<{ success: boolean; record?: LotteryRecord; message: string }> {
-  // 检查每日限制
-  const hasSpun = await checkDailyLimit(userId);
-  if (hasSpun) {
-    return { success: false, message: "今日已抽过奖，明天再来吧" };
+  // 1. 优先消耗额外次数
+  let usedExtraSpin = false;
+  const extraSpinSuccess = await useExtraSpinCount(userId);
+  
+  if (extraSpinSuccess) {
+    usedExtraSpin = true;
+  } else {
+    // 2. 如果没有额外次数，检查每日限制
+    const hasSpun = await checkDailyLimit(userId);
+    if (hasSpun) {
+      return { success: false, message: "今日免费次数已用完，请签到获取更多机会" };
+    }
   }
 
   // 检查配置是否启用
   const config = await getLotteryConfig();
   if (!config.enabled) {
+    // 如果使用了额外次数但活动未开启，需要返还次数（简单起见这里暂不处理返还，假设UI层会先检查）
     return { success: false, message: "抽奖活动暂未开放" };
   }
 
@@ -234,8 +211,10 @@ export async function spinLottery(
   });
   await updateLotteryConfig({ tiers: updatedTiers });
 
-  // 设置今日已抽
-  await setDailyLimit(userId);
+  // 如果没有使用额外次数，则标记今日已使用免费次数
+  if (!usedExtraSpin) {
+    await setDailyLimit(userId);
+  }
 
   return {
     success: true,

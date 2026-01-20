@@ -208,3 +208,79 @@ export async function getUserAllClaims(userId: number): Promise<ClaimRecord[]> {
 export async function getUserLotteryCount(userId: number): Promise<number> {
   return await kv.llen(`lottery:user:records:${userId}`);
 }
+
+const LOTTERY_DAILY_PREFIX = "lottery:daily:";
+
+// 获取今天日期字符串 (YYYY-MM-DD)
+function getTodayDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+// 获取距离次日0点的秒数
+function getSecondsUntilMidnight(): number {
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+  return Math.ceil((tomorrow.getTime() - now.getTime()) / 1000);
+}
+
+// 设置今日已抽
+export async function setDailyLimit(userId: number): Promise<void> {
+  const today = getTodayDateString();
+  const key = `${LOTTERY_DAILY_PREFIX}${userId}:${today}`;
+  const ttl = getSecondsUntilMidnight();
+  await kv.set(key, true, { ex: ttl });
+}
+
+// 检查今日是否已抽
+export async function checkDailyLimit(userId: number): Promise<boolean> {
+  const today = getTodayDateString();
+  const key = `${LOTTERY_DAILY_PREFIX}${userId}:${today}`;
+  const result = await kv.get(key);
+  return result !== null;
+}
+
+// 额外抽奖次数管理
+export async function getExtraSpinCount(userId: number): Promise<number> {
+  const count = await kv.get<number>(`user:extra_spins:${userId}`);
+  return count || 0;
+}
+
+export async function addExtraSpinCount(userId: number, count: number): Promise<void> {
+  const current = await getExtraSpinCount(userId);
+  await kv.set(`user:extra_spins:${userId}`, current + count);
+}
+
+export async function useExtraSpinCount(userId: number): Promise<boolean> {
+  const current = await getExtraSpinCount(userId);
+  if (current > 0) {
+    await kv.set(`user:extra_spins:${userId}`, current - 1);
+    return true;
+  }
+  return false;
+}
+
+// 签到状态管理
+export async function hasCheckedInToday(userId: number): Promise<boolean> {
+  const today = new Date();
+  const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const result = await kv.get(`user:checkin:${userId}:${dateStr}`);
+  return !!result;
+}
+
+export async function setCheckedInToday(userId: number): Promise<void> {
+  const today = new Date();
+  const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  // 设置过期时间为24小时后，或者次日凌晨
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+  const ttl = Math.ceil((tomorrow.getTime() - today.getTime()) / 1000);
+  
+  await kv.set(`user:checkin:${userId}:${dateStr}`, true, { ex: ttl });
+}

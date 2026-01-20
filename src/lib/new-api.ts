@@ -84,3 +84,34 @@ export async function getUserFromNewApi(sessionCookie: string): Promise<NewApiUs
     return null;
   }
 }
+
+export async function checkinToNewApi(sessionCookie: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const response = await fetch(`${NEW_API_URL}/api/user/checkin`, {
+      method: "POST",
+      headers: {
+        Cookie: sessionCookie,
+      },
+    });
+
+    const data = await response.json();
+    
+    if (data.success) {
+      return {
+        success: true,
+        message: data.message || "签到成功",
+      };
+    } else {
+      return {
+        success: false,
+        message: data.message || "签到失败",
+      };
+    }
+  } catch (error) {
+    console.error("Checkin error:", error);
+    return {
+      success: false,
+      message: "服务连接失败",
+    };
+  }
+}

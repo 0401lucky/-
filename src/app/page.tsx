@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LogOut, User, LayoutDashboard, Loader2, Gift, ChevronRight, Sparkles, Trophy, ArrowRight } from 'lucide-react';
+import { LogOut, User, LayoutDashboard, Loader2, Gift, ChevronRight, Sparkles, Trophy, ArrowRight, CalendarDays } from 'lucide-react';
 
 interface UserData {
   id: number;
@@ -157,10 +157,32 @@ export default function HomePage() {
           </p>
         </div>
 
-        {/* 双入口卡片 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto mb-20">
+        {/* 三入口卡片 - 网格布局调整 */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-6xl mx-auto mb-20">
+          {/* 签到入口 */}
+          <Link href="/checkin" className="group relative overflow-hidden glass rounded-3xl p-8 hover:shadow-xl hover:shadow-emerald-500/10 transition-all duration-500 hover:-translate-y-1 border border-white/60">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-emerald-50 to-transparent rounded-full blur-3xl -z-10 translate-x-1/3 -translate-y-1/3 group-hover:bg-emerald-100 transition-colors"></div>
+            
+            <div className="flex flex-col h-full justify-between relative z-10">
+              <div>
+                <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center mb-6 border border-emerald-100 group-hover:scale-110 transition-transform duration-300 shadow-sm">
+                  <CalendarDays className="w-7 h-7 text-emerald-500" />
+                </div>
+                <h2 className="text-2xl font-bold text-stone-800 mb-3 group-hover:text-emerald-600 transition-colors">每日签到</h2>
+                <p className="text-stone-500 leading-relaxed mb-8 text-sm">
+                  签到领好礼！<br/>
+                  每日签到可获得一次额外抽奖机会，更有机会解锁隐藏福利。
+                </p>
+              </div>
+              <div className="flex items-center text-emerald-600 font-bold group/btn">
+                <span className="group-hover/btn:mr-2 transition-all">立即签到</span>
+                <ArrowRight className="w-5 h-5 ml-1 transition-transform group-hover/btn:translate-x-1" />
+              </div>
+            </div>
+          </Link>
+
           {/* 兑换码入口 */}
-          <Link href="/projects" className="group relative overflow-hidden glass rounded-3xl p-8 sm:p-10 hover:shadow-xl hover:shadow-orange-500/10 transition-all duration-500 hover:-translate-y-1 border border-white/60">
+          <Link href="/projects" className="group relative overflow-hidden glass rounded-3xl p-8 hover:shadow-xl hover:shadow-orange-500/10 transition-all duration-500 hover:-translate-y-1 border border-white/60">
             <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-orange-50 to-transparent rounded-full blur-3xl -z-10 translate-x-1/3 -translate-y-1/3 group-hover:bg-orange-100 transition-colors"></div>
             
             <div className="flex flex-col h-full justify-between relative z-10">

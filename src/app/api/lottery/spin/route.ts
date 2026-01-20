@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import { spinLottery, getLotteryConfig, checkAllTiersHaveCodes } from "@/lib/lottery";
-import { recordUser } from "@/lib/kv";
+import { recordUser, getExtraSpinCount, checkDailyLimit } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +30,17 @@ export async function POST() {
     if (!allHaveCodes) {
       return NextResponse.json(
         { success: false, message: "库存不足，暂时无法抽奖" },
+        { status: 400 }
+      );
+    }
+
+    // 检查是否有资格抽奖（免费次数 或 额外次数）
+    const hasFreeSpin = !(await checkDailyLimit(user.id));
+    const extraSpins = await getExtraSpinCount(user.id);
+    
+    if (!hasFreeSpin && extraSpins <= 0) {
+      return NextResponse.json(
+        { success: false, message: "今日免费次数已用完，请签到获取更多机会" },
         { status: 400 }
       );
     }
