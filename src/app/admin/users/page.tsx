@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, Loader2, Search, Users, 
   LayoutDashboard, LogOut, User as UserIcon, X, 
-  ChevronRight, Gift, Sparkles, Clock, CheckCircle2, Star
+  ChevronRight, Gift, Sparkles, Clock, CheckCircle2, Star, RefreshCw
 } from 'lucide-react';
 
 interface UserWithStats {
@@ -56,6 +56,7 @@ export default function UsersPage() {
   const [userClaims, setUserClaims] = useState<ClaimRecord[]>([]);
   const [userLotteryRecords, setUserLotteryRecords] = useState<LotteryRecord[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   
   const router = useRouter();
 
@@ -139,6 +140,27 @@ export default function UsersPage() {
     router.push('/');
   };
 
+  const handleSyncUsers = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      const res = await fetch('/api/admin/sync-users', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        // 刷新用户列表
+        await fetchData();
+        alert(data.message);
+      } else {
+        alert(data.message || '同步失败');
+      }
+    } catch (error) {
+      console.error('Sync error:', error);
+      alert('同步失败');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#fafaf9]">
@@ -196,6 +218,18 @@ export default function UsersPage() {
 
       {/* 主内容 */}
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 pb-20">
+        {/* 操作栏 */}
+        <div className="flex justify-end mb-4">
+          <button
+            onClick={handleSyncUsers}
+            disabled={syncing}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-stone-600 bg-white border border-stone-200 rounded-xl hover:bg-stone-50 hover:border-stone-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? '同步中...' : '同步历史用户'}
+          </button>
+        </div>
+
         {/* 统计卡片 */}
         <div className="grid grid-cols-3 gap-4 mb-8">
           <div className="glass rounded-2xl p-5 border border-white/50">
