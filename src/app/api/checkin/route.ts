@@ -62,12 +62,19 @@ export async function POST() {
     const result = await checkinToNewApi(cookieHeader, user.id);
 
     if (!result.success) {
-      // 如果 API 返回失败，但消息是"已签到"，我们也视为本地成功并同步状态
-      if (result.message.includes("已经签到") || result.message.includes("Duplicate entry")) {
+      // 如果 API 返回失败，但消息是"已签到"，说明用户今天在 new-api 已签到
+      // 福利站本地没签过，仍然给额外抽奖次数
+      if (result.message.includes("已经签到") || result.message.includes("已签到") || result.message.includes("Duplicate entry")) {
         await setCheckedInToday(user.id);
+        await addExtraSpinCount(user.id, 1); // 仍然奖励1次额外抽奖机会
+        
+        const extraSpins = await getExtraSpinCount(user.id);
+        
         return NextResponse.json({
           success: true,
-          message: "今天已经签到过了（同步状态成功）"
+          message: "签到成功！获得1次额外抽奖机会",
+          quotaDisplay: "已在主站领取",
+          extraSpins,
         });
       }
       
