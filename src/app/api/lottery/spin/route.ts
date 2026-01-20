@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import { spinLottery, getLotteryConfig, checkAllTiersHaveCodes } from "@/lib/lottery";
+import { recordUser } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +43,9 @@ export async function POST() {
         { status: 400 }
       );
     }
+
+    // 记录用户信息（如果是新用户会自动记录）
+    await recordUser(user.id, user.username);
 
     return NextResponse.json({
       success: true,
