@@ -42,84 +42,37 @@ function LoginForm() {
   };
 
   return (
-    <div style={{ 
-      minHeight: '100vh', 
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 24
-    }}>
+    <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center p-6">
       <Link 
         href="/" 
-        style={{ 
-          position: 'fixed',
-          top: 24,
-          left: 24,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          color: 'white',
-          textDecoration: 'none',
-          fontSize: 14,
-          fontWeight: 500,
-          padding: '10px 16px',
-          background: 'rgba(255,255,255,0.15)',
-          borderRadius: 10
-        }}
+        className="fixed top-6 left-6 flex items-center gap-2 text-white text-sm font-medium py-2.5 px-4 bg-white/15 hover:bg-white/25 backdrop-blur-sm rounded-xl transition-colors"
       >
-        <ArrowLeft style={{ width: 18, height: 18 }} />
+        <ArrowLeft className="w-[18px] h-[18px]" />
         返回首页
       </Link>
 
-      <div style={{ 
-        width: '100%',
-        maxWidth: 420,
-        background: 'rgba(255,255,255,0.95)',
-        borderRadius: 24,
-        padding: 40,
-        boxShadow: '0 25px 80px rgba(0,0,0,0.25)'
-      }}>
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ 
-            width: 64, 
-            height: 64, 
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            borderRadius: 18,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            margin: '0 auto 20px',
-            boxShadow: '0 10px 30px rgba(102, 126, 234, 0.4)'
-          }}>
-            <Gift style={{ width: 32, height: 32, color: 'white' }} />
+      <div className="w-full max-w-md bg-white/95 backdrop-blur-sm rounded-3xl p-6 sm:p-8 md:p-10 shadow-2xl">
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-gradient-to-br from-[#667eea] to-[#764ba2] rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-lg shadow-[#667eea]/40">
+            <Gift className="w-8 h-8 text-white" />
           </div>
-          <h1 style={{ fontSize: 26, fontWeight: 700, color: '#1f2937', marginBottom: 8 }}>
+          <h1 className="text-2xl sm:text-[26px] font-bold text-gray-800 mb-2">
             欢迎回来
           </h1>
-          <p style={{ color: '#6b7280', fontSize: 15 }}>
+          <p className="text-gray-500 text-[15px]">
             使用 API 账号登录
           </p>
         </div>
 
         {error && (
-          <div style={{ 
-            background: '#fef2f2',
-            border: '1px solid #fecaca',
-            color: '#dc2626',
-            padding: '14px 18px',
-            borderRadius: 12,
-            marginBottom: 24,
-            fontSize: 14,
-            textAlign: 'center'
-          }}>
+          <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3.5 rounded-xl mb-6 text-sm text-center">
             {error}
           </div>
         )}
 
         <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600, color: '#374151' }}>
+          <div className="mb-5">
+            <label className="block mb-2 text-sm font-semibold text-gray-700">
               用户名
             </label>
             <input
@@ -128,20 +81,12 @@ function LoginForm() {
               onChange={(e) => setUsername(e.target.value)}
               placeholder="请输入用户名"
               required
-              style={{ 
-                width: '100%',
-                padding: '14px 18px',
-                border: '2px solid #e5e7eb',
-                borderRadius: 12,
-                fontSize: 15,
-                outline: 'none',
-                boxSizing: 'border-box'
-              }}
+              className="w-full px-4 py-3.5 border-2 border-gray-200 rounded-xl text-[15px] outline-none focus:border-[#667eea] focus:ring-4 focus:ring-[#667eea]/10 transition-all placeholder:text-gray-400"
             />
           </div>
 
-          <div style={{ marginBottom: 28 }}>
-            <label style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600, color: '#374151' }}>
+          <div className="mb-7">
+            <label className="block mb-2 text-sm font-semibold text-gray-700">
               密码
             </label>
             <input
@@ -150,39 +95,16 @@ function LoginForm() {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="请输入密码"
               required
-              style={{ 
-                width: '100%',
-                padding: '14px 18px',
-                border: '2px solid #e5e7eb',
-                borderRadius: 12,
-                fontSize: 15,
-                outline: 'none',
-                boxSizing: 'border-box'
-              }}
+              className="w-full px-4 py-3.5 border-2 border-gray-200 rounded-xl text-[15px] outline-none focus:border-[#667eea] focus:ring-4 focus:ring-[#667eea]/10 transition-all placeholder:text-gray-400"
             />
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            style={{ 
-              width: '100%',
-              padding: '16px',
-              background: loading ? '#9ca3af' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: 12,
-              fontSize: 16,
-              fontWeight: 600,
-              cursor: loading ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 10,
-              boxShadow: loading ? 'none' : '0 10px 30px rgba(102, 126, 234, 0.35)'
-            }}
+            className="w-full py-4 bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-xl text-base font-semibold flex items-center justify-center gap-2.5 shadow-lg shadow-[#667eea]/35 hover:shadow-xl hover:shadow-[#667eea]/45 hover:-translate-y-0.5 transition-all active:translate-y-0 disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
           >
-            {loading && <Loader2 style={{ width: 20, height: 20 }} className="animate-spin" />}
+            {loading && <Loader2 className="w-5 h-5 animate-spin" />}
             {loading ? '登录中...' : '登录'}
           </button>
         </form>
@@ -194,14 +116,8 @@ function LoginForm() {
 export default function LoginPage() {
   return (
     <Suspense fallback={
-      <div style={{ 
-        minHeight: '100vh', 
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center'
-      }}>
-        <Loader2 style={{ width: 40, height: 40, color: 'white' }} className="animate-spin" />
+      <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center">
+        <Loader2 className="w-10 h-10 text-white animate-spin" />
       </div>
     }>
       <LoginForm />

@@ -155,65 +155,49 @@ export default function AdminPage() {
 
   if (loading) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
-        <div style={{ textAlign: 'center', color: 'white' }}>
-          <Loader2 style={{ width: 48, height: 48, animation: 'spin 1s linear infinite' }} />
-          <p style={{ marginTop: 16 }}>加载管理后台...</p>
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#667eea] to-[#764ba2]">
+        <div className="text-center text-white">
+          <Loader2 className="w-12 h-12 animate-spin mx-auto" />
+          <p className="mt-4 text-lg font-medium">加载管理后台...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
+    <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2]">
       {/* 导航栏 */}
-      <nav style={{ 
-        background: 'rgba(255,255,255,0.95)', 
-        backdropFilter: 'blur(10px)',
-        boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-        position: 'sticky',
-        top: 0,
-        zIndex: 100
-      }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 70 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-              <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#6b7280', textDecoration: 'none' }}>
-                <ArrowLeft style={{ width: 20, height: 20 }} />
-                <span style={{ fontWeight: 500 }}>返回</span>
+      <nav className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm shadow-sm border-b border-gray-100">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6">
+          <div className="flex justify-between items-center h-16 sm:h-[70px]">
+            <div className="flex items-center gap-4 sm:gap-6">
+              <Link href="/" className="flex items-center gap-2 text-gray-500 hover:text-gray-900 transition-colors">
+                <ArrowLeft className="w-5 h-5" />
+                <span className="font-medium hidden sm:inline">返回</span>
               </Link>
-              <div style={{ width: 1, height: 24, background: '#e5e7eb' }} />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ 
-                  width: 36, height: 36, 
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center'
-                }}>
-                  <LayoutDashboard style={{ width: 20, height: 20, color: 'white' }} />
+              <div className="w-px h-6 bg-gray-200 hidden sm:block" />
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center shadow-md">
+                  <LayoutDashboard className="w-5 h-5 text-white" />
                 </div>
-                <span style={{ fontSize: 18, fontWeight: 700, color: '#1f2937' }}>管理后台</span>
+                <span className="text-lg sm:text-xl font-bold text-gray-800">管理后台</span>
               </div>
             </div>
+            
             {user && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ 
-                  display: 'flex', alignItems: 'center', gap: 8, 
-                  padding: '8px 14px', background: '#f3f4f6', borderRadius: 20
-                }}>
-                  <div style={{ 
-                    width: 28, height: 28, borderRadius: '50%',
-                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                  }}>
-                    <UserIcon style={{ width: 14, height: 14, color: 'white' }} />
+              <div className="flex items-center gap-3 sm:gap-4">
+                <div className="flex items-center gap-2 sm:gap-3 px-3 py-1.5 sm:px-4 sm:py-2 bg-gray-50 rounded-full border border-gray-100">
+                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center ring-2 ring-white">
+                    <UserIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
                   </div>
-                  <span style={{ fontWeight: 600, color: '#374151', fontSize: 14 }}>{user.displayName}</span>
+                  <span className="font-semibold text-gray-700 text-sm hidden sm:inline">{user.displayName}</span>
                 </div>
-                <button onClick={handleLogout} style={{ 
-                  padding: 10, background: '#fef2f2', border: 'none', borderRadius: 10, 
-                  cursor: 'pointer', color: '#ef4444', display: 'flex', alignItems: 'center'
-                }}>
-                  <LogOut style={{ width: 18, height: 18 }} />
+                <button 
+                  onClick={handleLogout} 
+                  className="p-2 sm:p-2.5 bg-red-50 hover:bg-red-100 text-red-500 rounded-xl transition-colors"
+                  title="退出登录"
+                >
+                  <LogOut className="w-5 h-5" />
                 </button>
               </div>
             )}
@@ -222,188 +206,227 @@ export default function AdminPage() {
       </nav>
 
       {/* 主内容 */}
-      <main style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 pb-20">
         {/* 成功提示 */}
         {success && (
-          <div style={{ 
-            marginBottom: 24, padding: '16px 20px', 
-            background: 'rgba(255,255,255,0.95)', borderRadius: 16, 
-            border: '2px solid #10b981',
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#059669' }}>
-              <Check style={{ width: 20, height: 20 }} />
-              <span style={{ fontWeight: 600 }}>{success}</span>
+          <div className="mb-6 p-4 bg-white/95 backdrop-blur-sm rounded-2xl border-2 border-green-500 shadow-lg flex justify-between items-center animate-fade-in">
+            <div className="flex items-center gap-3 text-green-600">
+              <Check className="w-5 h-5 flex-shrink-0" />
+              <span className="font-semibold">{success}</span>
             </div>
-            <button onClick={() => setSuccess(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}>
-              <X style={{ width: 20, height: 20 }} />
+            <button 
+              onClick={() => setSuccess(null)} 
+              className="p-1 hover:bg-green-50 rounded-lg text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <X className="w-5 h-5" />
             </button>
           </div>
         )}
 
         {/* 头部 */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
           <div>
-            <h1 style={{ fontSize: 32, fontWeight: 800, color: 'white', marginBottom: 8 }}>项目管理</h1>
-            <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: 16 }}>创建和管理兑换码分发项目</p>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-white mb-2 drop-shadow-sm">项目管理</h1>
+            <p className="text-white/80 text-sm sm:text-base">创建和管理兑换码分发项目</p>
           </div>
           <button 
             onClick={() => setShowCreateModal(true)}
-            style={{ 
-              display: 'flex', alignItems: 'center', gap: 10,
-              padding: '14px 24px', 
-              background: 'white', color: '#667eea',
-              border: 'none', borderRadius: 14, 
-              fontSize: 15, fontWeight: 700, cursor: 'pointer',
-              boxShadow: '0 10px 30px rgba(0,0,0,0.2)'
-            }}
+            className="w-full sm:w-auto flex items-center justify-center gap-2.5 px-6 py-3.5 bg-white text-[#667eea] hover:bg-gray-50 active:scale-95 transition-all rounded-2xl font-bold shadow-xl shadow-indigo-900/20"
           >
-            <Plus style={{ width: 20, height: 20 }} />
+            <Plus className="w-5 h-5" />
             创建新项目
           </button>
         </div>
 
-        {/* 项目列表 */}
-        <div style={{ 
-          background: 'rgba(255,255,255,0.95)', 
-          borderRadius: 24, 
-          boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
-          overflow: 'hidden'
-        }}>
+        {/* 项目列表容器 */}
+        <div className="bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl overflow-hidden min-h-[300px]">
           {projects.length === 0 ? (
-            <div style={{ padding: '80px 40px', textAlign: 'center' }}>
-              <div style={{ 
-                width: 80, height: 80, 
-                background: 'linear-gradient(135deg, #f0f4ff 0%, #e8e0ff 100%)',
-                borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                margin: '0 auto 24px'
-              }}>
-                <Package style={{ width: 40, height: 40, color: '#667eea' }} />
+            <div className="flex flex-col items-center justify-center py-20 px-4">
+              <div className="w-20 h-20 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-full flex items-center justify-center mb-6">
+                <Package className="w-10 h-10 text-[#667eea]" />
               </div>
-              <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1f2937', marginBottom: 8 }}>暂无项目</h2>
-              <p style={{ color: '#6b7280' }}>点击上方按钮创建您的第一个项目</p>
+              <h2 className="text-2xl font-bold text-gray-800 mb-2">暂无项目</h2>
+              <p className="text-gray-500">点击上方按钮创建您的第一个项目</p>
             </div>
           ) : (
             <div>
-              {/* 表头 */}
-              <div style={{ 
-                display: 'grid', 
-                gridTemplateColumns: '2fr 1fr 1.5fr 1fr 1fr 120px',
-                padding: '16px 24px',
-                background: '#f9fafb',
-                borderBottom: '1px solid #e5e7eb',
-                fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase'
-              }}>
-                <span>项目名称</span>
-                <span>状态</span>
-                <span>领取进度</span>
-                <span>库存</span>
-                <span>创建时间</span>
-                <span style={{ textAlign: 'right' }}>操作</span>
+              {/* Desktop Table Header */}
+              <div className="hidden lg:grid grid-cols-[2fr_1fr_1.5fr_1fr_1fr_120px] px-6 py-4 bg-gray-50/50 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                <div className="pl-2">项目名称</div>
+                <div>状态</div>
+                <div>领取进度</div>
+                <div>库存</div>
+                <div>创建时间</div>
+                <div className="text-right pr-2">操作</div>
               </div>
               
-              {/* 项目行 */}
-              {projects.map((project) => (
-                <Link 
-                  key={project.id} 
-                  href={`/admin/project/${project.id}`}
-                  style={{ 
-                    display: 'grid', 
-                    gridTemplateColumns: '2fr 1fr 1.5fr 1fr 1fr 120px',
-                    padding: '20px 24px',
-                    borderBottom: '1px solid #f3f4f6',
-                    textDecoration: 'none',
-                    alignItems: 'center',
-                    transition: 'background 0.2s'
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = '#f9fafb'}
-                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                >
-                  {/* 名称 */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ 
-                      width: 40, height: 40, borderRadius: 12,
-                      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center'
-                    }}>
-                      <Gift style={{ width: 20, height: 20, color: 'white' }} />
+              <div className="divide-y divide-gray-100">
+                {projects.map((project) => (
+                  <Link 
+                    key={project.id} 
+                    href={`/admin/project/${project.id}`}
+                    className="group block hover:bg-gray-50 transition-colors duration-200"
+                  >
+                    {/* Desktop View */}
+                    <div className="hidden lg:grid grid-cols-[2fr_1fr_1.5fr_1fr_1fr_120px] px-6 py-5 items-center gap-4">
+                      {/* Name */}
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
+                          <Gift className="w-5 h-5 text-white" />
+                        </div>
+                        <span className="font-semibold text-gray-800 text-[15px] truncate pr-4">{project.name}</span>
+                      </div>
+
+                      {/* Status */}
+                      <div>
+                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold border ${
+                          project.status === 'active' 
+                            ? 'bg-emerald-50 text-emerald-600 border-emerald-100' 
+                            : project.status === 'paused' 
+                              ? 'bg-amber-50 text-amber-600 border-amber-100' 
+                              : 'bg-gray-100 text-gray-500 border-gray-200'
+                        }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
+                            project.status === 'active' ? 'bg-emerald-500' : project.status === 'paused' ? 'bg-amber-500' : 'bg-gray-400'
+                          }`}></span>
+                          {project.status === 'active' ? '进行中' : project.status === 'paused' ? '已暂停' : '已领完'}
+                        </span>
+                      </div>
+
+                      {/* Progress */}
+                      <div className="pr-8">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <Users className="w-4 h-4 text-gray-400" />
+                          <span className="text-sm font-semibold text-gray-700">{project.claimedCount}</span>
+                          <span className="text-gray-400 text-xs">/</span>
+                          <span className="text-sm text-gray-500">{project.maxClaims}</span>
+                        </div>
+                        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-gradient-to-r from-[#667eea] to-[#764ba2] rounded-full transition-all duration-500"
+                            style={{ width: `${Math.min(100, (project.claimedCount / project.maxClaims) * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Stock */}
+                      <div className="flex items-center gap-2">
+                        <Package className="w-4 h-4 text-gray-400" />
+                        <span className="font-semibold text-gray-700">{project.codesCount}</span>
+                      </div>
+
+                      {/* Date */}
+                      <span className="text-sm text-gray-500">
+                        {new Date(project.createdAt).toLocaleDateString()}
+                      </span>
+
+                      {/* Actions */}
+                      <div className="flex justify-end gap-2" onClick={(e) => e.preventDefault()}>
+                        <button 
+                          onClick={(e) => handleToggleStatus(project, e)}
+                          className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all hover:scale-105 active:scale-95 ${
+                            project.status === 'active' 
+                              ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' 
+                              : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                          }`}
+                          title={project.status === 'active' ? '暂停项目' : '启动项目'}
+                        >
+                          {project.status === 'active' ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                        </button>
+                        <button 
+                          onClick={(e) => handleDelete(project, e)}
+                          className="w-9 h-9 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+                          title="删除项目"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                        <div className="w-9 h-9 rounded-lg bg-gray-100 text-gray-500 hover:bg-gray-200 flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer">
+                            <ChevronRight className="w-5 h-5" />
+                        </div>
+                      </div>
                     </div>
-                    <span style={{ fontWeight: 600, color: '#1f2937', fontSize: 15 }}>{project.name}</span>
-                  </div>
 
-                  {/* 状态 */}
-                  <div>
-                    <span style={{ 
-                      padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600,
-                      background: project.status === 'active' ? '#d1fae5' : project.status === 'paused' ? '#fef3c7' : '#f3f4f6',
-                      color: project.status === 'active' ? '#059669' : project.status === 'paused' ? '#d97706' : '#6b7280'
-                    }}>
-                      {project.status === 'active' ? '进行中' : project.status === 'paused' ? '已暂停' : '已领完'}
-                    </span>
-                  </div>
+                    {/* Mobile Card View */}
+                    <div className="lg:hidden p-5 flex flex-col gap-4">
+                      {/* Card Header */}
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center shadow-md">
+                            <Gift className="w-6 h-6 text-white" />
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-gray-800 text-lg">{project.name}</h3>
+                            <div className="flex items-center gap-2 text-sm text-gray-500 mt-0.5">
+                              <span className="text-xs">{new Date(project.createdAt).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${
+                          project.status === 'active' 
+                            ? 'bg-emerald-50 text-emerald-600 border-emerald-100' 
+                            : project.status === 'paused' 
+                              ? 'bg-amber-50 text-amber-600 border-amber-100' 
+                              : 'bg-gray-100 text-gray-500 border-gray-200'
+                        }`}>
+                          {project.status === 'active' ? '进行中' : project.status === 'paused' ? '已暂停' : '已领完'}
+                        </span>
+                      </div>
 
-                  {/* 进度 */}
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <Users style={{ width: 16, height: 16, color: '#9ca3af' }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#374151' }}>{project.claimedCount}</span>
-                      <span style={{ color: '#9ca3af' }}>/</span>
-                      <span style={{ fontSize: 14, color: '#6b7280' }}>{project.maxClaims}</span>
+                      {/* Progress Section */}
+                      <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                        <div className="flex justify-between items-center mb-2">
+                          <div className="flex items-center gap-1.5 text-sm font-medium text-gray-600">
+                            <Users className="w-4 h-4" />
+                            <span>领取进度</span>
+                          </div>
+                          <div className="text-sm">
+                            <span className="font-bold text-gray-900">{project.claimedCount}</span>
+                            <span className="text-gray-400 mx-1">/</span>
+                            <span className="text-gray-500">{project.maxClaims}</span>
+                          </div>
+                        </div>
+                        <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-gradient-to-r from-[#667eea] to-[#764ba2] rounded-full"
+                            style={{ width: `${Math.min(100, (project.claimedCount / project.maxClaims) * 100)}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-200/50">
+                          <div className="flex items-center gap-1.5 text-sm text-gray-600">
+                            <Package className="w-4 h-4" />
+                            <span>剩余库存</span>
+                          </div>
+                          <span className="font-bold text-gray-900">{project.codesCount}</span>
+                        </div>
+                      </div>
+
+                      {/* Card Actions */}
+                      <div className="flex items-center gap-3 pt-1" onClick={(e) => e.preventDefault()}>
+                        <button 
+                          onClick={(e) => handleToggleStatus(project, e)}
+                          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-medium transition-colors ${
+                            project.status === 'active' 
+                              ? 'bg-amber-50 text-amber-600 border border-amber-100' 
+                              : 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                          }`}
+                        >
+                          {project.status === 'active' ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                          {project.status === 'active' ? '暂停' : '启动'}
+                        </button>
+                        <button 
+                          onClick={(e) => handleDelete(project, e)}
+                          className="w-12 h-12 flex items-center justify-center bg-red-50 text-red-500 rounded-xl border border-red-100"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                        <div className="w-12 h-12 flex items-center justify-center bg-gray-100 text-gray-500 rounded-xl border border-gray-200 cursor-pointer">
+                          <ChevronRight className="w-6 h-6" />
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ height: 6, background: '#e5e7eb', borderRadius: 3, overflow: 'hidden' }}>
-                      <div style={{ 
-                        height: '100%', 
-                        width: `${Math.min(100, (project.claimedCount / project.maxClaims) * 100)}%`,
-                        background: 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)',
-                        borderRadius: 3
-                      }} />
-                    </div>
-                  </div>
-
-                  {/* 库存 */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Package style={{ width: 16, height: 16, color: '#9ca3af' }} />
-                    <span style={{ fontWeight: 600, color: '#374151' }}>{project.codesCount}</span>
-                  </div>
-
-                  {/* 时间 */}
-                  <span style={{ fontSize: 14, color: '#6b7280' }}>
-                    {new Date(project.createdAt).toLocaleDateString()}
-                  </span>
-
-                  {/* 操作 */}
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                    <button 
-                      onClick={(e) => handleToggleStatus(project, e)}
-                      style={{ 
-                        width: 36, height: 36, borderRadius: 10, border: 'none', cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        background: project.status === 'active' ? '#fef3c7' : '#d1fae5',
-                        color: project.status === 'active' ? '#d97706' : '#059669'
-                      }}
-                    >
-                      {project.status === 'active' ? <Pause style={{ width: 16, height: 16 }} /> : <Play style={{ width: 16, height: 16 }} />}
-                    </button>
-                    <button 
-                      onClick={(e) => handleDelete(project, e)}
-                      style={{ 
-                        width: 36, height: 36, borderRadius: 10, border: 'none', cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        background: '#fef2f2', color: '#ef4444'
-                      }}
-                    >
-                      <Trash2 style={{ width: 16, height: 16 }} />
-                    </button>
-                    <div style={{ 
-                      width: 36, height: 36, borderRadius: 10,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      background: '#f3f4f6', color: '#6b7280'
-                    }}>
-                      <ChevronRight style={{ width: 18, height: 18 }} />
-                    </div>
-                  </div>
-                </Link>
-              ))}
+                  </Link>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -411,167 +434,120 @@ export default function AdminPage() {
 
       {/* 创建项目弹窗 */}
       {showCreateModal && (
-        <div style={{ 
-          position: 'fixed', inset: 0, 
-          background: 'rgba(0,0,0,0.5)', 
-          backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 200, padding: 24
-        }}>
-          <div style={{ 
-            background: 'white', borderRadius: 24, 
-            width: '100%', maxWidth: 480,
-            boxShadow: '0 25px 80px rgba(0,0,0,0.3)'
-          }}>
-            {/* 弹窗头部 */}
-            <div style={{ 
-              padding: '20px 24px', 
-              borderBottom: '1px solid #e5e7eb',
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-            }}>
-              <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1f2937', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Plus style={{ width: 22, height: 22, color: '#667eea' }} />
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
+            onClick={() => setShowCreateModal(false)}
+          />
+          
+          {/* Modal Content */}
+          <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden animate-fade-in">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+                  <Plus className="w-5 h-5 text-[#667eea]" />
+                </div>
                 创建新项目
               </h2>
               <button 
                 onClick={() => setShowCreateModal(false)}
-                style={{ 
-                  width: 36, height: 36, borderRadius: 10, 
-                  background: '#f3f4f6', border: 'none', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280'
-                }}
+                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 transition-colors"
               >
-                <X style={{ width: 20, height: 20 }} />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* 表单 */}
-            <form onSubmit={handleCreateProject} style={{ padding: 24 }}>
+            {/* Form */}
+            <form onSubmit={handleCreateProject} className="p-6">
               {error && (
-                <div style={{ 
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '14px 18px', marginBottom: 20,
-                  background: '#fef2f2', border: '1px solid #fecaca',
-                  borderRadius: 12, color: '#dc2626', fontSize: 14
-                }}>
-                  <AlertCircle style={{ width: 18, height: 18 }} />
+                <div className="mb-5 p-3.5 bg-red-50 border border-red-100 rounded-xl flex items-center gap-2.5 text-red-600 text-sm font-medium">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
                   {error}
                 </div>
               )}
 
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600, color: '#374151' }}>
-                  项目名称 <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="例如: 5刀福利"
-                  style={{ 
-                    width: '100%', padding: '14px 18px',
-                    border: '2px solid #e5e7eb', borderRadius: 12,
-                    fontSize: 15, outline: 'none', boxSizing: 'border-box'
-                  }}
-                />
-              </div>
-
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600, color: '#374151' }}>
-                  项目描述
-                </label>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="可选"
-                  rows={3}
-                  style={{ 
-                    width: '100%', padding: '14px 18px',
-                    border: '2px solid #e5e7eb', borderRadius: 12,
-                    fontSize: 15, outline: 'none', resize: 'none', boxSizing: 'border-box'
-                  }}
-                />
-              </div>
-
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600, color: '#374151' }}>
-                  限领人数 <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <input
-                  type="number"
-                  value={maxClaims}
-                  onChange={(e) => setMaxClaims(e.target.value)}
-                  min="1"
-                  style={{ 
-                    width: '100%', padding: '14px 18px',
-                    border: '2px solid #e5e7eb', borderRadius: 12,
-                    fontSize: 15, outline: 'none', boxSizing: 'border-box'
-                  }}
-                />
-              </div>
-
-              <div style={{ marginBottom: 28 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600, color: '#374151' }}>
-                  导入兑换码
-                </label>
-                <div style={{ 
-                  border: '2px dashed #d1d5db', borderRadius: 12,
-                  padding: '32px 20px', textAlign: 'center',
-                  cursor: 'pointer', position: 'relative'
-                }}>
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">
+                    项目名称 <span className="text-red-500">*</span>
+                  </label>
                   <input
-                    type="file"
-                    accept=".txt"
-                    onChange={(e) => setCodesFile(e.target.files?.[0] || null)}
-                    style={{ 
-                      position: 'absolute', inset: 0, 
-                      opacity: 0, cursor: 'pointer'
-                    }}
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="例如: 5刀福利"
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#667eea] focus:ring-4 focus:ring-indigo-100 transition-all outline-none text-gray-800 placeholder-gray-400 font-medium"
                   />
-                  <div style={{ 
-                    width: 56, height: 56, borderRadius: '50%',
-                    background: 'linear-gradient(135deg, #f0f4ff 0%, #e8e0ff 100%)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    margin: '0 auto 16px'
-                  }}>
-                    <Upload style={{ width: 28, height: 28, color: '#667eea' }} />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">
+                    项目描述
+                  </label>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="可选"
+                    rows={3}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#667eea] focus:ring-4 focus:ring-indigo-100 transition-all outline-none text-gray-800 placeholder-gray-400 font-medium resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">
+                    限领人数 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={maxClaims}
+                    onChange={(e) => setMaxClaims(e.target.value)}
+                    min="1"
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#667eea] focus:ring-4 focus:ring-indigo-100 transition-all outline-none text-gray-800 placeholder-gray-400 font-medium"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">
+                    导入兑换码
+                  </label>
+                  <div className="group relative border-2 border-dashed border-gray-300 hover:border-[#667eea] rounded-2xl p-6 transition-colors bg-gray-50 hover:bg-indigo-50/50 text-center">
+                    <input
+                      type="file"
+                      accept=".txt"
+                      onChange={(e) => setCodesFile(e.target.files?.[0] || null)}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    />
+                    <div className="w-14 h-14 bg-white rounded-full shadow-sm flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform duration-200">
+                      <Upload className="w-6 h-6 text-[#667eea]" />
+                    </div>
+                    <p className="text-sm font-medium text-gray-600">
+                      {codesFile ? (
+                        <span className="text-[#667eea] font-bold">{codesFile.name}</span>
+                      ) : (
+                        <>点击选择 <span className="text-gray-900 font-bold">.txt</span> 文件</>
+                      )}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-1">每行一个兑换码</p>
                   </div>
-                  <p style={{ color: '#6b7280', fontSize: 14 }}>
-                    {codesFile ? (
-                      <span style={{ color: '#667eea', fontWeight: 600 }}>{codesFile.name}</span>
-                    ) : (
-                      <>点击选择 <strong>.txt</strong> 文件</>
-                    )}
-                  </p>
-                  <p style={{ color: '#9ca3af', fontSize: 12, marginTop: 4 }}>每行一个兑换码</p>
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: 12 }}>
+              <div className="flex gap-3 mt-8">
                 <button
                   type="button"
                   onClick={() => setShowCreateModal(false)}
-                  style={{ 
-                    flex: 1, padding: '14px',
-                    background: '#f3f4f6', color: '#374151',
-                    border: 'none', borderRadius: 12,
-                    fontSize: 15, fontWeight: 600, cursor: 'pointer'
-                  }}
+                  className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold transition-colors"
                 >
                   取消
                 </button>
                 <button
                   type="submit"
                   disabled={creating}
-                  style={{ 
-                    flex: 1, padding: '14px',
-                    background: creating ? '#9ca3af' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                    color: 'white', border: 'none', borderRadius: 12,
-                    fontSize: 15, fontWeight: 600, cursor: creating ? 'not-allowed' : 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
-                  }}
+                  className="flex-1 py-3.5 bg-gradient-to-r from-[#667eea] to-[#764ba2] hover:opacity-90 text-white rounded-xl font-bold shadow-lg shadow-indigo-500/20 disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
                 >
-                  {creating && <Loader2 style={{ width: 18, height: 18 }} />}
+                  {creating && <Loader2 className="w-5 h-5 animate-spin" />}
                   {creating ? '创建中...' : '创建项目'}
                 </button>
               </div>

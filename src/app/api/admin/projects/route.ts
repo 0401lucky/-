@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
       description,
       maxClaims,
       claimedCount: 0,
-      codesCount: codes.length,
+      codesCount: 0,  // 初始化为0，由 addCodesToProject 统一处理计数
       status: "active",
       createdAt: Date.now(),
       createdBy: user!.username,

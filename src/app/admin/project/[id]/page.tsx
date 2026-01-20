@@ -3,7 +3,7 @@
 import { useEffect, useState, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Upload, Loader2, AlertCircle, Users, Package, Clock, User as UserIcon, Check, X, Gift, FileText } from 'lucide-react';
+import { ArrowLeft, Upload, Loader2, AlertCircle, Users, Package, Clock, User as UserIcon, Check, X, Gift, FileText, Copy } from 'lucide-react';
 
 interface Project {
   id: string;
@@ -106,12 +106,17 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
     }
   };
 
+  const handleCopyCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    // Optional: could add a toast here, but keeping it simple as per requirements to not add new dependencies
+  };
+
   if (loading) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
-        <div style={{ textAlign: 'center', color: 'white' }}>
-          <Loader2 style={{ width: 48, height: 48, animation: 'spin 1s linear infinite' }} />
-          <p style={{ marginTop: 16 }}>加载项目数据...</p>
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#667eea] to-[#764ba2]">
+        <div className="text-center text-white">
+          <Loader2 className="w-12 h-12 animate-spin mx-auto" />
+          <p className="mt-4 font-medium">加载项目数据...</p>
         </div>
       </div>
     );
@@ -119,15 +124,18 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
 
   if (!project) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', padding: 24 }}>
-        <div style={{ background: 'white', borderRadius: 24, padding: 40, textAlign: 'center', maxWidth: 400, width: '100%', boxShadow: '0 25px 80px rgba(0,0,0,0.25)' }}>
-          <div style={{ width: 64, height: 64, background: '#fef2f2', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
-            <AlertCircle style={{ width: 32, height: 32, color: '#ef4444' }} />
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#667eea] to-[#764ba2] p-6">
+        <div className="bg-white rounded-3xl p-10 text-center max-w-md w-full shadow-2xl">
+          <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-5">
+            <AlertCircle className="w-8 h-8 text-red-500" />
           </div>
-          <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1f2937', marginBottom: 8 }}>出错了</h2>
-          <p style={{ color: '#6b7280', marginBottom: 24 }}>{error || '找不到该项目'}</p>
-          <Link href="/admin" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '14px 28px', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white', borderRadius: 12, textDecoration: 'none', fontWeight: 600, width: '100%' }}>
-            <ArrowLeft style={{ width: 18, height: 18, marginRight: 8 }} />
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">出错了</h2>
+          <p className="text-gray-500 mb-8">{error || '找不到该项目'}</p>
+          <Link 
+            href="/admin" 
+            className="inline-flex items-center justify-center w-full px-6 py-3.5 bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-xl font-semibold hover:shadow-lg transition-all active:scale-95"
+          >
+            <ArrowLeft className="w-5 h-5 mr-2" />
             返回管理后台
           </Link>
         </div>
@@ -138,156 +146,190 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
   const remaining = Math.max(0, project.maxClaims - project.claimedCount);
 
   return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
+    <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2]">
       {/* 导航栏 */}
-      <nav style={{ background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(10px)', boxShadow: '0 4px 20px rgba(0,0,0,0.1)', position: 'sticky', top: 0, zIndex: 100 }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 70 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <Link href="/admin" style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#6b7280', textDecoration: 'none' }}>
-                <ArrowLeft style={{ width: 20, height: 20 }} />
-                <span style={{ fontWeight: 500 }}>返回管理后台</span>
+      <nav className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm shadow-sm transition-all duration-300">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col sm:flex-row justify-between items-center py-4 sm:h-20 sm:py-0 gap-4 sm:gap-0">
+            <div className="flex items-center gap-3">
+              <Link href="/admin" className="flex items-center gap-2 text-gray-500 hover:text-[#667eea] transition-colors">
+                <ArrowLeft className="w-5 h-5" />
+                <span className="font-medium hidden sm:inline">返回</span>
               </Link>
-              <span style={{ color: '#d1d5db' }}>/</span>
-              <span style={{ fontWeight: 600, color: '#1f2937' }}>{project.name}</span>
+              <span className="text-gray-300 hidden sm:inline">/</span>
+              <span className="font-bold text-gray-800 text-lg truncate max-w-[200px] sm:max-w-md">{project.name}</span>
             </div>
           </div>
         </div>
       </nav>
 
       {/* 主内容 */}
-      <main style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
+      <main className="max-w-7xl mx-auto p-4 md:p-6 lg:p-8 space-y-8">
         {/* 提示消息 */}
         {success && (
-          <div style={{ marginBottom: 24, padding: '16px 20px', background: 'rgba(255,255,255,0.95)', borderRadius: 16, border: '2px solid #10b981', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#059669' }}>
-              <Check style={{ width: 20, height: 20 }} />
-              <span style={{ fontWeight: 600 }}>{success}</span>
+          <div className="p-4 bg-white/95 backdrop-blur-sm rounded-2xl border-l-4 border-emerald-500 shadow-lg flex justify-between items-center animate-fade-in">
+            <div className="flex items-center gap-3 text-emerald-700">
+              <div className="p-2 bg-emerald-100 rounded-full">
+                <Check className="w-5 h-5" />
+              </div>
+              <span className="font-semibold">{success}</span>
             </div>
-            <button onClick={() => setSuccess(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}>
-              <X style={{ width: 20, height: 20 }} />
+            <button onClick={() => setSuccess(null)} className="text-gray-400 hover:text-gray-600 p-1 hover:bg-gray-100 rounded-lg transition-colors">
+              <X className="w-5 h-5" />
             </button>
           </div>
         )}
         {error && (
-          <div style={{ marginBottom: 24, padding: '16px 20px', background: 'rgba(255,255,255,0.95)', borderRadius: 16, border: '2px solid #ef4444', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#dc2626' }}>
-              <AlertCircle style={{ width: 20, height: 20 }} />
-              <span style={{ fontWeight: 600 }}>{error}</span>
+          <div className="p-4 bg-white/95 backdrop-blur-sm rounded-2xl border-l-4 border-red-500 shadow-lg flex justify-between items-center animate-fade-in">
+            <div className="flex items-center gap-3 text-red-700">
+              <div className="p-2 bg-red-100 rounded-full">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <span className="font-semibold">{error}</span>
             </div>
-            <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}>
-              <X style={{ width: 20, height: 20 }} />
+            <button onClick={() => setError(null)} className="text-gray-400 hover:text-gray-600 p-1 hover:bg-gray-100 rounded-lg transition-colors">
+              <X className="w-5 h-5" />
             </button>
           </div>
         )}
 
-        {/* 项目信息 */}
-        <div style={{ background: 'rgba(255,255,255,0.95)', borderRadius: 24, boxShadow: '0 20px 60px rgba(0,0,0,0.15)', padding: 32, marginBottom: 32 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 24, marginBottom: 32 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-              <div style={{ width: 56, height: 56, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Gift style={{ width: 28, height: 28, color: 'white' }} />
+        {/* 项目信息卡片 */}
+        <div className="bg-white/95 backdrop-blur-sm rounded-3xl shadow-xl p-6 md:p-8">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
+            <div className="flex items-center gap-5">
+              <div className="w-16 h-16 bg-gradient-to-br from-[#667eea] to-[#764ba2] rounded-2xl flex items-center justify-center shadow-lg transform rotate-3 hover:rotate-0 transition-all duration-300">
+                <Gift className="w-8 h-8 text-white" />
               </div>
               <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <h1 style={{ fontSize: 28, fontWeight: 800, color: '#1f2937' }}>{project.name}</h1>
-                  <span style={{ padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, background: project.status === 'active' ? '#d1fae5' : project.status === 'paused' ? '#fef3c7' : '#f3f4f6', color: project.status === 'active' ? '#059669' : project.status === 'paused' ? '#d97706' : '#6b7280' }}>
+                <div className="flex flex-wrap items-center gap-3">
+                  <h1 className="text-2xl md:text-3xl font-extrabold text-gray-900 tracking-tight">{project.name}</h1>
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
+                    project.status === 'active' 
+                      ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-500/20' 
+                      : project.status === 'paused' 
+                        ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-500/20' 
+                        : 'bg-gray-100 text-gray-600 ring-1 ring-gray-500/20'
+                  }`}>
                     {project.status === 'active' ? '进行中' : project.status === 'paused' ? '已暂停' : '已领完'}
                   </span>
                 </div>
-                <p style={{ color: '#6b7280', marginTop: 4 }}>{project.description || '暂无描述'}</p>
+                <p className="text-gray-500 mt-2 text-sm md:text-base leading-relaxed max-w-2xl">{project.description || '暂无描述'}</p>
               </div>
             </div>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: '14px 24px', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white', borderRadius: 14, fontSize: 14, fontWeight: 600, cursor: uploading ? 'not-allowed' : 'pointer', opacity: uploading ? 0.7 : 1 }}>
-              <Upload style={{ width: 18, height: 18 }} />
-              {uploading ? '上传中...' : '追加兑换码'}
-              <input type="file" accept=".txt" onChange={handleUploadCodes} disabled={uploading} style={{ display: 'none' }} />
+            
+            <label className={`group relative inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-2xl font-semibold shadow-lg hover:shadow-xl transition-all duration-300 active:scale-95 cursor-pointer overflow-hidden ${uploading ? 'opacity-70 cursor-not-allowed' : ''}`}>
+              <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+              <Upload className={`w-5 h-5 relative z-10 ${uploading ? 'animate-bounce' : ''}`} />
+              <span className="relative z-10">{uploading ? '上传中...' : '追加兑换码'}</span>
+              <input type="file" accept=".txt" onChange={handleUploadCodes} disabled={uploading} className="hidden" />
             </label>
           </div>
 
-          {/* 统计卡片 */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 20 }}>
-            <div style={{ background: 'linear-gradient(135deg, #f0f4ff 0%, #e8e0ff 100%)', borderRadius: 16, padding: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#667eea', marginBottom: 8 }}>
-                <Users style={{ width: 18, height: 18 }} />
-                <span style={{ fontSize: 14, fontWeight: 600 }}>已领取</span>
+          {/* 统计网格 */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+            <div className="bg-gradient-to-br from-indigo-50 to-blue-50 rounded-2xl p-5 md:p-6 border border-indigo-100/50 hover:shadow-md transition-shadow">
+              <div className="flex items-center gap-2 text-indigo-600 mb-2">
+                <Users className="w-4 h-4 md:w-5 md:h-5" />
+                <span className="text-xs md:text-sm font-bold uppercase tracking-wide">已领取</span>
               </div>
-              <p style={{ fontSize: 32, fontWeight: 800, color: '#1f2937' }}>{project.claimedCount}</p>
+              <p className="text-2xl md:text-4xl font-black text-gray-900">{project.claimedCount}</p>
             </div>
-            <div style={{ background: 'linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%)', borderRadius: 16, padding: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#ec4899', marginBottom: 8 }}>
-                <Users style={{ width: 18, height: 18 }} />
-                <span style={{ fontSize: 14, fontWeight: 600 }}>剩余名额</span>
+            
+            <div className="bg-gradient-to-br from-pink-50 to-rose-50 rounded-2xl p-5 md:p-6 border border-pink-100/50 hover:shadow-md transition-shadow">
+              <div className="flex items-center gap-2 text-pink-600 mb-2">
+                <Users className="w-4 h-4 md:w-5 md:h-5" />
+                <span className="text-xs md:text-sm font-bold uppercase tracking-wide">剩余名额</span>
               </div>
-              <p style={{ fontSize: 32, fontWeight: 800, color: '#1f2937' }}>{remaining}</p>
+              <p className="text-2xl md:text-4xl font-black text-gray-900">{remaining}</p>
             </div>
-            <div style={{ background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)', borderRadius: 16, padding: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#10b981', marginBottom: 8 }}>
-                <Package style={{ width: 18, height: 18 }} />
-                <span style={{ fontSize: 14, fontWeight: 600 }}>库存总量</span>
+            
+            <div className="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-2xl p-5 md:p-6 border border-emerald-100/50 hover:shadow-md transition-shadow">
+              <div className="flex items-center gap-2 text-emerald-600 mb-2">
+                <Package className="w-4 h-4 md:w-5 md:h-5" />
+                <span className="text-xs md:text-sm font-bold uppercase tracking-wide">库存总量</span>
               </div>
-              <p style={{ fontSize: 32, fontWeight: 800, color: '#1f2937' }}>{project.codesCount}</p>
+              <p className="text-2xl md:text-4xl font-black text-gray-900">{project.codesCount}</p>
             </div>
-            <div style={{ background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', borderRadius: 16, padding: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#3b82f6', marginBottom: 8 }}>
-                <Clock style={{ width: 18, height: 18 }} />
-                <span style={{ fontSize: 14, fontWeight: 600 }}>创建时间</span>
+            
+            <div className="bg-gradient-to-br from-blue-50 to-sky-50 rounded-2xl p-5 md:p-6 border border-blue-100/50 hover:shadow-md transition-shadow">
+              <div className="flex items-center gap-2 text-blue-600 mb-2">
+                <Clock className="w-4 h-4 md:w-5 md:h-5" />
+                <span className="text-xs md:text-sm font-bold uppercase tracking-wide">创建时间</span>
               </div>
-              <p style={{ fontSize: 14, fontWeight: 600, color: '#1f2937' }}>{new Date(project.createdAt).toLocaleString()}</p>
+              <p className="text-sm md:text-base font-bold text-gray-900 truncate">
+                {new Date(project.createdAt).toLocaleDateString()}
+              </p>
+              <p className="text-xs text-blue-400 mt-1">
+                {new Date(project.createdAt).toLocaleTimeString()}
+              </p>
             </div>
           </div>
         </div>
 
-        {/* 分发记录 */}
-        <div style={{ background: 'rgba(255,255,255,0.95)', borderRadius: 24, boxShadow: '0 20px 60px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
-          <div style={{ padding: '20px 32px', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', gap: 12 }}>
-            <FileText style={{ width: 20, height: 20, color: '#667eea' }} />
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1f2937' }}>分发记录</h2>
-            <span style={{ padding: '4px 12px', background: '#f3f4f6', borderRadius: 20, fontSize: 12, fontWeight: 600, color: '#6b7280' }}>{records.length} 条</span>
+        {/* 分发记录 - 卡片列表模式 */}
+        <div className="space-y-6">
+          <div className="flex items-center justify-between px-2">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-white/20 backdrop-blur-md rounded-lg text-white">
+                <FileText className="w-5 h-5" />
+              </div>
+              <h2 className="text-xl md:text-2xl font-bold text-white">分发记录</h2>
+            </div>
+            <span className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-sm font-semibold text-white">
+              {records.length} 条
+            </span>
           </div>
 
           {records.length === 0 ? (
-            <div style={{ padding: '80px 40px', textAlign: 'center' }}>
-              <div style={{ width: 64, height: 64, background: '#f3f4f6', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
-                <Users style={{ width: 32, height: 32, color: '#9ca3af' }} />
+            <div className="bg-white/95 backdrop-blur-sm rounded-3xl shadow-xl p-12 md:p-20 text-center">
+              <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Users className="w-10 h-10 text-gray-300" />
               </div>
-              <h3 style={{ fontSize: 18, fontWeight: 600, color: '#1f2937', marginBottom: 8 }}>暂无分发记录</h3>
-              <p style={{ color: '#6b7280' }}>该项目尚未被领取过</p>
+              <h3 className="text-xl font-bold text-gray-800 mb-2">暂无分发记录</h3>
+              <p className="text-gray-500">该项目尚未被领取过</p>
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#f9fafb' }}>
-                    <th style={{ padding: '16px 32px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase' }}>用户</th>
-                    <th style={{ padding: '16px 32px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase' }}>兑换码</th>
-                    <th style={{ padding: '16px 32px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase' }}>领取时间</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {records.map((record) => (
-                    <tr key={record.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                      <td style={{ padding: '20px 32px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                          <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <UserIcon style={{ width: 16, height: 16, color: 'white' }} />
-                          </div>
-                          <div>
-                            <p style={{ fontWeight: 600, color: '#1f2937' }}>{record.username}</p>
-                            <p style={{ fontSize: 12, color: '#9ca3af' }}>ID: {record.userId}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td style={{ padding: '20px 32px' }}>
-                        <code style={{ padding: '6px 12px', background: '#f0f4ff', borderRadius: 8, fontFamily: 'monospace', fontSize: 14, color: '#667eea' }}>{record.code}</code>
-                      </td>
-                      <td style={{ padding: '20px 32px', color: '#6b7280', fontSize: 14 }}>
-                        {new Date(record.claimedAt).toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+              {records.map((record) => (
+                <div 
+                  key={record.id} 
+                  className="bg-white/95 backdrop-blur-sm rounded-2xl p-5 shadow-lg border border-white/20 hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 group"
+                >
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center shadow-md ring-2 ring-white">
+                        <UserIcon className="w-5 h-5 text-white" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-800 leading-tight">{record.username}</p>
+                        <p className="text-xs font-medium text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-md inline-block mt-1">
+                          ID: {record.userId}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="mb-4">
+                    <div 
+                      onClick={() => handleCopyCode(record.code)}
+                      className="relative bg-gray-50 rounded-xl p-3 border border-gray-100 group-hover:border-indigo-200 transition-colors cursor-pointer active:scale-[0.98]"
+                      title="点击复制"
+                    >
+                      <p className="font-mono text-sm text-indigo-600 break-all text-center font-semibold">
+                        {record.code}
+                      </p>
+                      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Copy className="w-3 h-3 text-gray-400" />
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-1.5 text-xs text-gray-400 border-t border-gray-100 pt-3">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>领取于 {new Date(record.claimedAt).toLocaleString()}</span>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
