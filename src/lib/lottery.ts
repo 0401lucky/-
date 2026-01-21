@@ -357,9 +357,15 @@ export async function getTiersStats(): Promise<{ id: string; available: number }
 }
 
 
-// 加权随机选择档位
-function weightedRandomSelect(tiers: LotteryTier[]): LotteryTier {
+// [Opt-3] 加权随机选择档位 - 添加 totalWeight <= 0 保护
+function weightedRandomSelect(tiers: LotteryTier[]): LotteryTier | null {
   const totalWeight = tiers.reduce((sum, tier) => sum + tier.probability, 0);
+  
+  // [Opt-3] 配置保护：如果所有概率都为0，返回null
+  if (totalWeight <= 0) {
+    return null;
+  }
+  
   let random = Math.random() * totalWeight;
 
   for (const tier of tiers) {
@@ -431,6 +437,12 @@ export async function spinLottery(
     // === 第三步：选择档位并原子性获取兑换码 ===
     const selectedTier = weightedRandomSelect(config.tiers);
     
+    // [Opt-3] 配置保护：如果所有概率都为0，返回错误
+    if (!selectedTier) {
+      await rollbackSpinCount();
+      return { success: false, message: "抽奖配置异常，请联系管理员" };
+    }
+    
     // [P1-1修复] 使用可用集合计算
     const allCodesResult = await kv.smembers(`${LOTTERY_CODES_PREFIX}${selectedTier.id}`);
     const usedCodesResult = await kv.smembers(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`);
@@ -472,11 +484,35 @@ export async function spinLottery(
       }
       
       // 使用重试成功的码
-      return await completeSpinWithCode(retryCode, selectedTier, userId, username, config);
+      // [Opt-1] 提交点失败时释放码
+      try {
+        return await completeSpinWithCode(retryCode, selectedTier, userId, username);
+      } catch (commitError) {
+        // 提交点（全局记录写入）失败，尝试释放已占用的码
+        console.error("提交点失败，尝试释放码:", commitError);
+        try {
+          await kv.srem(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`, retryCode);
+        } catch (releaseError) {
+          console.error("释放码失败:", releaseError);
+        }
+        throw commitError; // 继续抛出让外层 catch 处理回滚次数
+      }
     }
     
     // 使用成功抢占的码
-    return await completeSpinWithCode(selectedCode, selectedTier, userId, username, config);
+    // [Opt-1] 提交点失败时释放码
+    try {
+      return await completeSpinWithCode(selectedCode, selectedTier, userId, username);
+    } catch (commitError) {
+      // 提交点（全局记录写入）失败，尝试释放已占用的码
+      console.error("提交点失败，尝试释放码:", commitError);
+      try {
+        await kv.srem(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`, selectedCode);
+      } catch (releaseError) {
+        console.error("释放码失败:", releaseError);
+      }
+      throw commitError; // 继续抛出让外层 catch 处理回滚次数
+    }
     
   } catch (error) {
     // [P1-2补充] 全局异常兜底：确保次数被回滚
@@ -493,8 +529,7 @@ async function completeSpinWithCode(
   code: string,
   selectedTier: LotteryTier,
   userId: number,
-  username: string,
-  config: LotteryConfig
+  username: string
 ): Promise<{ success: boolean; record?: LotteryRecord; message: string }> {
   const record: LotteryRecord = {
     id: `lottery_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
@@ -519,9 +554,11 @@ async function completeSpinWithCode(
   }
 
   // 第三步：更新统计（非关键，失败只记录日志）
+  // [Opt-2] 使用最新 config，避免覆盖管理员刚更新的配置
   try {
+    const latestConfig = await getLotteryConfig();
     const usedCountNew = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`);
-    const updatedTiers = config.tiers.map((tier) => {
+    const updatedTiers = latestConfig.tiers.map((tier) => {
       if (tier.id === selectedTier.id) {
         return { ...tier, usedCount: usedCountNew };
       }
