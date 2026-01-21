@@ -211,22 +211,28 @@ export async function getUserLotteryCount(userId: number): Promise<number> {
 
 const LOTTERY_DAILY_PREFIX = "lottery:daily:";
 
-// 获取今天日期字符串 (YYYY-MM-DD)
+// 获取今天日期字符串 (YYYY-MM-DD) - 使用中国时区
 function getTodayDateString(): string {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
+  // 转换为中国时区 (UTC+8)
+  const chinaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const year = chinaTime.getUTCFullYear();
+  const month = String(chinaTime.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(chinaTime.getUTCDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
-// 获取距离次日0点的秒数
+// 获取距离中国时区次日0点的秒数
 function getSecondsUntilMidnight(): number {
   const now = new Date();
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(0, 0, 0, 0);
-  return Math.ceil((tomorrow.getTime() - now.getTime()) / 1000);
+  // 计算中国时区的午夜
+  const chinaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const tomorrow = new Date(chinaTime);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  tomorrow.setUTCHours(0, 0, 0, 0);
+  // 转回 UTC 计算差值
+  const tomorrowUTC = new Date(tomorrow.getTime() - 8 * 60 * 60 * 1000);
+  return Math.ceil((tomorrowUTC.getTime() - now.getTime()) / 1000);
 }
 
 // 设置今日已抽
@@ -265,22 +271,15 @@ export async function useExtraSpinCount(userId: number): Promise<boolean> {
   return false;
 }
 
-// 签到状态管理
+// 签到状态管理 - 使用中国时区
 export async function hasCheckedInToday(userId: number): Promise<boolean> {
-  const today = new Date();
-  const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const dateStr = getTodayDateString();
   const result = await kv.get(`user:checkin:${userId}:${dateStr}`);
   return !!result;
 }
 
 export async function setCheckedInToday(userId: number): Promise<void> {
-  const today = new Date();
-  const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  // 设置过期时间为24小时后，或者次日凌晨
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(0, 0, 0, 0);
-  const ttl = Math.ceil((tomorrow.getTime() - today.getTime()) / 1000);
-  
+  const dateStr = getTodayDateString();
+  const ttl = getSecondsUntilMidnight();
   await kv.set(`user:checkin:${userId}:${dateStr}`, true, { ex: ttl });
 }
