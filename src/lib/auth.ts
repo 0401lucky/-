@@ -1,7 +1,20 @@
 import { cookies } from "next/headers";
 import { createHmac } from "crypto";
 
-const ADMIN_USERNAMES = (process.env.ADMIN_USERNAMES || "lucky").split(",").map(s => s.trim());
+// [P0-1补充] ADMIN_USERNAMES 移除危险默认值
+// 生产环境必须配置，否则默认为空（无管理员）
+function getAdminUsernames(): string[] {
+  const adminEnv = process.env.ADMIN_USERNAMES;
+  if (!adminEnv) {
+    if (process.env.NODE_ENV === "production") {
+      console.warn("⚠️ ADMIN_USERNAMES not set in production, no admin users configured!");
+    }
+    return [];
+  }
+  return adminEnv.split(",").map(s => s.trim()).filter(s => s.length > 0);
+}
+
+const ADMIN_USERNAMES = getAdminUsernames();
 
 // [P0-1修复] 用于签名的密钥，生产环境必须设置 SESSION_SECRET 环境变量
 // 不再提供默认值，缺失则 fail-fast
