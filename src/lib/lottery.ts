@@ -87,7 +87,17 @@ export async function addCodesToTier(tierId: string, codes: string[]): Promise<n
   if (codes.length === 0) return 0;
 
   // 使用 sadd 添加到 Set（自动去重）
-  const added = await kv.sadd(`${LOTTERY_CODES_PREFIX}${tierId}`, codes);
+  // Vercel KV 的 sadd 接受多个参数，需要逐个添加或分批
+  let added = 0;
+  const batchSize = 100;
+  for (let i = 0; i < codes.length; i += batchSize) {
+    const batch = codes.slice(i, i + batchSize);
+    // 逐个添加到 Set
+    for (const code of batch) {
+      const result = await kv.sadd(`${LOTTERY_CODES_PREFIX}${tierId}`, code);
+      added += result;
+    }
+  }
 
   // 更新档位库存计数
   const config = await getLotteryConfig();
