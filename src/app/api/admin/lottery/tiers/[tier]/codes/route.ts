@@ -64,8 +64,9 @@ export async function POST(
     });
   } catch (error) {
     console.error("Add lottery codes error:", error);
+    const errorMessage = error instanceof Error ? error.message : "未知错误";
     return NextResponse.json(
-      { success: false, message: "添加兑换码失败" },
+      { success: false, message: `添加兑换码失败: ${errorMessage}` },
       { status: 500 }
     );
   }
