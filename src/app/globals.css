@@ -43,29 +43,29 @@ body {
   background: #fdfcf8; /* 更加温暖的米白底色 */
   font-family: var(--font-family-sans);
   overflow-x: hidden;
-  /* 更加细腻的高级背景 */
+  /* 更加细腻的高级背景 - 移除 fixed attachment 优化滚动性能 */
   background-image: 
     radial-gradient(at 0% 0%, rgba(255, 237, 213, 0.4) 0px, transparent 50%),
     radial-gradient(at 100% 0%, rgba(254, 215, 170, 0.4) 0px, transparent 50%),
     radial-gradient(at 100% 100%, rgba(255, 247, 237, 0.4) 0px, transparent 50%),
     radial-gradient(at 0% 100%, rgba(255, 237, 213, 0.4) 0px, transparent 50%);
-  background-attachment: fixed;
+  /* background-attachment: fixed; 移除此属性，这是滚动卡顿的主要原因 */
 }
 
 /* 自定义工具类 */
 @layer utilities {
-  /* 基础玻璃态 - 更通透 */
+  /* 基础玻璃态 - 优化性能：降低模糊强度 */
   .glass {
-    @apply bg-white/80 backdrop-blur-xl border border-white/60 shadow-sm;
+    @apply bg-white/85 backdrop-blur-md border border-white/60 shadow-sm;
   }
   
-  /* 卡片玻璃态 - 交互 */
+  /* 卡片玻璃态 - 交互：降低模糊强度优化滚动性能 */
   .glass-card {
-    @apply bg-white/70 backdrop-blur-lg border border-white/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] transition-all duration-300;
+    @apply bg-white/80 backdrop-blur-sm border border-white/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] transition-all duration-300;
   }
   
   .glass-card:hover {
-    @apply bg-white/90 shadow-[0_20px_40px_rgb(0,0,0,0.08)] -translate-y-1 border-white;
+    @apply bg-white/95 shadow-[0_20px_40px_rgb(0,0,0,0.08)] -translate-y-1 border-white;
   }
 
   /* 强强调色渐变 - 更饱和 */
