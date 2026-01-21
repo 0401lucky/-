@@ -118,14 +118,24 @@ export async function addCodesToTier(tierId: string, codes: string[]): Promise<n
 
 // 获取档位可用兑换码数量（总数 - 已使用）
 export async function getTierAvailableCodesCount(tierId: string): Promise<number> {
-  const total = await kv.scard(`${LOTTERY_CODES_PREFIX}${tierId}`);
-  const used = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${tierId}`);
-  return total - used;
+  try {
+    const total = await kv.scard(`${LOTTERY_CODES_PREFIX}${tierId}`) || 0;
+    const used = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${tierId}`) || 0;
+    return total - used;
+  } catch (error) {
+    console.error("Error getting tier available count:", error);
+    return 0;
+  }
 }
 
 // 获取档位已使用数量
 export async function getTierUsedCodesCount(tierId: string): Promise<number> {
-  return await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${tierId}`);
+  try {
+    return await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${tierId}`) || 0;
+  } catch (error) {
+    console.error("Error getting tier used count:", error);
+    return 0;
+  }
 }
 
 // 清空档位库存（清空所有码和已使用标记）
