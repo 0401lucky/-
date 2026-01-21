@@ -46,8 +46,8 @@ const DEFAULT_CONFIG: LotteryConfig = {
 
 // KV Keys
 const LOTTERY_CONFIG_KEY = "lottery:config";
-const LOTTERY_CODES_PREFIX = "lottery:codes:";
-// const LOTTERY_DAILY_PREFIX = "lottery:daily:"; // Moved to kv.ts
+const LOTTERY_CODES_PREFIX = "lottery:codes:";        // 所有码（Set）
+const LOTTERY_USED_CODES_PREFIX = "lottery:used:";    // 已使用的码（Set）
 const LOTTERY_RECORDS_KEY = "lottery:records";
 const LOTTERY_USER_RECORDS_PREFIX = "lottery:user:records:";
 
@@ -82,17 +82,21 @@ export async function updateTiersProbability(
   await updateLotteryConfig({ tiers: updatedTiers });
 }
 
-// 添加兑换码到档位
+// 添加兑换码到档位（使用 Set 存储）
 export async function addCodesToTier(tierId: string, codes: string[]): Promise<number> {
   if (codes.length === 0) return 0;
 
-  const added = await kv.lpush(`${LOTTERY_CODES_PREFIX}${tierId}`, ...codes);
+  // 使用 sadd 添加到 Set（自动去重）
+  const added = await kv.sadd(`${LOTTERY_CODES_PREFIX}${tierId}`, codes);
 
   // 更新档位库存计数
   const config = await getLotteryConfig();
+  const totalInSet = await kv.scard(`${LOTTERY_CODES_PREFIX}${tierId}`);
+  const usedCount = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${tierId}`);
+  
   const updatedTiers = config.tiers.map((tier) => {
     if (tier.id === tierId) {
-      return { ...tier, codesCount: tier.codesCount + codes.length };
+      return { ...tier, codesCount: totalInSet, usedCount };
     }
     return tier;
   });
@@ -101,29 +105,134 @@ export async function addCodesToTier(tierId: string, codes: string[]): Promise<n
   return added;
 }
 
-// 获取档位可用兑换码数量
+// 获取档位可用兑换码数量（总数 - 已使用）
 export async function getTierAvailableCodesCount(tierId: string): Promise<number> {
-  return await kv.llen(`${LOTTERY_CODES_PREFIX}${tierId}`);
+  const total = await kv.scard(`${LOTTERY_CODES_PREFIX}${tierId}`);
+  const used = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${tierId}`);
+  return total - used;
 }
 
-// 清空档位库存
+// 获取档位已使用数量
+export async function getTierUsedCodesCount(tierId: string): Promise<number> {
+  return await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${tierId}`);
+}
+
+// 清空档位库存（清空所有码和已使用标记）
 export async function clearTierCodes(tierId: string): Promise<{ cleared: number }> {
-  const count = await getTierAvailableCodesCount(tierId);
+  const count = await kv.scard(`${LOTTERY_CODES_PREFIX}${tierId}`);
   if (count > 0) {
     await kv.del(`${LOTTERY_CODES_PREFIX}${tierId}`);
   }
+  await kv.del(`${LOTTERY_USED_CODES_PREFIX}${tierId}`);
   
   // 更新档位库存计数
   const config = await getLotteryConfig();
   const updatedTiers = config.tiers.map((tier) => {
     if (tier.id === tierId) {
-      return { ...tier, codesCount: tier.usedCount }; // 保留已使用的计数，清除可用库存
+      return { ...tier, codesCount: 0, usedCount: 0 };
     }
     return tier;
   });
   await updateLotteryConfig({ tiers: updatedTiers });
   
   return { cleared: count };
+}
+
+// 重置整个抽奖系统
+export async function resetLotterySystem(clearRecords: boolean = false): Promise<{ 
+  clearedCodes: number; 
+  clearedRecords: number;
+}> {
+  let totalCleared = 0;
+  
+  // 1. 清空所有档位的兑换码和已使用标记
+  for (const tier of DEFAULT_TIERS) {
+    const count = await kv.scard(`${LOTTERY_CODES_PREFIX}${tier.id}`);
+    if (count > 0) {
+      await kv.del(`${LOTTERY_CODES_PREFIX}${tier.id}`);
+      totalCleared += count;
+    }
+    await kv.del(`${LOTTERY_USED_CODES_PREFIX}${tier.id}`);
+  }
+  
+  // 2. 重置配置到默认状态（计数归零）
+  await kv.set(LOTTERY_CONFIG_KEY, DEFAULT_CONFIG);
+  
+  // 3. 可选：清空抽奖记录
+  let clearedRecords = 0;
+  if (clearRecords) {
+    const recordsCount = await kv.llen(LOTTERY_RECORDS_KEY);
+    await kv.del(LOTTERY_RECORDS_KEY);
+    clearedRecords = recordsCount;
+  }
+  
+  return { clearedCodes: totalCleared, clearedRecords };
+}
+
+// 根据兑换码查找所属档位
+export async function findCodeTier(code: string): Promise<{ tierId: string; tierName: string; tierValue: number } | null> {
+  for (const tier of DEFAULT_TIERS) {
+    const exists = await kv.sismember(`${LOTTERY_CODES_PREFIX}${tier.id}`, code);
+    if (exists) {
+      return { tierId: tier.id, tierName: tier.name, tierValue: tier.value };
+    }
+  }
+  return null;
+}
+
+// 检查码是否已使用
+export async function isCodeUsed(tierId: string, code: string): Promise<boolean> {
+  const result = await kv.sismember(`${LOTTERY_USED_CODES_PREFIX}${tierId}`, code);
+  return result === 1;
+}
+
+// 重新统计：扫描已发放记录，检索每个码的真实档位，更新统计
+export async function recalculateStats(): Promise<{
+  processed: number;
+  corrected: number;
+  details: { code: string; recorded: string; actual: string }[];
+}> {
+  const records = await getLotteryRecords(1000);
+  let processed = 0;
+  let corrected = 0;
+  const details: { code: string; recorded: string; actual: string }[] = [];
+  
+  // 清空所有档位的已使用标记
+  for (const tier of DEFAULT_TIERS) {
+    await kv.del(`${LOTTERY_USED_CODES_PREFIX}${tier.id}`);
+  }
+  
+  // 遍历每条记录，根据兑换码找到真实档位
+  for (const record of records) {
+    processed++;
+    const actualTier = await findCodeTier(record.code);
+    
+    if (actualTier) {
+      // 标记为已使用
+      await kv.sadd(`${LOTTERY_USED_CODES_PREFIX}${actualTier.tierId}`, record.code);
+      
+      // 检查是否与记录的档位一致
+      if (actualTier.tierName !== record.tierName) {
+        corrected++;
+        details.push({
+          code: record.code,
+          recorded: record.tierName,
+          actual: actualTier.tierName,
+        });
+      }
+    }
+  }
+  
+  // 更新配置中的统计数据
+  const config = await getLotteryConfig();
+  const updatedTiers = await Promise.all(config.tiers.map(async (tier) => {
+    const total = await kv.scard(`${LOTTERY_CODES_PREFIX}${tier.id}`);
+    const used = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${tier.id}`);
+    return { ...tier, codesCount: total, usedCount: used };
+  }));
+  await updateLotteryConfig({ tiers: updatedTiers });
+  
+  return { processed, corrected, details };
 }
 
 // 检查是否所有档位都有库存
@@ -201,11 +310,65 @@ export async function spinLottery(
   // 加权随机选择档位
   const selectedTier = weightedRandomSelect(config.tiers);
 
-  // 从档位获取兑换码
-  const code = await kv.rpop<string>(`${LOTTERY_CODES_PREFIX}${selectedTier.id}`);
+  // 从档位获取一个未使用的兑换码
+  const code = await kv.srandmember<string>(`${LOTTERY_CODES_PREFIX}${selectedTier.id}`);
   if (!code) {
     return { success: false, message: "兑换码已用尽，请联系管理员" };
   }
+  
+  // 检查是否已使用（防止并发问题）
+  const isUsed = await kv.sismember(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`, code);
+  if (isUsed) {
+    // 重试：获取所有未使用的码
+    const allCodes = await kv.smembers(`${LOTTERY_CODES_PREFIX}${selectedTier.id}`) as string[];
+    const usedCodes = await kv.smembers(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`) as string[];
+    const usedSet = new Set(usedCodes);
+    const availableCodes = allCodes.filter((c: string) => !usedSet.has(c));
+    if (availableCodes.length === 0) {
+      return { success: false, message: "兑换码已用尽，请联系管理员" };
+    }
+    const randomCode = availableCodes[Math.floor(Math.random() * availableCodes.length)];
+    // 标记为已使用
+    await kv.sadd(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`, randomCode);
+    
+    // 创建抽奖记录
+    const record: LotteryRecord = {
+      id: `lottery_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+      oderId: String(userId),
+      username,
+      tierName: selectedTier.name,
+      tierValue: selectedTier.value,
+      code: randomCode,
+      createdAt: Date.now(),
+    };
+
+    // 保存记录
+    await kv.lpush(LOTTERY_RECORDS_KEY, record);
+    await kv.lpush(`${LOTTERY_USER_RECORDS_PREFIX}${userId}`, record);
+
+    // 更新档位已使用计数
+    const usedCount = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`);
+    const updatedTiers = config.tiers.map((tier) => {
+      if (tier.id === selectedTier.id) {
+        return { ...tier, usedCount };
+      }
+      return tier;
+    });
+    await updateLotteryConfig({ tiers: updatedTiers });
+
+    if (!usedExtraSpin) {
+      await setDailyLimit(userId);
+    }
+
+    return {
+      success: true,
+      record,
+      message: `恭喜获得 ${selectedTier.name}！`,
+    };
+  }
+  
+  // 标记为已使用
+  await kv.sadd(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`, code);
 
   // 创建抽奖记录
   const record: LotteryRecord = {
@@ -223,9 +386,10 @@ export async function spinLottery(
   await kv.lpush(`${LOTTERY_USER_RECORDS_PREFIX}${userId}`, record);
 
   // 更新档位已使用计数
+  const usedCountNew = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`);
   const updatedTiers = config.tiers.map((tier) => {
     if (tier.id === selectedTier.id) {
-      return { ...tier, usedCount: tier.usedCount + 1 };
+      return { ...tier, usedCount: usedCountNew };
     }
     return tier;
   });

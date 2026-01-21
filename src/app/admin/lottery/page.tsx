@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, Upload, Loader2, Save, AlertCircle, 
   Users, Package, Clock, User as UserIcon, Check, X, 
-  Percent, LayoutDashboard, Gift, Trash2
+  Percent, LayoutDashboard, Gift, Trash2, RefreshCw
 } from 'lucide-react';
 
 // 档位定义
@@ -65,6 +65,7 @@ export default function AdminLotteryPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [clearing, setClearing] = useState<string | null>(null);
+  const [recalculating, setRecalculating] = useState(false);
   
   // 消息提示
   const [error, setError] = useState<string | null>(null);
@@ -218,6 +219,38 @@ export default function AdminLotteryPage() {
     }
   };
 
+  const handleRecalculate = async () => {
+    if (!confirm('确定要重新统计吗？\n\n此操作会：\n1. 扫描所有已发放记录\n2. 根据兑换码检索真实所属档位\n3. 更新各档位的已使用计数\n\n可能需要一些时间，请耐心等待。')) {
+      return;
+    }
+
+    setRecalculating(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const res = await fetch('/api/admin/lottery/recalculate', {
+        method: 'POST'
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setSuccess(`重新统计完成！处理 ${data.processed} 条记录，发现 ${data.corrected} 条档位不匹配`);
+        if (data.details && data.details.length > 0) {
+          console.log('档位不匹配详情:', data.details);
+          alert(`发现 ${data.corrected} 条档位不匹配的记录，详情已打印到控制台。\n\n示例：\n${data.details.slice(0, 3).map((d: {code: string; recorded: string; actual: string}) => `码 ${d.code.substring(0, 8)}... 记录为 ${d.recorded}，实际为 ${d.actual}`).join('\n')}`);
+        }
+        fetchData();
+      } else {
+        setError(data.message || '重新统计失败');
+      }
+    } catch (err) {
+      setError('请求失败');
+    } finally {
+      setRecalculating(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#fafaf9]">
@@ -277,10 +310,24 @@ export default function AdminLotteryPage() {
 
         {/* 库存概览 */}
         <section>
-          <h2 className="text-lg font-bold text-stone-800 mb-4 flex items-center gap-2">
-            <Package className="w-5 h-5 text-orange-500" />
-            库存概览
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-bold text-stone-800 flex items-center gap-2">
+              <Package className="w-5 h-5 text-orange-500" />
+              库存概览
+            </h2>
+            <button
+              onClick={handleRecalculate}
+              disabled={recalculating}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              {recalculating ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              重新统计
+            </button>
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             {stats.map((stat) => {
               const tierConfig = TIERS.find(t => t.id === stat.id) || TIERS[0];
