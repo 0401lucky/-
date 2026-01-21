@@ -5,19 +5,32 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, Gift, Loader2, Sparkles, History, 
-  User as UserIcon, LogOut, Trophy, AlertCircle, Copy, Check 
+  User as UserIcon, LogOut, Trophy, AlertCircle, Copy, Check, Crown, Medal
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
-// 奖品配置 - id 需与后端 tier id 一致
+// 奖品配置 - 视觉角度更均匀，实际概率由后端控制
 const PRIZES = [
-  { id: 'tier_1', name: '1刀福利', value: 1, color: '#fbbf24', startAngle: 0, endAngle: 144 },
-  { id: 'tier_3', name: '3刀福利', value: 3, color: '#fb923c', startAngle: 144, endAngle: 252 },
-  { id: 'tier_5', name: '5刀福利', value: 5, color: '#f97316', startAngle: 252, endAngle: 316.8 },
-  { id: 'tier_10', name: '10刀福利', value: 10, color: '#ea580c', startAngle: 316.8, endAngle: 345.6 },
-  { id: 'tier_15', name: '15刀福利', value: 15, color: '#dc2626', startAngle: 345.6, endAngle: 356.4 },
-  { id: 'tier_20', name: '20刀福利', value: 20, color: '#b91c1c', startAngle: 356.4, endAngle: 360 },
+  { id: 'tier_1', name: '1刀福利', value: 1, color: '#22c55e', visualAngle: 90 },   // 绿色
+  { id: 'tier_3', name: '3刀福利', value: 3, color: '#3b82f6', visualAngle: 75 },   // 蓝色
+  { id: 'tier_5', name: '5刀福利', value: 5, color: '#f59e0b', visualAngle: 70 },   // 橙色
+  { id: 'tier_10', name: '10刀福利', value: 10, color: '#ec4899', visualAngle: 55 }, // 粉色
+  { id: 'tier_15', name: '15刀福利', value: 15, color: '#8b5cf6', visualAngle: 40 }, // 紫色
+  { id: 'tier_20', name: '20刀福利', value: 20, color: '#ef4444', visualAngle: 30 }, // 红色
 ];
+
+// 计算每个奖品的实际角度范围
+const calculateAngles = () => {
+  let currentAngle = 0;
+  return PRIZES.map(prize => {
+    const startAngle = currentAngle;
+    const endAngle = currentAngle + prize.visualAngle;
+    currentAngle = endAngle;
+    return { ...prize, startAngle, endAngle };
+  });
+};
+
+const PRIZES_WITH_ANGLES = calculateAngles();
 
 interface UserData {
   id: number;
@@ -31,6 +44,15 @@ interface LotteryRecord {
   tierValue: number;
   code: string;
   createdAt: number;
+}
+
+interface RankingUser {
+  rank: number;
+  userId: string;
+  username: string;
+  totalValue: number;
+  bestPrize: string;
+  count: number;
 }
 
 export default function LotteryPage() {
@@ -47,10 +69,15 @@ export default function LotteryPage() {
   const [showResultModal, setShowResultModal] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // 排行榜
+  const [ranking, setRanking] = useState<RankingUser[]>([]);
+  const [rankingLoading, setRankingLoading] = useState(true);
 
   // 初始化数据
   useEffect(() => {
     fetchData();
+    fetchRanking();
   }, []);
 
   const fetchData = async () => {
@@ -93,6 +120,22 @@ export default function LotteryPage() {
     }
   };
 
+  const fetchRanking = async () => {
+    try {
+      const res = await fetch('/api/lottery/ranking?limit=10');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setRanking(data.ranking || []);
+        }
+      }
+    } catch (err) {
+      console.error('获取排行榜失败', err);
+    } finally {
+      setRankingLoading(false);
+    }
+  };
+
   const handleSpin = async () => {
     if (!canSpin || spinning) return;
 
@@ -105,7 +148,7 @@ export default function LotteryPage() {
 
       if (data.success) {
         // 根据后端返回的 tierValue 找到对应的奖品（用于转盘动画定位）
-        const prize = PRIZES.find(p => p.value === Number(data.record.tierValue));
+        const prize = PRIZES_WITH_ANGLES.find(p => p.value === Number(data.record.tierValue));
         
         if (prize) {
           // 计算这个奖品区域的中心角度
@@ -183,8 +226,8 @@ export default function LotteryPage() {
   // 生成圆锥渐变样式
   const getConicGradient = () => {
     let stops = '';
-    PRIZES.forEach((prize, index) => {
-      stops += `${prize.color} ${prize.startAngle}deg ${prize.endAngle}deg${index < PRIZES.length - 1 ? ', ' : ''}`;
+    PRIZES_WITH_ANGLES.forEach((prize, index) => {
+      stops += `${prize.color} ${prize.startAngle}deg ${prize.endAngle}deg${index < PRIZES_WITH_ANGLES.length - 1 ? ', ' : ''}`;
     });
     return `conic-gradient(${stops})`;
   };
@@ -241,9 +284,61 @@ export default function LotteryPage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-8 lg:gap-12 items-start">
-          {/* 左侧：转盘区域 */}
-          <div className="flex flex-col items-center">
+        <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr_300px] gap-6 lg:gap-8 items-start">
+          {/* 左侧：今日运气最佳排行榜 */}
+          <div className="glass-card rounded-3xl p-5 w-full order-2 lg:order-1">
+            <div className="flex items-center gap-2 mb-4">
+              <Crown className="w-5 h-5 text-yellow-500" />
+              <h2 className="text-lg font-bold text-stone-800">今日运气最佳</h2>
+            </div>
+            
+            {rankingLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-orange-500" />
+              </div>
+            ) : ranking.length === 0 ? (
+              <div className="text-center py-8 text-stone-400">
+                <Trophy className="w-10 h-10 mx-auto mb-2 opacity-20" />
+                <p className="text-sm">暂无数据</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {ranking.map((user, index) => (
+                  <div 
+                    key={user.userId}
+                    className={`flex items-center gap-3 p-2.5 rounded-xl transition-colors ${
+                      index === 0 ? 'bg-yellow-50 border border-yellow-200' :
+                      index === 1 ? 'bg-stone-50 border border-stone-200' :
+                      index === 2 ? 'bg-orange-50 border border-orange-200' :
+                      'bg-white/50'
+                    }`}
+                  >
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                      index === 0 ? 'bg-yellow-400 text-white' :
+                      index === 1 ? 'bg-stone-400 text-white' :
+                      index === 2 ? 'bg-orange-400 text-white' :
+                      'bg-stone-200 text-stone-500'
+                    }`}>
+                      {user.rank}
+                    </div>
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-orange-100 to-stone-100 flex items-center justify-center border border-white">
+                      <UserIcon className="w-4 h-4 text-stone-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-stone-700 text-sm truncate">{user.username}</div>
+                      <div className="text-xs text-stone-400">{user.count}次抽奖</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-bold text-orange-600 text-sm">{user.totalValue}刀</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 中间：转盘区域 */}
+          <div className="flex flex-col items-center order-1 lg:order-2">
             <div className="relative w-[320px] h-[320px] sm:w-[380px] sm:h-[380px] md:w-[420px] md:h-[420px]">
               {/* 外圈装饰 */}
               <div className="absolute inset-0 rounded-full border-8 border-white shadow-[0_20px_50px_rgba(249,115,22,0.15)] bg-white"></div>
@@ -259,7 +354,7 @@ export default function LotteryPage() {
                 }}
               >
                 {/* 分割线和文字（可选，这里简化为纯色块） */}
-                {PRIZES.map((prize) => (
+                {PRIZES_WITH_ANGLES.map((prize) => (
                   <div 
                     key={prize.id}
                     className="absolute w-full h-full top-0 left-0"
@@ -339,7 +434,7 @@ export default function LotteryPage() {
           </div>
 
           {/* 右侧：中奖记录 */}
-          <div className="glass-card rounded-3xl p-6 sm:p-8 w-full">
+          <div className="glass-card rounded-3xl p-5 w-full order-3">
             <div className="flex items-center gap-3 mb-6">
               <div className="p-2 bg-orange-100 rounded-xl text-orange-600">
                 <History className="w-5 h-5" />
