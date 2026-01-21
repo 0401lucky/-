@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser, isAdmin } from "@/lib/auth";
-import { addCodesToTier, getLotteryConfig, getTierAvailableCodesCount } from "@/lib/lottery";
+import { addCodesToTier, getLotteryConfig, getTierAvailableCodesCount, clearTierCodes } from "@/lib/lottery";
 
 export const dynamic = "force-dynamic";
 
@@ -110,6 +110,49 @@ export async function GET(
     console.error("Get tier codes info error:", error);
     return NextResponse.json(
       { success: false, message: "获取档位信息失败" },
+      { status: 500 }
+    );
+  }
+}
+
+// DELETE - 清空档位库存
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ tier: string }> }
+) {
+  try {
+    const user = await getAuthUser();
+
+    if (!isAdmin(user)) {
+      return NextResponse.json(
+        { success: false, message: "无权限操作" },
+        { status: 403 }
+      );
+    }
+
+    const { tier: tierId } = await params;
+
+    // 验证档位是否存在
+    const config = await getLotteryConfig();
+    const tierExists = config.tiers.some((t) => t.id === tierId);
+    if (!tierExists) {
+      return NextResponse.json(
+        { success: false, message: "档位不存在" },
+        { status: 404 }
+      );
+    }
+
+    const result = await clearTierCodes(tierId);
+
+    return NextResponse.json({
+      success: true,
+      message: `已清空 ${result.cleared} 个兑换码`,
+      cleared: result.cleared,
+    });
+  } catch (error) {
+    console.error("Clear tier codes error:", error);
+    return NextResponse.json(
+      { success: false, message: "清空库存失败" },
       { status: 500 }
     );
   }

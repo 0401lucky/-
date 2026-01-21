@@ -106,6 +106,26 @@ export async function getTierAvailableCodesCount(tierId: string): Promise<number
   return await kv.llen(`${LOTTERY_CODES_PREFIX}${tierId}`);
 }
 
+// 清空档位库存
+export async function clearTierCodes(tierId: string): Promise<{ cleared: number }> {
+  const count = await getTierAvailableCodesCount(tierId);
+  if (count > 0) {
+    await kv.del(`${LOTTERY_CODES_PREFIX}${tierId}`);
+  }
+  
+  // 更新档位库存计数
+  const config = await getLotteryConfig();
+  const updatedTiers = config.tiers.map((tier) => {
+    if (tier.id === tierId) {
+      return { ...tier, codesCount: tier.usedCount }; // 保留已使用的计数，清除可用库存
+    }
+    return tier;
+  });
+  await updateLotteryConfig({ tiers: updatedTiers });
+  
+  return { cleared: count };
+}
+
 // 检查是否所有档位都有库存
 export async function checkAllTiersHaveCodes(): Promise<boolean> {
   const config = await getLotteryConfig();

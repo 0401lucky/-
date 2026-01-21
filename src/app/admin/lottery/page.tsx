@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, Upload, Loader2, Save, AlertCircle, 
   Users, Package, Clock, User as UserIcon, Check, X, 
-  Percent, LayoutDashboard, Gift
+  Percent, LayoutDashboard, Gift, Trash2
 } from 'lucide-react';
 
 // 档位定义
@@ -64,6 +64,7 @@ export default function AdminLotteryPage() {
   const [selectedTier, setSelectedTier] = useState(TIERS[0].id);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [clearing, setClearing] = useState<string | null>(null);
   
   // 消息提示
   const [error, setError] = useState<string | null>(null);
@@ -187,6 +188,36 @@ export default function AdminLotteryPage() {
     }
   };
 
+  const handleClearTier = async (tierId: string) => {
+    const tierName = TIERS.find(t => t.id === tierId)?.name || tierId;
+    if (!confirm(`确定要清空【${tierName}】的所有库存吗？此操作不可恢复！`)) {
+      return;
+    }
+
+    setClearing(tierId);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const res = await fetch(`/api/admin/lottery/tiers/${tierId}/codes`, {
+        method: 'DELETE'
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setSuccess(`已清空【${tierName}】的 ${data.cleared} 个兑换码`);
+        fetchData();
+        setTimeout(() => setSuccess(null), 3000);
+      } else {
+        setError(data.message || '清空失败');
+      }
+    } catch (err) {
+      setError('请求失败');
+    } finally {
+      setClearing(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#fafaf9]">
@@ -258,7 +289,23 @@ export default function AdminLotteryPage() {
 
               return (
                 <div key={stat.id} className={`glass-card p-4 rounded-2xl border ${isLowStock ? 'border-red-200 bg-red-50/30' : 'border-white/60'}`}>
-                  <div className={`text-xs font-bold uppercase mb-2 ${tierConfig.color}`}>{tierConfig.name}</div>
+                  <div className="flex justify-between items-start mb-2">
+                    <div className={`text-xs font-bold uppercase ${tierConfig.color}`}>{tierConfig.name}</div>
+                    {stat.available > 0 && (
+                      <button
+                        onClick={() => handleClearTier(stat.id)}
+                        disabled={clearing === stat.id}
+                        className="p-1 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                        title="清空库存"
+                      >
+                        {clearing === stat.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    )}
+                  </div>
                   <div className="text-2xl font-bold text-stone-800 mb-1">{stat.available}</div>
                   <div className="text-xs text-stone-400 mb-3">可用 / 总量 {stat.codesCount}</div>
                   <div className="h-1.5 bg-stone-100 rounded-full overflow-hidden">
