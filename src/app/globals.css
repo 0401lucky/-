@@ -43,13 +43,13 @@ body {
   background: #fdfcf8; /* 更加温暖的米白底色 */
   font-family: var(--font-family-sans);
   overflow-x: hidden;
-  /* 更加细腻的高级背景 - 移除 fixed attachment 优化滚动性能 */
+  /* [Perf-3] 纯 CSS 渐变背景，替代 fixed + blur DOM 元素 */
   background-image: 
-    radial-gradient(at 0% 0%, rgba(255, 237, 213, 0.4) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, rgba(254, 215, 170, 0.4) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(255, 247, 237, 0.4) 0px, transparent 50%),
-    radial-gradient(at 0% 100%, rgba(255, 237, 213, 0.4) 0px, transparent 50%);
-  /* background-attachment: fixed; 移除此属性，这是滚动卡顿的主要原因 */
+    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(255, 237, 213, 0.5) 0%, transparent 50%),
+    radial-gradient(circle at 0% 0%, rgba(255, 237, 213, 0.4) 0px, transparent 40%),
+    radial-gradient(circle at 100% 0%, rgba(254, 215, 170, 0.4) 0px, transparent 40%),
+    radial-gradient(circle at 100% 100%, rgba(255, 247, 237, 0.3) 0px, transparent 40%),
+    radial-gradient(circle at 0% 100%, rgba(255, 237, 213, 0.3) 0px, transparent 40%);
 }
 
 /* 自定义工具类 */
@@ -112,8 +112,10 @@ body {
     animation: float 3s ease-in-out infinite;
   }
   
+  /* [Perf-2] 改用 opacity 动画替代 box-shadow（GPU 友好） */
   .animate-pulse-glow {
     animation: pulseGlow 2s ease-in-out infinite;
+    will-change: opacity;
   }
   
   .animate-fade-in {
@@ -134,7 +136,7 @@ body {
     display: none;
   }
   
-  /* 闪光效果 */
+  /* [Perf-4] 闪光效果 - 用 transform 替代 left（避免触发 layout） */
   .shine-effect {
     position: relative;
     overflow: hidden;
@@ -144,11 +146,12 @@ body {
     content: '';
     position: absolute;
     top: 0;
-    left: -100%;
+    left: 0;
     width: 50%;
     height: 100%;
     background: linear-gradient(to right, transparent, rgba(255,255,255,0.4), transparent);
-    transform: skewX(-25deg);
+    transform: translateX(-150%) skewX(-25deg);
+    will-change: transform;
     animation: shine 3s infinite;
   }
   
@@ -182,13 +185,42 @@ body {
   50% { transform: translateY(-10px); }
 }
 
+/* [Perf-2] 只动画 opacity，不动画 box-shadow */
 @keyframes pulseGlow {
-  0%, 100% { box-shadow: 0 0 10px rgba(249, 115, 22, 0.2); }
-  50% { box-shadow: 0 0 25px rgba(249, 115, 22, 0.5); }
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
 }
 
+/* [Perf-4] shine 用 transform 位移 */
 @keyframes shine {
-  0% { left: -100%; }
-  20% { left: 200%; }
-  100% { left: 200%; }
+  0% { transform: translateX(-150%) skewX(-25deg); }
+  20% { transform: translateX(250%) skewX(-25deg); }
+  100% { transform: translateX(250%) skewX(-25deg); }
+}
+
+/* ============================================
+   [Perf-1] 移动端禁用 backdrop-filter（滚动性能优化）
+   ============================================ */
+@media (max-width: 768px) {
+  .glass,
+  .glass-card {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    /* 关闭 blur 后，提高不透明度补偿视觉 */
+    background-color: rgba(255, 255, 255, 0.95) !important;
+  }
+}
+
+/* ============================================
+   [Perf-5] 尊重用户减少动画偏好
+   ============================================ */
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin,
+  .animate-spin-slow,
+  .animate-float,
+  .animate-pulse,
+  .animate-pulse-glow,
+  .shine-effect::after {
+    animation: none !important;
+  }
 }

@@ -298,11 +298,8 @@ export default function LotteryPage() {
 
   return (
     <div className="min-h-screen bg-[#fdfcf8] overflow-x-hidden pb-20">
-      {/* 顶部背景装饰 */}
-      <div className="fixed top-0 left-0 w-full h-[600px] bg-gradient-to-b from-orange-100/40 to-transparent -z-10 pointer-events-none" />
-      <div className="fixed top-[-200px] left-[-200px] w-[600px] h-[600px] bg-orange-200/20 rounded-full blur-[100px] -z-10" />
-      <div className="fixed top-[-100px] right-[-100px] w-[500px] h-[500px] bg-yellow-200/20 rounded-full blur-[80px] -z-10" />
-
+      {/* [Perf-3] 移除 fixed + blur 背景层，改用纯 CSS 渐变（在 globals.css body 中定义） */}
+      
       {/* 导航栏 */}
       <nav className="sticky top-0 z-40 glass border-b border-white/40 shadow-sm">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
