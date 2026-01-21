@@ -235,15 +235,27 @@ function getSecondsUntilMidnight(): number {
   return Math.ceil((tomorrowUTC.getTime() - now.getTime()) / 1000);
 }
 
-// 设置今日已抽
-export async function setDailyLimit(userId: number): Promise<void> {
+// [C3修复] 原子性占用每日免费次数 - 使用 SET NX 防止并发
+// 返回 true 表示成功占用（之前没用过），false 表示已被占用
+export async function tryClaimDailyFree(userId: number): Promise<boolean> {
   const today = getTodayDateString();
   const key = `${LOTTERY_DAILY_PREFIX}${userId}:${today}`;
   const ttl = getSecondsUntilMidnight();
-  await kv.set(key, true, { ex: ttl });
+  
+  // SET key value NX EX ttl - 仅当key不存在时设置
+  // Vercel KV 返回 "OK" 表示成功设置，null 表示 key 已存在
+  const result = await kv.set(key, "1", { nx: true, ex: ttl });
+  return result === "OK";
 }
 
-// 检查今日是否已抽
+// [C3修复] 释放每日免费次数（失败补偿用）
+export async function releaseDailyFree(userId: number): Promise<void> {
+  const today = getTodayDateString();
+  const key = `${LOTTERY_DAILY_PREFIX}${userId}:${today}`;
+  await kv.del(key);
+}
+
+// 检查今日是否已抽（只读检查，不修改）
 export async function checkDailyLimit(userId: number): Promise<boolean> {
   const today = getTodayDateString();
   const key = `${LOTTERY_DAILY_PREFIX}${userId}:${today}`;
@@ -257,18 +269,33 @@ export async function getExtraSpinCount(userId: number): Promise<number> {
   return count || 0;
 }
 
-export async function addExtraSpinCount(userId: number, count: number): Promise<void> {
-  const current = await getExtraSpinCount(userId);
-  await kv.set(`user:extra_spins:${userId}`, current + count);
+// [C3修复] 原子性增加额外次数
+export async function addExtraSpinCount(userId: number, count: number): Promise<number> {
+  // 使用 INCRBY 原子增加
+  const newCount = await kv.incrby(`user:extra_spins:${userId}`, count);
+  return newCount;
 }
 
-export async function useExtraSpinCount(userId: number): Promise<boolean> {
-  const current = await getExtraSpinCount(userId);
-  if (current > 0) {
-    await kv.set(`user:extra_spins:${userId}`, current - 1);
-    return true;
+// [C3修复] 原子性消耗额外次数 - 使用 DECR 并检查结果
+// 返回 { success: boolean, remaining: number }
+export async function tryUseExtraSpin(userId: number): Promise<{ success: boolean; remaining: number }> {
+  const key = `user:extra_spins:${userId}`;
+  
+  // 使用 DECR 原子减1
+  const newValue = await kv.decrby(key, 1);
+  
+  if (newValue < 0) {
+    // 减过头了，需要回滚
+    await kv.incrby(key, 1);
+    return { success: false, remaining: 0 };
   }
-  return false;
+  
+  return { success: true, remaining: newValue };
+}
+
+// [C3修复] 回滚额外次数（失败补偿用）
+export async function rollbackExtraSpin(userId: number): Promise<void> {
+  await kv.incrby(`user:extra_spins:${userId}`, 1);
 }
 
 // 签到状态管理 - 使用中国时区

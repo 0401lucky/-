@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loginToNewApi } from "@/lib/new-api";
+import { createSessionToken } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   try {
@@ -36,8 +37,8 @@ export async function POST(request: NextRequest) {
       exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 天过期
     };
 
-    // 使用 base64 编码存储（简单实现，生产环境建议使用 JWT）
-    const sessionToken = Buffer.from(JSON.stringify(sessionData)).toString("base64");
+    // 使用 HMAC 签名创建安全的 session token
+    const sessionToken = createSessionToken(sessionData);
 
     const response = NextResponse.json({
       success: true,

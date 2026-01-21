@@ -40,38 +40,51 @@
 
 body {
   color: var(--color-foreground);
-  background: var(--color-background);
+  background: #fdfcf8; /* 更加温暖的米白底色 */
   font-family: var(--font-family-sans);
-  /* 添加微弱噪点纹理，增加质感 */
+  overflow-x: hidden;
+  /* 更加细腻的高级背景 */
   background-image: 
-    radial-gradient(at 0% 0%, rgba(249, 115, 22, 0.03) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, rgba(249, 115, 22, 0.02) 0px, transparent 50%);
+    radial-gradient(at 0% 0%, rgba(255, 237, 213, 0.4) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(254, 215, 170, 0.4) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(255, 247, 237, 0.4) 0px, transparent 50%),
+    radial-gradient(at 0% 100%, rgba(255, 237, 213, 0.4) 0px, transparent 50%);
   background-attachment: fixed;
 }
 
 /* 自定义工具类 */
 @layer utilities {
-  /* 基础玻璃态 */
+  /* 基础玻璃态 - 更通透 */
   .glass {
-    @apply bg-white/70 backdrop-blur-xl border border-white/50 shadow-glass;
+    @apply bg-white/80 backdrop-blur-xl border border-white/60 shadow-sm;
   }
   
   /* 卡片玻璃态 - 交互 */
   .glass-card {
-    @apply bg-white/60 backdrop-blur-md border border-white/60 shadow-glass transition-all duration-300;
+    @apply bg-white/70 backdrop-blur-lg border border-white/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] transition-all duration-300;
   }
   
   .glass-card:hover {
-    @apply bg-white/80 shadow-glass-hover -translate-y-1;
+    @apply bg-white/90 shadow-[0_20px_40px_rgb(0,0,0,0.08)] -translate-y-1 border-white;
   }
 
-  /* 强强调色渐变 */
+  /* 强强调色渐变 - 更饱和 */
   .gradient-warm {
-    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+    background: linear-gradient(135deg, #ff8c42 0%, #f97316 50%, #ea580c 100%);
   }
   
-  .gradient-warm-hover:hover {
-    background: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
+  /* 金色渐变 - 用于高光 */
+  .gradient-gold {
+    background: linear-gradient(135deg, #fcd34d 0%, #fbbf24 50%, #d97706 100%);
+  }
+
+  /* 霓虹光效 */
+  .shadow-glow {
+    box-shadow: 0 0 20px rgba(249, 115, 22, 0.3);
+  }
+  
+  .shadow-glow-gold {
+    box-shadow: 0 0 15px rgba(251, 191, 36, 0.4);
   }
 
   /* 文本渐变 */
@@ -80,15 +93,35 @@ body {
   }
 
   .text-gradient-primary {
-    @apply bg-clip-text text-transparent bg-gradient-to-br from-orange-500 to-orange-700;
+    @apply bg-clip-text text-transparent bg-gradient-to-br from-orange-500 via-orange-600 to-red-600;
+  }
+  
+  .text-gradient-gold {
+    @apply bg-clip-text text-transparent bg-gradient-to-br from-amber-400 via-orange-400 to-amber-600;
   }
   
   .animate-spin {
     animation: spin 1s linear infinite;
   }
+
+  .animate-spin-slow {
+    animation: spin 8s linear infinite;
+  }
+  
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+  
+  .animate-pulse-glow {
+    animation: pulseGlow 2s ease-in-out infinite;
+  }
   
   .animate-fade-in {
-    animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation: fadeIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  
+  .animate-scale-in {
+    animation: scaleIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
   }
   
   /* 隐藏滚动条但保持可滚动 */
@@ -100,6 +133,33 @@ body {
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
+  
+  /* 闪光效果 */
+  .shine-effect {
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .shine-effect::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(to right, transparent, rgba(255,255,255,0.4), transparent);
+    transform: skewX(-25deg);
+    animation: shine 3s infinite;
+  }
+  
+  /* 透视和3D效果 */
+  .perspective-1000 {
+    perspective: 1000px;
+  }
+  
+  .clip-path-pointer {
+    clip-path: polygon(20% 0%, 80% 0%, 100% 20%, 50% 100%, 0% 20%);
+  }
 }
 
 @keyframes spin {
@@ -108,6 +168,27 @@ body {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 10px rgba(249, 115, 22, 0.2); }
+  50% { box-shadow: 0 0 25px rgba(249, 115, 22, 0.5); }
+}
+
+@keyframes shine {
+  0% { left: -100%; }
+  20% { left: 200%; }
+  100% { left: 200%; }
 }

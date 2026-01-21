@@ -24,15 +24,30 @@ export async function PATCH(request: NextRequest) {
 
     // 更新概率配置
     if (Array.isArray(body.tiers)) {
+      // [M4修复] 获取当前配置，确保提交了所有档位
+      const currentConfig = await getLotteryConfig();
+      const requiredTierIds = new Set(currentConfig.tiers.map(t => t.id));
+      const submittedTierIds = new Set(body.tiers.map((t: { id: string }) => t.id));
+      
+      // 检查是否提交了所有必需的档位
+      const missingTiers = [...requiredTierIds].filter(id => !submittedTierIds.has(id));
+      if (missingTiers.length > 0) {
+        return NextResponse.json(
+          { success: false, message: `缺少档位配置: ${missingTiers.join(', ')}` },
+          { status: 400 }
+        );
+      }
+      
       // 验证概率总和
       const totalProbability = body.tiers.reduce(
         (sum: number, t: { probability: number }) => sum + (t.probability || 0),
         0
       );
 
-      if (totalProbability !== 100) {
+      // [M4修复] 使用浮点数容差比较
+      if (Math.abs(totalProbability - 100) > 0.01) {
         return NextResponse.json(
-          { success: false, message: `概率总和必须为100%，当前为${totalProbability}%` },
+          { success: false, message: `概率总和必须为100%，当前为${totalProbability.toFixed(2)}%` },
           { status: 400 }
         );
       }

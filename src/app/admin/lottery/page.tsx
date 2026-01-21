@@ -146,10 +146,16 @@ export default function AdminLotteryPage() {
     setSuccess(null);
 
     try {
+      // [M3修复] 将 probabilities 对象转换为后端期望的 tiers 数组格式
+      const tiersArray = Object.entries(probabilities).map(([id, probability]) => ({
+        id,
+        probability
+      }));
+      
       const res = await fetch('/api/admin/lottery/config', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ probabilities, enabled: config.enabled })
+        body: JSON.stringify({ tiers: tiersArray, enabled: config.enabled })
       });
 
       const data = await res.json();
