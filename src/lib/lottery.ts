@@ -207,16 +207,19 @@ export async function isCodeUsed(tierId: string, code: string): Promise<boolean>
   return result === 1;
 }
 
-// 重新统计：扫描已发放记录，检索每个码的真实档位，更新统计
+// 重新统计：扫描已发放记录，检索每个码的真实档位，更新统计并修正记录
 export async function recalculateStats(): Promise<{
   processed: number;
   corrected: number;
-  details: { code: string; recorded: string; actual: string }[];
+  notFound: number;
+  details: { code: string; recorded: string; actual: string; recordId: string }[];
 }> {
   const records = await getLotteryRecords(1000);
   let processed = 0;
   let corrected = 0;
-  const details: { code: string; recorded: string; actual: string }[] = [];
+  let notFound = 0;
+  const details: { code: string; recorded: string; actual: string; recordId: string }[] = [];
+  const correctedRecords: LotteryRecord[] = [];
   
   // 清空所有档位的已使用标记
   for (const tier of DEFAULT_TIERS) {
@@ -229,7 +232,7 @@ export async function recalculateStats(): Promise<{
     const actualTier = await findCodeTier(record.code);
     
     if (actualTier) {
-      // 标记为已使用
+      // 标记为已使用（在真实档位中）
       await kv.sadd(`${LOTTERY_USED_CODES_PREFIX}${actualTier.tierId}`, record.code);
       
       // 检查是否与记录的档位一致
@@ -239,21 +242,43 @@ export async function recalculateStats(): Promise<{
           code: record.code,
           recorded: record.tierName,
           actual: actualTier.tierName,
+          recordId: record.id,
         });
+        // 修正记录
+        correctedRecords.push({
+          ...record,
+          tierName: actualTier.tierName,
+          tierValue: actualTier.tierValue,
+        });
+      } else {
+        correctedRecords.push(record);
       }
+    } else {
+      // 码不在任何档位中（可能是旧数据或被删除）
+      notFound++;
+      correctedRecords.push(record);
+    }
+  }
+  
+  // 用修正后的记录替换原记录
+  if (corrected > 0) {
+    await kv.del(LOTTERY_RECORDS_KEY);
+    // 倒序添加，因为 lpush 是从头部插入
+    for (let i = correctedRecords.length - 1; i >= 0; i--) {
+      await kv.lpush(LOTTERY_RECORDS_KEY, correctedRecords[i]);
     }
   }
   
   // 更新配置中的统计数据
   const config = await getLotteryConfig();
   const updatedTiers = await Promise.all(config.tiers.map(async (tier) => {
-    const total = await kv.scard(`${LOTTERY_CODES_PREFIX}${tier.id}`);
-    const used = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${tier.id}`);
+    const total = await kv.scard(`${LOTTERY_CODES_PREFIX}${tier.id}`) || 0;
+    const used = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${tier.id}`) || 0;
     return { ...tier, codesCount: total, usedCount: used };
   }));
   await updateLotteryConfig({ tiers: updatedTiers });
   
-  return { processed, corrected, details };
+  return { processed, corrected, notFound, details };
 }
 
 // 检查是否所有档位都有库存
