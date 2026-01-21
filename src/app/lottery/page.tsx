@@ -104,8 +104,8 @@ export default function LotteryPage() {
       const data = await res.json();
 
       if (data.success) {
-        // 根据后端返回的 tierValue 找到对应的奖品
-        const prize = PRIZES.find(p => p.value === data.record.tierValue);
+        // 根据后端返回的 tierValue 找到对应的奖品（用于转盘动画定位）
+        const prize = PRIZES.find(p => p.value === Number(data.record.tierValue));
         
         if (prize) {
           // 计算这个奖品区域的中心角度
@@ -120,7 +120,8 @@ export default function LotteryPage() {
           // 动画结束后显示结果 (6秒后)
           setTimeout(() => {
             setSpinning(false);
-            setResult({ name: prize.name, code: data.record.code });
+            // 直接使用后端返回的数据，不依赖前端匹配
+            setResult({ name: data.record.tierName, code: data.record.code });
             setShowResultModal(true);
             // 更新抽奖次数状态
             if (!hasSpunToday) {
@@ -133,10 +134,11 @@ export default function LotteryPage() {
             const newExtraSpins = hasSpunToday ? extraSpins - 1 : extraSpins;
             setCanSpin(newDailyAvailable > 0 || newExtraSpins > 0);
             
+            // 直接使用后端返回的记录数据
             setRecords(prev => [{
               id: data.record.id,
-              tierName: prize.name,
-              tierValue: prize.value,
+              tierName: data.record.tierName,
+              tierValue: data.record.tierValue,
               code: data.record.code,
               createdAt: Date.now()
             }, ...prev]);
