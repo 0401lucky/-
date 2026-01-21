@@ -319,7 +319,8 @@ export async function checkAllTiersHaveCodes(): Promise<boolean> {
     // 只检查概率>0的档位，概率为0的档位不影响抽奖
     if (tier.probability > 0) {
       const count = await getTierAvailableCodesCount(tier.id);
-      if (count === 0) {
+      // [P2-1修复] 使用 <= 0 防止异常负数被误判为有库存
+      if (count <= 0) {
         return false;
       }
     }
@@ -372,7 +373,7 @@ function weightedRandomSelect(tiers: LotteryTier[]): LotteryTier {
   return tiers[tiers.length - 1];
 }
 
-// 执行抽奖 - [C2/C3修复] 使用原子操作防止竞态
+// [P1-1/P1-2修复] 执行抽奖 - 使用可用集合 + SPOP 原子发码 + 异常补偿
 export async function spinLottery(
   userId: number,
   username: string
@@ -395,57 +396,87 @@ export async function spinLottery(
     usedDailyFree = true;
   }
 
+  // 补偿函数：返还已扣减的次数
+  const rollbackSpinCount = async () => {
+    if (usedExtraSpin) await rollbackExtraSpin(userId);
+    if (usedDailyFree) await releaseDailyFree(userId);
+  };
+
   // === 第二步：检查配置和库存 ===
   const config = await getLotteryConfig();
   if (!config.enabled) {
-    // 补偿：返还已扣减的次数
-    if (usedExtraSpin) await rollbackExtraSpin(userId);
-    if (usedDailyFree) await releaseDailyFree(userId);
+    await rollbackSpinCount();
     return { success: false, message: "抽奖活动暂未开放" };
   }
 
   const allHaveCodes = await checkAllTiersHaveCodes();
   if (!allHaveCodes) {
-    // 补偿：返还已扣减的次数
-    if (usedExtraSpin) await rollbackExtraSpin(userId);
-    if (usedDailyFree) await releaseDailyFree(userId);
+    await rollbackSpinCount();
     return { success: false, message: "库存不足，请联系管理员" };
   }
 
-  // === 第三步：选择档位并原子性抢占兑换码 ===
+  // === 第三步：选择档位并原子性获取兑换码 ===
   const selectedTier = weightedRandomSelect(config.tiers);
   
-  // [C2修复] 使用 SADD 返回值做原子抢占，最多重试5次
-  const MAX_RETRIES = 5;
-  let code: string | null = null;
+  // [P1-1修复] 使用可用集合计算，然后用 SMOVE 原子移动
+  // 获取所有码和已用码，计算可用码
+  const allCodesResult = await kv.smembers(`${LOTTERY_CODES_PREFIX}${selectedTier.id}`);
+  const usedCodesResult = await kv.smembers(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`);
+  const allCodes: string[] = Array.isArray(allCodesResult) ? allCodesResult as string[] : [];
+  const usedCodes: string[] = Array.isArray(usedCodesResult) ? usedCodesResult as string[] : [];
+  const usedSet = new Set(usedCodes);
+  const availableCodes = allCodes.filter((c: string) => !usedSet.has(c));
   
-  for (let retry = 0; retry < MAX_RETRIES; retry++) {
-    // 随机获取一个码
-    const candidateCode = await kv.srandmember<string>(`${LOTTERY_CODES_PREFIX}${selectedTier.id}`);
-    if (!candidateCode) {
-      break; // 没有可用码了
-    }
-    
-    // 尝试原子性标记为已使用
-    // SADD 返回 1 表示成功添加（抢占成功），返回 0 表示已存在（被别人抢了）
-    const addResult = await kv.sadd(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`, candidateCode);
-    
-    if (addResult === 1) {
-      // 抢占成功
-      code = candidateCode;
-      break;
-    }
-    // 抢占失败，重试获取另一个码
+  if (availableCodes.length === 0) {
+    await rollbackSpinCount();
+    return { success: false, message: "该档位兑换码已用尽，请联系管理员" };
   }
   
-  if (!code) {
-    // 补偿：返还已扣减的次数
-    if (usedExtraSpin) await rollbackExtraSpin(userId);
-    if (usedDailyFree) await releaseDailyFree(userId);
-    return { success: false, message: "兑换码已用尽，请联系管理员" };
+  // 随机选择一个可用码
+  const randomIndex = Math.floor(Math.random() * availableCodes.length);
+  const selectedCode = availableCodes[randomIndex];
+  
+  // 原子性标记为已使用（SADD 返回 1 表示成功）
+  const addResult = await kv.sadd(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`, selectedCode);
+  
+  if (addResult !== 1) {
+    // 极小概率：刚好被别人抢了，重试一次
+    // 重新获取可用码
+    const retryUsedCodesResult = await kv.smembers(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`);
+    const retryUsedCodes: string[] = Array.isArray(retryUsedCodesResult) ? retryUsedCodesResult as string[] : [];
+    const retryUsedSet = new Set(retryUsedCodes);
+    const retryAvailable = allCodes.filter((c: string) => !retryUsedSet.has(c));
+    
+    if (retryAvailable.length === 0) {
+      await rollbackSpinCount();
+      return { success: false, message: "兑换码已用尽，请联系管理员" };
+    }
+    
+    const retryCode = retryAvailable[Math.floor(Math.random() * retryAvailable.length)];
+    const retryResult = await kv.sadd(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`, retryCode);
+    
+    if (retryResult !== 1) {
+      await rollbackSpinCount();
+      return { success: false, message: "系统繁忙，请稍后再试" };
+    }
+    
+    // 使用重试成功的码
+    return await completeSpinWithCode(retryCode, selectedTier, userId, username, config, rollbackSpinCount);
   }
+  
+  // 使用成功抢占的码
+  return await completeSpinWithCode(selectedCode, selectedTier, userId, username, config, rollbackSpinCount);
+}
 
-  // === 第四步：创建记录并更新统计 ===
+// [P1-2修复] 完成抽奖的后续操作，包含异常补偿
+async function completeSpinWithCode(
+  code: string,
+  selectedTier: LotteryTier,
+  userId: number,
+  username: string,
+  config: LotteryConfig,
+  rollbackSpinCount: () => Promise<void>
+): Promise<{ success: boolean; record?: LotteryRecord; message: string }> {
   const record: LotteryRecord = {
     id: `lottery_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
     oderId: String(userId),
@@ -456,25 +487,39 @@ export async function spinLottery(
     createdAt: Date.now(),
   };
 
-  // 保存记录
-  await kv.lpush(LOTTERY_RECORDS_KEY, record);
-  await kv.lpush(`${LOTTERY_USER_RECORDS_PREFIX}${userId}`, record);
+  try {
+    // 保存记录
+    await kv.lpush(LOTTERY_RECORDS_KEY, record);
+    await kv.lpush(`${LOTTERY_USER_RECORDS_PREFIX}${userId}`, record);
 
-  // 更新档位已使用计数
-  const usedCountNew = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`);
-  const updatedTiers = config.tiers.map((tier) => {
-    if (tier.id === selectedTier.id) {
-      return { ...tier, usedCount: usedCountNew };
+    // 更新档位已使用计数
+    const usedCountNew = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`);
+    const updatedTiers = config.tiers.map((tier) => {
+      if (tier.id === selectedTier.id) {
+        return { ...tier, usedCount: usedCountNew };
+      }
+      return tier;
+    });
+    await updateLotteryConfig({ tiers: updatedTiers });
+
+    return {
+      success: true,
+      record,
+      message: `恭喜获得 ${selectedTier.name}！`,
+    };
+  } catch (error) {
+    // [P1-2修复] 异常补偿：尝试回滚码的使用状态和次数
+    console.error("抽奖后续操作失败，尝试补偿回滚:", error);
+    try {
+      // 回滚码的使用标记
+      await kv.srem(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`, code);
+      // 回滚次数
+      await rollbackSpinCount();
+    } catch (rollbackError) {
+      console.error("补偿回滚失败:", rollbackError);
     }
-    return tier;
-  });
-  await updateLotteryConfig({ tiers: updatedTiers });
-
-  return {
-    success: true,
-    record,
-    message: `恭喜获得 ${selectedTier.name}！`,
-  };
+    return { success: false, message: "系统错误，请稍后再试" };
+  }
 }
 
 // 获取抽奖记录

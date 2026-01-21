@@ -3,8 +3,33 @@ import { createHmac } from "crypto";
 
 const ADMIN_USERNAMES = (process.env.ADMIN_USERNAMES || "lucky").split(",").map(s => s.trim());
 
-// 用于签名的密钥，生产环境必须设置 SESSION_SECRET 环境变量
-const SESSION_SECRET = process.env.SESSION_SECRET || "default-secret-please-change-in-production";
+// [P0-1修复] 用于签名的密钥，生产环境必须设置 SESSION_SECRET 环境变量
+// 不再提供默认值，缺失则 fail-fast
+function getSessionSecret(): string {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) {
+    // 开发环境允许使用开发密钥，但会警告
+    if (process.env.NODE_ENV === "development") {
+      console.warn("⚠️ SESSION_SECRET not set, using development key. DO NOT use in production!");
+      return "dev-only-secret-do-not-use-in-production";
+    }
+    // 生产环境必须配置，否则直接抛错
+    throw new Error("FATAL: SESSION_SECRET environment variable is required in production!");
+  }
+  if (secret.length < 32) {
+    console.warn("⚠️ SESSION_SECRET should be at least 32 characters for security");
+  }
+  return secret;
+}
+
+// 延迟获取 secret，避免模块加载时立即抛错（便于测试/构建）
+let _sessionSecret: string | null = null;
+function getSecret(): string {
+  if (!_sessionSecret) {
+    _sessionSecret = getSessionSecret();
+  }
+  return _sessionSecret;
+}
 
 export interface AuthUser {
   id: number;
@@ -22,7 +47,7 @@ interface SessionData {
 
 // 生成 HMAC 签名
 export function signSession(payload: string): string {
-  return createHmac("sha256", SESSION_SECRET)
+  return createHmac("sha256", getSecret())
     .update(payload)
     .digest("hex");
 }
