@@ -250,10 +250,11 @@ export default function LotteryPage() {
               
               {/* 转盘主体 */}
               <div 
-                className="absolute inset-2 rounded-full transition-transform duration-[6000ms] cubic-bezier(0.2, 0.8, 0.3, 1)"
+                className="absolute inset-2 rounded-full"
                 style={{ 
                   background: getConicGradient(),
                   transform: `rotate(${rotation}deg)`,
+                  transition: spinning ? 'transform 6s cubic-bezier(0.2, 0.8, 0.3, 1)' : 'none',
                   boxShadow: 'inset 0 0 20px rgba(0,0,0,0.1)'
                 }}
               >
@@ -277,9 +278,9 @@ export default function LotteryPage() {
                 <Gift className="w-8 h-8 text-orange-500" />
               </div>
 
-              {/* 顶部指针 */}
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-3 z-20 filter drop-shadow-md">
-                <div className="w-8 h-10 bg-stone-800 clip-path-triangle"></div>
+              {/* 顶部指针 - 小巧精确 */}
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1 z-20 filter drop-shadow-md">
+                <div className="w-4 h-6 bg-stone-800 clip-path-triangle"></div>
               </div>
             </div>
 
