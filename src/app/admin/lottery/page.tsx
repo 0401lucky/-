@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, Upload, Loader2, Save, AlertCircle, 
   Users, Package, Clock, User as UserIcon, Check, X, 
-  Percent, LayoutDashboard, Gift, Trash2, RefreshCw
+  Percent, LayoutDashboard, Gift, Trash2, RefreshCw, Eye
 } from 'lucide-react';
 
 // 档位定义
@@ -66,6 +66,18 @@ export default function AdminLotteryPage() {
   const [uploading, setUploading] = useState(false);
   const [clearing, setClearing] = useState<string | null>(null);
   const [recalculating, setRecalculating] = useState(false);
+  
+  // 兑换码详情弹窗
+  const [detailTier, setDetailTier] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailData, setDetailData] = useState<{
+    tierId: string;
+    total: number;
+    usedCount: number;
+    availableCount: number;
+    used: string[];
+    available: string[];
+  } | null>(null);
   
   // 消息提示
   const [error, setError] = useState<string | null>(null);
@@ -251,6 +263,28 @@ export default function AdminLotteryPage() {
     }
   };
 
+  const handleViewDetail = async (tierId: string) => {
+    setDetailTier(tierId);
+    setDetailLoading(true);
+    setDetailData(null);
+
+    try {
+      const res = await fetch(`/api/admin/lottery/tiers/${tierId}/detail`);
+      const data = await res.json();
+      if (data.success) {
+        setDetailData(data);
+      } else {
+        setError(data.message || '获取详情失败');
+        setDetailTier(null);
+      }
+    } catch (err) {
+      setError('请求失败');
+      setDetailTier(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#fafaf9]">
@@ -338,20 +372,29 @@ export default function AdminLotteryPage() {
                 <div key={stat.id} className={`glass-card p-4 rounded-2xl border ${isLowStock ? 'border-red-200 bg-red-50/30' : 'border-white/60'}`}>
                   <div className="flex justify-between items-start mb-2">
                     <div className={`text-xs font-bold uppercase ${tierConfig.color}`}>{tierConfig.name}</div>
-                    {stat.available > 0 && (
+                    <div className="flex items-center gap-1">
                       <button
-                        onClick={() => handleClearTier(stat.id)}
-                        disabled={clearing === stat.id}
-                        className="p-1 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                        title="清空库存"
+                        onClick={() => handleViewDetail(stat.id)}
+                        className="p-1 text-stone-400 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors"
+                        title="查看兑换码"
                       >
-                        {clearing === stat.id ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <Trash2 className="w-3.5 h-3.5" />
-                        )}
+                        <Eye className="w-3.5 h-3.5" />
                       </button>
-                    )}
+                      {stat.available > 0 && (
+                        <button
+                          onClick={() => handleClearTier(stat.id)}
+                          disabled={clearing === stat.id}
+                          className="p-1 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                          title="清空库存"
+                        >
+                          {clearing === stat.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="text-2xl font-bold text-stone-800 mb-1">{stat.available}</div>
                   <div className="text-xs text-stone-400 mb-3">可用 / 总量 {stat.codesCount}</div>
@@ -530,6 +573,91 @@ export default function AdminLotteryPage() {
           </div>
         </section>
       </main>
+
+      {/* 兑换码详情弹窗 */}
+      {detailTier && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setDetailTier(null)}>
+          <div 
+            className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 border-b border-stone-100 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-stone-800">
+                {TIERS.find(t => t.id === detailTier)?.name || detailTier} - 兑换码详情
+              </h3>
+              <button
+                onClick={() => setDetailTier(null)}
+                className="p-2 hover:bg-stone-100 rounded-full transition-colors"
+              >
+                <X className="w-5 h-5 text-stone-500" />
+              </button>
+            </div>
+            
+            {detailLoading ? (
+              <div className="p-12 flex items-center justify-center">
+                <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
+              </div>
+            ) : detailData ? (
+              <div className="p-6">
+                <div className="flex gap-4 mb-4">
+                  <div className="flex-1 p-3 bg-green-50 rounded-xl text-center">
+                    <div className="text-2xl font-bold text-green-600">{detailData.availableCount}</div>
+                    <div className="text-xs text-green-500 font-medium">可用</div>
+                  </div>
+                  <div className="flex-1 p-3 bg-stone-100 rounded-xl text-center">
+                    <div className="text-2xl font-bold text-stone-600">{detailData.usedCount}</div>
+                    <div className="text-xs text-stone-500 font-medium">已使用</div>
+                  </div>
+                  <div className="flex-1 p-3 bg-orange-50 rounded-xl text-center">
+                    <div className="text-2xl font-bold text-orange-600">{detailData.total}</div>
+                    <div className="text-xs text-orange-500 font-medium">总计</div>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4 max-h-[50vh] overflow-auto">
+                  {/* 可用的码 */}
+                  <div>
+                    <h4 className="text-sm font-bold text-green-600 mb-2 sticky top-0 bg-white py-1">
+                      ✓ 可用 ({detailData.availableCount})
+                    </h4>
+                    <div className="space-y-1">
+                      {detailData.available.length === 0 ? (
+                        <p className="text-sm text-stone-400 italic">无可用兑换码</p>
+                      ) : (
+                        detailData.available.map((code, i) => (
+                          <div key={i} className="text-xs font-mono bg-green-50 text-green-700 px-2 py-1 rounded break-all">
+                            {code}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* 已使用的码 */}
+                  <div>
+                    <h4 className="text-sm font-bold text-stone-500 mb-2 sticky top-0 bg-white py-1">
+                      ✗ 已使用 ({detailData.usedCount})
+                    </h4>
+                    <div className="space-y-1">
+                      {detailData.used.length === 0 ? (
+                        <p className="text-sm text-stone-400 italic">无已使用兑换码</p>
+                      ) : (
+                        detailData.used.map((code, i) => (
+                          <div key={i} className="text-xs font-mono bg-stone-100 text-stone-500 px-2 py-1 rounded break-all line-through">
+                            {code}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-12 text-center text-stone-500">加载失败</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
