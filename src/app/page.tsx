@@ -260,7 +260,7 @@ export default function HomePage() {
                   </div>
                   <div className="flex justify-between text-xs text-stone-400">
                     <span>剩 {Math.max(0, project.maxClaims - project.claimedCount)} 份</span>
-                    <span>库存 {project.codesCount}</span>
+                    <span>库存 {project.codesCount - project.claimedCount}</span>
                   </div>
                 </Link>
               ))}

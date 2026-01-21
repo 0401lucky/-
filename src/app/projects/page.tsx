@@ -216,7 +216,7 @@ export default function ProjectsPage() {
 
                   <div className="flex justify-between items-center pt-5 border-t border-stone-100">
                     <span className="text-xs text-stone-400 font-medium px-2 py-1 bg-stone-50 rounded">
-                      库存: {project.codesCount}
+                      剩余: {project.codesCount - project.claimedCount}
                     </span>
                     <span className="text-sm font-bold text-stone-800 flex items-center gap-1 group-hover:gap-2 group-hover:text-orange-600 transition-all">
                       去领取 <ChevronRight className="w-4 h-4" />

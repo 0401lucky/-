@@ -335,9 +335,9 @@ export default function AdminPage() {
                         </div>
                       </div>
 
-                      {/* Stock */}
+                      {/* Stock - 显示剩余库存 */}
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-stone-600">{project.codesCount}</span>
+                        <span className="text-sm font-semibold text-stone-600">{project.codesCount - project.claimedCount}</span>
                         <span className="text-xs text-stone-400">个</span>
                       </div>
 
@@ -421,7 +421,7 @@ export default function AdminPage() {
                         </div>
                         <div className="flex justify-between items-center mt-3 pt-3 border-t border-stone-200/50">
                           <span className="text-xs text-stone-500">剩余库存</span>
-                          <span className="font-bold text-stone-800 text-sm">{project.codesCount}</span>
+                          <span className="font-bold text-stone-800 text-sm">{project.codesCount - project.claimedCount}</span>
                         </div>
                       </div>
 
