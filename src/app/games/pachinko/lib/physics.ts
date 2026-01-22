@@ -31,6 +31,9 @@ export function createPhysicsEngine(
   const engine = Engine.create({
     gravity: { x: 0, y: 1 }
   });
+  // 提高迭代次数，减少高速情况下穿透边界/钉子的概率
+  engine.positionIterations = 8;
+  engine.velocityIterations = 6;
 
   // 创建渲染器
   const render = Render.create({
@@ -45,10 +48,42 @@ export function createPhysicsEngine(
   });
 
   // 创建边界
+  // 使用更厚的墙 + 顶部边界，避免弹珠在高弹性碰撞时“飞出屏幕”
+  const WALL_THICKNESS = 100;
+  const WALL_COLOR = '#2a2a4e';
   const walls = [
-    Bodies.rectangle(CANVAS_WIDTH / 2, CANVAS_HEIGHT + 25, CANVAS_WIDTH, 50, { isStatic: true, render: { fillStyle: '#2a2a4e' } }),
-    Bodies.rectangle(-25, CANVAS_HEIGHT / 2, 50, CANVAS_HEIGHT, { isStatic: true, render: { fillStyle: '#2a2a4e' } }),
-    Bodies.rectangle(CANVAS_WIDTH + 25, CANVAS_HEIGHT / 2, 50, CANVAS_HEIGHT, { isStatic: true, render: { fillStyle: '#2a2a4e' } }),
+    // 底部（加宽以覆盖角落）
+    Bodies.rectangle(
+      CANVAS_WIDTH / 2,
+      CANVAS_HEIGHT + WALL_THICKNESS / 2,
+      CANVAS_WIDTH + WALL_THICKNESS * 2,
+      WALL_THICKNESS,
+      { isStatic: true, render: { fillStyle: WALL_COLOR } }
+    ),
+    // 左侧（加高以覆盖顶部/底部）
+    Bodies.rectangle(
+      -WALL_THICKNESS / 2,
+      CANVAS_HEIGHT / 2,
+      WALL_THICKNESS,
+      CANVAS_HEIGHT + WALL_THICKNESS * 2,
+      { isStatic: true, render: { fillStyle: WALL_COLOR } }
+    ),
+    // 右侧（加高以覆盖顶部/底部）
+    Bodies.rectangle(
+      CANVAS_WIDTH + WALL_THICKNESS / 2,
+      CANVAS_HEIGHT / 2,
+      WALL_THICKNESS,
+      CANVAS_HEIGHT + WALL_THICKNESS * 2,
+      { isStatic: true, render: { fillStyle: WALL_COLOR } }
+    ),
+    // 顶部（防止向上弹飞后“消失”）
+    Bodies.rectangle(
+      CANVAS_WIDTH / 2,
+      -WALL_THICKNESS / 2,
+      CANVAS_WIDTH + WALL_THICKNESS * 2,
+      WALL_THICKNESS,
+      { isStatic: true, render: { fillStyle: WALL_COLOR } }
+    ),
   ];
 
   // 创建钉子（交错排列，覆盖整个槽位宽度）
@@ -121,6 +156,20 @@ export function createPhysicsEngine(
   let activeBall: Matter.Body | null = null;
   let launchTime = 0;
   let resolvePromise: ((score: number) => void) | null = null;
+
+  // 限制最大速度，减少离散步进导致的穿透/“单飞”
+  const MAX_BALL_SPEED = 22;
+  Events.on(engine, 'beforeUpdate', () => {
+    if (!activeBall) return;
+    const vx = activeBall.velocity.x;
+    const vy = activeBall.velocity.y;
+    const speedSq = vx * vx + vy * vy;
+    const maxSq = MAX_BALL_SPEED * MAX_BALL_SPEED;
+    if (speedSq > maxSq) {
+      const scale = MAX_BALL_SPEED / Math.sqrt(speedSq);
+      Body.setVelocity(activeBall, { x: vx * scale, y: vy * scale });
+    }
+  });
 
   Events.on(engine, 'collisionStart', (event) => {
     for (const pair of event.pairs) {
