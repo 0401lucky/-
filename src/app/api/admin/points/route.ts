@@ -77,10 +77,18 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { userId, amount, description } = body;
+    const { amount, description } = body;
+    // 兼容前端/第三方可能把 userId 以字符串传递的情况
+    const rawUserId: unknown = body?.userId;
+    const userId =
+      typeof rawUserId === 'number'
+        ? rawUserId
+        : typeof rawUserId === 'string'
+          ? Number(rawUserId)
+          : NaN;
 
     // 验证 userId
-    if (typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) {
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
       return jsonResponse({ success: false, message: 'userId 必须是正整数' }, 400);
     }
 
