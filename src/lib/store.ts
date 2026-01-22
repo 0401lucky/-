@@ -16,8 +16,9 @@ const DEFAULT_STORE_ITEMS: Omit<StoreItem, 'id' | 'createdAt' | 'updatedAt'>[] =
     name: '抽奖机会 x1',
     description: '兑换一次抽奖机会',
     type: 'lottery_spin',
-    pointsCost: 600,
+    pointsCost: 13000,
     value: 1,
+    dailyLimit: 1,
     sortOrder: 1,
     enabled: true,
   },
@@ -25,8 +26,9 @@ const DEFAULT_STORE_ITEMS: Omit<StoreItem, 'id' | 'createdAt' | 'updatedAt'>[] =
     name: '抽奖机会 x2',
     description: '兑换两次抽奖机会',
     type: 'lottery_spin',
-    pointsCost: 1500,
+    pointsCost: 24000,
     value: 2,
+    dailyLimit: 1,
     sortOrder: 2,
     enabled: true,
   },
@@ -34,9 +36,9 @@ const DEFAULT_STORE_ITEMS: Omit<StoreItem, 'id' | 'createdAt' | 'updatedAt'>[] =
     name: '账户额度 $1',
     description: '直接充值 $1 到您的账户',
     type: 'quota_direct',
-    pointsCost: 500,
+    pointsCost: 3500,
     value: 1,
-    dailyLimit: 5,  // 每日限购5次
+    dailyLimit: 1,  // 每日限购1次
     sortOrder: 10,
     enabled: true,
   },
@@ -44,9 +46,9 @@ const DEFAULT_STORE_ITEMS: Omit<StoreItem, 'id' | 'createdAt' | 'updatedAt'>[] =
     name: '账户额度 $5',
     description: '直接充值 $5 到您的账户（优惠）',
     type: 'quota_direct',
-    pointsCost: 2250,  // 9折
+    pointsCost: 16000,  // 约9折
     value: 5,
-    dailyLimit: 2,  // 每日限购2次
+    dailyLimit: 1,  // 每日限购1次
     sortOrder: 11,
     enabled: true,
   },
