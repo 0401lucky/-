@@ -68,6 +68,7 @@ export async function POST() {
     let newApiUpdated = 0;
     let newApiRemoved = 0;
     let newApiFailed = 0;
+    let newApiNote: string | null = null;
     const adminUsername = process.env.NEW_API_ADMIN_USERNAME;
     const adminPassword = process.env.NEW_API_ADMIN_PASSWORD;
     if (adminUsername && adminPassword) {
@@ -132,20 +133,31 @@ export async function POST() {
           await Promise.all(batch.map(syncOne));
         }
       } else {
+        newApiNote = `new-api 管理员登录失败：${adminLogin.message || 'unknown error'}`;
         console.error('new-api admin login failed:', adminLogin.message);
       }
     } else {
+      newApiNote = '未配置 new-api 管理员账号，已跳过 new-api 同步';
       console.warn('NEW_API_ADMIN_USERNAME/NEW_API_ADMIN_PASSWORD not set, skip new-api sync');
     }
 
+    const messageParts = [
+      `同步完成：本地发现 ${syncedUsers.size} 个用户`,
+      `new-api 更新 ${newApiUpdated} 个用户名`,
+      `移除 ${newApiRemoved} 个已注销用户`,
+      `失败 ${newApiFailed} 个`,
+    ];
+    if (newApiNote) messageParts.push(newApiNote);
+
     return NextResponse.json({
       success: true,
-      message: `同步完成：本地发现 ${syncedUsers.size} 个用户；new-api 更新 ${newApiUpdated} 个用户名；移除 ${newApiRemoved} 个已注销用户；失败 ${newApiFailed} 个`,
+      message: messageParts.join('；'),
       count: syncedUsers.size,
       newApi: {
         updated: newApiUpdated,
         removed: newApiRemoved,
         failed: newApiFailed,
+        note: newApiNote,
         baseUrl: NEW_API_URL,
       },
     });
