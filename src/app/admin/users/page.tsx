@@ -746,9 +746,11 @@ export default function UsersPage() {
                       <div className="mt-3">
                         <div className="flex items-center justify-between mb-2">
                           <p className="text-xs text-stone-400 font-medium">
-                            积分流水（最近 {userPointsLogs.length} 条）
+                            积分流水（仅展示最近10条）
                           </p>
-                          <p className="text-[11px] text-stone-400">仅保留最近100条</p>
+                          <p className="text-[11px] text-stone-400">
+                            共 {userPointsLogs.length} 条（最多保留100条）
+                          </p>
                         </div>
                         {userPointsLogs.length === 0 ? (
                           <div className="text-center py-3 text-stone-400 text-xs bg-stone-50 rounded-lg border border-stone-100">
@@ -756,7 +758,7 @@ export default function UsersPage() {
                           </div>
                         ) : (
                           <div className="space-y-2 max-h-48 overflow-y-auto">
-                            {userPointsLogs.map((log) => (
+                            {userPointsLogs.slice(0, 10).map((log) => (
                               <div
                                 key={log.id}
                                 className="flex items-start justify-between gap-3 p-2 bg-stone-50 rounded-lg text-xs"
