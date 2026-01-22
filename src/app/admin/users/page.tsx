@@ -740,21 +740,43 @@ export default function UsersPage() {
                     </div>
                     
                     {/* 积分流水 */}
-                    {userPointsLogs.length > 0 && (
-                      <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
-                        {userPointsLogs.slice(0, 10).map((log) => (
-                          <div key={log.id} className="flex items-center justify-between p-2 bg-stone-50 rounded-lg text-xs">
-                            <div className="flex items-center gap-2">
-                              <span className={`font-bold ${log.amount >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                                {log.amount >= 0 ? '+' : ''}{log.amount}
-                              </span>
-                              <span className="text-stone-500">{getSourceLabel(log.source)}</span>
-                            </div>
-                            <div className="text-right">
-                              <span className="text-stone-400">{new Date(log.createdAt).toLocaleString()}</span>
-                            </div>
+                    {pointsError ? (
+                      <div className="mt-3 text-xs text-red-500">积分流水加载失败</div>
+                    ) : (
+                      <div className="mt-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-xs text-stone-400 font-medium">
+                            积分流水（最近 {userPointsLogs.length} 条）
+                          </p>
+                          <p className="text-[11px] text-stone-400">仅保留最近100条</p>
+                        </div>
+                        {userPointsLogs.length === 0 ? (
+                          <div className="text-center py-3 text-stone-400 text-xs bg-stone-50 rounded-lg border border-stone-100">
+                            暂无积分变动记录
                           </div>
-                        ))}
+                        ) : (
+                          <div className="space-y-2 max-h-48 overflow-y-auto">
+                            {userPointsLogs.map((log) => (
+                              <div
+                                key={log.id}
+                                className="flex items-start justify-between gap-3 p-2 bg-stone-50 rounded-lg text-xs"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className={`font-bold ${log.amount >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                    {log.amount >= 0 ? '+' : ''}{log.amount}
+                                  </span>
+                                  <span className="text-stone-500 truncate">{getSourceLabel(log.source)}</span>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <div className="text-stone-400">{new Date(log.createdAt).toLocaleString()}</div>
+                                  <div className="text-stone-500">
+                                    余额 {Number.isFinite(log.balance) ? log.balance.toLocaleString() : '--'}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

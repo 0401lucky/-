@@ -50,7 +50,8 @@ export async function GET(request: NextRequest) {
   try {
     const [balance, logs] = await Promise.all([
       getUserPoints(userId),
-      getPointsLogs(userId, 50),
+      // 与 points.ts 的流水保留上限对齐：最多返回最近100条
+      getPointsLogs(userId, 100),
     ]);
 
     return jsonResponse({
