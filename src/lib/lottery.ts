@@ -19,13 +19,17 @@ export interface LotteryRecord {
   username: string;
   tierName: string;
   tierValue: number;
-  code: string;
+  code: string;           // 兑换码模式使用
+  directCredit?: boolean; // 是否为直充模式
+  creditedQuota?: number; // 直充的 quota 数量
   createdAt: number;
 }
 
 // 抽奖配置
 export interface LotteryConfig {
   enabled: boolean;
+  mode: 'code' | 'direct' | 'hybrid';  // code=兑换码, direct=直充, hybrid=优先直充降级兑换码
+  dailyDirectLimit: number;            // 每日直充发放上限（美元），默认2000
   tiers: LotteryTier[];
 }
 
@@ -41,6 +45,8 @@ const DEFAULT_TIERS: LotteryTier[] = [
 
 const DEFAULT_CONFIG: LotteryConfig = {
   enabled: true,
+  mode: 'direct',        // 默认使用直充模式
+  dailyDirectLimit: 2000, // 每日直充上限 $2000
   tiers: DEFAULT_TIERS,
 };
 
@@ -51,14 +57,22 @@ const LOTTERY_USED_CODES_PREFIX = "lottery:used:";    // 已使用的码（Set�
 const LOTTERY_RECORDS_KEY = "lottery:records";
 const LOTTERY_USER_RECORDS_PREFIX = "lottery:user:records:";
 
-// 获取抽奖配置
+// 获取抽奖配置（自动合并默认值，兼容旧配置）
 export async function getLotteryConfig(): Promise<LotteryConfig> {
-  const config = await kv.get<LotteryConfig>(LOTTERY_CONFIG_KEY);
+  const config = await kv.get<Partial<LotteryConfig>>(LOTTERY_CONFIG_KEY);
   if (!config) {
     await kv.set(LOTTERY_CONFIG_KEY, DEFAULT_CONFIG);
     return DEFAULT_CONFIG;
   }
-  return config;
+  // 合并默认值，确保新增字段有定义
+  return {
+    enabled: config.enabled ?? DEFAULT_CONFIG.enabled,
+    mode: config.mode ?? DEFAULT_CONFIG.mode,
+    dailyDirectLimit: typeof config.dailyDirectLimit === 'number' 
+      ? config.dailyDirectLimit 
+      : DEFAULT_CONFIG.dailyDirectLimit,
+    tiers: config.tiers ?? DEFAULT_CONFIG.tiers,
+  };
 }
 
 // 更新抽奖配置
@@ -577,9 +591,9 @@ async function completeSpinWithCode(
   };
 }
 
-// 获取抽奖记录
-export async function getLotteryRecords(limit: number = 50): Promise<LotteryRecord[]> {
-  return await kv.lrange<LotteryRecord>(LOTTERY_RECORDS_KEY, 0, limit - 1);
+// 获取抽奖记录（支持分页）
+export async function getLotteryRecords(limit: number = 50, offset: number = 0): Promise<LotteryRecord[]> {
+  return await kv.lrange<LotteryRecord>(LOTTERY_RECORDS_KEY, offset, offset + limit - 1);
 }
 
 // 获取用户抽奖记录
@@ -592,4 +606,293 @@ export async function getUserLotteryRecords(
     0,
     limit - 1
   );
+}
+
+// ============ 直充模式相关函数 ============
+
+const LOTTERY_DAILY_DIRECT_KEY = "lottery:daily_direct:"; // 每日直充发放记录
+
+/**
+ * 获取今日已发放的直充金额（美元）
+ */
+export async function getTodayDirectTotal(): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10);
+  const total = await kv.get<number>(`${LOTTERY_DAILY_DIRECT_KEY}${today}`);
+  return total || 0;
+}
+
+/**
+ * 检查今日直充额度是否充足（仅用于门禁判断，不做预占）
+ * @param dollars 本次需要发放的金额
+ * @returns 是否可以发放
+ */
+export async function checkDailyDirectLimit(dollars: number): Promise<boolean> {
+  const config = await getLotteryConfig();
+  const todayTotal = await getTodayDirectTotal();
+  return (todayTotal + dollars) <= config.dailyDirectLimit;
+}
+
+/**
+ * 原子性预占今日直充额度（INCRBY + 超限回滚）
+ * @param dollars 要预占的金额
+ * @returns { success: boolean, newTotal: number } 
+ */
+export async function reserveDailyDirectQuota(dollars: number): Promise<{ success: boolean; newTotal: number }> {
+  const config = await getLotteryConfig();
+  const today = new Date().toISOString().slice(0, 10);
+  const key = `${LOTTERY_DAILY_DIRECT_KEY}${today}`;
+  
+  // 原子性增加
+  const newTotal = await kv.incrby(key, dollars);
+  
+  // 首次创建时设置过期时间（48小时）
+  // 注意：incrby 不会重置 TTL，需要在首次创建时设置
+  const ttl = await kv.ttl(key);
+  if (ttl === -1) { // -1 表示没有过期时间
+    await kv.expire(key, 48 * 60 * 60);
+  }
+  
+  // 检查是否超限
+  if (newTotal > config.dailyDirectLimit) {
+    // 超限，回滚
+    await kv.decrby(key, dollars);
+    return { success: false, newTotal: newTotal - dollars };
+  }
+  
+  return { success: true, newTotal };
+}
+
+/**
+ * 回滚预占的直充额度
+ * @param dollars 要回滚的金额
+ */
+export async function rollbackDailyDirectQuota(dollars: number): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  const key = `${LOTTERY_DAILY_DIRECT_KEY}${today}`;
+  await kv.decrby(key, dollars);
+}
+
+/**
+ * 获取最小可中奖档位值（概率>0的档位中的最小值）
+ */
+export async function getMinTierValue(): Promise<number> {
+  const config = await getLotteryConfig();
+  const activeTiers = config.tiers.filter(t => t.probability > 0);
+  if (activeTiers.length === 0) return Infinity;
+  return Math.min(...activeTiers.map(t => t.value));
+}
+
+/**
+ * 直充模式抽奖
+ * 抽奖后直接给用户 new-api 账户充值
+ * 改进：根据剩余额度过滤可选档位，确保选中的档位一定能直充成功
+ */
+export async function spinLotteryDirect(
+  userId: number,
+  username: string
+): Promise<{ success: boolean; record?: LotteryRecord; message: string; uncertain?: boolean }> {
+  // 动态导入避免循环依赖
+  const { creditQuotaToUser } = await import('./new-api');
+  
+  let usedExtraSpin = false;
+  let usedDailyFree = false;
+
+  try {
+    // === 第一步：原子性扣减次数 ===
+    const extraResult = await tryUseExtraSpin(userId);
+    
+    if (extraResult.success) {
+      usedExtraSpin = true;
+    } else {
+      const dailyResult = await tryClaimDailyFree(userId);
+      if (!dailyResult) {
+        return { success: false, message: "今日免费次数已用完，请签到获取更多机会" };
+      }
+      usedDailyFree = true;
+    }
+  } catch (spinCountError) {
+    console.error("扣次数阶段异常:", spinCountError);
+    return { success: false, message: "系统繁忙，请稍后再试" };
+  }
+
+  const rollbackSpinCount = async () => {
+    try {
+      if (usedExtraSpin) await rollbackExtraSpin(userId);
+      if (usedDailyFree) await releaseDailyFree(userId);
+    } catch (e) {
+      console.error("回滚次数失败:", e);
+    }
+  };
+
+  let reservedDollars = 0; // 记录已预占的额度，用于回滚
+
+  try {
+    // === 第二步：检查配置 ===
+    const config = await getLotteryConfig();
+    if (!config.enabled) {
+      await rollbackSpinCount();
+      return { success: false, message: "抽奖活动暂未开放" };
+    }
+
+    // === 第三步：获取剩余额度并过滤可选档位 ===
+    const todayTotal = await getTodayDirectTotal();
+    const remainingQuota = config.dailyDirectLimit - todayTotal;
+    
+    // 过滤掉超过剩余额度的档位
+    const affordableTiers = config.tiers.filter(t => t.probability > 0 && t.value <= remainingQuota);
+    
+    if (affordableTiers.length === 0) {
+      await rollbackSpinCount();
+      return { success: false, message: "今日发放额度已达上限，请明日再试" };
+    }
+
+    // 在可负担的档位中进行概率抽奖（重新归一化概率）
+    const selectedTier = weightedRandomSelect(affordableTiers);
+    if (!selectedTier) {
+      await rollbackSpinCount();
+      return { success: false, message: "抽奖配置异常，请联系管理员" };
+    }
+
+    // === 第四步：原子性预占每日直充额度 ===
+    const reserveResult = await reserveDailyDirectQuota(selectedTier.value);
+    if (!reserveResult.success) {
+      await rollbackSpinCount();
+      return { success: false, message: "今日发放额度已达上限，请明日再试" };
+    }
+    reservedDollars = selectedTier.value; // 标记已预占
+
+    // === 第五步：执行直充（提交点前的不可逆操作） ===
+    const creditResult = await creditQuotaToUser(userId, selectedTier.value) as { 
+      success: boolean; 
+      message: string; 
+      newQuota?: number;
+      uncertain?: boolean;
+    };
+    
+    // 处理"结果不确定"的情况（网络异常但可能已成功）
+    if ((creditResult as { uncertain?: boolean }).uncertain) {
+      // 结果不确定时，不回滚（避免重复发放风险）
+      // 记录为 pending 状态，让管理员后续核实
+      console.warn("直充结果不确定，不回滚额度和次数:", creditResult.message);
+      
+      // 创建一个 pending 记录用于审计
+      const pendingRecord: LotteryRecord = {
+        id: `lottery_pending_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+        oderId: String(userId),
+        username,
+        tierName: `[待确认] ${selectedTier.name}`,
+        tierValue: selectedTier.value,
+        code: '',
+        directCredit: true,
+        createdAt: Date.now(),
+      };
+      
+      try {
+        await kv.lpush(LOTTERY_RECORDS_KEY, pendingRecord);
+        await kv.lpush(`${LOTTERY_USER_RECORDS_PREFIX}${userId}`, pendingRecord);
+      } catch (e) {
+        console.error("写入 pending 记录失败:", e);
+      }
+      
+      return { 
+        success: false, 
+        message: "充值结果不确定，请稍后检查余额。如有问题请联系管理员",
+        uncertain: true  // 标记不确定状态，防止 hybrid 降级
+      };
+    }
+    
+    if (!creditResult.success) {
+      // 明确失败，回滚额度预占和次数
+      await rollbackDailyDirectQuota(reservedDollars);
+      await rollbackSpinCount();
+      console.error("直充失败:", creditResult.message);
+      return { success: false, message: "充值失败，请稍后重试" };
+    }
+
+    // ============ 提交点 ============
+    // creditQuotaToUser 成功后，用户已收到钱，这是不可逆的
+    // 从此刻起，不再回滚次数和额度，只做 best-effort 记录写入
+
+    // === 第六步：创建抽奖记录（best-effort，不影响结果） ===
+    const record: LotteryRecord = {
+      id: `lottery_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+      oderId: String(userId),
+      username,
+      tierName: selectedTier.name,
+      tierValue: selectedTier.value,
+      code: '',              // 直充模式无兑换码
+      directCredit: true,
+      creditedQuota: creditResult.newQuota,
+      createdAt: Date.now(),
+    };
+
+    // 写入全局记录（best-effort）
+    try {
+      await kv.lpush(LOTTERY_RECORDS_KEY, record);
+    } catch (globalRecordError) {
+      console.error("写入全局记录失败（充值已成功，不影响用户）:", globalRecordError);
+    }
+
+    // 写入用户记录（best-effort）
+    try {
+      await kv.lpush(`${LOTTERY_USER_RECORDS_PREFIX}${userId}`, record);
+    } catch (userRecordError) {
+      console.error("写入用户记录失败（充值已成功，不影响用户）:", userRecordError);
+    }
+
+    return {
+      success: true,
+      record,
+      message: `恭喜获得 ${selectedTier.name}！已直接充值到您的账户`,
+    };
+
+  } catch (error) {
+    console.error("spinLotteryDirect 异常:", error);
+    // 如果已预占额度但未到提交点，回滚
+    if (reservedDollars > 0) {
+      await rollbackDailyDirectQuota(reservedDollars);
+    }
+    await rollbackSpinCount();
+    return { success: false, message: "系统错误，请稍后再试" };
+  }
+}
+
+/**
+ * 统一抽奖入口（根据配置选择模式）
+ */
+export async function spinLotteryAuto(
+  userId: number,
+  username: string
+): Promise<{ success: boolean; record?: LotteryRecord; message: string }> {
+  const config = await getLotteryConfig();
+  
+  switch (config.mode) {
+    case 'direct':
+      return spinLotteryDirect(userId, username);
+    
+    case 'code':
+      return spinLottery(userId, username);
+    
+    case 'hybrid':
+      // 优先直充，检查是否有任何可抽的直充档位
+      const minValue = await getMinTierValue();
+      const canDirect = await checkDailyDirectLimit(minValue);
+      if (canDirect) {
+        const directResult = await spinLotteryDirect(userId, username);
+        if (directResult.success) {
+          return directResult;
+        }
+        // 结果不确定时，不降级（避免双重发放风险）
+        if (directResult.uncertain) {
+          console.warn("直充结果不确定，不降级到兑换码模式");
+          return directResult; // 直接返回不确定结果
+        }
+        // 明确失败（已回滚）时才降级到兑换码模式
+        console.log("直充明确失败，降级到兑换码模式:", directResult.message);
+      }
+      return spinLottery(userId, username);
+    
+    default:
+      return spinLottery(userId, username);
+  }
 }

@@ -53,6 +53,7 @@ interface LotteryRecord {
   tierName: string;
   tierValue: number;
   code: string;
+  directCredit?: boolean;  // 是否为直充模式
   createdAt: number;
 }
 
@@ -75,7 +76,7 @@ export default function LotteryPage() {
   const [extraSpins, setExtraSpins] = useState(0);
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
-  const [result, setResult] = useState<{ name: string; code: string } | null>(null);
+  const [result, setResult] = useState<{ name: string; code: string; directCredit?: boolean; value?: number } | null>(null);
   const [showResultModal, setShowResultModal] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -179,21 +180,36 @@ export default function LotteryPage() {
         const prize = PRIZES_WITH_ANGLES.find(p => p.value === Number(data.record.tierValue));
         
         if (prize) {
+          // 归一化角度到 [0, 360) 范围，处理负数和超过 360 的情况
+          const normalize = (deg: number) => ((deg % 360) + 360) % 360;
+          
           // 计算这个奖品区域的中心角度
           const centerAngle = (prize.startAngle + prize.endAngle) / 2;
           // 转盘需要停在指针指向的位置（顶部 = 0度）
-          // 所以需要旋转 (360 - centerAngle) 度让中心对准顶部
-          const targetAngle = 360 - centerAngle;
-          // 加上多圈旋转 (增加旋转圈数，让动画更刺激)
-          const totalRotation = 360 * 12 + targetAngle;
-          setRotation(prev => prev + totalRotation);
+          // 目标角度：让 centerAngle 对准指针（0度位置）
+          const targetAngle = normalize(360 - centerAngle);
+          
+          // [FIX] 修复累加逻辑：计算相对于当前角度的增量
+          // 修复前 bug：直接用 prev + 360*12 + targetAngle 累加，
+          // 把"绝对目标角度"当成"增量"，导致第二次及之后停留位置偏移
+          setRotation(prev => {
+            const current = normalize(prev);      // 当前停留角度
+            const desired = targetAngle;          // 目标停留角度
+            const delta = normalize(desired - current); // 需要额外转动的增量
+            return prev + 360 * 12 + delta;       // 12 圈 + 增量
+          });
 
           // 动画结束后显示结果 (6.5秒后 - 稍微留点余量给CSS动画)
           // [M2修复] 使用 ref 存储 timeout ID 以便清理
           spinTimeoutRef.current = setTimeout(async () => {
             setSpinning(false);
             // 直接使用后端返回的数据
-            setResult({ name: data.record.tierName, code: data.record.code });
+            setResult({ 
+              name: data.record.tierName, 
+              code: data.record.code || '',
+              directCredit: data.record.directCredit || false,
+              value: data.record.tierValue
+            });
             setShowResultModal(true);
             
             // [M1修复] 抽奖成功后重新从后端获取最新状态，确保前后端一致
@@ -610,31 +626,45 @@ export default function LotteryPage() {
                             <span className={`font-bold text-sm ${PRIZE_STYLES[`tier_${record.tierValue}`]?.text || 'text-stone-700'}`}>
                                 {record.tierName}
                             </span>
+                            {record.directCredit && (
+                              <span className="text-[9px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-bold">
+                                已直充
+                              </span>
+                            )}
                         </div>
                         <span className="text-[10px] text-stone-400 font-mono bg-stone-50 px-1.5 py-0.5 rounded">
                            {new Date(record.createdAt).toLocaleDateString()}
                         </span>
                       </div>
                       
-                      <div className="relative bg-stone-50 rounded-lg p-2 border border-stone-100 border-dashed flex items-center justify-between group-hover:bg-white transition-colors">
-                        <code className="text-xs font-mono text-stone-600 truncate max-w-[140px] select-all">
-                           {record.code}
-                        </code>
-                        <button 
-                            onClick={() => {
-                                navigator.clipboard.writeText(record.code);
-                                // 简单的视觉反馈
-                                const btn = document.getElementById(`copy-${record.id}`);
-                                if(btn) btn.style.color = '#10b981';
-                                setTimeout(() => { if(btn) btn.style.color = ''; }, 1000);
-                            }}
-                            id={`copy-${record.id}`}
-                            className="p-1.5 hover:bg-stone-100 rounded text-stone-400 hover:text-stone-600 transition-colors"
-                            title="复制"
-                        >
-                            <Copy className="w-3 h-3" />
-                        </button>
-                      </div>
+                      {/* 直充模式显示金额，兑换码模式显示码 */}
+                      {record.directCredit ? (
+                        <div className="relative bg-green-50 rounded-lg p-2 border border-green-200 flex items-center justify-center">
+                          <span className="text-sm font-bold text-green-700">
+                            💰 ${record.tierValue} 已充值到账户
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="relative bg-stone-50 rounded-lg p-2 border border-stone-100 border-dashed flex items-center justify-between group-hover:bg-white transition-colors">
+                          <code className="text-xs font-mono text-stone-600 truncate max-w-[140px] select-all">
+                             {record.code}
+                          </code>
+                          <button 
+                              onClick={() => {
+                                  navigator.clipboard.writeText(record.code);
+                                  // 简单的视觉反馈
+                                  const btn = document.getElementById(`copy-${record.id}`);
+                                  if(btn) btn.style.color = '#10b981';
+                                  setTimeout(() => { if(btn) btn.style.color = ''; }, 1000);
+                              }}
+                              id={`copy-${record.id}`}
+                              className="p-1.5 hover:bg-stone-100 rounded text-stone-400 hover:text-stone-600 transition-colors"
+                              title="复制"
+                          >
+                              <Copy className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -680,21 +710,37 @@ export default function LotteryPage() {
               <span className="text-2xl text-transparent bg-clip-text bg-gradient-to-r from-orange-600 to-red-600 font-black mt-2 inline-block">
                   {result.name}
               </span>
+              {result.directCredit && (
+                <span className="block text-sm text-green-600 mt-2 font-bold">
+                  💰 已直接充值到您的账户
+                </span>
+              )}
             </p>
 
-            <div className="bg-stone-50 border-2 border-dashed border-orange-200 rounded-2xl p-1 mb-8 relative group hover:border-orange-300 transition-colors">
-              <div className="bg-white rounded-xl p-4 shadow-sm">
-                <p className="font-mono text-xl font-bold text-stone-800 break-all tracking-wider">{result.code}</p>
+            {/* 直充模式显示金额，兑换码模式显示码 */}
+            {result.directCredit ? (
+              <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-2xl p-6 mb-8">
+                <div className="text-center">
+                  <p className="text-sm text-green-600 mb-2 font-medium">充值金额</p>
+                  <p className="text-4xl font-black text-green-700">${result.value}</p>
+                  <p className="text-xs text-green-500 mt-2">已添加到您的 API 账户余额</p>
+                </div>
               </div>
-              <button 
-                onClick={handleCopy}
-                className={`absolute -right-3 -top-3 p-2.5 rounded-xl shadow-lg transition-all transform hover:scale-110 ${
-                  copied ? 'bg-green-500 text-white' : 'bg-stone-800 text-white'
-                }`}
-              >
-                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              </button>
-            </div>
+            ) : (
+              <div className="bg-stone-50 border-2 border-dashed border-orange-200 rounded-2xl p-1 mb-8 relative group hover:border-orange-300 transition-colors">
+                <div className="bg-white rounded-xl p-4 shadow-sm">
+                  <p className="font-mono text-xl font-bold text-stone-800 break-all tracking-wider">{result.code}</p>
+                </div>
+                <button 
+                  onClick={handleCopy}
+                  className={`absolute -right-3 -top-3 p-2.5 rounded-xl shadow-lg transition-all transform hover:scale-110 ${
+                    copied ? 'bg-green-500 text-white' : 'bg-stone-800 text-white'
+                  }`}
+                >
+                  {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                </button>
+              </div>
+            )}
 
             <button 
               onClick={() => setShowResultModal(false)}

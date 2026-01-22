@@ -4,6 +4,8 @@ import {
   getLotteryConfig,
   checkAllTiersHaveCodes,
   getTiersStats,
+  checkDailyDirectLimit,
+  getMinTierValue,
 } from "@/lib/lottery";
 import { checkDailyLimit, getExtraSpinCount } from "@/lib/kv";
 
@@ -38,11 +40,31 @@ export async function GET() {
       };
     });
 
+    // 根据模式判断是否可以抽奖
+    // direct 模式：不需要兑换码库存，只需要直充额度
+    // code 模式：需要兑换码库存
+    // hybrid 模式：只要其中一个可用即可
+    let canSpinByMode = false;
+    const minTierValue = await getMinTierValue();
+    
+    if (config.mode === 'direct') {
+      // 直充模式：检查每日直充额度是否还有剩余（用最低可中奖档位判断）
+      canSpinByMode = await checkDailyDirectLimit(minTierValue);
+    } else if (config.mode === 'code') {
+      // 兑换码模式：需要所有档位都有库存
+      canSpinByMode = allTiersHaveCodes;
+    } else {
+      // hybrid 模式：直充可用 OR 兑换码可用
+      const directAvailable = await checkDailyDirectLimit(minTierValue);
+      canSpinByMode = directAvailable || allTiersHaveCodes;
+    }
+
     return NextResponse.json({
       success: true,
       enabled: config.enabled,
+      mode: config.mode,
       tiers: tiersWithStats,
-      canSpin: config.enabled && (!hasSpunToday || extraSpins > 0) && allTiersHaveCodes,
+      canSpin: config.enabled && (!hasSpunToday || extraSpins > 0) && canSpinByMode,
       hasSpunToday,
       extraSpins,
       allTiersHaveCodes,

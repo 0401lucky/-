@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, Plus, Pause, Play, Trash2, Upload, 
   Loader2, AlertCircle, Users, Package, LayoutDashboard,
-  ChevronRight, LogOut, User as UserIcon, X, Check, Gift, Sparkles
+  ChevronRight, LogOut, User as UserIcon, X, Check, Gift, Sparkles, ShoppingBag
 } from 'lucide-react';
 
 interface Project {
@@ -201,6 +201,22 @@ export default function AdminPage() {
               >
                 <Users className="w-4 h-4" />
                 <span className="hidden sm:inline">用户管理</span>
+              </Link>
+              {/* 商品管理入口 */}
+              <Link 
+                href="/admin/store" 
+                className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-purple-200"
+              >
+                <ShoppingBag className="w-4 h-4" />
+                <span className="hidden sm:inline">商品管理</span>
+              </Link>
+              {/* 系统设置入口 */}
+              <Link 
+                href="/admin/settings" 
+                className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-slate-200"
+              >
+                <span className="text-sm">⚙️</span>
+                <span className="hidden sm:inline">设置</span>
               </Link>
             </div>
             

@@ -37,7 +37,15 @@ interface LotteryRecord {
   tierName: string;
   tierValue: number;
   code: string;
+  directCredit?: boolean;
   createdAt: number;
+}
+
+interface LotteryConfigState {
+  enabled: boolean;
+  mode: 'code' | 'direct' | 'hybrid';
+  dailyDirectLimit: number;
+  probabilities: Record<string, number>;
 }
 
 interface UserData {
@@ -53,10 +61,23 @@ export default function AdminLotteryPage() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<TierStats[]>([]);
   const [records, setRecords] = useState<LotteryRecord[]>([]);
-  const [config, setConfig] = useState<{ enabled: boolean; probabilities: Record<string, number> }>({
+  const [config, setConfig] = useState<LotteryConfigState>({
     enabled: true,
+    mode: 'direct',
+    dailyDirectLimit: 2000,
     probabilities: {}
   });
+  
+  // 今日已发放额度
+  const [todayDirect, setTodayDirect] = useState(0);
+  
+  // 概率映射表
+  const [probabilityMap, setProbabilityMap] = useState<Record<string, number>>({});
+  
+  // 分页状态
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   
   // 表单状态
   const [probabilities, setProbabilities] = useState<Record<string, number>>({});
@@ -102,27 +123,65 @@ export default function AdminLotteryPage() {
       }
       setUser(userData.user);
 
-      // 获取数据
-      const dataRes = await fetch('/api/admin/lottery');
-      if (dataRes.ok) {
-        const data = await dataRes.json();
-        if (data.success) {
-          setStats(data.tiers || []);
-          setRecords(data.records || []);
-          setConfig(data.config || { enabled: true, probabilities: {} });
-          // 从 tiers 数组构建 probabilities 对象
-          const probs: Record<string, number> = {};
-          (data.tiers || []).forEach((tier: TierStats) => {
-            probs[tier.id] = tier.probability;
-          });
-          setProbabilities(probs);
+      // 获取数据（重置分页）
+        const dataRes = await fetch('/api/admin/lottery?page=1&limit=50');
+        if (dataRes.ok) {
+          const data = await dataRes.json();
+          if (data.success) {
+            setStats(data.tiers || []);
+            setRecords(data.records || []);
+            setProbabilityMap(data.probabilityMap || {});
+            setPage(1);
+            setHasMore(data.pagination?.hasMore ?? false);
+            // 处理配置数据（注意 0 是有效值，不应被覆盖）
+            const configData = data.config || {};
+            setConfig({
+              enabled: configData.enabled ?? true,
+              mode: configData.mode || 'direct',
+              dailyDirectLimit: typeof configData.dailyDirectLimit === 'number' 
+                ? configData.dailyDirectLimit 
+                : 2000,
+              probabilities: {}
+            });
+            setTodayDirect(data.todayDirectTotal || 0);
+            // 从 tiers 数组构建 probabilities 对象
+            const probs: Record<string, number> = {};
+            (data.tiers || []).forEach((tier: TierStats) => {
+              probs[tier.id] = tier.probability;
+            });
+            setProbabilities(probs);
+          }
         }
-      }
     } catch (err) {
       console.error('Fetch error:', err);
       setError('加载失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 加载更多记录
+  const loadMoreRecords = async () => {
+    if (loadingMore || !hasMore) return;
+    
+    setLoadingMore(true);
+    try {
+      const nextPage = page + 1;
+      const res = await fetch(`/api/admin/lottery?page=${nextPage}&limit=50`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.records?.length > 0) {
+          setRecords(prev => [...prev, ...data.records]);
+          setPage(nextPage);
+          setHasMore(data.pagination?.hasMore ?? false);
+        } else {
+          setHasMore(false);
+        }
+      }
+    } catch (err) {
+      console.error('Load more error:', err);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -146,7 +205,7 @@ export default function AdminLotteryPage() {
     setSuccess(null);
 
     try {
-      // [M3修复] 将 probabilities 对象转换为后端期望的 tiers 数组格式
+      // 将 probabilities 对象转换为后端期望的 tiers 数组格式
       const tiersArray = Object.entries(probabilities).map(([id, probability]) => ({
         id,
         probability
@@ -155,13 +214,17 @@ export default function AdminLotteryPage() {
       const res = await fetch('/api/admin/lottery/config', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tiers: tiersArray, enabled: config.enabled })
+        body: JSON.stringify({ 
+          tiers: tiersArray, 
+          enabled: config.enabled,
+          mode: config.mode,
+          dailyDirectLimit: config.dailyDirectLimit
+        })
       });
 
       const data = await res.json();
       if (data.success) {
         setSuccess('配置保存成功');
-        setConfig(prev => ({ ...prev, probabilities }));
         setTimeout(() => setSuccess(null), 3000);
       } else {
         setError(data.message || '保存失败');
@@ -347,6 +410,117 @@ export default function AdminLotteryPage() {
             <button onClick={() => setSuccess(null)} className="ml-auto"><X className="w-4 h-4" /></button>
           </div>
         )}
+
+        {/* 发放模式配置 */}
+        <section className="glass rounded-3xl p-6 md:p-8">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-lg font-bold text-stone-800 flex items-center gap-2">
+              <LayoutDashboard className="w-5 h-5 text-orange-500" />
+              发放模式
+            </h2>
+            {config.mode === 'direct' && (
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-stone-500">今日已发放:</span>
+                <span className={`font-bold ${todayDirect >= config.dailyDirectLimit ? 'text-red-500' : 'text-green-600'}`}>
+                  ${todayDirect}
+                </span>
+                <span className="text-stone-400">/</span>
+                <span className="text-stone-500">${config.dailyDirectLimit}</span>
+              </div>
+            )}
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            {/* 兑换码模式 */}
+            <button
+              onClick={() => setConfig(prev => ({ ...prev, mode: 'code' }))}
+              className={`p-4 rounded-2xl border-2 transition-all text-left ${
+                config.mode === 'code' 
+                  ? 'border-orange-500 bg-orange-50 ring-2 ring-orange-100' 
+                  : 'border-stone-200 bg-white hover:border-stone-300'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <Package className={`w-5 h-5 ${config.mode === 'code' ? 'text-orange-500' : 'text-stone-400'}`} />
+                <span className={`font-bold ${config.mode === 'code' ? 'text-orange-600' : 'text-stone-700'}`}>
+                  兑换码模式
+                </span>
+              </div>
+              <p className="text-xs text-stone-500">
+                抽中后发放预设的兑换码，用户需手动兑换
+              </p>
+            </button>
+            
+            {/* 直充模式 */}
+            <button
+              onClick={() => setConfig(prev => ({ ...prev, mode: 'direct' }))}
+              className={`p-4 rounded-2xl border-2 transition-all text-left ${
+                config.mode === 'direct' 
+                  ? 'border-green-500 bg-green-50 ring-2 ring-green-100' 
+                  : 'border-stone-200 bg-white hover:border-stone-300'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <Gift className={`w-5 h-5 ${config.mode === 'direct' ? 'text-green-500' : 'text-stone-400'}`} />
+                <span className={`font-bold ${config.mode === 'direct' ? 'text-green-600' : 'text-stone-700'}`}>
+                  直充模式
+                </span>
+                <span className="text-[10px] bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full font-bold">推荐</span>
+              </div>
+              <p className="text-xs text-stone-500">
+                抽中后直接充值到用户账户，无需兑换码
+              </p>
+            </button>
+            
+            {/* 混合模式 */}
+            <button
+              onClick={() => setConfig(prev => ({ ...prev, mode: 'hybrid' }))}
+              className={`p-4 rounded-2xl border-2 transition-all text-left ${
+                config.mode === 'hybrid' 
+                  ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' 
+                  : 'border-stone-200 bg-white hover:border-stone-300'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <RefreshCw className={`w-5 h-5 ${config.mode === 'hybrid' ? 'text-blue-500' : 'text-stone-400'}`} />
+                <span className={`font-bold ${config.mode === 'hybrid' ? 'text-blue-600' : 'text-stone-700'}`}>
+                  混合模式
+                </span>
+              </div>
+              <p className="text-xs text-stone-500">
+                优先直充，失败时降级为兑换码
+              </p>
+            </button>
+          </div>
+          
+          {/* 每日直充上限配置 */}
+          {(config.mode === 'direct' || config.mode === 'hybrid') && (
+            <div className="p-4 bg-stone-50 rounded-xl border border-stone-200">
+              <div className="flex items-center gap-4">
+                <label className="text-sm font-bold text-stone-600 whitespace-nowrap">
+                  每日直充上限
+                </label>
+                <div className="flex-1 relative">
+                  <span className="absolute left-3 top-2.5 text-stone-400">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="100"
+                    value={config.dailyDirectLimit}
+                    onChange={(e) => setConfig(prev => ({ 
+                      ...prev, 
+                      dailyDirectLimit: Math.max(0, parseInt(e.target.value) || 0) 
+                    }))}
+                    className="w-full pl-7 pr-4 py-2 bg-white border border-stone-200 rounded-xl focus:border-orange-500 focus:ring-2 focus:ring-orange-100 outline-none text-stone-800 font-mono"
+                  />
+                </div>
+                <p className="text-xs text-stone-400 hidden md:block">
+                  积分商店兑换不受此限制
+                </p>
+              </div>
+            </div>
+          )}
+        </section>
 
         {/* 库存概览 */}
         <section>
@@ -534,20 +708,21 @@ export default function AdminLotteryPage() {
               <Users className="w-5 h-5 text-orange-500" />
               近期中奖记录
             </h2>
-            <span className="text-xs font-bold text-stone-400 bg-stone-100 px-2 py-1 rounded-md">最新 50 条</span>
+            <span className="text-xs font-bold text-stone-400 bg-stone-100 px-2 py-1 rounded-md">已加载 {records.length} 条</span>
           </div>
 
           <div className="glass rounded-3xl overflow-hidden shadow-sm">
             {records.length === 0 ? (
               <div className="p-12 text-center text-stone-400">暂无中奖数据</div>
             ) : (
-              <div className="w-full overflow-x-auto">
+              <div className="w-full overflow-x-auto max-h-[600px] overflow-y-auto">
                 <table className="w-full text-left">
-                  <thead className="bg-stone-50/80 border-b border-stone-200">
+                  <thead className="bg-stone-50/80 border-b border-stone-200 sticky top-0">
                     <tr>
                       <th className="px-6 py-4 text-xs font-bold text-stone-500 uppercase tracking-wide">用户</th>
                       <th className="px-6 py-4 text-xs font-bold text-stone-500 uppercase tracking-wide">奖品</th>
-                      <th className="px-6 py-4 text-xs font-bold text-stone-500 uppercase tracking-wide">兑换码</th>
+                      <th className="px-6 py-4 text-xs font-bold text-stone-500 uppercase tracking-wide">概率</th>
+                      <th className="px-6 py-4 text-xs font-bold text-stone-500 uppercase tracking-wide">发放方式</th>
                       <th className="px-6 py-4 text-xs font-bold text-stone-500 uppercase tracking-wide">时间</th>
                     </tr>
                   </thead>
@@ -563,7 +738,29 @@ export default function AdminLotteryPage() {
                             {record.tierName}
                           </span>
                         </td>
-                        <td className="px-6 py-4 font-mono text-sm text-stone-500">{record.code}</td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-bold ${
+                            (probabilityMap[record.tierName] || 0) <= 1 
+                              ? 'bg-red-100 text-red-600' 
+                              : (probabilityMap[record.tierName] || 0) <= 5 
+                                ? 'bg-orange-100 text-orange-600'
+                                : 'bg-stone-100 text-stone-600'
+                          }`}>
+                            {probabilityMap[record.tierName] !== undefined 
+                              ? `${probabilityMap[record.tierName]}%` 
+                              : '-'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          {record.directCredit ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-bold bg-green-100 text-green-700">
+                              <Check className="w-3 h-3" />
+                              已直充
+                            </span>
+                          ) : (
+                            <code className="font-mono text-sm text-stone-500">{record.code}</code>
+                          )}
+                        </td>
                         <td className="px-6 py-4 text-sm text-stone-400">
                           <div className="flex items-center gap-1.5">
                             <Clock className="w-3.5 h-3.5" />
@@ -574,6 +771,32 @@ export default function AdminLotteryPage() {
                     ))}
                   </tbody>
                 </table>
+                
+                {/* 加载更多按钮 */}
+                {hasMore && (
+                  <div className="p-4 text-center border-t border-stone-100">
+                    <button
+                      onClick={loadMoreRecords}
+                      disabled={loadingMore}
+                      className="px-6 py-2 bg-orange-500 text-white rounded-lg font-bold text-sm hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    >
+                      {loadingMore ? (
+                        <span className="flex items-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          加载中...
+                        </span>
+                      ) : (
+                        '加载更多'
+                      )}
+                    </button>
+                  </div>
+                )}
+                
+                {!hasMore && records.length > 0 && (
+                  <div className="p-4 text-center text-stone-400 text-sm border-t border-stone-100">
+                    已加载全部记录
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -23,6 +23,7 @@ export async function GET() {
         tierName: r.tierName,
         tierValue: r.tierValue,
         code: r.code,
+        directCredit: r.directCredit || false,  // 直充标记
         createdAt: r.createdAt
       }))
     });

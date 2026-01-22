@@ -85,7 +85,7 @@ export default function ProjectsPage() {
     <div className="min-h-screen bg-[#fafaf9] overflow-x-hidden">
       {/* 导航栏 */}
       <nav className="sticky top-0 z-50 glass border-b border-white/50 transition-all duration-300">
-        <div className="max-w-[1200px] mx-auto px-6">
+        <div className="max-w-[1200px] mx-auto px-4 sm:px-6">
           <div className="flex justify-between items-center h-[72px]">
             {/* Logo */}
             <div className="flex items-center gap-4">
@@ -103,19 +103,20 @@ export default function ProjectsPage() {
             </div>
 
             {/* 用户区域 */}
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 sm:gap-4">
               {user ? (
                 <>
                   {user.isAdmin && (
-                    <Link 
-                      href="/admin" 
-                      className="hidden sm:flex items-center gap-2 px-4 py-2 bg-stone-100 text-stone-600 rounded-xl text-sm font-semibold hover:bg-orange-50 hover:text-orange-600 transition-all duration-300 border border-stone-200"
+                    <Link
+                      href="/admin"
+                      className="flex items-center gap-2 px-2.5 py-2 sm:px-4 sm:py-2 bg-stone-100 text-stone-600 rounded-xl text-sm font-semibold hover:bg-orange-50 hover:text-orange-600 transition-all duration-300 border border-stone-200"
+                      title="后台管理"
                     >
                       <LayoutDashboard className="w-4 h-4" />
-                      <span>后台管理</span>
+                      <span className="hidden sm:inline">后台管理</span>
                     </Link>
                   )}
-                  <div className="flex items-center gap-3 pl-4 sm:border-l sm:border-stone-200">
+                  <div className="flex items-center gap-3 pl-2 sm:pl-4 sm:border-l sm:border-stone-200">
                     <div className="w-9 h-9 rounded-full bg-white flex items-center justify-center border border-stone-100 shadow-sm">
                       <User className="w-4 h-4 text-stone-500" />
                     </div>
@@ -143,7 +144,7 @@ export default function ProjectsPage() {
       </nav>
 
       {/* 主内容 */}
-      <main className="max-w-[1200px] mx-auto px-6 py-12">
+      <main className="max-w-[1200px] mx-auto px-4 sm:px-6 py-12">
         <div className="mb-12 animate-fade-in">
           <h1 className="text-3xl font-extrabold text-stone-800 mb-4 tracking-tight">
             所有福利项目

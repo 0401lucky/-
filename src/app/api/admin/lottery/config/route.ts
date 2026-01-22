@@ -22,6 +22,16 @@ export async function PATCH(request: NextRequest) {
       await updateLotteryConfig({ enabled: body.enabled });
     }
 
+    // 更新发放模式
+    if (body.mode && ['code', 'direct', 'hybrid'].includes(body.mode)) {
+      await updateLotteryConfig({ mode: body.mode });
+    }
+
+    // 更新每日直充上限
+    if (typeof body.dailyDirectLimit === "number" && body.dailyDirectLimit >= 0) {
+      await updateLotteryConfig({ dailyDirectLimit: body.dailyDirectLimit });
+    }
+
     // 更新概率配置
     if (Array.isArray(body.tiers)) {
       // [M4修复] 获取当前配置，确保提交了所有档位
@@ -78,6 +88,8 @@ export async function PATCH(request: NextRequest) {
       message: "配置更新成功",
       config: {
         enabled: updatedConfig.enabled,
+        mode: updatedConfig.mode,
+        dailyDirectLimit: updatedConfig.dailyDirectLimit,
         tiers: updatedConfig.tiers.map((t) => ({
           id: t.id,
           name: t.name,

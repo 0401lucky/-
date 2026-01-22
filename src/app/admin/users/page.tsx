@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, Loader2, Search, Users, 
   LayoutDashboard, LogOut, User as UserIcon, X, 
-  ChevronRight, Gift, Sparkles, Clock, CheckCircle2, Star, RefreshCw
+  ChevronRight, Gift, Sparkles, Clock, CheckCircle2, Star, RefreshCw, Coins
 } from 'lucide-react';
 
 interface UserWithStats {
@@ -29,11 +29,24 @@ interface ClaimRecord {
 }
 
 interface LotteryRecord {
-  lotteryId: string;
-  lotteryName: string;
-  prizeId: string;
-  prizeName: string;
-  wonAt: number;
+  id: string;
+  oderId: string;
+  username: string;
+  tierName: string;
+  tierValue: number;
+  code: string;
+  directCredit?: boolean;
+  creditedQuota?: number;
+  createdAt: number;
+}
+
+interface PointsLog {
+  id: string;
+  amount: number;
+  source: 'game_play' | 'game_win' | 'daily_login' | 'checkin_bonus' | 'exchange' | 'admin_adjust';
+  description: string;
+  balance: number;
+  createdAt: number;
 }
 
 interface UserData {
@@ -51,12 +64,29 @@ export default function UsersPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'new' | 'claimed'>('all');
   
+  // 分页状态
+  const [page, setPage] = useState(1);
+  const [totalUsers, setTotalUsers] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  
   // 用户详情模态框
   const [selectedUser, setSelectedUser] = useState<UserWithStats | null>(null);
   const [userClaims, setUserClaims] = useState<ClaimRecord[]>([]);
   const [userLotteryRecords, setUserLotteryRecords] = useState<LotteryRecord[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  
+  // 积分相关状态
+  const [userPoints, setUserPoints] = useState<number | null>(null);
+  const [userPointsLogs, setUserPointsLogs] = useState<PointsLog[]>([]);
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustReason, setAdjustReason] = useState('');
+  const [adjusting, setAdjusting] = useState(false);
+  const [pointsError, setPointsError] = useState(false);
+  
+  // 请求序号防抖，防止竞态
+  const requestIdRef = useRef(0);
   
   const router = useRouter();
 
@@ -67,16 +97,7 @@ export default function UsersPage() {
   useEffect(() => {
     let result = users;
     
-    // 搜索过滤
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(u => 
-        u.username.toLowerCase().includes(query) ||
-        u.id.toString().includes(query)
-      );
-    }
-    
-    // 类型过滤
+    // 类型过滤（前端过滤，因为搜索在后端）
     if (filterType === 'new') {
       result = result.filter(u => u.isNewUser);
     } else if (filterType === 'claimed') {
@@ -84,9 +105,9 @@ export default function UsersPage() {
     }
     
     setFilteredUsers(result);
-  }, [users, searchQuery, filterType]);
+  }, [users, filterType]);
 
-  const fetchData = async () => {
+  const fetchData = async (resetPage = true) => {
     try {
       const userRes = await fetch('/api/auth/me');
       if (!userRes.ok) {
@@ -100,12 +121,21 @@ export default function UsersPage() {
       }
       setUser(userData.user);
 
-      const usersRes = await fetch('/api/admin/users');
+      // 重置分页
+      if (resetPage) {
+        setPage(1);
+        setUsers([]);
+      }
+      
+      const searchParam = searchQuery.trim() ? `&search=${encodeURIComponent(searchQuery.trim())}` : '';
+      const usersRes = await fetch(`/api/admin/users?page=1&limit=50${searchParam}`);
       if (usersRes.ok) {
         const data = await usersRes.json();
         if (data.success) {
           setUsers(data.users);
-          setFilteredUsers(data.users);
+          setTotalUsers(data.pagination?.total || data.users.length);
+          setHasMore(data.pagination?.hasMore ?? false);
+          setPage(1);
         }
       }
     } catch (error) {
@@ -115,24 +145,158 @@ export default function UsersPage() {
     }
   };
 
-  const handleUserClick = async (u: UserWithStats) => {
-    setSelectedUser(u);
-    setLoadingDetail(true);
+  // 加载更多用户
+  const loadMoreUsers = async () => {
+    if (loadingMore || !hasMore) return;
     
+    setLoadingMore(true);
     try {
-      const res = await fetch(`/api/admin/users/${u.id}`);
+      const nextPage = page + 1;
+      const searchParam = searchQuery.trim() ? `&search=${encodeURIComponent(searchQuery.trim())}` : '';
+      const res = await fetch(`/api/admin/users?page=${nextPage}&limit=50${searchParam}`);
       if (res.ok) {
         const data = await res.json();
+        if (data.success && data.users?.length > 0) {
+          setUsers(prev => [...prev, ...data.users]);
+          setPage(nextPage);
+          setHasMore(data.pagination?.hasMore ?? false);
+        } else {
+          setHasMore(false);
+        }
+      }
+    } catch (err) {
+      console.error('Load more error:', err);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  // 搜索防抖
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!loading) {
+        fetchData(true);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
+
+  const handleUserClick = async (u: UserWithStats) => {
+    // 递增请求序号，用于防止竞态
+    const currentRequestId = ++requestIdRef.current;
+    
+    setSelectedUser(u);
+    setLoadingDetail(true);
+    // 清空所有详情数据，防止显示上一个用户的数据
+    setUserPoints(null);
+    setUserPointsLogs([]);
+    setUserClaims([]);
+    setUserLotteryRecords([]);
+    setAdjustAmount('');
+    setAdjustReason('');
+    setPointsError(false);
+    
+    try {
+      // 并行获取用户详情和积分信息
+      const [detailRes, pointsRes] = await Promise.all([
+        fetch(`/api/admin/users/${u.id}`),
+        fetch(`/api/admin/points?userId=${u.id}`)
+      ]);
+      
+      // 检查是否仍是最新请求
+      if (currentRequestId !== requestIdRef.current) return;
+      
+      if (detailRes.ok) {
+        const data = await detailRes.json();
         if (data.success) {
           setUserClaims(data.claims || []);
           setUserLotteryRecords(data.lotteryRecords || []);
         }
       }
+      
+      if (pointsRes.ok) {
+        const pointsData = await pointsRes.json();
+        if (pointsData.success && pointsData.data) {
+          setUserPoints(pointsData.data.balance ?? 0);
+          setUserPointsLogs(pointsData.data.logs || []);
+        } else {
+          setPointsError(true);
+        }
+      } else {
+        setPointsError(true);
+      }
     } catch (error) {
       console.error('Fetch user detail error:', error);
+      // 检查是否仍是最新请求
+      if (currentRequestId === requestIdRef.current) {
+        setPointsError(true);
+      }
     } finally {
-      setLoadingDetail(false);
+      // 只有最新请求才能结束 loading
+      if (currentRequestId === requestIdRef.current) {
+        setLoadingDetail(false);
+      }
     }
+  };
+
+  const handleAdjustPoints = async () => {
+    if (!selectedUser || !adjustAmount || !adjustReason.trim()) return;
+    
+    // 使用 Number 而非 parseInt，更严格的验证
+    const amount = Number(adjustAmount);
+    if (!Number.isSafeInteger(amount) || amount === 0) {
+      alert('请输入有效的积分数量（必须是非零整数）');
+      return;
+    }
+    
+    setAdjusting(true);
+    try {
+      const res = await fetch('/api/admin/points', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: selectedUser.id,
+          amount,
+          description: adjustReason.trim()
+        })
+      });
+      
+      const data = await res.json();
+      if (data.success) {
+        // 刷新积分数据
+        const pointsRes = await fetch(`/api/admin/points?userId=${selectedUser.id}`);
+        if (pointsRes.ok) {
+          const pointsData = await pointsRes.json();
+          if (pointsData.success && pointsData.data) {
+            setUserPoints(pointsData.data.balance || 0);
+            setUserPointsLogs(pointsData.data.logs || []);
+          }
+        }
+        setAdjustAmount('');
+        setAdjustReason('');
+        alert(data.message || '积分调整成功');
+      } else {
+        alert(data.message || '积分调整失败');
+      }
+    } catch (error) {
+      console.error('Adjust points error:', error);
+      alert('积分调整失败');
+    } finally {
+      setAdjusting(false);
+    }
+  };
+
+  const getSourceLabel = (source: string) => {
+    const labels: Record<string, string> = {
+      game_play: '游戏游玩',
+      game_win: '游戏胜利',
+      daily_login: '每日登录',
+      checkin_bonus: '签到奖励',
+      exchange: '商店兑换',
+      admin_adjust: '管理员调整'
+    };
+    return labels[source] || source;
   };
 
   const handleLogout = async () => {
@@ -426,6 +590,32 @@ export default function UsersPage() {
                   </div>
                 ))}
               </div>
+              
+              {/* 加载更多按钮 */}
+              {hasMore && (
+                <div className="p-4 text-center border-t border-stone-100">
+                  <button
+                    onClick={loadMoreUsers}
+                    disabled={loadingMore}
+                    className="px-6 py-2 bg-blue-500 text-white rounded-lg font-bold text-sm hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  >
+                    {loadingMore ? (
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        加载中...
+                      </span>
+                    ) : (
+                      `加载更多 (已加载 ${users.length}/${totalUsers})`
+                    )}
+                  </button>
+                </div>
+              )}
+              
+              {!hasMore && users.length > 0 && (
+                <div className="p-4 text-center text-stone-400 text-sm border-t border-stone-100">
+                  已加载全部 {totalUsers} 位用户
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -488,6 +678,87 @@ export default function UsersPage() {
                     </div>
                   </div>
 
+                  {/* 用户积分 */}
+                  <div>
+                    <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wide mb-3 flex items-center gap-2">
+                      <Coins className="w-4 h-4" />
+                      用户积分
+                    </h3>
+                    <div className="p-4 bg-gradient-to-r from-amber-50 to-yellow-50 rounded-xl border border-amber-200">
+                      {/* 当前余额 */}
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center">
+                          <span className="text-2xl">⭐</span>
+                        </div>
+                        <div>
+                          <p className="text-xs text-amber-600 font-medium">当前积分</p>
+                          {pointsError ? (
+                            <p className="text-lg font-bold text-red-500">加载失败</p>
+                          ) : userPoints === null ? (
+                            <p className="text-3xl font-bold text-amber-400">--</p>
+                          ) : (
+                            <p className="text-3xl font-bold text-amber-700">{userPoints.toLocaleString()}</p>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* 调整表单 */}
+                      <div className="space-y-3 pt-3 border-t border-amber-200">
+                        <div className="grid grid-cols-2 gap-3">
+                          <input
+                            type="number"
+                            step={1}
+                            value={adjustAmount}
+                            onChange={(e) => setAdjustAmount(e.target.value)}
+                            placeholder="积分数量 (正/负)"
+                            className="px-3 py-2 rounded-lg border border-amber-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                          />
+                          <input
+                            type="text"
+                            value={adjustReason}
+                            onChange={(e) => setAdjustReason(e.target.value)}
+                            placeholder="调整原因"
+                            maxLength={100}
+                            className="px-3 py-2 rounded-lg border border-amber-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                          />
+                        </div>
+                        <button
+                          onClick={handleAdjustPoints}
+                          disabled={adjusting || !adjustAmount || !adjustReason.trim() || userPoints === null}
+                          className="w-full py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-medium rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
+                        >
+                          {adjusting ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              处理中...
+                            </>
+                          ) : (
+                            '提交调整'
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {/* 积分流水 */}
+                    {userPointsLogs.length > 0 && (
+                      <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
+                        {userPointsLogs.slice(0, 10).map((log) => (
+                          <div key={log.id} className="flex items-center justify-between p-2 bg-stone-50 rounded-lg text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className={`font-bold ${log.amount >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                {log.amount >= 0 ? '+' : ''}{log.amount}
+                              </span>
+                              <span className="text-stone-500">{getSourceLabel(log.source)}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-stone-400">{new Date(log.createdAt).toLocaleString()}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {/* 兑换码领取记录 */}
                   <div>
                     <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wide mb-3 flex items-center gap-2">
@@ -533,15 +804,22 @@ export default function UsersPage() {
                         {userLotteryRecords.map((record, idx) => (
                           <div key={idx} className="p-4 bg-purple-50/50 rounded-xl border border-purple-100">
                             <div className="flex justify-between items-start mb-2">
-                              <span className="font-bold text-stone-800">{record.lotteryName}</span>
+                              <span className="font-bold text-stone-800">{record.tierName}</span>
                               <span className="text-xs text-stone-400 flex items-center gap-1">
                                 <Clock className="w-3 h-3" />
-                                {new Date(record.wonAt).toLocaleString()}
+                                {new Date(record.createdAt).toLocaleString()}
                               </span>
                             </div>
-                            <span className="text-sm font-medium text-purple-600">
-                              🎁 {record.prizeName}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-purple-600">
+                                🎁 ${record.tierValue}
+                              </span>
+                              {record.directCredit && (
+                                <span className="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full">
+                                  已直充
+                                </span>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>

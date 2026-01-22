@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { spinLottery, getLotteryConfig, checkAllTiersHaveCodes } from "@/lib/lottery";
+import { spinLotteryAuto, getLotteryConfig, checkAllTiersHaveCodes, checkDailyDirectLimit, getMinTierValue } from "@/lib/lottery";
 import { recordUser, getExtraSpinCount, checkDailyLimit } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
@@ -25,13 +25,38 @@ export async function POST() {
       );
     }
 
-    // 检查所有档位是否有库存
-    const allHaveCodes = await checkAllTiersHaveCodes();
-    if (!allHaveCodes) {
-      return NextResponse.json(
-        { success: false, message: "库存不足，暂时无法抽奖" },
-        { status: 400 }
-      );
+    // 根据模式检查可用性
+    // direct 模式：只检查直充额度
+    // code 模式：只检查兑换码库存
+    // hybrid 模式：至少有一个可用即可（具体由 spinLotteryAuto 内部处理降级）
+    const minTierValue = await getMinTierValue();
+    
+    if (config.mode === 'code') {
+      const allHaveCodes = await checkAllTiersHaveCodes();
+      if (!allHaveCodes) {
+        return NextResponse.json(
+          { success: false, message: "库存不足，暂时无法抽奖" },
+          { status: 400 }
+        );
+      }
+    } else if (config.mode === 'direct') {
+      const canDirect = await checkDailyDirectLimit(minTierValue);
+      if (!canDirect) {
+        return NextResponse.json(
+          { success: false, message: "今日发放额度已达上限，请明日再试" },
+          { status: 400 }
+        );
+      }
+    } else if (config.mode === 'hybrid') {
+      // hybrid 模式：直充可用 OR 兑换码可用
+      const canDirect = await checkDailyDirectLimit(minTierValue);
+      const allHaveCodes = await checkAllTiersHaveCodes();
+      if (!canDirect && !allHaveCodes) {
+        return NextResponse.json(
+          { success: false, message: "当前无法抽奖（直充额度已满且库存不足）" },
+          { status: 400 }
+        );
+      }
     }
 
     // 检查是否有资格抽奖（免费次数 或 额外次数）
@@ -45,8 +70,8 @@ export async function POST() {
       );
     }
 
-    // 执行抽奖
-    const result = await spinLottery(user.id, user.username);
+    // 执行抽奖（根据配置自动选择模式：直充/兑换码/混合）
+    const result = await spinLotteryAuto(user.id, user.username);
 
     if (!result.success) {
       return NextResponse.json(
