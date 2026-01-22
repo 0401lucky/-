@@ -174,50 +174,52 @@ export default function AdminPage() {
       <nav className="sticky top-0 z-50 glass border-b border-white/50">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="flex justify-between items-center h-16 sm:h-[72px]">
-            <div className="flex items-center gap-4 sm:gap-6">
+            <div className="flex items-center gap-3 sm:gap-6 min-w-0">
               <Link href="/" className="flex items-center gap-2 text-stone-500 hover:text-stone-800 transition-colors">
                 <ArrowLeft className="w-4 h-4" />
                 <span className="font-medium hidden sm:inline text-sm">首页</span>
               </Link>
               <div className="w-px h-5 bg-stone-300 hidden sm:block" />
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0">
                 <div className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center">
                   <LayoutDashboard className="w-4 h-4 text-orange-600" />
                 </div>
-                <span className="text-lg font-bold text-stone-800 tracking-tight">管理后台</span>
+                <span className="text-lg font-bold text-stone-800 tracking-tight truncate">
+                  <span className="sm:hidden">后台</span>
+                  <span className="hidden sm:inline">管理后台</span>
+                </span>
               </div>
-              {/* 抽奖管理入口 */}
-              <Link 
-                href="/admin/lottery" 
-                className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-orange-200"
-              >
-                <Sparkles className="w-4 h-4" />
-                <span className="hidden sm:inline">抽奖管理</span>
-              </Link>
-              {/* 用户管理入口 */}
-              <Link 
-                href="/admin/users" 
-                className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-blue-200"
-              >
-                <Users className="w-4 h-4" />
-                <span className="hidden sm:inline">用户管理</span>
-              </Link>
-              {/* 商品管理入口 */}
-              <Link 
-                href="/admin/store" 
-                className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-purple-200"
-              >
-                <ShoppingBag className="w-4 h-4" />
-                <span className="hidden sm:inline">商品管理</span>
-              </Link>
-              {/* 系统设置入口 */}
-              <Link 
-                href="/admin/settings" 
-                className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-slate-200"
-              >
-                <span className="text-sm">⚙️</span>
-                <span className="hidden sm:inline">设置</span>
-              </Link>
+              {/* 桌面端：快捷入口放在同一行 */}
+              <div className="hidden sm:flex items-center gap-3">
+                <Link 
+                  href="/admin/lottery" 
+                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-orange-200"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span className="hidden sm:inline">抽奖管理</span>
+                </Link>
+                <Link 
+                  href="/admin/users" 
+                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-blue-200"
+                >
+                  <Users className="w-4 h-4" />
+                  <span className="hidden sm:inline">用户管理</span>
+                </Link>
+                <Link 
+                  href="/admin/store" 
+                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-purple-200"
+                >
+                  <ShoppingBag className="w-4 h-4" />
+                  <span className="hidden sm:inline">商品管理</span>
+                </Link>
+                <Link 
+                  href="/admin/settings" 
+                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-slate-200"
+                >
+                  <span className="text-sm">⚙️</span>
+                  <span className="hidden sm:inline">设置</span>
+                </Link>
+              </div>
             </div>
             
             {user && (
@@ -237,6 +239,40 @@ export default function AdminPage() {
                 </button>
               </div>
             )}
+          </div>
+
+          {/* 移动端：快捷入口单独一行，避免标题/按钮挤压 */}
+          <div className="sm:hidden pb-3">
+            <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide -mx-4 px-4">
+              <Link 
+                href="/admin/lottery" 
+                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-orange-500 to-red-500 text-white rounded-full text-sm font-medium shadow-sm"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>抽奖</span>
+              </Link>
+              <Link 
+                href="/admin/users" 
+                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-full text-sm font-medium shadow-sm"
+              >
+                <Users className="w-4 h-4" />
+                <span>用户</span>
+              </Link>
+              <Link 
+                href="/admin/store" 
+                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-full text-sm font-medium shadow-sm"
+              >
+                <ShoppingBag className="w-4 h-4" />
+                <span>商品</span>
+              </Link>
+              <Link 
+                href="/admin/settings" 
+                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-slate-600 to-slate-700 text-white rounded-full text-sm font-medium shadow-sm"
+              >
+                <span className="text-sm">⚙️</span>
+                <span>设置</span>
+              </Link>
+            </div>
           </div>
         </div>
       </nav>
