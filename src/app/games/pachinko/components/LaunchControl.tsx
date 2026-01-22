@@ -215,7 +215,7 @@ export function LaunchControl({ onLaunch, disabled, ballsRemaining }: LaunchCont
   return (
     <div className="flex flex-col items-center w-full">
       {/* 剩余弹珠 */}
-      <div className="flex items-center gap-3 mb-6 bg-slate-50 px-4 py-2 rounded-full border border-slate-100">
+      <div className="flex items-center gap-3 mb-4 sm:mb-6 bg-slate-50 px-4 py-2 rounded-full border border-slate-100">
         <span className="text-slate-500 text-xs font-bold uppercase tracking-wider">剩余弹珠</span>
         <div className="flex gap-1.5">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -232,7 +232,7 @@ export function LaunchControl({ onLaunch, disabled, ballsRemaining }: LaunchCont
       </div>
 
       {/* 力度条 */}
-      <div className="w-full max-w-xs mb-8">
+      <div className="w-full max-w-xs mb-6 sm:mb-8">
         <div className="flex justify-between text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-wider">
           <span>MIN</span>
           <span className={`tabular-nums text-sm transition-colors ${power > 70 ? 'text-red-500' : power > 30 ? 'text-orange-500' : 'text-green-500'}`}>
@@ -256,7 +256,7 @@ export function LaunchControl({ onLaunch, disabled, ballsRemaining }: LaunchCont
         onPointerCancel={handlePointerCancel}
         disabled={!canLaunch}
         className={`
-          relative w-36 h-36 rounded-full 
+          relative w-28 h-28 sm:w-36 sm:h-36 rounded-full 
           transition-all duration-200 
           select-none touch-none
           flex items-center justify-center
@@ -270,7 +270,7 @@ export function LaunchControl({ onLaunch, disabled, ballsRemaining }: LaunchCont
       >
         {/* 按钮内圈 */}
         <div className={`
-          w-28 h-28 rounded-full 
+          w-20 h-20 sm:w-28 sm:h-28 rounded-full 
           flex items-center justify-center
           transition-all duration-200
           ${canLaunch
@@ -287,12 +287,12 @@ export function LaunchControl({ onLaunch, disabled, ballsRemaining }: LaunchCont
               </span>
             ) : isCharging ? (
               <div className="text-white">
-                <div className="text-3xl font-bold animate-pulse">🎯</div>
+                <div className="text-2xl sm:text-3xl font-bold animate-pulse">🎯</div>
                 <div className="text-[10px] font-bold mt-1 uppercase tracking-wide opacity-90">RELEASE</div>
               </div>
             ) : (
               <div className="text-white group">
-                <div className="text-3xl mb-1 transform group-hover:scale-110 transition-transform">🚀</div>
+                <div className="text-2xl sm:text-3xl mb-1 transform group-hover:scale-110 transition-transform">🚀</div>
                 <div className="text-[10px] font-bold uppercase tracking-wide opacity-80">HOLD</div>
               </div>
             )}

@@ -11,24 +11,21 @@ interface GameBoardProps {
 
 export function GameBoard({ canvasRef, ballsRemaining, currentScore }: GameBoardProps) {
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col w-full max-w-[400px] mx-auto">
       {/* 游戏画布 */}
       <canvas
         ref={canvasRef}
         width={CANVAS_WIDTH}
         height={CANVAS_HEIGHT}
-        className="rounded-t-lg border-2 border-b-0 border-purple-500/30"
+        className="w-full aspect-[2/3] rounded-t-lg border-2 border-b-0 border-purple-500/30"
       />
       
       {/* 槽位分数标签 - 移出画布，使用 grid 对齐 */}
-      <div 
-        className="grid grid-cols-9 rounded-b-lg border-2 border-t-0 border-purple-500/30 bg-slate-900/80"
-        style={{ width: CANVAS_WIDTH }}
-      >
+      <div className="w-full grid grid-cols-9 rounded-b-lg border-2 border-t-0 border-purple-500/30 bg-slate-900/80">
         {SLOT_SCORES.map((score, i) => (
           <div
             key={i}
-            className={`text-center py-2 text-sm font-bold tabular-nums ${
+            className={`text-center py-2 text-[11px] sm:text-sm font-bold tabular-nums ${
               score === 80 
                 ? 'text-red-400 bg-red-500/10' 
                 : score === 40 
@@ -44,15 +41,12 @@ export function GameBoard({ canvasRef, ballsRemaining, currentScore }: GameBoard
       </div>
       
       {/* 状态栏 - 使用 grid 对齐 */}
-      <div 
-        className="grid grid-cols-2 gap-4 mt-4 text-white"
-        style={{ width: CANVAS_WIDTH }}
-      >
-        <div className="flex items-center justify-center gap-2 bg-slate-800/50 rounded-lg py-2">
+      <div className="w-full grid grid-cols-2 gap-3 sm:gap-4 mt-3 sm:mt-4 text-white">
+        <div className="flex items-center justify-center gap-2 bg-slate-800/50 rounded-lg py-2 text-sm">
           <span className="text-yellow-400">🎱</span>
           <span className="tabular-nums">剩余: {ballsRemaining}</span>
         </div>
-        <div className="flex items-center justify-center gap-2 bg-slate-800/50 rounded-lg py-2">
+        <div className="flex items-center justify-center gap-2 bg-slate-800/50 rounded-lg py-2 text-sm">
           <span className="text-green-400">⭐</span>
           <span className="tabular-nums">得分: {currentScore}</span>
         </div>

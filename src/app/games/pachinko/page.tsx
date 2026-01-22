@@ -95,10 +95,10 @@ export default function PachinkoPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 py-6 px-4 sm:py-8 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-slate-50 py-4 px-4 sm:py-8 sm:px-6 lg:px-8">
       <div className="max-w-6xl mx-auto">
         {/* 标题栏 */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-6 sm:mb-8">
           <button
             onClick={() => router.push('/games')}
             className="group flex items-center text-slate-500 hover:text-slate-800 transition-colors font-medium"
@@ -117,7 +117,7 @@ export default function PachinkoPage() {
 
         {/* 每日统计 */}
         {status?.dailyStats && (
-          <div className="bg-white rounded-xl p-4 mb-6 shadow-sm border border-slate-100 flex items-center justify-between max-w-2xl mx-auto">
+          <div className="bg-white rounded-xl p-3 sm:p-4 mb-4 sm:mb-6 shadow-sm border border-slate-100 flex items-center justify-between max-w-2xl mx-auto">
             <div className="flex items-center gap-2">
                <span className="text-slate-400 text-xs font-bold uppercase tracking-wider">今日游戏</span>
                <span className="text-slate-900 font-bold">{status.dailyStats.gamesPlayed} <span className="text-slate-400 font-normal text-xs">局</span></span>
@@ -161,9 +161,9 @@ export default function PachinkoPage() {
 
         {/* 游戏区域 - 响应式布局 */}
         {session ? (
-          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-center gap-8">
+          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-center gap-6 sm:gap-8">
             {/* 游戏画布 */}
-            <div className="flex justify-center p-4 bg-slate-900 rounded-3xl shadow-2xl shadow-slate-300 ring-8 ring-slate-100">
+            <div className="w-full max-w-[460px] mx-auto flex justify-center p-2 sm:p-4 bg-slate-900 rounded-3xl shadow-2xl shadow-slate-300 ring-4 sm:ring-8 ring-slate-100 overflow-hidden">
               <GameBoard
                 canvasRef={canvasRef}
                 ballsRemaining={ballsRemaining}
@@ -172,7 +172,7 @@ export default function PachinkoPage() {
             </div>
             
             {/* 控制区域 - 移动端在下方，桌面端在右侧 */}
-            <div className="w-full lg:w-80 bg-white rounded-3xl p-6 shadow-xl border border-slate-100 flex flex-col gap-6">
+            <div className="w-full lg:w-80 bg-white rounded-3xl p-4 sm:p-6 shadow-xl border border-slate-100 flex flex-col gap-5 sm:gap-6">
               <div>
                 <h3 className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2">当前得分</h3>
                 <div className="text-4xl font-extrabold text-slate-900">{currentScore}</div>
