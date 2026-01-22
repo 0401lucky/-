@@ -1,4 +1,5 @@
-const NEW_API_URL = process.env.NEW_API_URL || "https://katqnmhfsssn.ap-northeast-1.clawcloudrun.com";
+export const NEW_API_URL =
+  process.env.NEW_API_URL || "https://katqnmhfsssn.ap-northeast-1.clawcloudrun.com";
 
 export interface NewApiUser {
   id: number;

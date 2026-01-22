@@ -171,15 +171,21 @@ export async function hasUserClaimedAny(userId: number): Promise<boolean> {
 
 // 记录用户（首次登录时调用）
 export async function recordUser(userId: number, username: string): Promise<void> {
-  const existing = await kv.get(`user:${userId}`);
+  const existing = await kv.get<User>(`user:${userId}`);
   if (!existing) {
-    await kv.set(`user:${userId}`, { 
-      id: userId, 
-      username, 
-      firstSeen: Date.now() 
+    await kv.set(`user:${userId}`, {
+      id: userId,
+      username,
+      firstSeen: Date.now(),
     });
-    await kv.sadd('users:all', userId);
+  } else if (existing.username !== username) {
+    await kv.set(`user:${userId}`, {
+      ...existing,
+      username,
+    });
   }
+  // 确保用户一定在用户集合中（便于后续管理/统计）
+  await kv.sadd('users:all', userId);
 }
 
 // 获取所有用户
