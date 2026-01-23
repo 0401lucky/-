@@ -7,15 +7,23 @@ import { getTodayDateString } from './time';
 import { getDailyPointsLimit } from './config';
 import type { DailyGameStats } from './types/game';
 import {
+  SLOT_BET_OPTIONS,
+  SLOT_EARN_BASE,
   SLOT_MAX_RECORD_ENTRIES,
+  SLOT_PAIR_BONUS_WITH_DIAMOND,
+  SLOT_PAIR_BONUS_WITH_SEVEN,
+  SLOT_PAIR_MULTIPLIERS,
   SLOT_SPIN_COOLDOWN_MS,
+  SLOT_SPECIAL_MIX_DIAMOND_DIAMOND_SEVEN_MULTIPLIER,
   SLOT_STATUS_RECORD_LIMIT,
   SLOT_SYMBOLS,
-  SLOT_TWO_OF_KIND_PAYOUT,
+  SLOT_TRIPLE_MULTIPLIERS,
   type SlotSymbolId,
 } from './slot-constants';
 
 export type SlotPlayMode = 'earn' | 'bet';
+
+export type SlotWinType = 'none' | 'pair' | 'pair_with_diamond' | 'pair_with_seven' | 'special_mix' | 'triple';
 
 export interface SlotSpinRecord {
   id: string;
@@ -25,6 +33,9 @@ export interface SlotSpinRecord {
   betCost?: number;
   reels: SlotSymbolId[];
   payout: number;
+  winType?: SlotWinType;
+  multiplier?: number;
+  matchedSymbolId?: SlotSymbolId;
   pointsEarned: number;
   pointsDelta?: number;
   createdAt: number;
@@ -88,23 +99,66 @@ function pickSymbolId(): SlotSymbolId {
   return SLOT_SYMBOLS[SLOT_SYMBOLS.length - 1]!.id;
 }
 
-function computePayout(reels: SlotSymbolId[]): {
-  payout: number;
-  match: 'none' | 'two' | 'three';
+function computeOutcome(reels: SlotSymbolId[]): {
+  winType: SlotWinType;
+  multiplier: number;
   matchedSymbolId?: SlotSymbolId;
 } {
   const [a, b, c] = reels;
 
   if (a === b && b === c) {
-    return { payout: SYMBOL_BY_ID[a].triplePayout, match: 'three', matchedSymbolId: a };
+    return { winType: 'triple', multiplier: SLOT_TRIPLE_MULTIPLIERS[a], matchedSymbolId: a };
+  }
+
+  const counts: Record<SlotSymbolId, number> = {} as Record<SlotSymbolId, number>;
+  counts[a] = (counts[a] ?? 0) + 1;
+  counts[b] = (counts[b] ?? 0) + 1;
+  counts[c] = (counts[c] ?? 0) + 1;
+
+  // 特殊爆：💎💎+7️⃣（任意顺序）
+  if ((counts.diamond ?? 0) === 2 && (counts.seven ?? 0) === 1) {
+    return { winType: 'special_mix', multiplier: SLOT_SPECIAL_MIX_DIAMOND_DIAMOND_SEVEN_MULTIPLIER };
   }
 
   if (a === b || a === c || b === c) {
-    const matched = a === b ? a : a === c ? a : b;
-    return { payout: SLOT_TWO_OF_KIND_PAYOUT, match: 'two', matchedSymbolId: matched };
+    const matchedSymbolId = a === b ? a : a === c ? a : b;
+    const thirdSymbolId = a === b ? c : a === c ? b : a;
+
+    let multiplier = SLOT_PAIR_MULTIPLIERS[matchedSymbolId];
+    let winType: SlotWinType = 'pair';
+
+    if (thirdSymbolId === 'diamond') {
+      multiplier += SLOT_PAIR_BONUS_WITH_DIAMOND;
+      winType = 'pair_with_diamond';
+    } else if (thirdSymbolId === 'seven') {
+      multiplier += SLOT_PAIR_BONUS_WITH_SEVEN;
+      winType = 'pair_with_seven';
+    }
+
+    return { winType, multiplier, matchedSymbolId };
   }
 
-  return { payout: 0, match: 'none' };
+  return { winType: 'none', multiplier: 0 };
+}
+
+function computePayout(base: number, multiplier: number): number {
+  if (!Number.isFinite(base) || base <= 0) return 0;
+  if (!Number.isFinite(multiplier) || multiplier <= 0) return 0;
+  return Math.max(0, Math.round(base * multiplier));
+}
+
+function resolveBetCost(configBetCost: unknown, requestedBetCost?: unknown): number {
+  const parsedRequested = Number(requestedBetCost);
+  if (Number.isInteger(parsedRequested) && SLOT_BET_OPTIONS.includes(parsedRequested as (typeof SLOT_BET_OPTIONS)[number])) {
+    return parsedRequested;
+  }
+
+  const parsedConfig = Number(configBetCost);
+  if (Number.isInteger(parsedConfig) && SLOT_BET_OPTIONS.includes(parsedConfig as (typeof SLOT_BET_OPTIONS)[number])) {
+    return parsedConfig;
+  }
+
+  return SLOT_BET_OPTIONS[0];
 }
 
 async function getSharedDailyStats(userId: number): Promise<DailyGameStats> {
@@ -161,13 +215,17 @@ export async function getSlotStatus(userId: number): Promise<SlotStatus> {
     pointsLimitReached,
     config: {
       betModeEnabled: !!slotConfig.betModeEnabled,
-      betCost: Number.isFinite(slotConfig.betCost) ? slotConfig.betCost : 10,
+      betCost: resolveBetCost(slotConfig.betCost),
     },
     records,
   };
 }
 
-export async function spinSlot(userId: number, mode: SlotPlayMode = 'earn'): Promise<
+export async function spinSlot(
+  userId: number,
+  mode: SlotPlayMode = 'earn',
+  requestedBetCost?: number
+): Promise<
   | {
       success: true;
       data: {
@@ -203,7 +261,7 @@ export async function spinSlot(userId: number, mode: SlotPlayMode = 'earn'): Pro
     await kv.set(SLOT_LAST_SPIN_AT_KEY(userId), now, { ex: 60 });
 
     const reels: SlotSymbolId[] = [pickSymbolId(), pickSymbolId(), pickSymbolId()];
-    const { payout, match, matchedSymbolId } = computePayout(reels);
+    const outcome = computeOutcome(reels);
 
     const dailyLimit = await getDailyPointsLimit();
 
@@ -216,18 +274,31 @@ export async function spinSlot(userId: number, mode: SlotPlayMode = 'earn'): Pro
         return { success: false, message: '管理员未开启赌积分模式' };
       }
 
-      const betCost = Number(slotConfig.betCost);
-      if (!Number.isInteger(betCost) || betCost < 1) {
-        return { success: false, message: '下注配置异常，请联系管理员' };
-      }
+      const betCost = resolveBetCost(slotConfig.betCost, requestedBetCost);
+      const payout = computePayout(betCost, outcome.multiplier);
 
       const pointsDelta = payout - betCost;
-      const description =
-        payout > 0
-          ? `老虎机赌积分：下注${betCost}，${match === 'three' ? '三连' : '二连'}${
-              matchedSymbolId ? ` ${SYMBOL_BY_ID[matchedSymbolId].name}` : ''
-            } +${payout}，净 ${pointsDelta >= 0 ? `+${pointsDelta}` : String(pointsDelta)}`
-          : `老虎机赌积分：下注${betCost}，未中奖，净 -${betCost}`;
+      const description = (() => {
+        if (payout <= 0 || outcome.winType === 'none') {
+          return `老虎机赌积分：下注${betCost}，未中奖，净 -${betCost}`;
+        }
+        if (outcome.winType === 'special_mix') {
+          return `老虎机赌积分：下注${betCost}，特殊爆 💎💎+7️⃣ x${outcome.multiplier} 返奖${payout}，净 ${
+            pointsDelta >= 0 ? `+${pointsDelta}` : String(pointsDelta)
+          }`;
+        }
+        const symbolName = outcome.matchedSymbolId ? SYMBOL_BY_ID[outcome.matchedSymbolId].name : '';
+        const matchText = outcome.winType === 'triple' ? '三连' : '二连';
+        const bonusText =
+          outcome.winType === 'pair_with_diamond'
+            ? ' +💎加成'
+            : outcome.winType === 'pair_with_seven'
+              ? ' +7️⃣加成'
+              : '';
+        return `老虎机赌积分：下注${betCost}，${matchText}${symbolName ? ` ${symbolName}` : ''}${bonusText} x${
+          outcome.multiplier
+        } 返奖${payout}，净 ${pointsDelta >= 0 ? `+${pointsDelta}` : String(pointsDelta)}`;
+      })();
 
       const deltaResult = await applyPointsDelta(userId, pointsDelta, 'game_play', description);
       if (!deltaResult.success) {
@@ -242,6 +313,9 @@ export async function spinSlot(userId: number, mode: SlotPlayMode = 'earn'): Pro
         betCost,
         reels,
         payout,
+        winType: outcome.winType,
+        multiplier: outcome.multiplier,
+        matchedSymbolId: outcome.matchedSymbolId,
         pointsEarned: payout,
         pointsDelta,
         createdAt: now,
@@ -283,13 +357,18 @@ export async function spinSlot(userId: number, mode: SlotPlayMode = 'earn'): Pro
       };
     }
 
+    const payout = computePayout(SLOT_EARN_BASE, outcome.multiplier);
     const pointsResult = await addGamePointsWithLimit(
       userId,
       payout,
       dailyLimit,
       'game_play',
       payout > 0
-        ? `老虎机${match === 'three' ? '三连' : '二连'}：${matchedSymbolId ? SYMBOL_BY_ID[matchedSymbolId].name : ''} +${payout}`
+        ? outcome.winType === 'special_mix'
+          ? `老虎机特殊爆 💎💎+7️⃣ x${outcome.multiplier} +${payout}`
+          : `老虎机${outcome.winType === 'triple' ? '三连' : '二连'}：${
+              outcome.matchedSymbolId ? SYMBOL_BY_ID[outcome.matchedSymbolId].name : ''
+            } x${outcome.multiplier} +${payout}`
         : '老虎机未中奖'
     );
 
@@ -301,6 +380,9 @@ export async function spinSlot(userId: number, mode: SlotPlayMode = 'earn'): Pro
       betCost: 0,
       reels,
       payout,
+      winType: outcome.winType,
+      multiplier: outcome.multiplier,
+      matchedSymbolId: outcome.matchedSymbolId,
       pointsEarned: pointsResult.pointsEarned,
       pointsDelta: pointsResult.pointsEarned,
       createdAt: now,

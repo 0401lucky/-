@@ -4,13 +4,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
+  SLOT_BET_OPTIONS,
+  SLOT_EARN_BASE,
+  SLOT_PAIR_BONUS_WITH_DIAMOND,
+  SLOT_PAIR_BONUS_WITH_SEVEN,
+  SLOT_PAIR_MULTIPLIERS,
   SLOT_SPIN_COOLDOWN_MS,
+  SLOT_SPECIAL_MIX_DIAMOND_DIAMOND_SEVEN_MULTIPLIER,
   SLOT_SYMBOLS,
-  SLOT_TWO_OF_KIND_PAYOUT,
+  SLOT_TRIPLE_MULTIPLIERS,
   type SlotSymbolId,
 } from '@/lib/slot-constants';
 
 type SlotPlayMode = 'earn' | 'bet';
+type SlotWinType = 'none' | 'pair' | 'pair_with_diamond' | 'pair_with_seven' | 'special_mix' | 'triple';
 
 interface SlotSpinRecord {
   id: string;
@@ -18,6 +25,9 @@ interface SlotSpinRecord {
   mode?: SlotPlayMode;
   betCost?: number;
   payout: number;
+  winType?: SlotWinType;
+  multiplier?: number;
+  matchedSymbolId?: SlotSymbolId;
   pointsEarned: number;
   pointsDelta?: number;
   createdAt: number;
@@ -155,11 +165,28 @@ const REEL_INDEXES = [0, 1, 2] as const;
 
 function getWinMask(
   reels: [SlotSymbolId, SlotSymbolId, SlotSymbolId],
-  payout: number
+  payout: number,
+  winType?: SlotWinType
 ): [boolean, boolean, boolean] {
   if (payout <= 0) return [false, false, false];
 
   const [a, b, c] = reels;
+
+  if (
+    winType === 'triple' ||
+    winType === 'special_mix' ||
+    winType === 'pair_with_diamond' ||
+    winType === 'pair_with_seven'
+  ) {
+    return [true, true, true];
+  }
+
+  // 兼容旧记录（无 winType）：💎💎+7️⃣（任意顺序）
+  const isSpecialMix =
+    (a === 'diamond' && b === 'diamond' && c === 'seven') ||
+    (a === 'diamond' && b === 'seven' && c === 'diamond') ||
+    (a === 'seven' && b === 'diamond' && c === 'diamond');
+  if (isSpecialMix) return [true, true, true];
 
   if (a === b && b === c) return [true, true, true];
   if (a === b) return [true, true, false];
@@ -199,6 +226,7 @@ export default function SlotPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [playMode, setPlayMode] = useState<SlotPlayMode>('earn');
+  const [selectedBetCost, setSelectedBetCost] = useState<number>(SLOT_BET_OPTIONS[0]);
   const [ranking, setRanking] = useState<SlotRankingEntry[]>([]);
   const [rankingError, setRankingError] = useState(false);
 
@@ -218,6 +246,7 @@ export default function SlotPage() {
 
   const [lastResult, setLastResult] = useState<SlotSpinRecord | null>(null);
   const [showLimitWarning, setShowLimitWarning] = useState(false);
+  const [showRules, setShowRules] = useState(false);
   const [limitWarningAck, setLimitWarningAck] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
 
@@ -232,10 +261,11 @@ export default function SlotPage() {
   const timeoutsRef = useRef<NodeJS.Timeout[]>([]);
   const spinRafRef = useRef<number | null>(null);
   const reelMeasureRef = useRef<HTMLDivElement | null>(null);
+  const didInitBetCostRef = useRef(false);
 
   const cooldownRemainingMs = Math.max(0, cooldownUntil - now);
   const betModeEnabled = status?.config?.betModeEnabled ?? false;
-  const betCost = status?.config?.betCost ?? 10;
+  const fallbackBetCost = status?.config?.betCost ?? SLOT_BET_OPTIONS[0];
 
   const fetchStatus = useCallback(async () => {
     setLoading(true);
@@ -284,6 +314,21 @@ export default function SlotPage() {
   useEffect(() => {
     fetchStatus();
   }, [fetchStatus]);
+
+  useEffect(() => {
+    if (didInitBetCostRef.current) return;
+    if (!status?.config) return;
+
+    const configBetCost = status.config.betCost;
+    if (
+      typeof configBetCost === 'number' &&
+      SLOT_BET_OPTIONS.includes(configBetCost as (typeof SLOT_BET_OPTIONS)[number])
+    ) {
+      setSelectedBetCost(configBetCost);
+    }
+
+    didInitBetCostRef.current = true;
+  }, [status?.config]);
 
   useEffect(() => {
     fetchRanking();
@@ -405,7 +450,7 @@ export default function SlotPage() {
       const res = await fetch('/api/games/slot/spin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: playMode }),
+        body: JSON.stringify(playMode === 'bet' ? { mode: playMode, betCost: selectedBetCost } : { mode: playMode }),
       });
       const data = await res.json();
 
@@ -433,7 +478,7 @@ export default function SlotPage() {
       await runReelAnimation(finalReels);
       setReels(finalReels);
       setLastResult(record);
-      setWinMask(getWinMask(finalReels, record.payout));
+      setWinMask(getWinMask(finalReels, record.payout, record.winType));
 
       // 同步状态（余额/今日统计）
       setStatus((prev) => {
@@ -462,6 +507,7 @@ export default function SlotPage() {
     status?.pointsLimitReached,
     limitWarningAck,
     playMode,
+    selectedBetCost,
     runReelAnimation,
     clearPendingAnimations,
   ]);
@@ -471,17 +517,18 @@ export default function SlotPage() {
     const mode = lastResult.mode ?? 'earn';
 
     if (mode === 'bet') {
-      const betCost = lastResult.betCost ?? status?.config?.betCost ?? 10;
+      const betCost = lastResult.betCost ?? fallbackBetCost;
       const delta =
         typeof lastResult.pointsDelta === 'number' ? lastResult.pointsDelta : lastResult.pointsEarned - betCost;
       if (lastResult.payout <= 0) return `下注 ${betCost}，未中奖，净 -${betCost}`;
-      return `下注 ${betCost}，中奖 +${lastResult.payout}，净 ${delta >= 0 ? `+${delta}` : String(delta)}`;
+      const multText = typeof lastResult.multiplier === 'number' ? `（x${lastResult.multiplier}）` : '';
+      return `下注 ${betCost}，中奖 +${lastResult.payout}${multText}，净 ${delta >= 0 ? `+${delta}` : String(delta)}`;
     }
 
     if (lastResult.payout <= 0) return '未中奖';
     if (lastResult.pointsEarned <= 0) return `中奖 +${lastResult.payout}，但今日已达积分上限`;
     return `中奖 +${lastResult.pointsEarned} 积分`;
-  }, [lastResult, status?.config?.betCost]);
+  }, [lastResult, fallbackBetCost]);
 
   return (
     <div className="min-h-screen bg-slate-100 py-6 px-4 sm:py-10 selection:bg-yellow-200 font-sans">
@@ -569,16 +616,16 @@ export default function SlotPage() {
                       <div className="text-right">
                         <div
                           className={`text-sm font-black ${
-                            getRecordDelta(r, betCost) > 0
+                            getRecordDelta(r, fallbackBetCost) > 0
                               ? 'text-green-600'
-                              : getRecordDelta(r, betCost) < 0
+                              : getRecordDelta(r, fallbackBetCost) < 0
                                 ? 'text-red-600'
                                 : 'text-slate-400'
                           }`}
                         >
-                          {getRecordDelta(r, betCost) > 0
-                            ? `+${getRecordDelta(r, betCost)}`
-                            : `${getRecordDelta(r, betCost)}`}
+                          {getRecordDelta(r, fallbackBetCost) > 0
+                            ? `+${getRecordDelta(r, fallbackBetCost)}`
+                            : `${getRecordDelta(r, fallbackBetCost)}`}
                         </div>
                         <div className="text-[10px] text-slate-400 font-medium flex items-center justify-end gap-2">
                           <span
@@ -771,8 +818,32 @@ export default function SlotPage() {
                 </div>
 
                 {playMode === 'bet' && (
-                  <div className="text-center mb-4 text-xs text-slate-300">
-                    下注 <span className="font-black text-white tabular-nums">{betCost}</span> 积分/次（未中 -{betCost}，二连≈回本，三连盈利）
+                  <div className="mb-4 space-y-3">
+                    <div className="flex items-center justify-center">
+                      <div className="inline-flex flex-wrap justify-center gap-1.5 rounded-2xl bg-slate-800/70 p-1 ring-1 ring-white/10 backdrop-blur-sm">
+                        {SLOT_BET_OPTIONS.map((opt) => {
+                          const active = selectedBetCost === opt;
+                          return (
+                            <button
+                              key={opt}
+                              type="button"
+                              onClick={() => setSelectedBetCost(opt)}
+                              disabled={spinning || cooldownRemainingMs > 0}
+                              className={`px-3 py-2 rounded-xl text-xs font-black tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                                active ? 'bg-rose-200 text-rose-950 shadow-sm' : 'text-slate-200 hover:text-white'
+                              }`}
+                              aria-label={`Bet ${opt}`}
+                            >
+                              {opt}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="text-center text-xs text-slate-300">
+                      下注 <span className="font-black text-white tabular-nums">{selectedBetCost}</span> 积分/次（返奖=下注×倍率，净赢分=返奖-下注）
+                    </div>
                   </div>
                 )}
 
@@ -897,33 +968,54 @@ export default function SlotPage() {
               )}
             </div>
 
-            {/* 赔率说明 - Compact Grid */}
-              <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-pink-500"></span>
-                    赔率表
-                  </h3>
-                  <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-1 rounded-full font-bold">二连: +{SLOT_TWO_OF_KIND_PAYOUT}</span>
-                </div>
+            {/* 规则与倍率 */}
+            <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-pink-500"></span>
+                  规则与倍率
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowRules(true)}
+                  className="text-[10px] font-black bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full hover:bg-slate-200 transition-colors"
+                >
+                  规则
+                </button>
+              </div>
+
+              <div className="text-[11px] text-slate-400 font-medium mb-3">
+                赚积分：{SLOT_EARN_BASE}×倍率；赌积分：返奖=下注×倍率
+              </div>
 
               <div className="space-y-2">
                 {SLOT_SYMBOLS.map((s) => (
                   <div
                     key={s.id}
-                    className="group flex items-center justify-between p-2 hover:bg-white rounded-xl transition-colors cursor-default"
+                    className="group flex items-center justify-between gap-3 p-2 hover:bg-white rounded-xl transition-colors cursor-default"
                   >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 flex items-center justify-center bg-slate-50 rounded-lg text-2xl group-hover:scale-110 transition-transform shadow-sm border border-slate-100">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 flex items-center justify-center bg-slate-50 rounded-lg text-2xl group-hover:scale-110 transition-transform shadow-sm border border-slate-100 shrink-0">
                         {s.emoji}
                       </div>
-                      <span className="text-xs font-bold text-slate-600">{s.name}</span>
+                      <span className="text-xs font-bold text-slate-600 truncate">{s.name}</span>
                     </div>
-                    <div className="text-sm font-black text-slate-900 bg-slate-100 px-2 py-1 rounded-md min-w-[3rem] text-center">
-                      +{s.triplePayout}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="text-[10px] font-black text-slate-700 bg-slate-100 px-2 py-1 rounded-md tabular-nums">
+                        二连 x{SLOT_PAIR_MULTIPLIERS[s.id].toFixed(1)}
+                      </div>
+                      <div className="text-[10px] font-black text-slate-700 bg-slate-100 px-2 py-1 rounded-md tabular-nums">
+                        三连 x{SLOT_TRIPLE_MULTIPLIERS[s.id]}
+                      </div>
                     </div>
                   </div>
                 ))}
+              </div>
+
+              <div className="mt-4 space-y-1 text-xs text-slate-500 font-medium">
+                <div>二连 +💎 加成：+{SLOT_PAIR_BONUS_WITH_DIAMOND.toFixed(1)}</div>
+                <div>二连 +7️⃣ 加成：+{SLOT_PAIR_BONUS_WITH_SEVEN.toFixed(1)}</div>
+                <div>特殊爆：💎💎+7️⃣ x{SLOT_SPECIAL_MIX_DIAMOND_DIAMOND_SEVEN_MULTIPLIER}</div>
               </div>
             </div>
           </div>
@@ -959,6 +1051,111 @@ export default function SlotPage() {
                 className="py-3 px-4 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 shadow-lg shadow-slate-200 transition-all active:scale-95"
               >
                 继续娱乐 (无积分)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 规则说明 - Modal */}
+      {showRules && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowRules(false)} />
+          <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-1">Rules</div>
+                <h3 className="text-xl font-black text-slate-900">老虎机规则说明</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRules(false)}
+                className="w-9 h-9 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors font-black"
+                aria-label="Close rules"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 max-h-[70vh] overflow-y-auto space-y-5">
+              <div className="space-y-2">
+                <div className="text-xs font-black uppercase tracking-wider text-slate-400">玩法模式</div>
+                <div className="text-sm text-slate-700 leading-relaxed">
+                  <div className="font-bold text-slate-900">赚积分</div>
+                  <div className="text-slate-600">
+                    免费旋转，中奖获得 <span className="font-bold tabular-nums">{SLOT_EARN_BASE}</span>×倍率 积分（受每日积分上限限制）。
+                  </div>
+                </div>
+                <div className="text-sm text-slate-700 leading-relaxed">
+                  <div className="font-bold text-slate-900">赌积分</div>
+                  <div className="text-slate-600">
+                    选择下注档位 <span className="font-bold tabular-nums">{SLOT_BET_OPTIONS.join(' / ')}</span>。
+                    结算口径：返奖=下注×倍率，净赢分=返奖-下注（可能亏损，不受每日上限限制）。
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-xs font-black uppercase tracking-wider text-slate-400">判定顺序（只取最高，不叠加）</div>
+                <ul className="text-sm text-slate-700 space-y-1 list-disc pl-5">
+                  <li>三连（AAA）</li>
+                  <li>
+                    特殊爆：<span className="font-bold">💎💎+7️⃣</span>（任意顺序）倍率 x{SLOT_SPECIAL_MIX_DIAMOND_DIAMOND_SEVEN_MULTIPLIER}
+                  </li>
+                  <li>二连 + 7️⃣：在二连倍率基础上 +{SLOT_PAIR_BONUS_WITH_SEVEN.toFixed(1)}（不含 💎💎+7️⃣）</li>
+                  <li>二连 + 💎：在二连倍率基础上 +{SLOT_PAIR_BONUS_WITH_DIAMOND.toFixed(1)}</li>
+                  <li>普通二连（任意两格相同）</li>
+                  <li>其他：0</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-xs font-black uppercase tracking-wider text-slate-400">倍率表</div>
+                <div className="space-y-2">
+                  {SLOT_SYMBOLS.map((s) => (
+                    <div
+                      key={`rule-${s.id}`}
+                      className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-100"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-xl bg-white border border-slate-100 flex items-center justify-center text-2xl shrink-0">
+                          {s.emoji}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-black text-slate-900 truncate">{s.name}</div>
+                          <div className="text-[11px] text-slate-500 font-medium">
+                            权重 {s.weight}%
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0 space-y-1">
+                        <div className="text-[11px] font-black text-slate-700 tabular-nums">
+                          二连 x{SLOT_PAIR_MULTIPLIERS[s.id].toFixed(1)}
+                        </div>
+                        <div className="text-[11px] font-black text-slate-700 tabular-nums">
+                          三连 x{SLOT_TRIPLE_MULTIPLIERS[s.id]}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-xs font-black uppercase tracking-wider text-slate-400">公平性</div>
+                <div className="text-sm text-slate-600 leading-relaxed">
+                  每次旋转由服务端按权重随机生成结果，客户端动画仅用于展示；最终积分结算以服务端为准。
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => setShowRules(false)}
+                className="px-5 py-2.5 rounded-xl bg-slate-900 text-white font-black hover:bg-slate-800 transition-colors"
+              >
+                知道了
               </button>
             </div>
           </div>

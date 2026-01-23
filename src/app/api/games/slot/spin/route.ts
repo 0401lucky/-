@@ -16,16 +16,23 @@ export async function POST(request: NextRequest) {
     await recordUser(user.id, user.username);
 
     let mode: SlotPlayMode = 'earn';
+    let betCost: number | undefined;
     try {
       const body = await request.json();
       if (body?.mode === 'bet') {
         mode = 'bet';
       }
+      if (body?.betCost !== undefined) {
+        const parsed = Number(body.betCost);
+        if (Number.isFinite(parsed)) {
+          betCost = parsed;
+        }
+      }
     } catch {
       // ignore invalid body
     }
 
-    const result = await spinSlot(user.id, mode);
+    const result = await spinSlot(user.id, mode, betCost);
 
     if (!result.success) {
       const status = result.cooldownRemaining ? 429 : 400;

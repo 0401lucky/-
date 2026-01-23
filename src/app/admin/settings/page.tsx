@@ -4,6 +4,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { SLOT_BET_OPTIONS } from '@/lib/slot-constants';
 
 interface SystemConfig {
   dailyPointsLimit: number;
@@ -56,7 +57,13 @@ export default function AdminSettingsPage() {
       if (slotData.success && slotData.data?.config) {
         setSlotConfig(slotData.data.config);
         setBetModeEnabled(!!slotData.data.config.betModeEnabled);
-        setBetCost(String(slotData.data.config.betCost ?? 10));
+        const parsedBetCost = Number(slotData.data.config.betCost);
+        const safeBetCost =
+          Number.isInteger(parsedBetCost) &&
+          SLOT_BET_OPTIONS.includes(parsedBetCost as (typeof SLOT_BET_OPTIONS)[number])
+            ? parsedBetCost
+            : SLOT_BET_OPTIONS[0];
+        setBetCost(String(safeBetCost));
       }
     } catch (err) {
       setError('网络错误');
@@ -246,18 +253,21 @@ export default function AdminSettingsPage() {
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">每次下注成本</label>
               <div className="flex items-center gap-4">
-                <input
-                  type="number"
+                <select
                   value={betCost}
                   onChange={(e) => setBetCost(e.target.value)}
-                  min="1"
-                  max="100000"
-                  className="w-40 px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                />
+                  className="w-40 px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                >
+                  {SLOT_BET_OPTIONS.map((opt) => (
+                    <option key={opt} value={String(opt)}>
+                      {opt}
+                    </option>
+                  ))}
+                </select>
                 <span className="text-slate-500">积分/次</span>
               </div>
               <p className="mt-2 text-sm text-slate-400">
-                默认推荐设置为 <span className="font-semibold">10</span>：二连≈回本，三连盈利。
+                下注档位固定为 <span className="font-semibold">{SLOT_BET_OPTIONS.join(' / ')}</span>。
               </p>
             </div>
 

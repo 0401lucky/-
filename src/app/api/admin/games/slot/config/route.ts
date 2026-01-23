@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, isAdmin } from '@/lib/auth';
 import { getSlotConfig, updateSlotConfig } from '@/lib/slot-config';
+import { SLOT_BET_OPTIONS } from '@/lib/slot-constants';
 
 function jsonResponse(
   data: { success: boolean; data?: unknown; message?: string },
@@ -55,8 +56,11 @@ export async function PUT(request: NextRequest) {
 
     if (body.betCost !== undefined) {
       const betCost = Number(body.betCost);
-      if (!Number.isInteger(betCost) || betCost < 1 || betCost > 100000) {
-        return jsonResponse({ success: false, message: 'betCost 必须在 1 - 100000 之间' }, 400);
+      if (!Number.isInteger(betCost) || !SLOT_BET_OPTIONS.includes(betCost as (typeof SLOT_BET_OPTIONS)[number])) {
+        return jsonResponse(
+          { success: false, message: `betCost 仅支持：${SLOT_BET_OPTIONS.join(' / ')}` },
+          400
+        );
       }
       updates.betCost = betCost;
     }
@@ -73,4 +77,3 @@ export async function PUT(request: NextRequest) {
     return jsonResponse({ success: false, message: '更新老虎机配置失败' }, 500);
   }
 }
-
