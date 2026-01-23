@@ -73,12 +73,14 @@ export async function GET(request: NextRequest) {
       .slice(0, limit)
       .map((item, index) => ({ ...item, rank: index + 1 }));
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       date: chinaTime.toISOString().split("T")[0],
       totalParticipants: Object.keys(userStats).length,
       ranking,
     });
+    response.headers.set("Cache-Control", "no-store");
+    return response;
   } catch (error) {
     console.error("Get today ranking error:", error);
     return NextResponse.json(

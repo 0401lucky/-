@@ -107,6 +107,25 @@ export default function LotteryPage() {
   useEffect(() => {
     fetchData();
     fetchRanking();
+
+    // [LIVE] 轮询刷新排行榜，避免榜单停留在首屏数据
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchRanking();
+      }
+    }, 15000);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchRanking();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, []);
 
   const fetchData = async () => {
@@ -151,7 +170,7 @@ export default function LotteryPage() {
 
   const fetchRanking = async () => {
     try {
-      const res = await fetch('/api/lottery/ranking?limit=10');
+      const res = await fetch('/api/lottery/ranking?limit=10', { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
@@ -231,6 +250,8 @@ export default function LotteryPage() {
                   setRecords(recordsData.records || []);
                 }
               }
+              // 刷新排行榜
+              await fetchRanking();
             } catch (err) {
               console.error('刷新状态失败', err);
             }
