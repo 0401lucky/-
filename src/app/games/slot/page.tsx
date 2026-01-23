@@ -34,9 +34,109 @@ const INITIAL_REELS: [SlotSymbolId, SlotSymbolId, SlotSymbolId] = [
   SLOT_SYMBOLS[2]!.id,
 ];
 
-const REEL_TRACK_LENGTHS: [number, number, number] = [18, 22, 26];
-const REEL_DURATIONS_MS: [number, number, number] = [900, 1100, 1300];
-const REEL_EASING = 'cubic-bezier(0.12, 0.82, 0.18, 1)';
+const REEL_TRACK_LENGTHS: [number, number, number] = [20, 25, 30]; // Increased for smoother spin
+const REEL_DURATIONS_MS: [number, number, number] = [1200, 1500, 1800]; // Slightly longer for anticipation
+const REEL_EASING = 'cubic-bezier(0.2, 0.8, 0.2, 1)'; // Smooth easing
+
+// Enhanced CSS Animation Keyframes
+const ANIMATION_STYLES = `
+  @keyframes bounce-land {
+    0% { transform: translateY(0); }
+    30% { transform: translateY(8%); }
+    60% { transform: translateY(-4%); }
+    80% { transform: translateY(2%); }
+    100% { transform: translateY(0); }
+  }
+  @keyframes win-pulse {
+    0% { transform: scale(1); filter: brightness(100%) drop-shadow(0 0 0 rgba(234, 179, 8, 0)); }
+    50% { transform: scale(1.15); filter: brightness(120%) drop-shadow(0 0 20px rgba(234, 179, 8, 0.8)); }
+    100% { transform: scale(1); filter: brightness(100%) drop-shadow(0 0 0 rgba(234, 179, 8, 0)); }
+  }
+  @keyframes shine {
+    from { mask-position: 150%; }
+    to { mask-position: -50%; }
+  }
+  @keyframes confetti-fall {
+    0% { transform: translateY(-100vh) rotate(0deg) scale(0.5); opacity: 1; }
+    25% { transform: translateY(-20vh) rotate(90deg) scale(1); opacity: 1; }
+    100% { transform: translateY(100vh) rotate(720deg) scale(0.8); opacity: 0; }
+  }
+  @keyframes spin-blur {
+    0% { filter: blur(0); }
+    10% { filter: blur(4px); }
+    90% { filter: blur(4px); }
+    100% { filter: blur(0); }
+  }
+  @keyframes gradient-x {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+  @keyframes border-glow {
+    0%, 100% { opacity: 0.5; box-shadow: 0 0 10px rgba(234, 179, 8, 0.2); }
+    50% { opacity: 1; box-shadow: 0 0 25px rgba(234, 179, 8, 0.6); }
+  }
+  .reel-bounce {
+    animation: bounce-land 0.5s cubic-bezier(0.36, 0, 0.66, -0.56) forwards;
+  }
+  .symbol-win {
+    animation: win-pulse 1.2s ease-in-out infinite;
+    z-index: 20;
+    position: relative;
+  }
+  .spinning-blur {
+    animation: spin-blur 0.1s linear infinite;
+  }
+  .btn-shine {
+    mask-image: linear-gradient(-75deg, rgba(0,0,0,.6) 30%, #000 50%, rgba(0,0,0,.6) 70%);
+    mask-size: 200%;
+    animation: shine 3s infinite;
+  }
+  .glass-panel {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+  }
+  .slot-machine-gradient {
+    background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
+  }
+  .gold-text-gradient {
+    background: linear-gradient(to bottom, #fde68a, #d97706);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+`;
+
+function Confetti({ active }: { active: boolean }) {
+  if (!active) return null;
+  
+  const particles = Array.from({ length: 80 }).map((_, i) => {
+    const left = Math.random() * 100;
+    const delay = Math.random() * 1.5;
+    const duration = 2.5 + Math.random() * 2;
+    // Enhanced vibrant colors
+    const bg = ['#FCD34D', '#F87171', '#60A5FA', '#34D399', '#A78BFA', '#F472B6', '#FFFFFF'][Math.floor(Math.random() * 7)];
+    const size = 6 + Math.random() * 8;
+    
+    return (
+      <div
+        key={i}
+        className="fixed top-0 rounded-sm pointer-events-none z-[100]"
+        style={{
+          left: `${left}%`,
+          width: `${size}px`,
+          height: `${size * (Math.random() > 0.5 ? 1 : 0.4)}px`, // Mix squares and rectangles
+          backgroundColor: bg,
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          animation: `confetti-fall ${duration}s ease-in ${delay}s forwards`,
+        }}
+      />
+    );
+  });
+
+  return <>{particles}</>;
+}
+
 const REEL_INDEXES = [0, 1, 2] as const;
 
 function getWinMask(
@@ -91,6 +191,15 @@ export default function SlotPage() {
   const [lastResult, setLastResult] = useState<SlotSpinRecord | null>(null);
   const [showLimitWarning, setShowLimitWarning] = useState(false);
   const [limitWarningAck, setLimitWarningAck] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
+
+  useEffect(() => {
+    if (lastResult && lastResult.payout > 0) {
+      setShowConfetti(true);
+      const t = setTimeout(() => setShowConfetti(false), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [lastResult]);
 
   const timeoutsRef = useRef<NodeJS.Timeout[]>([]);
   const spinRafRef = useRef<number | null>(null);
@@ -212,7 +321,7 @@ export default function SlotPage() {
       await new Promise<void>((resolve) => {
         spinRafRef.current = requestAnimationFrame(() => {
           setReelOffsets(endOffsets);
-          const done = setTimeout(resolve, Math.max(...REEL_DURATIONS_MS) + 80);
+          const done = setTimeout(resolve, Math.max(...REEL_DURATIONS_MS) + 150);
           timeoutsRef.current.push(done);
         });
       });
@@ -298,70 +407,51 @@ export default function SlotPage() {
   const payoutText = useMemo(() => {
     if (!lastResult) return null;
     if (lastResult.payout <= 0) return '未中奖';
-    if (lastResult.pointsEarned <= 0) return `中奖 +${lastResult.payout}，但今日已达积分上限（本次未发放）`;
+    if (lastResult.pointsEarned <= 0) return `中奖 +${lastResult.payout}，但今日已达积分上限`;
     return `中奖 +${lastResult.pointsEarned} 积分`;
   }, [lastResult]);
 
   return (
-    <div className="min-h-screen bg-slate-50 py-6 px-4 sm:py-10">
-      <div className="max-w-6xl mx-auto">
+    <div className="min-h-screen bg-slate-100 py-6 px-4 sm:py-10 selection:bg-yellow-200 font-sans">
+      <style>{ANIMATION_STYLES}</style>
+      <Confetti active={showConfetti} />
+      
+      {/* Dynamic Background Pattern */}
+      <div className="fixed inset-0 z-0 pointer-events-none opacity-40">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-indigo-100 via-slate-100 to-slate-200" />
+        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150" />
+      </div>
+
+      <div className="relative z-10 max-w-6xl mx-auto">
         {/* 顶部导航 */}
-        <div className="flex items-center justify-between mb-6 sm:mb-8">
+        <div className="flex items-center justify-between mb-8">
           <button
             onClick={() => router.push('/games')}
-            className="group flex items-center text-slate-500 hover:text-slate-800 transition-colors font-medium"
+            className="group flex items-center text-slate-500 hover:text-indigo-600 transition-colors font-semibold bg-white/50 px-4 py-2 rounded-full backdrop-blur-sm border border-slate-200/60 shadow-sm hover:shadow-md"
           >
             <span className="mr-2 group-hover:-translate-x-1 transition-transform">←</span>
             游戏中心
           </button>
 
-          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 flex items-center gap-2">
-            <span className="text-3xl">🎰</span> 老虎机
-          </h1>
-
           <Link
             href="/store"
-            className="flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-200 text-slate-700 hover:border-yellow-400 hover:text-yellow-600 transition-all group"
+            className="flex items-center gap-2 bg-white/80 backdrop-blur-md px-5 py-2.5 rounded-full shadow-lg border border-white/40 ring-1 ring-slate-100 hover:ring-yellow-300 hover:scale-105 transition-all group"
           >
-            <span className="text-yellow-500">⭐</span>
-            <span className="font-bold">{loading ? '...' : status?.balance ?? 0}</span>
-            <span className="text-slate-300 group-hover:text-yellow-400 transition-colors">→</span>
+            <span className="text-yellow-500 drop-shadow-sm text-lg">⭐</span>
+            <span className="font-extrabold text-slate-800 text-lg tabular-nums tracking-tight">{loading ? '...' : status?.balance ?? 0}</span>
+            <div className="w-px h-4 bg-slate-200 mx-1" />
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide group-hover:text-yellow-600 transition-colors">Store</span>
           </Link>
         </div>
 
-        {/* 今日统计 */}
-        {status?.dailyStats && (
-          <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-100 mb-6">
-            <div className="flex items-center justify-center gap-8">
-              <div className="text-center">
-                <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">今日游戏</div>
-                <div className="text-xl font-bold text-slate-900">
-                  {status.dailyStats.gamesPlayed} <span className="text-sm font-normal text-slate-500">局</span>
-                </div>
-              </div>
-              <div className="w-px h-10 bg-slate-200" />
-              <div className="text-center">
-                <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">今日积分</div>
-                <div className={`text-xl font-bold ${status.pointsLimitReached ? 'text-orange-500' : 'text-green-600'}`}>
-                  {status.dailyStats.pointsEarned} <span className="text-slate-300">/</span>{' '}
-                  <span className="text-sm font-normal text-slate-500">{status.dailyLimit ?? 2000}</span>
-                  {status.pointsLimitReached && (
-                    <span className="block text-xs text-orange-500 font-medium mt-1">已达上限</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* 错误提示 */}
         {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-center">
-            {error}{' '}
+          <div className="mb-8 p-4 bg-red-50/90 backdrop-blur border border-red-200 rounded-2xl text-red-700 text-center shadow-lg animate-pulse">
+            <span className="font-bold">Error:</span> {error}{' '}
             {error.includes('登录') && (
               <button
                 onClick={() => router.push('/login?redirect=/games/slot')}
-                className="ml-2 font-bold underline hover:no-underline"
+                className="ml-2 font-bold underline hover:no-underline hover:text-red-800"
               >
                 去登录
               </button>
@@ -369,51 +459,67 @@ export default function SlotPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-8 items-start">
           {/* 左侧：老虎机主体 */}
-          <div className="bg-white rounded-3xl p-5 sm:p-7 shadow-xl border border-slate-100 relative overflow-hidden">
-            <div className="absolute -top-24 -right-24 w-64 h-64 bg-gradient-to-br from-yellow-50 to-orange-50 rounded-full blur-2xl opacity-70" />
-            <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-gradient-to-br from-slate-50 to-slate-100 rounded-full blur-2xl opacity-70" />
-
-            <div className="relative">
-              <div className="flex items-start justify-between gap-3 mb-4">
+          <div className="bg-slate-900 rounded-[2.5rem] p-6 sm:p-8 shadow-2xl ring-8 ring-slate-800/50 relative overflow-hidden isolate">
+            {/* Glossy Overlay */}
+            <div className="absolute inset-0 z-0 bg-gradient-to-br from-slate-800 to-slate-950" />
+            <div className="absolute -top-[200px] -right-[200px] w-[500px] h-[500px] bg-purple-500/20 rounded-full blur-[120px] mix-blend-screen" />
+            <div className="absolute -bottom-[200px] -left-[200px] w-[500px] h-[500px] bg-indigo-500/20 rounded-full blur-[120px] mix-blend-screen" />
+            
+            <div className="relative z-10 flex flex-col h-full">
+              {/* Header */}
+              <div className="flex items-center justify-between gap-4 mb-6 px-2">
                 <div>
-                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Lucky Spin</div>
-                  <div className="text-xl font-extrabold text-slate-900">转动幸运符号</div>
+                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-yellow-500/80 mb-1">Premium Slots</div>
+                  <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight flex items-center gap-2">
+                    <span className="bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-200 to-slate-400">
+                      Lucky Spin
+                    </span>
+                  </h1>
                 </div>
-                <div className="text-right">
-                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Cooldown</div>
-                  <div className={`text-sm font-bold ${cooldownRemainingMs > 0 ? 'text-amber-600' : 'text-slate-500'}`}>
-                    {cooldownRemainingMs > 0 ? `${(cooldownRemainingMs / 1000).toFixed(1)}s` : 'Ready'}
+                <div className="text-right bg-slate-800/50 rounded-xl px-4 py-2 border border-slate-700/50 backdrop-blur-md">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Cooldown</div>
+                  <div className={`text-sm font-mono font-bold ${cooldownRemainingMs > 0 ? 'text-amber-400 animate-pulse' : 'text-emerald-400'}`}>
+                    {cooldownRemainingMs > 0 ? `${(cooldownRemainingMs / 1000).toFixed(1)}s` : 'READY'}
                   </div>
                 </div>
               </div>
 
-              {/* 转轴显示 */}
-              <div className="bg-slate-900 rounded-3xl p-4 sm:p-6 shadow-2xl shadow-slate-200 ring-4 ring-slate-100">
-                <div className="grid grid-cols-3 gap-3 sm:gap-4">
+              {/* 转轴显示区 - Machine Display */}
+              <div className="bg-slate-950 rounded-3xl p-4 sm:p-6 shadow-[inset_0_4px_24px_rgba(0,0,0,0.6)] ring-1 ring-white/10 relative overflow-hidden group mb-6">
+                {/* Metallic Mesh Background */}
+                <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#334155_2px,transparent_2px)] [background-size:24px_24px]" />
+                
+                <div className="grid grid-cols-3 gap-3 sm:gap-4 relative z-10">
                   {REEL_INDEXES.map((idx) => {
                     const highlight = !spinning && winMask[idx];
                     const track = reelTracks[idx] ?? [reels[idx]];
                     const offset = reelOffsets[idx] ?? 0;
-
+                    
                     return (
                       <div
                         key={`reel-${idx}`}
-                        className={`relative bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden ${
-                          highlight ? 'ring-2 ring-green-300 shadow-[0_0_0_4px_rgba(34,197,94,0.15)]' : ''
+                        className={`relative rounded-xl overflow-hidden transform transition-all duration-500 ${
+                          highlight 
+                            ? 'z-10 scale-[1.02] ring-2 ring-yellow-400 shadow-[0_0_50px_rgba(250,204,21,0.3)]' 
+                            : 'ring-1 ring-slate-700/50 shadow-lg'
                         }`}
                       >
-                        <div className="relative">
+                        {/* Reel Background - Curved glass effect */}
+                        <div className="absolute inset-0 bg-gradient-to-b from-slate-200 via-white to-slate-200 z-0" />
+                        
+                        {/* Reel Content */}
+                        <div className="relative bg-transparent z-10">
                           <div
                             ref={idx === 0 ? reelMeasureRef : undefined}
-                            className="relative h-24 sm:h-28 overflow-hidden"
+                            className="relative h-28 sm:h-36 overflow-hidden"
                           >
                             <div
                               key={`track-${spinId}-${idx}`}
-                              className={`transform-gpu will-change-transform transition-transform ${
-                                spinning ? 'blur-[1px]' : 'blur-0'
-                              } transition-[filter]`}
+                              className={`transform-gpu will-change-transform flex flex-col items-center w-full ${
+                                spinning ? 'blur-[1px]' : !spinning && offset === 0 ? 'reel-bounce' : ''
+                              }`}
                               style={{
                                 transform: `translate3d(0, ${-offset * itemHeightPx}px, 0)`,
                                 transitionDuration: `${REEL_DURATIONS_MS[idx]}ms`,
@@ -423,25 +529,36 @@ export default function SlotPage() {
                               {track.map((symbolId, i) => (
                                 <div
                                   key={`${spinId}-${idx}-${i}-${symbolId}`}
-                                  className="h-24 sm:h-28 flex items-center justify-center text-5xl sm:text-6xl select-none"
+                                  className={`h-28 sm:h-36 w-full flex items-center justify-center select-none transition-all duration-300 ${
+                                    highlight && i === track.length - 1 ? 'symbol-win' : 'opacity-90'
+                                  }`}
                                 >
-                                  {symbolById[symbolId].emoji}
+                                  <span className="text-6xl sm:text-7xl filter drop-shadow-sm transform hover:scale-110 transition-transform cursor-default">
+                                    {symbolById[symbolId].emoji}
+                                  </span>
                                 </div>
                               ))}
                             </div>
 
-                            <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/70 via-transparent to-white/70" />
-                            <div className="pointer-events-none absolute inset-x-0 top-0 h-6 bg-gradient-to-b from-white/80 to-transparent" />
-                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-white/80 to-transparent" />
+                            {/* Enhanced 3D Glass Reflections & Shadows */}
+                            <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/20 mix-blend-multiply z-20" />
+                            <div className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-black/40 to-transparent z-20" />
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/40 to-transparent z-20" />
+                            
+                            {/* High-gloss reflection line */}
+                            <div className="pointer-events-none absolute inset-x-0 top-[40%] h-[1px] bg-white/40 blur-[1px] z-30 opacity-30" />
                           </div>
 
-                          <div className="px-3 pb-3 pt-2 text-center relative z-10">
+                          {/* Reel Label */}
+                          <div className={`text-center py-1.5 border-t border-slate-300/50 transition-colors duration-300 ${
+                              highlight ? 'bg-yellow-100' : 'bg-slate-100'
+                          }`}>
                             <div
-                              className={`inline-flex items-center justify-center px-2 py-1 rounded-full border text-[11px] font-bold ${
-                                spinning ? 'text-slate-400 border-slate-200 bg-slate-50' : 'text-slate-600 border-slate-200 bg-slate-50'
+                              className={`text-[10px] font-bold uppercase tracking-wider ${
+                                highlight ? 'text-yellow-700' : 'text-slate-400'
                               }`}
                             >
-                              {spinning ? 'Rolling' : symbolById[reels[idx]].name}
+                              {spinning ? '•••' : symbolById[reels[idx]].name}
                             </div>
                           </div>
                         </div>
@@ -449,142 +566,196 @@ export default function SlotPage() {
                     );
                   })}
                 </div>
+
+                {/* Payline Indicators */}
+                <div className="absolute top-1/2 left-0 w-3 h-1 bg-yellow-500/50 -translate-y-1/2 rounded-r-full shadow-[0_0_10px_rgba(234,179,8,0.5)] z-20" />
+                <div className="absolute top-1/2 right-0 w-3 h-1 bg-yellow-500/50 -translate-y-1/2 rounded-l-full shadow-[0_0_10px_rgba(234,179,8,0.5)] z-20" />
               </div>
 
-              {/* 结果提示 */}
-              <div className="mt-5">
-                <div
-                  className={`rounded-2xl border px-4 py-3 text-sm font-medium ${
+              {/* Status & Win Message */}
+              <div className="relative mb-6">
+                 <div
+                  className={`relative overflow-hidden rounded-2xl border px-6 py-4 text-center transition-all duration-500 ${
                     lastResult
                       ? lastResult.payout > 0
-                        ? 'bg-green-50 border-green-200 text-green-700'
-                        : 'bg-slate-50 border-slate-200 text-slate-600'
-                      : 'bg-slate-50 border-slate-200 text-slate-500'
+                        ? 'bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border-yellow-500/30 shadow-[0_0_30px_rgba(234,179,8,0.1)]'
+                        : 'bg-slate-800/50 border-slate-700/50'
+                      : 'bg-slate-800/30 border-slate-700/30'
                   }`}
                 >
-                  {payoutText ?? '点击下方按钮开始旋转。三连更高奖励，二连也有保底！'}
+                  <div className={`text-lg font-bold flex items-center justify-center gap-3 ${
+                     lastResult && lastResult.payout > 0 ? 'text-yellow-400' : 'text-slate-300'
+                  }`}>
+                    {lastResult && lastResult.payout > 0 && <span className="animate-bounce">🎉</span>}
+                    <span>{payoutText ?? '点击按钮开始旋转'}</span>
+                    {lastResult && lastResult.payout > 0 && <span className="animate-bounce">🎉</span>}
+                  </div>
+                  {!lastResult && (
+                     <div className="text-xs text-slate-500 mt-1">三连更高奖励，二连也有保底！</div>
+                  )}
                 </div>
               </div>
 
-              {/* 操作按钮 */}
-              <div className="mt-5 flex flex-col gap-3">
+              {/* Action Buttons */}
+              <div className="mt-auto">
                 <button
                   onClick={() => handleSpin()}
                   disabled={loading || spinning || cooldownRemainingMs > 0}
-                  className="w-full py-4 rounded-2xl font-extrabold text-white bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 flex items-center justify-center gap-2"
+                  className="group relative w-full h-16 rounded-2xl font-black text-xl tracking-widest text-white transition-all 
+                  disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none
+                  transform hover:-translate-y-1 hover:shadow-[0_10px_40px_-10px_rgba(234,179,8,0.4)]
+                  active:translate-y-0.5 active:shadow-none"
                 >
-                  {spinning ? (
-                    <>
-                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      旋转中...
-                    </>
-                  ) : (
-                    'SPIN'
-                  )}
+                  <div className="absolute inset-0 rounded-2xl bg-gradient-to-b from-yellow-400 to-yellow-600 shadow-[inset_0_2px_4px_rgba(255,255,255,0.4),0_4px_0_#b45309] group-active:shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)] group-active:translate-y-[4px] transition-all"></div>
+                  <div className="absolute inset-0 rounded-2xl btn-shine opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                  <div className="relative flex items-center justify-center gap-3 drop-shadow-sm group-active:translate-y-[4px] transition-all">
+                    {spinning ? (
+                      <>
+                        <span className="w-5 h-5 border-3 border-white/40 border-t-white rounded-full animate-spin" />
+                        <span className="text-lg">SPINNING...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>SPIN</span>
+                        <span className="text-yellow-200 opacity-80 group-hover:translate-x-1 transition-transform">➤</span>
+                      </>
+                    )}
+                  </div>
                 </button>
-                <div className="text-center text-xs text-slate-400">
-                  {cooldownRemainingMs > 0 ? '冷却中，稍后再试' : '每次旋转将产生随机结果（服务端判定）'}
-                </div>
-              </div>
-
-              {/* 赔率说明 */}
-              <div className="mt-6 border-t border-slate-100 pt-6">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400">赔率说明</div>
-                  <div className="text-xs text-slate-400">二连保底：+{SLOT_TWO_OF_KIND_PAYOUT}</div>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {SLOT_SYMBOLS.map((s) => (
-                    <div
-                      key={s.id}
-                      className="bg-slate-50 rounded-2xl border border-slate-100 px-3 py-2 flex items-center justify-between"
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="text-xl">{s.emoji}</div>
-                        <div>
-                          <div className="text-xs font-bold text-slate-700">{s.name}</div>
-                          <div className="text-[11px] text-slate-400">三连</div>
-                        </div>
-                      </div>
-                      <div className="text-sm font-extrabold text-slate-900">+{s.triplePayout}</div>
-                    </div>
-                  ))}
+                <div className="text-center mt-3 text-[10px] uppercase tracking-wider text-slate-500 font-medium">
+                  {cooldownRemainingMs > 0 ? 'Machine Cooling Down' : 'Fair Play • Random Generated'}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* 右侧：历史记录 */}
-          <div className="bg-white rounded-3xl p-5 sm:p-6 shadow-xl border border-slate-100">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Recent Spins</div>
-                <div className="text-lg font-extrabold text-slate-900">最近记录</div>
-              </div>
-              <button
-                onClick={fetchStatus}
-                disabled={loading}
-                className="text-sm font-bold text-slate-500 hover:text-slate-900 transition-colors"
-              >
-                刷新
-              </button>
-            </div>
-
-            {(status?.records?.length ?? 0) === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-slate-400">
-                暂无记录
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {status?.records?.map((r) => (
-                  <div
-                    key={r.id}
-                    className="rounded-2xl border border-slate-100 bg-white hover:bg-slate-50 transition-colors px-4 py-3"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-2xl">
-                        {r.reels.map((id, i) => (
-                          <span key={`${r.id}-${id}-${i}`}>{symbolById[id].emoji}</span>
-                        ))}
-                      </div>
-                      <div className={`text-sm font-extrabold ${r.payout > 0 ? 'text-green-600' : 'text-slate-400'}`}>
-                        {r.payout > 0 ? `+${r.pointsEarned}` : '0'}
-                      </div>
+          {/* 右侧：统计与记录 */}
+          <div className="space-y-6">
+             {/* 今日统计 - Card Style */}
+             {status?.dailyStats && (
+              <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-4 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                  Daily Status
+                </h3>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-slate-50/50 rounded-2xl p-4 border border-slate-100">
+                    <div className="text-xs text-slate-400 font-bold mb-1">Played</div>
+                    <div className="text-2xl font-black text-slate-800">
+                      {status.dailyStats.gamesPlayed}
+                      <span className="text-sm font-bold text-slate-400 ml-1">rnds</span>
                     </div>
-                    <div className="mt-1 flex items-center justify-between text-[11px] text-slate-400">
-                      <span>{new Date(r.createdAt).toLocaleTimeString()}</span>
-                      <span>{r.payout > 0 ? `中奖 ${r.payout}` : '未中奖'}</span>
+                  </div>
+                  
+                  <div className={`rounded-2xl p-4 border ${status.pointsLimitReached ? 'bg-orange-50/50 border-orange-100' : 'bg-green-50/50 border-green-100'}`}>
+                    <div className={`text-xs font-bold mb-1 ${status.pointsLimitReached ? 'text-orange-400' : 'text-green-500'}`}>Points</div>
+                    <div className={`text-2xl font-black ${status.pointsLimitReached ? 'text-orange-600' : 'text-green-700'}`}>
+                      {status.dailyStats.pointsEarned}
+                      <span className="text-xs font-bold opacity-60 ml-1">/ {status.dailyLimit ?? 2000}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 赔率说明 - Compact Grid */}
+            <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-pink-500"></span>
+                  Payouts
+                </h3>
+                <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-1 rounded-full font-bold">2x Pair: +{SLOT_TWO_OF_KIND_PAYOUT}</span>
+              </div>
+
+              <div className="space-y-2">
+                {SLOT_SYMBOLS.map((s) => (
+                  <div
+                    key={s.id}
+                    className="group flex items-center justify-between p-2 hover:bg-white rounded-xl transition-colors cursor-default"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 flex items-center justify-center bg-slate-50 rounded-lg text-2xl group-hover:scale-110 transition-transform shadow-sm border border-slate-100">
+                        {s.emoji}
+                      </div>
+                      <span className="text-xs font-bold text-slate-600">{s.name}</span>
+                    </div>
+                    <div className="text-sm font-black text-slate-900 bg-slate-100 px-2 py-1 rounded-md min-w-[3rem] text-center">
+                      +{s.triplePayout}
                     </div>
                   </div>
                 ))}
               </div>
-            )}
+            </div>
 
-            <div className="mt-6 border-t border-slate-100 pt-5 text-xs text-slate-500 leading-relaxed">
-              <div className="font-bold text-slate-700 mb-2">提示</div>
-              <div>达到每日积分上限后仍可继续旋转，但不会再发放积分。</div>
-              <div>如果你更想“赌积分”模式，可以在计划里作为扩展功能再做。</div>
+            {/* 历史记录 */}
+            <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                  History
+                </h3>
+                <button
+                  onClick={fetchStatus}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+                </button>
+              </div>
+
+              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+                {(status?.records?.length ?? 0) === 0 ? (
+                  <div className="text-center py-8 text-slate-400 text-xs italic">
+                    No games played yet.
+                  </div>
+                ) : (
+                  status?.records?.map((r) => (
+                    <div
+                      key={r.id}
+                      className="flex items-center justify-between p-2.5 rounded-xl border border-transparent hover:border-slate-100 hover:bg-white/50 transition-all"
+                    >
+                      <div className="flex items-center gap-1.5 opacity-80 text-lg grayscale-[30%] hover:grayscale-0 transition-all">
+                        {r.reels.map((id, i) => (
+                          <span key={`${r.id}-${id}-${i}`}>{symbolById[id].emoji}</span>
+                        ))}
+                      </div>
+                      <div className="text-right">
+                        <div className={`text-sm font-black ${r.payout > 0 ? 'text-green-600' : 'text-slate-300'}`}>
+                          {r.payout > 0 ? `+${r.pointsEarned}` : '-'}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-medium">
+                          {new Date(r.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* 积分上限提示 */}
+      {/* 积分上限提示 - Styled Modal */}
       {showLimitWarning && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 p-6">
-            <div className="text-lg font-extrabold text-slate-900 mb-2">今日积分已达上限</div>
-            <div className="text-sm text-slate-600 leading-relaxed">
-              你仍然可以继续旋转，但本次不会再发放积分。是否继续？
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowLimitWarning(false)} />
+          <div className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl overflow-hidden animate-[bounce-land_0.5s_ease-out]">
+            <div className="bg-orange-50 p-6 border-b border-orange-100 text-center">
+              <div className="text-4xl mb-3">⚠️</div>
+              <h3 className="text-xl font-black text-slate-900">Daily Limit Reached</h3>
+              <p className="text-sm text-slate-600 mt-2 font-medium">
+                You've hit the daily point limit. Games won't award points until tomorrow.
+              </p>
             </div>
-
-            <div className="mt-6 grid grid-cols-2 gap-3">
+            
+            <div className="p-6 grid grid-cols-2 gap-3 bg-white">
               <button
                 onClick={() => setShowLimitWarning(false)}
-                className="py-3 rounded-2xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition-colors"
+                className="py-3 px-4 rounded-xl font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors"
               >
-                先不玩了
+                Cancel
               </button>
               <button
                 onClick={() => {
@@ -592,14 +763,10 @@ export default function SlotPage() {
                   setShowLimitWarning(false);
                   handleSpin({ ignoreLimit: true });
                 }}
-                className="py-3 rounded-2xl bg-slate-900 text-white font-bold hover:bg-slate-800 transition-colors"
+                className="py-3 px-4 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 shadow-lg shadow-slate-200 transition-all active:scale-95"
               >
-                继续旋转
+                Play for Fun
               </button>
-            </div>
-
-            <div className="mt-4 text-[11px] text-slate-400">
-              提示：明天 0 点（北京时间）会刷新上限。
             </div>
           </div>
         </div>
