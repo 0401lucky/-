@@ -213,7 +213,15 @@ export function LaunchControl({ onLaunch, disabled, ballsRemaining }: LaunchCont
   const canLaunch = !disabled && ballsRemaining > 0;
 
   return (
-    <div className="flex flex-col items-center w-full">
+    <div
+      className="flex flex-col items-center w-full select-none"
+      onContextMenu={(e) => e.preventDefault()}
+      style={{
+        WebkitTouchCallout: 'none',
+        WebkitUserSelect: 'none',
+        userSelect: 'none',
+      }}
+    >
       {/* 剩余弹珠 */}
       <div className="flex items-center gap-3 mb-4 sm:mb-6 bg-slate-50 px-4 py-2 rounded-full border border-slate-100">
         <span className="text-slate-500 text-xs font-bold uppercase tracking-wider">剩余弹珠</span>
@@ -254,6 +262,7 @@ export function LaunchControl({ onLaunch, disabled, ballsRemaining }: LaunchCont
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
+        onContextMenu={(e) => e.preventDefault()}
         disabled={!canLaunch}
         className={`
           relative w-28 h-28 sm:w-36 sm:h-36 rounded-full 

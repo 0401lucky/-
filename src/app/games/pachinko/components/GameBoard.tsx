@@ -11,7 +11,15 @@ interface GameBoardProps {
 
 export function GameBoard({ canvasRef, ballsRemaining, currentScore }: GameBoardProps) {
   return (
-    <div className="flex flex-col w-full max-w-[400px] mx-auto">
+    <div
+      className="flex flex-col w-full max-w-[400px] mx-auto select-none"
+      onContextMenu={(e) => e.preventDefault()}
+      style={{
+        WebkitTouchCallout: 'none',
+        WebkitUserSelect: 'none',
+        userSelect: 'none',
+      }}
+    >
       {/* 游戏画布 */}
       <canvas
         ref={canvasRef}
