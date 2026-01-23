@@ -41,13 +41,13 @@ export default function GamesPage() {
       available: true,
     },
     {
-      id: 'coming-soon-1',
+      id: 'slot',
       name: '老虎机',
       description: '经典三轴老虎机，转动幸运符号！',
       icon: '🎰',
       color: 'from-yellow-600 to-orange-600',
-      href: '#',
-      available: false,
+      href: '/games/slot',
+      available: true,
     },
     {
       id: 'memory',

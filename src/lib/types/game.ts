@@ -1,7 +1,7 @@
 // src/lib/types/game.ts
 
 /** 游戏类型 */
-export type GameType = 'pachinko' | 'memory';
+export type GameType = 'pachinko' | 'memory' | 'slot';
 
 /** 记忆游戏难度 */
 export type MemoryDifficulty = 'easy' | 'normal' | 'hard';
