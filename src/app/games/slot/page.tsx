@@ -435,8 +435,12 @@ export default function SlotPage() {
                             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-white/80 to-transparent" />
                           </div>
 
-                          <div className="px-3 pb-3 -mt-2 text-center">
-                            <div className={`text-[11px] font-bold ${spinning ? 'text-slate-300' : 'text-slate-500'}`}>
+                          <div className="px-3 pb-3 pt-2 text-center relative z-10">
+                            <div
+                              className={`inline-flex items-center justify-center px-2 py-1 rounded-full border text-[11px] font-bold ${
+                                spinning ? 'text-slate-400 border-slate-200 bg-slate-50' : 'text-slate-600 border-slate-200 bg-slate-50'
+                              }`}
+                            >
                               {spinning ? 'Rolling' : symbolById[reels[idx]].name}
                             </div>
                           </div>
