@@ -28,8 +28,31 @@ interface SlotStatus {
   records: SlotSpinRecord[];
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+const INITIAL_REELS: [SlotSymbolId, SlotSymbolId, SlotSymbolId] = [
+  SLOT_SYMBOLS[0]!.id,
+  SLOT_SYMBOLS[1]!.id,
+  SLOT_SYMBOLS[2]!.id,
+];
+
+const REEL_TRACK_LENGTHS: [number, number, number] = [18, 22, 26];
+const REEL_DURATIONS_MS: [number, number, number] = [900, 1100, 1300];
+const REEL_EASING = 'cubic-bezier(0.12, 0.82, 0.18, 1)';
+const REEL_INDEXES = [0, 1, 2] as const;
+
+function getWinMask(
+  reels: [SlotSymbolId, SlotSymbolId, SlotSymbolId],
+  payout: number
+): [boolean, boolean, boolean] {
+  if (payout <= 0) return [false, false, false];
+
+  const [a, b, c] = reels;
+
+  if (a === b && b === c) return [true, true, true];
+  if (a === b) return [true, true, false];
+  if (a === c) return [true, false, true];
+  if (b === c) return [false, true, true];
+
+  return [false, false, false];
 }
 
 export default function SlotPage() {
@@ -51,11 +74,15 @@ export default function SlotPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [reels, setReels] = useState<SlotSymbolId[]>(() => [
-    SLOT_SYMBOLS[0]!.id,
-    SLOT_SYMBOLS[1]!.id,
-    SLOT_SYMBOLS[2]!.id,
+  const [reels, setReels] = useState<[SlotSymbolId, SlotSymbolId, SlotSymbolId]>(INITIAL_REELS);
+  const [reelTracks, setReelTracks] = useState<[SlotSymbolId[], SlotSymbolId[], SlotSymbolId[]]>(() => [
+    [INITIAL_REELS[0]],
+    [INITIAL_REELS[1]],
+    [INITIAL_REELS[2]],
   ]);
+  const [reelOffsets, setReelOffsets] = useState<[number, number, number]>([0, 0, 0]);
+  const [spinId, setSpinId] = useState(0);
+  const [winMask, setWinMask] = useState<[boolean, boolean, boolean]>([false, false, false]);
   const [spinning, setSpinning] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [now, setNow] = useState(Date.now());
@@ -64,8 +91,8 @@ export default function SlotPage() {
   const [showLimitWarning, setShowLimitWarning] = useState(false);
   const [limitWarningAck, setLimitWarningAck] = useState(false);
 
-  const tickerRef = useRef<NodeJS.Timeout | null>(null);
-  const stopTimersRef = useRef<NodeJS.Timeout[]>([]);
+  const timeoutsRef = useRef<NodeJS.Timeout[]>([]);
+  const spinRafRef = useRef<number | null>(null);
 
   const cooldownRemainingMs = Math.max(0, cooldownUntil - now);
 
@@ -113,40 +140,67 @@ export default function SlotPage() {
   // 卸载清理
   useEffect(() => {
     return () => {
-      if (tickerRef.current) clearInterval(tickerRef.current);
-      for (const t of stopTimersRef.current) clearTimeout(t);
-      stopTimersRef.current = [];
+      if (spinRafRef.current !== null) {
+        cancelAnimationFrame(spinRafRef.current);
+        spinRafRef.current = null;
+      }
+      for (const t of timeoutsRef.current) clearTimeout(t);
+      timeoutsRef.current = [];
     };
   }, []);
 
-  const startTicker = useCallback(() => {
-    if (tickerRef.current) clearInterval(tickerRef.current);
-    tickerRef.current = setInterval(() => {
-      setReels([randomSymbolId(), randomSymbolId(), randomSymbolId()]);
-    }, 80);
-  }, [randomSymbolId]);
-
-  const stopTicker = useCallback(() => {
-    if (tickerRef.current) {
-      clearInterval(tickerRef.current);
-      tickerRef.current = null;
+  const clearPendingAnimations = useCallback(() => {
+    if (spinRafRef.current !== null) {
+      cancelAnimationFrame(spinRafRef.current);
+      spinRafRef.current = null;
     }
+    for (const t of timeoutsRef.current) clearTimeout(t);
+    timeoutsRef.current = [];
   }, []);
 
-  const applyResultWithStagger = useCallback((finalReels: SlotSymbolId[]) => {
-    stopTimersRef.current.forEach((t) => clearTimeout(t));
-    stopTimersRef.current = [];
+  const buildTrack = useCallback(
+    (finalSymbolId: SlotSymbolId, length: number): SlotSymbolId[] => {
+      const safeLength = Math.max(2, Math.floor(length));
+      const track: SlotSymbolId[] = [];
+      for (let i = 0; i < safeLength - 1; i++) {
+        track.push(randomSymbolId());
+      }
+      track.push(finalSymbolId);
+      return track;
+    },
+    [randomSymbolId]
+  );
 
-    stopTimersRef.current.push(
-      setTimeout(() => setReels((cur) => [finalReels[0]!, cur[1]!, cur[2]!]), 0)
-    );
-    stopTimersRef.current.push(
-      setTimeout(() => setReels((cur) => [cur[0]!, finalReels[1]!, cur[2]!]), 160)
-    );
-    stopTimersRef.current.push(
-      setTimeout(() => setReels(() => [...finalReels]), 320)
-    );
-  }, []);
+  const runReelAnimation = useCallback(
+    async (finalReels: [SlotSymbolId, SlotSymbolId, SlotSymbolId]) => {
+      clearPendingAnimations();
+      setSpinId((v) => v + 1);
+
+      const tracks: [SlotSymbolId[], SlotSymbolId[], SlotSymbolId[]] = [
+        buildTrack(finalReels[0], REEL_TRACK_LENGTHS[0]),
+        buildTrack(finalReels[1], REEL_TRACK_LENGTHS[1]),
+        buildTrack(finalReels[2], REEL_TRACK_LENGTHS[2]),
+      ];
+
+      const endOffsets: [number, number, number] = [
+        tracks[0].length - 1,
+        tracks[1].length - 1,
+        tracks[2].length - 1,
+      ];
+
+      setReelTracks(tracks);
+      setReelOffsets([0, 0, 0]);
+
+      await new Promise<void>((resolve) => {
+        spinRafRef.current = requestAnimationFrame(() => {
+          setReelOffsets(endOffsets);
+          const done = setTimeout(resolve, Math.max(...REEL_DURATIONS_MS) + 80);
+          timeoutsRef.current.push(done);
+        });
+      });
+    },
+    [buildTrack, clearPendingAnimations]
+  );
 
   const handleSpin = useCallback(async (options?: { ignoreLimit?: boolean }) => {
     if (spinning) return;
@@ -160,20 +214,12 @@ export default function SlotPage() {
     setSpinning(true);
     setError(null);
     setLastResult(null);
+    setWinMask([false, false, false]);
     setCooldownUntil(Date.now() + SLOT_SPIN_COOLDOWN_MS);
-
-    const startedAt = Date.now();
-    startTicker();
 
     try {
       const res = await fetch('/api/games/slot/spin', { method: 'POST' });
       const data = await res.json();
-
-      const elapsed = Date.now() - startedAt;
-      const minSpin = 950;
-      if (elapsed < minSpin) await sleep(minSpin - elapsed);
-
-      stopTicker();
 
       if (res.status === 401) {
         setError('请先登录后再游玩');
@@ -188,10 +234,18 @@ export default function SlotPage() {
       }
 
       const record: SlotSpinRecord | undefined = data?.data?.record;
-      if (record?.reels?.length === 3) {
-        applyResultWithStagger(record.reels);
-        setLastResult(record);
+      if (!record || !Array.isArray(record.reels) || record.reels.length !== 3) {
+        setError('系统错误：结果异常');
+        return;
       }
+
+      const finalReels = record.reels as [SlotSymbolId, SlotSymbolId, SlotSymbolId];
+
+      // 等待滚动动画完成后再揭晓结果
+      await runReelAnimation(finalReels);
+      setReels(finalReels);
+      setLastResult(record);
+      setWinMask(getWinMask(finalReels, record.payout));
 
       // 同步状态（余额/今日统计）
       setStatus((prev) => {
@@ -210,7 +264,7 @@ export default function SlotPage() {
       console.error('Spin error:', err);
       setError('网络错误');
     } finally {
-      stopTicker();
+      clearPendingAnimations();
       setSpinning(false);
       setNow(Date.now());
     }
@@ -219,9 +273,8 @@ export default function SlotPage() {
     cooldownRemainingMs,
     status?.pointsLimitReached,
     limitWarningAck,
-    startTicker,
-    stopTicker,
-    applyResultWithStagger,
+    runReelAnimation,
+    clearPendingAnimations,
   ]);
 
   const payoutText = useMemo(() => {
@@ -321,20 +374,55 @@ export default function SlotPage() {
               {/* 转轴显示 */}
               <div className="bg-slate-900 rounded-3xl p-4 sm:p-6 shadow-2xl shadow-slate-200 ring-4 ring-slate-100">
                 <div className="grid grid-cols-3 gap-3 sm:gap-4">
-                  {reels.map((id, idx) => (
-                    <div
-                      key={`${id}-${idx}`}
-                      className="relative bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"
-                    >
-                      <div className="absolute inset-0 bg-gradient-to-b from-white/60 via-transparent to-white/60 pointer-events-none" />
-                      <div className="h-24 sm:h-28 flex items-center justify-center text-5xl sm:text-6xl select-none">
-                        {symbolById[id].emoji}
+                  {REEL_INDEXES.map((idx) => {
+                    const highlight = !spinning && winMask[idx];
+                    const track = reelTracks[idx] ?? [reels[idx]];
+                    const offset = reelOffsets[idx] ?? 0;
+
+                    return (
+                      <div
+                        key={`reel-${idx}`}
+                        className={`relative bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden ${
+                          highlight ? 'ring-2 ring-green-300 shadow-[0_0_0_4px_rgba(34,197,94,0.15)]' : ''
+                        }`}
+                      >
+                        <div className="relative [--item-h:6rem] sm:[--item-h:7rem]">
+                          <div className="relative h-[var(--item-h)] overflow-hidden flex items-center justify-center">
+                            <div
+                              key={`track-${spinId}-${idx}`}
+                              className={`transform-gpu will-change-transform transition-transform ${
+                                spinning ? 'blur-[1px]' : 'blur-0'
+                              } transition-[filter]`}
+                              style={{
+                                transform: `translateY(calc(var(--item-h) * -1 * ${offset}))`,
+                                transitionDuration: `${REEL_DURATIONS_MS[idx]}ms`,
+                                transitionTimingFunction: REEL_EASING,
+                              }}
+                            >
+                              {track.map((symbolId, i) => (
+                                <div
+                                  key={`${spinId}-${idx}-${i}-${symbolId}`}
+                                  className="h-[var(--item-h)] flex items-center justify-center text-5xl sm:text-6xl select-none"
+                                >
+                                  {symbolById[symbolId].emoji}
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/70 via-transparent to-white/70" />
+                            <div className="pointer-events-none absolute inset-x-0 top-0 h-6 bg-gradient-to-b from-white/80 to-transparent" />
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-white/80 to-transparent" />
+                          </div>
+
+                          <div className="px-3 pb-3 -mt-2 text-center">
+                            <div className={`text-[11px] font-bold ${spinning ? 'text-slate-300' : 'text-slate-500'}`}>
+                              {spinning ? 'Rolling' : symbolById[reels[idx]].name}
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <div className="px-3 pb-3 -mt-2 text-center">
-                        <div className="text-[11px] font-bold text-slate-500">{symbolById[id].name}</div>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
