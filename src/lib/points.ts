@@ -227,6 +227,72 @@ export async function deductPoints(
 }
 
 /**
+ * 原子化调整积分（可正可负，负数时确保不会扣成负数）
+ * 适用于“赌积分”等需要一次性结算净输赢的场景
+ */
+export async function applyPointsDelta(
+  userId: number,
+  delta: number,
+  source: PointsSource,
+  description: string
+): Promise<{ success: boolean; balance: number; message?: string }> {
+  if (!Number.isSafeInteger(delta)) {
+    throw new Error('Delta must be an integer');
+  }
+
+  if (delta === 0) {
+    const balance = await getUserPoints(userId);
+    return { success: true, balance };
+  }
+
+  if (typeof description !== 'string' || description.trim() === '') {
+    throw new Error('Description is required');
+  }
+
+  const pointsKey = POINTS_KEY(userId);
+  const logKey = POINTS_LOG_KEY(userId);
+  const now = Date.now();
+  const logId = nanoid();
+
+  const luaScript = `
+    local pointsKey = KEYS[1]
+    local logKey = KEYS[2]
+    local delta = tonumber(ARGV[1])
+    local logId = ARGV[2]
+    local source = ARGV[3]
+    local description = ARGV[4]
+    local now = tonumber(ARGV[5])
+    local maxLogs = tonumber(ARGV[6])
+
+    local current = tonumber(redis.call('GET', pointsKey) or '0')
+    if delta < 0 and current < (-delta) then
+      return {0, current}
+    end
+
+    local newBalance = redis.call('INCRBY', pointsKey, delta)
+
+    local log = {id = logId, amount = delta, source = source, description = description, balance = newBalance, createdAt = now}
+    redis.call('LPUSH', logKey, cjson.encode(log))
+    redis.call('LTRIM', logKey, 0, maxLogs - 1)
+
+    return {1, newBalance}
+  `;
+
+  const result = await kv.eval(
+    luaScript,
+    [pointsKey, logKey],
+    [delta, logId, source, description.trim(), now, MAX_LOG_ENTRIES]
+  ) as [number, number];
+
+  const [ok, balance] = result;
+  if (ok === 0) {
+    return { success: false, balance, message: '积分不足' };
+  }
+
+  return { success: true, balance };
+}
+
+/**
  * 获取积分流水记录
  */
 export async function getPointsLogs(

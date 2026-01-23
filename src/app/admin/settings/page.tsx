@@ -11,15 +11,26 @@ interface SystemConfig {
   updatedBy?: string;
 }
 
+interface SlotConfig {
+  betModeEnabled: boolean;
+  betCost: number;
+  updatedAt?: number;
+  updatedBy?: string;
+}
+
 export default function AdminSettingsPage() {
   const [config, setConfig] = useState<SystemConfig | null>(null);
+  const [slotConfig, setSlotConfig] = useState<SlotConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingSlot, setSavingSlot] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   
   // 表单状态
   const [dailyPointsLimit, setDailyPointsLimit] = useState('');
+  const [betModeEnabled, setBetModeEnabled] = useState(false);
+  const [betCost, setBetCost] = useState('');
 
   // 获取配置
   useEffect(() => {
@@ -28,14 +39,24 @@ export default function AdminSettingsPage() {
 
   const fetchConfig = async () => {
     try {
-      const res = await fetch('/api/admin/config');
-      const data = await res.json();
-      
-      if (data.success) {
-        setConfig(data.config);
-        setDailyPointsLimit(String(data.config.dailyPointsLimit));
+      const [systemRes, slotRes] = await Promise.all([
+        fetch('/api/admin/config'),
+        fetch('/api/admin/games/slot/config'),
+      ]);
+
+      const systemData = await systemRes.json();
+      if (systemData.success) {
+        setConfig(systemData.config);
+        setDailyPointsLimit(String(systemData.config.dailyPointsLimit));
       } else {
-        setError(data.error || '获取配置失败');
+        setError(systemData.error || '获取系统配置失败');
+      }
+
+      const slotData = await slotRes.json();
+      if (slotData.success && slotData.data?.config) {
+        setSlotConfig(slotData.data.config);
+        setBetModeEnabled(!!slotData.data.config.betModeEnabled);
+        setBetCost(String(slotData.data.config.betCost ?? 10));
       }
     } catch (err) {
       setError('网络错误');
@@ -72,6 +93,36 @@ export default function AdminSettingsPage() {
       setError('网络错误');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveSlot = async () => {
+    setError(null);
+    setSuccess(null);
+    setSavingSlot(true);
+
+    try {
+      const res = await fetch('/api/admin/games/slot/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          betModeEnabled,
+          betCost: Number(betCost),
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setSlotConfig(data.data.config);
+        setSuccess('老虎机配置已保存');
+        setTimeout(() => setSuccess(null), 3000);
+      } else {
+        setError(data.message || '保存失败');
+      }
+    } catch (err) {
+      setError('网络错误');
+    } finally {
+      setSavingSlot(false);
     }
   };
 
@@ -162,11 +213,81 @@ export default function AdminSettingsPage() {
           </div>
         </div>
 
+        {/* 老虎机配置 */}
+        <div className="mt-6 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className="p-6 border-b border-slate-100">
+            <h2 className="text-lg font-semibold text-slate-900">老虎机设置</h2>
+          </div>
+
+          <div className="p-6 space-y-6">
+            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <div className="pr-6">
+                <div className="text-sm font-semibold text-slate-800">赌积分模式</div>
+                <div className="text-xs text-slate-500 mt-1">
+                  开启后，用户可用积分下注旋转（默认期望为负，避免刷分）。
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBetModeEnabled((v) => !v)}
+                className={`relative w-12 h-7 rounded-full transition-colors ${
+                  betModeEnabled ? 'bg-emerald-500' : 'bg-slate-300'
+                }`}
+                aria-label="Toggle bet mode"
+              >
+                <span
+                  className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-sm transition-all ${
+                    betModeEnabled ? 'left-6' : 'left-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">每次下注成本</label>
+              <div className="flex items-center gap-4">
+                <input
+                  type="number"
+                  value={betCost}
+                  onChange={(e) => setBetCost(e.target.value)}
+                  min="1"
+                  max="100000"
+                  className="w-40 px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                />
+                <span className="text-slate-500">积分/次</span>
+              </div>
+              <p className="mt-2 text-sm text-slate-400">
+                默认推荐设置为 <span className="font-semibold">10</span>：二连≈回本，三连盈利。
+              </p>
+            </div>
+
+            <div className="pt-4 border-t border-slate-100">
+              <button
+                onClick={handleSaveSlot}
+                disabled={savingSlot}
+                className="px-6 py-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white font-semibold rounded-lg transition-colors"
+              >
+                {savingSlot ? '保存中...' : '保存老虎机配置'}
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* 配置信息 */}
-        {config?.updatedAt && (
-          <div className="mt-6 text-sm text-slate-400 text-center">
-            最后更新：{new Date(config.updatedAt).toLocaleString('zh-CN')}
-            {config.updatedBy && ` · 操作人：${config.updatedBy}`}
+        {(config?.updatedAt || slotConfig?.updatedAt) && (
+          <div className="mt-6 text-sm text-slate-400 text-center space-y-1">
+            {config?.updatedAt && (
+              <div>
+                系统配置更新：{new Date(config.updatedAt).toLocaleString('zh-CN')}
+                {config.updatedBy && ` · 操作人：${config.updatedBy}`}
+              </div>
+            )}
+            {slotConfig?.updatedAt && (
+              <div>
+                老虎机配置更新：{new Date(slotConfig.updatedAt).toLocaleString('zh-CN')}
+                {slotConfig.updatedBy && ` · 操作人：${slotConfig.updatedBy}`}
+              </div>
+            )}
           </div>
         )}
       </div>

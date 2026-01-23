@@ -1,7 +1,8 @@
 import { randomBytes } from 'crypto';
 import { kv } from '@vercel/kv';
 import { nanoid } from 'nanoid';
-import { addGamePointsWithLimit, getUserPoints } from './points';
+import { addGamePointsWithLimit, applyPointsDelta, getUserPoints } from './points';
+import { getSlotConfig } from './slot-config';
 import { getTodayDateString } from './time';
 import { getDailyPointsLimit } from './config';
 import type { DailyGameStats } from './types/game';
@@ -14,13 +15,18 @@ import {
   type SlotSymbolId,
 } from './slot-constants';
 
+export type SlotPlayMode = 'earn' | 'bet';
+
 export interface SlotSpinRecord {
   id: string;
   userId: number;
   gameType: 'slot';
+  mode?: SlotPlayMode;
+  betCost?: number;
   reels: SlotSymbolId[];
   payout: number;
   pointsEarned: number;
+  pointsDelta?: number;
   createdAt: number;
 }
 
@@ -34,6 +40,10 @@ export interface SlotStatus {
   cooldownRemaining: number; // ms
   dailyLimit: number;
   pointsLimitReached: boolean;
+  config: {
+    betModeEnabled: boolean;
+    betCost: number;
+  };
   records: SlotSpinRecord[];
 }
 
@@ -43,6 +53,8 @@ const SLOT_RECORDS_KEY = (userId: number) => `slot:records:${userId}`;
 
 const DAILY_STATS_KEY = (userId: number, date: string) => `game:daily:${userId}:${date}`;
 const DAILY_STATS_TTL = 48 * 60 * 60; // 48小时
+
+const SLOT_RANK_DAILY_KEY = (date: string) => `slot:rank:daily:${date}`;
 
 const SPIN_LOCK_TTL = 10; // 秒：防并发与重复请求
 
@@ -127,10 +139,11 @@ export async function getSlotRecords(userId: number, limit: number = SLOT_STATUS
 }
 
 export async function getSlotStatus(userId: number): Promise<SlotStatus> {
-  const [balance, dailyStats, dailyLimit, records, cooldownRemaining] = await Promise.all([
+  const [balance, dailyStats, dailyLimit, slotConfig, records, cooldownRemaining] = await Promise.all([
     getUserPoints(userId),
     getSharedDailyStats(userId),
     getDailyPointsLimit(),
+    getSlotConfig(),
     getSlotRecords(userId, SLOT_STATUS_RECORD_LIMIT),
     getCooldownRemainingMs(userId),
   ]);
@@ -146,16 +159,21 @@ export async function getSlotStatus(userId: number): Promise<SlotStatus> {
     cooldownRemaining,
     dailyLimit,
     pointsLimitReached,
+    config: {
+      betModeEnabled: !!slotConfig.betModeEnabled,
+      betCost: Number.isFinite(slotConfig.betCost) ? slotConfig.betCost : 10,
+    },
     records,
   };
 }
 
-export async function spinSlot(userId: number): Promise<
+export async function spinSlot(userId: number, mode: SlotPlayMode = 'earn'): Promise<
   | {
       success: true;
       data: {
         record: SlotSpinRecord;
         pointsEarned: number;
+        pointsDelta: number;
         newBalance: number;
         dailyStats: { gamesPlayed: number; pointsEarned: number };
         dailyLimit: number;
@@ -189,6 +207,82 @@ export async function spinSlot(userId: number): Promise<
 
     const dailyLimit = await getDailyPointsLimit();
 
+    const date = getTodayDateString();
+    const dailyStats = await getSharedDailyStats(userId);
+
+    if (mode === 'bet') {
+      const slotConfig = await getSlotConfig();
+      if (!slotConfig.betModeEnabled) {
+        return { success: false, message: '管理员未开启赌积分模式' };
+      }
+
+      const betCost = Number(slotConfig.betCost);
+      if (!Number.isInteger(betCost) || betCost < 1) {
+        return { success: false, message: '下注配置异常，请联系管理员' };
+      }
+
+      const pointsDelta = payout - betCost;
+      const description =
+        payout > 0
+          ? `老虎机赌积分：下注${betCost}，${match === 'three' ? '三连' : '二连'}${
+              matchedSymbolId ? ` ${SYMBOL_BY_ID[matchedSymbolId].name}` : ''
+            } +${payout}，净 ${pointsDelta >= 0 ? `+${pointsDelta}` : String(pointsDelta)}`
+          : `老虎机赌积分：下注${betCost}，未中奖，净 -${betCost}`;
+
+      const deltaResult = await applyPointsDelta(userId, pointsDelta, 'game_play', description);
+      if (!deltaResult.success) {
+        return { success: false, message: deltaResult.message || '积分不足' };
+      }
+
+      const record: SlotSpinRecord = {
+        id: nanoid(),
+        userId,
+        gameType: 'slot',
+        mode: 'bet',
+        betCost,
+        reels,
+        payout,
+        pointsEarned: payout,
+        pointsDelta,
+        createdAt: now,
+      };
+
+      const newDailyStats: DailyGameStats = {
+        userId,
+        date,
+        gamesPlayed: dailyStats.gamesPlayed + 1,
+        totalScore: dailyStats.totalScore + payout,
+        pointsEarned: dailyStats.pointsEarned,
+        lastGameAt: now,
+      };
+
+      const tasks: Promise<unknown>[] = [
+        kv.set(DAILY_STATS_KEY(userId, date), newDailyStats, { ex: DAILY_STATS_TTL }),
+        kv.lpush(SLOT_RECORDS_KEY(userId), record),
+      ];
+      if (pointsDelta > 0) {
+        tasks.push(kv.zincrby(SLOT_RANK_DAILY_KEY(date), pointsDelta, `u:${userId}`));
+        tasks.push(kv.expire(SLOT_RANK_DAILY_KEY(date), DAILY_STATS_TTL));
+      }
+      await Promise.all(tasks);
+      await kv.ltrim(SLOT_RECORDS_KEY(userId), 0, SLOT_MAX_RECORD_ENTRIES - 1);
+
+      const pointsLimitReached = newDailyStats.pointsEarned >= dailyLimit;
+
+      return {
+        success: true,
+        data: {
+          record,
+          pointsEarned: payout,
+          pointsDelta,
+          newBalance: deltaResult.balance,
+          dailyStats: { gamesPlayed: newDailyStats.gamesPlayed, pointsEarned: newDailyStats.pointsEarned },
+          dailyLimit,
+          pointsLimitReached,
+        },
+      };
+    }
+
     const pointsResult = await addGamePointsWithLimit(
       userId,
       payout,
@@ -203,14 +297,14 @@ export async function spinSlot(userId: number): Promise<
       id: nanoid(),
       userId,
       gameType: 'slot',
+      mode: 'earn',
+      betCost: 0,
       reels,
       payout,
       pointsEarned: pointsResult.pointsEarned,
+      pointsDelta: pointsResult.pointsEarned,
       createdAt: now,
     };
-
-    const date = getTodayDateString();
-    const dailyStats = await getSharedDailyStats(userId);
 
     const newDailyStats: DailyGameStats = {
       userId,
@@ -221,10 +315,16 @@ export async function spinSlot(userId: number): Promise<
       lastGameAt: now,
     };
 
-    await Promise.all([
+    const tasks: Promise<unknown>[] = [
       kv.set(DAILY_STATS_KEY(userId, date), newDailyStats, { ex: DAILY_STATS_TTL }),
       kv.lpush(SLOT_RECORDS_KEY(userId), record),
-    ]);
+    ];
+    const pointsDelta = pointsResult.pointsEarned;
+    if (pointsDelta > 0) {
+      tasks.push(kv.zincrby(SLOT_RANK_DAILY_KEY(date), pointsDelta, `u:${userId}`));
+      tasks.push(kv.expire(SLOT_RANK_DAILY_KEY(date), DAILY_STATS_TTL));
+    }
+    await Promise.all(tasks);
     await kv.ltrim(SLOT_RECORDS_KEY(userId), 0, SLOT_MAX_RECORD_ENTRIES - 1);
 
     const pointsLimitReached = newDailyStats.pointsEarned >= dailyLimit;
@@ -234,6 +334,7 @@ export async function spinSlot(userId: number): Promise<
       data: {
         record,
         pointsEarned: pointsResult.pointsEarned,
+        pointsDelta: pointsResult.pointsEarned,
         newBalance: pointsResult.balance,
         dailyStats: { gamesPlayed: newDailyStats.gamesPlayed, pointsEarned: newDailyStats.pointsEarned },
         dailyLimit,
@@ -244,4 +345,3 @@ export async function spinSlot(userId: number): Promise<
     await kv.del(lockKey);
   }
 }
-

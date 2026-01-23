@@ -10,11 +10,16 @@ import {
   type SlotSymbolId,
 } from '@/lib/slot-constants';
 
+type SlotPlayMode = 'earn' | 'bet';
+
 interface SlotSpinRecord {
   id: string;
   reels: SlotSymbolId[];
+  mode?: SlotPlayMode;
+  betCost?: number;
   payout: number;
   pointsEarned: number;
+  pointsDelta?: number;
   createdAt: number;
 }
 
@@ -25,7 +30,17 @@ interface SlotStatus {
   cooldownRemaining: number; // ms
   dailyLimit: number;
   pointsLimitReached: boolean;
+  config: {
+    betModeEnabled: boolean;
+    betCost: number;
+  };
   records: SlotSpinRecord[];
+}
+
+interface SlotRankingEntry {
+  userId: number;
+  username: string;
+  score: number;
 }
 
 const INITIAL_REELS: [SlotSymbolId, SlotSymbolId, SlotSymbolId] = [
@@ -34,8 +49,8 @@ const INITIAL_REELS: [SlotSymbolId, SlotSymbolId, SlotSymbolId] = [
   SLOT_SYMBOLS[2]!.id,
 ];
 
-const REEL_TRACK_LENGTHS: [number, number, number] = [20, 25, 30]; // Increased for smoother spin
-const REEL_DURATIONS_MS: [number, number, number] = [1200, 1500, 1800]; // Slightly longer for anticipation
+const REEL_TRACK_LENGTHS: [number, number, number] = [30, 35, 40]; // Increased for smoother spin
+const REEL_DURATIONS_MS: [number, number, number] = [2000, 2400, 2800]; // Slower for dramatic effect
 const REEL_EASING = 'cubic-bezier(0.2, 0.8, 0.2, 1)'; // Smooth easing
 
 // Enhanced CSS Animation Keyframes
@@ -57,9 +72,8 @@ const ANIMATION_STYLES = `
     to { mask-position: -50%; }
   }
   @keyframes confetti-fall {
-    0% { transform: translateY(-100vh) rotate(0deg) scale(0.5); opacity: 1; }
-    25% { transform: translateY(-20vh) rotate(90deg) scale(1); opacity: 1; }
-    100% { transform: translateY(100vh) rotate(720deg) scale(0.8); opacity: 0; }
+    0% { transform: translateY(-20vh) rotate(0deg) scale(0.5); opacity: 1; }
+    100% { transform: translateY(120vh) rotate(720deg) scale(0.8); opacity: 0; }
   }
   @keyframes spin-blur {
     0% { filter: blur(0); }
@@ -128,7 +142,7 @@ function Confetti({ active }: { active: boolean }) {
           height: `${size * (Math.random() > 0.5 ? 1 : 0.4)}px`, // Mix squares and rectangles
           backgroundColor: bg,
           boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-          animation: `confetti-fall ${duration}s ease-in ${delay}s forwards`,
+          animation: `confetti-fall ${duration}s ease-in ${delay}s both`,
         }}
       />
     );
@@ -155,6 +169,17 @@ function getWinMask(
   return [false, false, false];
 }
 
+function getRecordMode(record: SlotSpinRecord): SlotPlayMode {
+  return record.mode ?? 'earn';
+}
+
+function getRecordDelta(record: SlotSpinRecord, fallbackBetCost: number): number {
+  if (typeof record.pointsDelta === 'number') return record.pointsDelta;
+  const mode = getRecordMode(record);
+  if (mode === 'bet') return record.pointsEarned - (record.betCost ?? fallbackBetCost);
+  return record.pointsEarned;
+}
+
 export default function SlotPage() {
   const router = useRouter();
 
@@ -173,6 +198,9 @@ export default function SlotPage() {
   const [status, setStatus] = useState<SlotStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [playMode, setPlayMode] = useState<SlotPlayMode>('earn');
+  const [ranking, setRanking] = useState<SlotRankingEntry[]>([]);
+  const [rankingError, setRankingError] = useState(false);
 
   const [reels, setReels] = useState<[SlotSymbolId, SlotSymbolId, SlotSymbolId]>(INITIAL_REELS);
   const [reelTracks, setReelTracks] = useState<[SlotSymbolId[], SlotSymbolId[], SlotSymbolId[]]>(() => [
@@ -206,6 +234,8 @@ export default function SlotPage() {
   const reelMeasureRef = useRef<HTMLDivElement | null>(null);
 
   const cooldownRemainingMs = Math.max(0, cooldownUntil - now);
+  const betModeEnabled = status?.config?.betModeEnabled ?? false;
+  const betCost = status?.config?.betCost ?? 10;
 
   const fetchStatus = useCallback(async () => {
     setLoading(true);
@@ -236,9 +266,36 @@ export default function SlotPage() {
     }
   }, []);
 
+  const fetchRanking = useCallback(async () => {
+    try {
+      const res = await fetch('/api/games/slot/ranking?limit=10', { cache: 'no-store' });
+      const data = await res.json();
+      if (data.success) {
+        setRanking(Array.isArray(data.data?.leaderboard) ? data.data.leaderboard : []);
+        setRankingError(false);
+      } else {
+        setRankingError(true);
+      }
+    } catch (err) {
+      setRankingError(true);
+    }
+  }, []);
+
   useEffect(() => {
     fetchStatus();
   }, [fetchStatus]);
+
+  useEffect(() => {
+    fetchRanking();
+    const t = setInterval(fetchRanking, 15000);
+    return () => clearInterval(t);
+  }, [fetchRanking]);
+
+  useEffect(() => {
+    if (playMode === 'bet' && status?.config && !status.config.betModeEnabled) {
+      setPlayMode('earn');
+    }
+  }, [playMode, status?.config]);
 
   // 计算滚轴单格高度（用于 translate 像素值，避免 CSS calc 乘法兼容问题）
   useEffect(() => {
@@ -333,7 +390,7 @@ export default function SlotPage() {
     if (spinning) return;
     if (cooldownRemainingMs > 0) return;
 
-    if (status?.pointsLimitReached && !limitWarningAck && !options?.ignoreLimit) {
+    if (playMode === 'earn' && status?.pointsLimitReached && !limitWarningAck && !options?.ignoreLimit) {
       setShowLimitWarning(true);
       return;
     }
@@ -345,7 +402,11 @@ export default function SlotPage() {
     setCooldownUntil(Date.now() + SLOT_SPIN_COOLDOWN_MS);
 
     try {
-      const res = await fetch('/api/games/slot/spin', { method: 'POST' });
+      const res = await fetch('/api/games/slot/spin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: playMode }),
+      });
       const data = await res.json();
 
       if (res.status === 401) {
@@ -400,16 +461,27 @@ export default function SlotPage() {
     cooldownRemainingMs,
     status?.pointsLimitReached,
     limitWarningAck,
+    playMode,
     runReelAnimation,
     clearPendingAnimations,
   ]);
 
   const payoutText = useMemo(() => {
     if (!lastResult) return null;
+    const mode = lastResult.mode ?? 'earn';
+
+    if (mode === 'bet') {
+      const betCost = lastResult.betCost ?? status?.config?.betCost ?? 10;
+      const delta =
+        typeof lastResult.pointsDelta === 'number' ? lastResult.pointsDelta : lastResult.pointsEarned - betCost;
+      if (lastResult.payout <= 0) return `下注 ${betCost}，未中奖，净 -${betCost}`;
+      return `下注 ${betCost}，中奖 +${lastResult.payout}，净 ${delta >= 0 ? `+${delta}` : String(delta)}`;
+    }
+
     if (lastResult.payout <= 0) return '未中奖';
     if (lastResult.pointsEarned <= 0) return `中奖 +${lastResult.payout}，但今日已达积分上限`;
     return `中奖 +${lastResult.pointsEarned} 积分`;
-  }, [lastResult]);
+  }, [lastResult, status?.config?.betCost]);
 
   return (
     <div className="min-h-screen bg-slate-100 py-6 px-4 sm:py-10 selection:bg-yellow-200 font-sans">
@@ -440,14 +512,14 @@ export default function SlotPage() {
             <span className="text-yellow-500 drop-shadow-sm text-lg">⭐</span>
             <span className="font-extrabold text-slate-800 text-lg tabular-nums tracking-tight">{loading ? '...' : status?.balance ?? 0}</span>
             <div className="w-px h-4 bg-slate-200 mx-1" />
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide group-hover:text-yellow-600 transition-colors">Store</span>
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide group-hover:text-yellow-600 transition-colors">商店</span>
           </Link>
         </div>
 
         {/* 错误提示 */}
         {error && (
           <div className="mb-8 p-4 bg-red-50/90 backdrop-blur border border-red-200 rounded-2xl text-red-700 text-center shadow-lg animate-pulse">
-            <span className="font-bold">Error:</span> {error}{' '}
+            <span className="font-bold">错误:</span> {error}{' '}
             {error.includes('登录') && (
               <button
                 onClick={() => router.push('/login?redirect=/games/slot')}
@@ -459,9 +531,80 @@ export default function SlotPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-8 items-start">
-          {/* 左侧：老虎机主体 */}
-          <div className="bg-slate-900 rounded-[2.5rem] p-6 sm:p-8 shadow-2xl ring-8 ring-slate-800/50 relative overflow-hidden isolate">
+        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr_320px] xl:grid-cols-[360px_1fr_360px] gap-6 lg:gap-8 items-start">
+          
+          {/* Left Column (Desktop): History */}
+          {/* Mobile: Order 3 (Bottom) */}
+          <div className="order-3 lg:order-1 space-y-6">
+            <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                  历史记录
+                </h3>
+                <button
+                  onClick={fetchStatus}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+                </button>
+              </div>
+
+              <div className="space-y-2 max-h-[500px] lg:max-h-[600px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+                {(status?.records?.length ?? 0) === 0 ? (
+                  <div className="text-center py-8 text-slate-400 text-xs italic">
+                    暂无游戏记录
+                  </div>
+                ) : (
+                  status?.records?.map((r) => (
+                    <div
+                      key={r.id}
+                      className="flex items-center justify-between p-2.5 rounded-xl border border-transparent hover:border-slate-100 hover:bg-white/50 transition-all"
+                    >
+                      <div className="flex items-center gap-1.5 opacity-80 text-lg grayscale-[30%] hover:grayscale-0 transition-all">
+                        {r.reels.map((id, i) => (
+                          <span key={`${r.id}-${id}-${i}`}>{symbolById[id].emoji}</span>
+                        ))}
+                      </div>
+                      <div className="text-right">
+                        <div
+                          className={`text-sm font-black ${
+                            getRecordDelta(r, betCost) > 0
+                              ? 'text-green-600'
+                              : getRecordDelta(r, betCost) < 0
+                                ? 'text-red-600'
+                                : 'text-slate-400'
+                          }`}
+                        >
+                          {getRecordDelta(r, betCost) > 0
+                            ? `+${getRecordDelta(r, betCost)}`
+                            : `${getRecordDelta(r, betCost)}`}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-medium flex items-center justify-end gap-2">
+                          <span
+                            className={`px-1.5 py-0.5 rounded-full border ${
+                              getRecordMode(r) === 'bet'
+                                ? 'bg-red-50 text-red-600 border-red-200'
+                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            }`}
+                          >
+                            {getRecordMode(r) === 'bet' ? '赌' : '赚'}
+                          </span>
+                          <span>
+                            {new Date(r.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Center Column (Desktop): Slot Machine */}
+          {/* Mobile: Order 1 (Top) */}
+          <div className="order-1 lg:order-2 bg-slate-900 rounded-[2.5rem] p-6 sm:p-8 shadow-2xl ring-8 ring-slate-800/50 relative overflow-hidden isolate">
             {/* Glossy Overlay */}
             <div className="absolute inset-0 z-0 bg-gradient-to-br from-slate-800 to-slate-950" />
             <div className="absolute -top-[200px] -right-[200px] w-[500px] h-[500px] bg-purple-500/20 rounded-full blur-[120px] mix-blend-screen" />
@@ -471,17 +614,17 @@ export default function SlotPage() {
               {/* Header */}
               <div className="flex items-center justify-between gap-4 mb-6 px-2">
                 <div>
-                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-yellow-500/80 mb-1">Premium Slots</div>
+                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-yellow-500/80 mb-1">幸运老虎机</div>
                   <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight flex items-center gap-2">
                     <span className="bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-200 to-slate-400">
-                      Lucky Spin
+                      幸运转盘
                     </span>
                   </h1>
                 </div>
                 <div className="text-right bg-slate-800/50 rounded-xl px-4 py-2 border border-slate-700/50 backdrop-blur-md">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Cooldown</div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">冷却中</div>
                   <div className={`text-sm font-mono font-bold ${cooldownRemainingMs > 0 ? 'text-amber-400 animate-pulse' : 'text-emerald-400'}`}>
-                    {cooldownRemainingMs > 0 ? `${(cooldownRemainingMs / 1000).toFixed(1)}s` : 'READY'}
+                    {cooldownRemainingMs > 0 ? `${(cooldownRemainingMs / 1000).toFixed(1)}s` : '就绪'}
                   </div>
                 </div>
               </div>
@@ -598,9 +741,44 @@ export default function SlotPage() {
 
               {/* Action Buttons */}
               <div className="mt-auto">
+                <div className="mb-4 flex items-center justify-center">
+                  <div className="inline-flex rounded-2xl bg-slate-800/70 p-1 ring-1 ring-white/10 backdrop-blur-sm">
+                    <button
+                      type="button"
+                      onClick={() => setPlayMode('earn')}
+                      className={`px-4 py-2 rounded-xl text-xs font-black tracking-wider transition-all ${
+                        playMode === 'earn'
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      赚积分
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPlayMode('bet')}
+                      disabled={!betModeEnabled}
+                      className={`px-4 py-2 rounded-xl text-xs font-black tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                        playMode === 'bet'
+                          ? 'bg-rose-200 text-rose-950 shadow-sm'
+                          : 'text-slate-300 hover:text-white'
+                      }`}
+                      title={betModeEnabled ? '' : '管理员未开启赌积分模式'}
+                    >
+                      赌积分
+                    </button>
+                  </div>
+                </div>
+
+                {playMode === 'bet' && (
+                  <div className="text-center mb-4 text-xs text-slate-300">
+                    下注 <span className="font-black text-white tabular-nums">{betCost}</span> 积分/次（未中 -{betCost}，二连≈回本，三连盈利）
+                  </div>
+                )}
+
                 <button
                   onClick={() => handleSpin()}
-                  disabled={loading || spinning || cooldownRemainingMs > 0}
+                  disabled={loading || spinning || cooldownRemainingMs > 0 || (playMode === 'bet' && !betModeEnabled)}
                   className="group relative w-full h-16 rounded-2xl font-black text-xl tracking-widest text-white transition-all 
                   disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none
                   transform hover:-translate-y-1 hover:shadow-[0_10px_40px_-10px_rgba(234,179,8,0.4)]
@@ -612,46 +790,47 @@ export default function SlotPage() {
                     {spinning ? (
                       <>
                         <span className="w-5 h-5 border-3 border-white/40 border-t-white rounded-full animate-spin" />
-                        <span className="text-lg">SPINNING...</span>
+                        <span className="text-lg">旋转中...</span>
                       </>
                     ) : (
                       <>
-                        <span>SPIN</span>
+                        <span>开始旋转</span>
                         <span className="text-yellow-200 opacity-80 group-hover:translate-x-1 transition-transform">➤</span>
                       </>
                     )}
                   </div>
                 </button>
                 <div className="text-center mt-3 text-[10px] uppercase tracking-wider text-slate-500 font-medium">
-                  {cooldownRemainingMs > 0 ? 'Machine Cooling Down' : 'Fair Play • Random Generated'}
+                  {cooldownRemainingMs > 0 ? '请等待冷却...' : '公平游戏 • 随机生成'}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* 右侧：统计与记录 */}
-          <div className="space-y-6">
+          {/* Right Column (Desktop): Status & Payouts */}
+          {/* Mobile: Order 2 (Middle) */}
+          <div className="order-2 lg:order-3 space-y-6">
              {/* 今日统计 - Card Style */}
-             {status?.dailyStats && (
-              <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-4 flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
-                  Daily Status
-                </h3>
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-slate-50/50 rounded-2xl p-4 border border-slate-100">
-                    <div className="text-xs text-slate-400 font-bold mb-1">Played</div>
-                    <div className="text-2xl font-black text-slate-800">
-                      {status.dailyStats.gamesPlayed}
-                      <span className="text-sm font-bold text-slate-400 ml-1">rnds</span>
-                    </div>
-                  </div>
+              {status?.dailyStats && (
+                <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-4 flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                    今日统计
+                  </h3>
                   
-                  <div className={`rounded-2xl p-4 border ${status.pointsLimitReached ? 'bg-orange-50/50 border-orange-100' : 'bg-green-50/50 border-green-100'}`}>
-                    <div className={`text-xs font-bold mb-1 ${status.pointsLimitReached ? 'text-orange-400' : 'text-green-500'}`}>Points</div>
-                    <div className={`text-2xl font-black ${status.pointsLimitReached ? 'text-orange-600' : 'text-green-700'}`}>
-                      {status.dailyStats.pointsEarned}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-slate-50/50 rounded-2xl p-4 border border-slate-100">
+                      <div className="text-xs text-slate-400 font-bold mb-1">已玩</div>
+                      <div className="text-2xl font-black text-slate-800">
+                        {status.dailyStats.gamesPlayed}
+                        <span className="text-sm font-bold text-slate-400 ml-1">局</span>
+                      </div>
+                    </div>
+                    
+                    <div className={`rounded-2xl p-4 border ${status.pointsLimitReached ? 'bg-orange-50/50 border-orange-100' : 'bg-green-50/50 border-green-100'}`}>
+                      <div className={`text-xs font-bold mb-1 ${status.pointsLimitReached ? 'text-orange-400' : 'text-green-500'}`}>积分</div>
+                      <div className={`text-2xl font-black ${status.pointsLimitReached ? 'text-orange-600' : 'text-green-700'}`}>
+                        {status.dailyStats.pointsEarned}
                       <span className="text-xs font-bold opacity-60 ml-1">/ {status.dailyLimit ?? 2000}</span>
                     </div>
                   </div>
@@ -659,15 +838,74 @@ export default function SlotPage() {
               </div>
             )}
 
-            {/* 赔率说明 - Compact Grid */}
+            {/* 今日排行榜 */}
             <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-pink-500"></span>
-                  Payouts
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                  今日排行榜
                 </h3>
-                <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-1 rounded-full font-bold">2x Pair: +{SLOT_TWO_OF_KIND_PAYOUT}</span>
+                <button
+                  onClick={fetchRanking}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                  aria-label="刷新排行榜"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+                </button>
               </div>
+
+              <div className="text-[11px] text-slate-400 font-medium mb-3">
+                统计口径：净赢分（仅累计正净赢分）
+              </div>
+
+              {ranking.length === 0 ? (
+                <div className="text-center py-6 text-slate-400 text-xs bg-slate-50 rounded-2xl border border-slate-100">
+                  暂无上榜记录
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {ranking.map((entry, idx) => {
+                    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '•';
+                    return (
+                      <div
+                        key={`${entry.userId}-${idx}`}
+                        className="flex items-center justify-between gap-3 p-2.5 rounded-2xl bg-white/60 border border-slate-100"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center text-sm font-black text-slate-700 shrink-0">
+                            {medal}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-sm font-black text-slate-900 truncate">
+                              {entry.username}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-medium">#{idx + 1}</div>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="text-sm font-black text-emerald-700 tabular-nums">+{entry.score}</div>
+                          <div className="text-[10px] text-slate-400 font-medium">分</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {rankingError && (
+                <div className="mt-3 text-xs text-red-500">排行榜加载失败</div>
+              )}
+            </div>
+
+            {/* 赔率说明 - Compact Grid */}
+              <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-pink-500"></span>
+                    赔率表
+                  </h3>
+                  <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-1 rounded-full font-bold">二连: +{SLOT_TWO_OF_KIND_PAYOUT}</span>
+                </div>
 
               <div className="space-y-2">
                 {SLOT_SYMBOLS.map((s) => (
@@ -688,51 +926,6 @@ export default function SlotPage() {
                 ))}
               </div>
             </div>
-
-            {/* 历史记录 */}
-            <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                  History
-                </h3>
-                <button
-                  onClick={fetchStatus}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
-                </button>
-              </div>
-
-              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
-                {(status?.records?.length ?? 0) === 0 ? (
-                  <div className="text-center py-8 text-slate-400 text-xs italic">
-                    No games played yet.
-                  </div>
-                ) : (
-                  status?.records?.map((r) => (
-                    <div
-                      key={r.id}
-                      className="flex items-center justify-between p-2.5 rounded-xl border border-transparent hover:border-slate-100 hover:bg-white/50 transition-all"
-                    >
-                      <div className="flex items-center gap-1.5 opacity-80 text-lg grayscale-[30%] hover:grayscale-0 transition-all">
-                        {r.reels.map((id, i) => (
-                          <span key={`${r.id}-${id}-${i}`}>{symbolById[id].emoji}</span>
-                        ))}
-                      </div>
-                      <div className="text-right">
-                        <div className={`text-sm font-black ${r.payout > 0 ? 'text-green-600' : 'text-slate-300'}`}>
-                          {r.payout > 0 ? `+${r.pointsEarned}` : '-'}
-                        </div>
-                        <div className="text-[10px] text-slate-400 font-medium">
-                          {new Date(r.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -744,9 +937,9 @@ export default function SlotPage() {
           <div className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl overflow-hidden animate-[bounce-land_0.5s_ease-out]">
             <div className="bg-orange-50 p-6 border-b border-orange-100 text-center">
               <div className="text-4xl mb-3">⚠️</div>
-              <h3 className="text-xl font-black text-slate-900">Daily Limit Reached</h3>
+              <h3 className="text-xl font-black text-slate-900">今日积分已达上限</h3>
               <p className="text-sm text-slate-600 mt-2 font-medium">
-                You've hit the daily point limit. Games won't award points until tomorrow.
+                您已达到今日积分上限，继续游戏将不再获得积分，直到明天重置。
               </p>
             </div>
             
@@ -755,7 +948,7 @@ export default function SlotPage() {
                 onClick={() => setShowLimitWarning(false)}
                 className="py-3 px-4 rounded-xl font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors"
               >
-                Cancel
+                取消
               </button>
               <button
                 onClick={() => {
@@ -765,7 +958,7 @@ export default function SlotPage() {
                 }}
                 className="py-3 px-4 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 shadow-lg shadow-slate-200 transition-all active:scale-95"
               >
-                Play for Fun
+                继续娱乐 (无积分)
               </button>
             </div>
           </div>
