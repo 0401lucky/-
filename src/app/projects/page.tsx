@@ -15,6 +15,8 @@ interface Project {
   status: 'active' | 'paused' | 'exhausted';
   createdAt: number;
   createdBy: string;
+  pinned?: boolean;
+  pinnedAt?: number;
 }
 
 interface UserData {
@@ -187,10 +189,17 @@ export default function ProjectsPage() {
                     <div className="w-12 h-12 bg-gradient-to-br from-orange-50 to-stone-50 rounded-xl flex items-center justify-center border border-orange-100/50 group-hover:scale-110 transition-transform duration-300">
                       <Gift className="w-6 h-6 text-orange-500" />
                     </div>
-                    <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border border-transparent ${currentStatus.bg} ${currentStatus.text}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${currentStatus.dot}`}></span>
-                      {currentStatus.label}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {project.pinned && (
+                        <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border border-orange-200 bg-orange-50 text-orange-700">
+                          📌 置顶
+                        </span>
+                      )}
+                      <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border border-transparent ${currentStatus.bg} ${currentStatus.text}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${currentStatus.dot}`}></span>
+                        {currentStatus.label}
+                      </span>
+                    </div>
                   </div>
 
                   <h3 className="text-lg font-bold text-stone-800 mb-2 line-clamp-1 group-hover:text-orange-600 transition-colors">

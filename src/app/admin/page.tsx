@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, Plus, Pause, Play, Trash2, Upload, 
   Loader2, AlertCircle, Users, Package, LayoutDashboard,
-  ChevronRight, LogOut, User as UserIcon, X, Check, Gift, Sparkles, ShoppingBag
+  ChevronRight, LogOut, User as UserIcon, X, Check, Gift, Sparkles, ShoppingBag, Pin
 } from 'lucide-react';
 
 interface Project {
@@ -20,6 +20,8 @@ interface Project {
   createdAt: number;
   createdBy: string;
   newUserOnly?: boolean;
+  pinned?: boolean;
+  pinnedAt?: number;
 }
 
 interface UserData {
@@ -149,6 +151,21 @@ export default function AdminPage() {
       if (res.ok) fetchData();
     } catch (err) {
       console.error('Delete error:', err);
+    }
+  };
+
+  const handleTogglePinned = async (project: Project, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const res = await fetch(`/api/admin/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pinned: !project.pinned }),
+      });
+      if (res.ok) fetchData();
+    } catch (err) {
+      console.error('Toggle pinned error:', err);
     }
   };
 
@@ -350,9 +367,24 @@ export default function AdminPage() {
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-stone-700 text-[15px] truncate group-hover:text-orange-600 transition-colors">{project.name}</span>
+                          {project.pinned && (
+                            <span className="px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded text-xs font-bold border border-orange-200">📌</span>
+                          )}
                           {project.newUserOnly && (
                             <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-600 rounded text-xs font-bold border border-emerald-200">🆕</span>
                           )}
+                          <button
+                            type="button"
+                            onClick={(e) => handleTogglePinned(project, e)}
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all hover:scale-105 active:scale-95 border ${
+                              project.pinned
+                                ? 'bg-orange-50 text-orange-600 border-orange-200 hover:bg-orange-100'
+                                : 'bg-white text-stone-400 border-stone-200 hover:text-orange-600 hover:border-orange-200 hover:bg-orange-50'
+                            }`}
+                            title={project.pinned ? '取消置顶' : '置顶'}
+                          >
+                            <Pin className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
 
@@ -435,9 +467,24 @@ export default function AdminPage() {
                           <div>
                             <div className="flex items-center gap-2">
                               <h3 className="font-bold text-stone-800 text-base">{project.name}</h3>
+                              {project.pinned && (
+                                <span className="px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded text-xs font-bold border border-orange-200">📌</span>
+                              )}
                               {project.newUserOnly && (
                                 <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-600 rounded text-xs font-bold border border-emerald-200">🆕</span>
                               )}
+                              <button
+                                type="button"
+                                onClick={(e) => handleTogglePinned(project, e)}
+                                className={`w-8 h-8 rounded-xl flex items-center justify-center border ${
+                                  project.pinned
+                                    ? 'bg-orange-50 text-orange-600 border-orange-200'
+                                    : 'bg-white text-stone-400 border-stone-200 hover:text-orange-600 hover:border-orange-200 hover:bg-orange-50'
+                                }`}
+                                title={project.pinned ? '取消置顶' : '置顶'}
+                              >
+                                <Pin className="w-4 h-4" />
+                              </button>
                             </div>
                             <div className="flex items-center gap-2 text-xs text-stone-400 mt-0.5">
                               <span>{new Date(project.createdAt).toLocaleDateString()}</span>

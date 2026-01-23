@@ -17,10 +17,21 @@ export async function GET() {
     }
 
     const projects = await getAllProjects();
+    const sortedProjects = [...projects].sort((a, b) => {
+      const aPinned = a.pinned ? 1 : 0;
+      const bPinned = b.pinned ? 1 : 0;
+      if (aPinned !== bPinned) return bPinned - aPinned;
+
+      const aPinnedAt = a.pinnedAt ?? 0;
+      const bPinnedAt = b.pinnedAt ?? 0;
+      if (aPinnedAt !== bPinnedAt) return bPinnedAt - aPinnedAt;
+
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
 
     return NextResponse.json({
       success: true,
-      projects,
+      projects: sortedProjects,
     });
   } catch (error) {
     console.error("Get admin projects error:", error);

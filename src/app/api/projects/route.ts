@@ -9,10 +9,21 @@ export async function GET() {
     
     // 只返回非暂停状态的项目给普通用户
     const activeProjects = projects.filter(p => p.status !== "paused");
+    const sortedProjects = [...activeProjects].sort((a, b) => {
+      const aPinned = a.pinned ? 1 : 0;
+      const bPinned = b.pinned ? 1 : 0;
+      if (aPinned !== bPinned) return bPinned - aPinned;
+
+      const aPinnedAt = a.pinnedAt ?? 0;
+      const bPinnedAt = b.pinnedAt ?? 0;
+      if (aPinnedAt !== bPinnedAt) return bPinnedAt - aPinnedAt;
+
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
     
     return NextResponse.json({
       success: true,
-      projects: activeProjects,
+      projects: sortedProjects,
     });
   } catch (error) {
     console.error("Get projects error:", error);

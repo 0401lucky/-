@@ -72,6 +72,10 @@ export async function PATCH(
     if (body.status && ["active", "paused"].includes(body.status)) {
       updates.status = body.status;
     }
+    if (typeof body.pinned === "boolean") {
+      updates.pinned = body.pinned;
+      updates.pinnedAt = body.pinned ? Date.now() : 0;
+    }
     if (body.name) {
       updates.name = body.name;
     }

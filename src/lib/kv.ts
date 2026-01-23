@@ -12,6 +12,8 @@ export interface Project {
   createdAt: number;
   createdBy: string;
   newUserOnly?: boolean;  // 仅限未领取过福利的用户
+  pinned?: boolean; // 置顶项目
+  pinnedAt?: number; // 置顶时间（用于排序）
 }
 
 // 用户接口
