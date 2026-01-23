@@ -229,9 +229,9 @@ export default function AdminSettingsPage() {
           <div className="p-6 space-y-6">
             <div className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-200">
               <div className="pr-6">
-                <div className="text-sm font-semibold text-slate-800">赌积分模式</div>
+                <div className="text-sm font-semibold text-slate-800">挑战模式</div>
                 <div className="text-xs text-slate-500 mt-1">
-                  开启后，用户可用积分下注旋转（默认期望为负，避免刷分）。
+                  开启后，用户可消耗积分选择档位旋转（默认期望为负，避免刷分）。
                 </div>
               </div>
               <button
@@ -251,7 +251,7 @@ export default function AdminSettingsPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">每次下注成本</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">每次消耗积分</label>
               <div className="flex items-center gap-4">
                 <select
                   value={betCost}

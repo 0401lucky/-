@@ -24,10 +24,10 @@ export const SLOT_STATUS_RECORD_LIMIT = 10;
 // 规则：赚积分模式的基础值（最终得分 = earnBase * 倍率）
 export const SLOT_EARN_BASE = 50;
 
-// 规则：赌积分模式下注档位（最大下注不超过 100）
+// 规则：挑战模式下注档位（最大下注不超过 100）
 export const SLOT_BET_OPTIONS = [10, 20, 50, 100] as const;
 
-// 规则：倍率表（赌积分模式：返奖=下注*倍率；赚积分模式：得分=earnBase*倍率）
+// 规则：倍率表（挑战模式：返奖=下注*倍率；赚积分模式：得分=earnBase*倍率）
 export const SLOT_PAIR_MULTIPLIERS: Record<SlotSymbolId, number> = {
   cherry: 1.0,
   lemon: 1.1,

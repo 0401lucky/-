@@ -228,7 +228,7 @@ export async function deductPoints(
 
 /**
  * 原子化调整积分（可正可负，负数时确保不会扣成负数）
- * 适用于“赌积分”等需要一次性结算净输赢的场景
+ * 适用于“挑战模式”等需要一次性结算净输赢的场景
  */
 export async function applyPointsDelta(
   userId: number,

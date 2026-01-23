@@ -662,7 +662,7 @@ export default function SlotPage() {
                                 : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                             }`}
                           >
-                            {getRecordMode(r) === 'bet' ? '赌' : '赚'}
+                            {getRecordMode(r) === 'bet' ? '挑战' : '赚'}
                           </span>
                           <span>
                             {new Date(r.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -837,9 +837,9 @@ export default function SlotPage() {
                           ? 'bg-rose-200 text-rose-950 shadow-sm'
                           : 'text-slate-300 hover:text-white'
                       }`}
-                      title={betModeEnabled ? '' : '管理员未开启赌积分模式'}
+                      title={betModeEnabled ? '' : '管理员未开启挑战模式'}
                     >
-                      赌积分
+                      挑战模式
                     </button>
                   </div>
                 </div>
@@ -1012,7 +1012,7 @@ export default function SlotPage() {
               </div>
 
               <div className="text-[11px] text-slate-400 font-medium mb-3">
-                赚积分：{SLOT_EARN_BASE}×倍率；赌积分：返奖=下注×倍率
+                赚积分：{SLOT_EARN_BASE}×倍率；挑战模式：返奖=下注×倍率
               </div>
 
               <div className="space-y-2">
@@ -1114,7 +1114,7 @@ export default function SlotPage() {
                   </div>
                 </div>
                 <div className="text-sm text-slate-700 leading-relaxed">
-                  <div className="font-bold text-slate-900">赌积分</div>
+                  <div className="font-bold text-slate-900">挑战模式</div>
                   <div className="text-slate-600">
                     选择下注档位 <span className="font-bold tabular-nums">{SLOT_BET_OPTIONS.join(' / ')}</span>。
                     结算口径：返奖=下注×倍率，净赢分=返奖-下注（可能亏损，不受每日上限限制）。

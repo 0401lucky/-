@@ -271,7 +271,7 @@ export async function spinSlot(
     if (mode === 'bet') {
       const slotConfig = await getSlotConfig();
       if (!slotConfig.betModeEnabled) {
-        return { success: false, message: '管理员未开启赌积分模式' };
+        return { success: false, message: '管理员未开启挑战模式' };
       }
 
       const betCost = resolveBetCost(slotConfig.betCost, requestedBetCost);
@@ -280,10 +280,10 @@ export async function spinSlot(
       const pointsDelta = payout - betCost;
       const description = (() => {
         if (payout <= 0 || outcome.winType === 'none') {
-          return `老虎机赌积分：下注${betCost}，未中奖，净 -${betCost}`;
+          return `老虎机挑战：投入${betCost}，未中奖，净 -${betCost}`;
         }
         if (outcome.winType === 'special_mix') {
-          return `老虎机赌积分：下注${betCost}，特殊爆 💎💎+7️⃣ x${outcome.multiplier} 返奖${payout}，净 ${
+          return `老虎机挑战：投入${betCost}，特殊爆 💎💎+7️⃣ x${outcome.multiplier} 返奖${payout}，净 ${
             pointsDelta >= 0 ? `+${pointsDelta}` : String(pointsDelta)
           }`;
         }
@@ -295,7 +295,7 @@ export async function spinSlot(
             : outcome.winType === 'pair_with_seven'
               ? ' +7️⃣加成'
               : '';
-        return `老虎机赌积分：下注${betCost}，${matchText}${symbolName ? ` ${symbolName}` : ''}${bonusText} x${
+        return `老虎机挑战：投入${betCost}，${matchText}${symbolName ? ` ${symbolName}` : ''}${bonusText} x${
           outcome.multiplier
         } 返奖${payout}，净 ${pointsDelta >= 0 ? `+${pointsDelta}` : String(pointsDelta)}`;
       })();
