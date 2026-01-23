@@ -156,9 +156,45 @@ export function createPhysicsEngine(
   let activeBall: Matter.Body | null = null;
   let launchTime = 0;
   let resolvePromise: ((score: number) => void) | null = null;
+  let fallbackTimeout: ReturnType<typeof setTimeout> | null = null;
+  let lastMovedAt = 0;
+
+  const clearFallbackTimeout = () => {
+    if (fallbackTimeout) {
+      clearTimeout(fallbackTimeout);
+      fallbackTimeout = null;
+    }
+  };
+
+  const settleBallByX = (ball: Matter.Body) => {
+    if (activeBall !== ball) return;
+
+    const ballX = ball.position.x;
+    const clampedX = Math.min(Math.max(0, ballX), CANVAS_WIDTH - 0.0001);
+    const slotIndex = Math.min(
+      Math.max(0, Math.floor(clampedX / SLOT_WIDTH)),
+      SLOT_COUNT - 1
+    );
+    const score = SLOT_SCORES[slotIndex];
+    const duration = Date.now() - launchTime;
+
+    clearFallbackTimeout();
+    Composite.remove(engine.world, ball);
+    activeBall = null;
+
+    onBallLanded(slotIndex, score, duration);
+    if (resolvePromise) {
+      resolvePromise(score);
+      resolvePromise = null;
+    }
+  };
 
   // 限制最大速度，减少离散步进导致的穿透/“单飞”
   const MAX_BALL_SPEED = 22;
+  const STUCK_SPEED_THRESHOLD_SQ = 0.12 * 0.12;
+  const STUCK_AFTER_MS = 1400;
+  const STUCK_GRACE_MS = 1800;
+  const OUT_OF_BOUNDS_MARGIN = 120;
   Events.on(engine, 'beforeUpdate', () => {
     if (!activeBall) return;
     const vx = activeBall.velocity.x;
@@ -168,6 +204,30 @@ export function createPhysicsEngine(
     if (speedSq > maxSq) {
       const scale = MAX_BALL_SPEED / Math.sqrt(speedSq);
       Body.setVelocity(activeBall, { x: vx * scale, y: vy * scale });
+    }
+
+    // 出界/卡住兜底：避免弹珠在边缘或钉子间陷入静止导致游戏卡住
+    const now = Date.now();
+    const { x, y } = activeBall.position;
+    const elapsed = now - launchTime;
+
+    if (
+      x < -OUT_OF_BOUNDS_MARGIN ||
+      x > CANVAS_WIDTH + OUT_OF_BOUNDS_MARGIN ||
+      y < -OUT_OF_BOUNDS_MARGIN ||
+      y > CANVAS_HEIGHT + OUT_OF_BOUNDS_MARGIN
+    ) {
+      settleBallByX(activeBall);
+      return;
+    }
+
+    if (speedSq > STUCK_SPEED_THRESHOLD_SQ) {
+      lastMovedAt = now;
+      return;
+    }
+
+    if (elapsed > STUCK_GRACE_MS && lastMovedAt > 0 && now - lastMovedAt > STUCK_AFTER_MS) {
+      settleBallByX(activeBall);
     }
   });
 
@@ -184,6 +244,7 @@ export function createPhysicsEngine(
         const score = SLOT_SCORES[slotIndex];
         const duration = Date.now() - launchTime;
         
+        clearFallbackTimeout();
         // 移除弹珠
         Composite.remove(engine.world, ball);
         activeBall = null;
@@ -211,6 +272,7 @@ export function createPhysicsEngine(
     stop: () => {
       Render.stop(render);
       Runner.stop(runner);
+      clearFallbackTimeout();
     },
     launchBall: (angle: number, power: number): Promise<number> => {
       return new Promise((resolve) => {
@@ -218,6 +280,7 @@ export function createPhysicsEngine(
         if (activeBall) {
           Composite.remove(engine.world, activeBall);
         }
+        clearFallbackTimeout();
         
         // 为这颗弹珠创建随机扰动
         const ballRng = getBallRng();
@@ -258,28 +321,11 @@ export function createPhysicsEngine(
         Composite.add(engine.world, ball);
         activeBall = ball;
         launchTime = Date.now();
+        lastMovedAt = launchTime;
         resolvePromise = resolve;
         
         // 超时处理（10秒后自动解决）
-        setTimeout(() => {
-          if (activeBall === ball) {
-            // 根据球的 x 位置计算落入的槽位
-            const ballX = ball.position.x;
-            const slotIndex = Math.min(
-              Math.max(0, Math.floor(ballX / SLOT_WIDTH)),
-              SLOT_COUNT - 1
-            );
-            const score = SLOT_SCORES[slotIndex];
-            const duration = Date.now() - launchTime;
-            
-            Composite.remove(engine.world, ball);
-            activeBall = null;
-            
-            // 通知回调
-            onBallLanded(slotIndex, score, duration);
-            resolve(score);
-          }
-        }, 10000);
+        fallbackTimeout = setTimeout(() => settleBallByX(ball), 10000);
       });
     },
     reset: () => {
@@ -287,6 +333,8 @@ export function createPhysicsEngine(
         Composite.remove(engine.world, activeBall);
         activeBall = null;
       }
+      clearFallbackTimeout();
+      resolvePromise = null;
     }
   };
 }
