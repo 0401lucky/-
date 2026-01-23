@@ -81,6 +81,7 @@ export default function SlotPage() {
     [INITIAL_REELS[2]],
   ]);
   const [reelOffsets, setReelOffsets] = useState<[number, number, number]>([0, 0, 0]);
+  const [itemHeightPx, setItemHeightPx] = useState(96);
   const [spinId, setSpinId] = useState(0);
   const [winMask, setWinMask] = useState<[boolean, boolean, boolean]>([false, false, false]);
   const [spinning, setSpinning] = useState(false);
@@ -93,6 +94,7 @@ export default function SlotPage() {
 
   const timeoutsRef = useRef<NodeJS.Timeout[]>([]);
   const spinRafRef = useRef<number | null>(null);
+  const reelMeasureRef = useRef<HTMLDivElement | null>(null);
 
   const cooldownRemainingMs = Math.max(0, cooldownUntil - now);
 
@@ -128,6 +130,22 @@ export default function SlotPage() {
   useEffect(() => {
     fetchStatus();
   }, [fetchStatus]);
+
+  // 计算滚轴单格高度（用于 translate 像素值，避免 CSS calc 乘法兼容问题）
+  useEffect(() => {
+    const measure = () => {
+      const el = reelMeasureRef.current;
+      if (!el) return;
+      const h = el.getBoundingClientRect().height;
+      if (Number.isFinite(h) && h > 0) {
+        setItemHeightPx(h);
+      }
+    };
+
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
 
   // 用于刷新倒计时（冷却/动画）
   useEffect(() => {
@@ -386,15 +404,18 @@ export default function SlotPage() {
                           highlight ? 'ring-2 ring-green-300 shadow-[0_0_0_4px_rgba(34,197,94,0.15)]' : ''
                         }`}
                       >
-                        <div className="relative [--item-h:6rem] sm:[--item-h:7rem]">
-                          <div className="relative h-[var(--item-h)] overflow-hidden flex items-center justify-center">
+                        <div className="relative">
+                          <div
+                            ref={idx === 0 ? reelMeasureRef : undefined}
+                            className="relative h-24 sm:h-28 overflow-hidden"
+                          >
                             <div
                               key={`track-${spinId}-${idx}`}
                               className={`transform-gpu will-change-transform transition-transform ${
                                 spinning ? 'blur-[1px]' : 'blur-0'
                               } transition-[filter]`}
                               style={{
-                                transform: `translateY(calc(var(--item-h) * -1 * ${offset}))`,
+                                transform: `translate3d(0, ${-offset * itemHeightPx}px, 0)`,
                                 transitionDuration: `${REEL_DURATIONS_MS[idx]}ms`,
                                 transitionTimingFunction: REEL_EASING,
                               }}
@@ -402,7 +423,7 @@ export default function SlotPage() {
                               {track.map((symbolId, i) => (
                                 <div
                                   key={`${spinId}-${idx}-${i}-${symbolId}`}
-                                  className="h-[var(--item-h)] flex items-center justify-center text-5xl sm:text-6xl select-none"
+                                  className="h-24 sm:h-28 flex items-center justify-center text-5xl sm:text-6xl select-none"
                                 >
                                   {symbolById[symbolId].emoji}
                                 </div>
