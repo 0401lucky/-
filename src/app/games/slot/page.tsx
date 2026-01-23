@@ -237,7 +237,7 @@ export default function SlotPage() {
     [INITIAL_REELS[2]],
   ]);
   const [reelOffsets, setReelOffsets] = useState<[number, number, number]>([0, 0, 0]);
-  const [itemHeightPx, setItemHeightPx] = useState(96);
+  const [itemHeightPx, setItemHeightPx] = useState(112);
   const [spinId, setSpinId] = useState(0);
   const [winMask, setWinMask] = useState<[boolean, boolean, boolean]>([false, false, false]);
   const [spinning, setSpinning] = useState(false);
@@ -344,18 +344,36 @@ export default function SlotPage() {
 
   // 计算滚轴单格高度（用于 translate 像素值，避免 CSS calc 乘法兼容问题）
   useEffect(() => {
+    const el = reelMeasureRef.current;
+    if (!el) return;
+
     const measure = () => {
-      const el = reelMeasureRef.current;
-      if (!el) return;
-      const h = el.getBoundingClientRect().height;
-      if (Number.isFinite(h) && h > 0) {
-        setItemHeightPx(h);
+      const next = el.offsetHeight;
+      if (Number.isFinite(next) && next > 0) {
+        setItemHeightPx(next);
       }
     };
 
+    // 首次渲染 / 字体加载后可能发生高度变化
     measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
+    const raf = requestAnimationFrame(measure);
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => measure());
+      ro.observe(el);
+    } else {
+      window.addEventListener('resize', measure);
+    }
+
+    return () => {
+      cancelAnimationFrame(raf);
+      if (ro) {
+        ro.disconnect();
+      } else {
+        window.removeEventListener('resize', measure);
+      }
+    };
   }, []);
 
   // 用于刷新倒计时（冷却/动画）
@@ -404,6 +422,15 @@ export default function SlotPage() {
     async (finalReels: [SlotSymbolId, SlotSymbolId, SlotSymbolId]) => {
       clearPendingAnimations();
       setSpinId((v) => v + 1);
+
+      // 兜底：开转前再测一次高度，避免移动端偶发测量不准导致图标被裁切/错位
+      const el = reelMeasureRef.current;
+      if (el) {
+        const next = el.offsetHeight;
+        if (Number.isFinite(next) && next > 0) {
+          setItemHeightPx(next);
+        }
+      }
 
       const tracks: [SlotSymbolId[], SlotSymbolId[], SlotSymbolId[]] = [
         buildTrack(finalReels[0], REEL_TRACK_LENGTHS[0]),
