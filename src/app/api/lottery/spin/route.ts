@@ -60,18 +60,21 @@ export async function POST() {
     }
 
     // 检查是否有资格抽奖（免费次数 或 额外次数）
-    const hasFreeSpin = !(await checkDailyLimit(user.id));
-    const extraSpins = await getExtraSpinCount(user.id);
-    
-    if (!hasFreeSpin && extraSpins <= 0) {
-      return NextResponse.json(
-        { success: false, message: "今日免费次数已用完，请签到获取更多机会" },
-        { status: 400 }
-      );
+    // 管理员：仅绕过“次数限制”，仍遵守库存/直充日额度等限制
+    if (!user.isAdmin) {
+      const hasFreeSpin = !(await checkDailyLimit(user.id));
+      const extraSpins = await getExtraSpinCount(user.id);
+      
+      if (!hasFreeSpin && extraSpins <= 0) {
+        return NextResponse.json(
+          { success: false, message: "今日免费次数已用完，请签到获取更多机会" },
+          { status: 400 }
+        );
+      }
     }
 
     // 执行抽奖（根据配置自动选择模式：直充/兑换码/混合）
-    const result = await spinLotteryAuto(user.id, user.username);
+    const result = await spinLotteryAuto(user.id, user.username, { bypassSpinLimit: user.isAdmin });
 
     if (!result.success) {
       return NextResponse.json(
