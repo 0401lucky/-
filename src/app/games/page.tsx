@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ComponentType } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { Brain, CircleDot, Dices, Puzzle, Star } from 'lucide-react';
 
 interface GameStats {
   balance: number;
@@ -13,6 +14,8 @@ interface GameStats {
   dailyLimit: number;
   pointsLimitReached: boolean;
 }
+
+type IconType = ComponentType<{ className?: string }>;
 
 export default function GamesPage() {
   const router = useRouter();
@@ -35,7 +38,7 @@ export default function GamesPage() {
       id: 'pachinko',
       name: '弹珠机',
       description: '控制角度和力度，让弹珠落入高分槽位！',
-      icon: '🎱',
+      icon: CircleDot as IconType,
       color: 'from-purple-600 to-pink-600',
       href: '/games/pachinko',
       available: true,
@@ -44,7 +47,7 @@ export default function GamesPage() {
       id: 'slot',
       name: '老虎机',
       description: '经典三轴老虎机，转动幸运符号！',
-      icon: '🎰',
+      icon: Dices as IconType,
       color: 'from-yellow-600 to-orange-600',
       href: '/games/slot',
       available: true,
@@ -53,9 +56,18 @@ export default function GamesPage() {
       id: 'memory',
       name: '记忆卡片',
       description: '翻开卡片，找到所有配对，步数越少分越高！',
-      icon: '🃏',
+      icon: Brain as IconType,
       color: 'from-teal-500 to-cyan-500',
       href: '/games/memory',
+      available: true,
+    },
+    {
+      id: 'match3',
+      name: '消消乐',
+      description: '交换相邻方块，凑 3 个及以上即可消除得分！',
+      icon: Puzzle as IconType,
+      color: 'from-indigo-600 to-violet-600',
+      href: '/games/match3',
       available: true,
     },
   ];
@@ -78,7 +90,7 @@ export default function GamesPage() {
               href="/store"
               className="flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-sm border border-slate-200 text-slate-700 hover:border-yellow-400 hover:text-yellow-600 transition-all group"
             >
-              <span className="text-yellow-500">⭐</span>
+              <Star className="w-4 h-4 text-yellow-500" />
               <span className="font-bold">{loading ? '...' : stats?.balance || 0}</span>
               <span className="text-slate-300 group-hover:text-yellow-400 transition-colors">→</span>
             </Link>
@@ -101,7 +113,7 @@ export default function GamesPage() {
           <div className="relative z-10 flex flex-col sm:flex-row justify-between items-center gap-8">
             <div className="flex items-center gap-6">
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center text-3xl shadow-lg shadow-orange-200 text-white">
-                ⭐
+                <Star className="w-8 h-8" />
               </div>
               <div>
                 <h2 className="text-slate-500 font-medium mb-1">当前可用积分</h2>
@@ -141,42 +153,43 @@ export default function GamesPage() {
 
         {/* 游戏列表 */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {games.map((game) => (
-            <div
-              key={game.id}
-              className={`group relative bg-white rounded-3xl overflow-hidden transition-all duration-300 border border-slate-100 ${
-                game.available 
-                  ? 'hover:shadow-2xl hover:shadow-slate-200/50 cursor-pointer hover:-translate-y-1' 
-                  : 'opacity-70 grayscale-[0.5]'
-              }`}
-              onClick={() => game.available && router.push(game.href)}
-            >
-              {/* 游戏图标区域 */}
-              <div className={`h-48 flex items-center justify-center bg-gradient-to-br ${game.color} relative overflow-hidden`}>
-                <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                <span className="text-7xl transform group-hover:scale-110 transition-transform duration-300 drop-shadow-md">
-                  {game.icon}
-                </span>
-              </div>
-              
-              {/* 游戏信息 */}
-              <div className="p-6">
-                <h3 className="text-xl font-bold text-slate-900 mb-2">{game.name}</h3>
-                <p className="text-slate-500 text-sm leading-relaxed">{game.description}</p>
+          {games.map((game) => {
+            const Icon = game.icon;
+            return (
+              <div
+                key={game.id}
+                className={`group relative bg-white rounded-3xl overflow-hidden transition-all duration-300 border border-slate-100 ${
+                  game.available 
+                    ? 'hover:shadow-2xl hover:shadow-slate-200/50 cursor-pointer hover:-translate-y-1' 
+                    : 'opacity-70 grayscale-[0.5]'
+                }`}
+                onClick={() => game.available && router.push(game.href)}
+              >
+                {/* 游戏图标区域 */}
+                <div className={`h-48 flex items-center justify-center bg-gradient-to-br ${game.color} relative overflow-hidden`}>
+                  <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                  <Icon className="w-20 h-20 text-white transform group-hover:scale-110 transition-transform duration-300 drop-shadow-md" />
+                </div>
                 
-                <div className="mt-4 flex items-center text-sm font-medium text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity transform translate-y-2 group-hover:translate-y-0">
-                  {game.available ? '开始游戏 →' : '敬请期待'}
+                {/* 游戏信息 */}
+                <div className="p-6">
+                  <h3 className="text-xl font-bold text-slate-900 mb-2">{game.name}</h3>
+                  <p className="text-slate-500 text-sm leading-relaxed">{game.description}</p>
+                  
+                  <div className="mt-4 flex items-center text-sm font-medium text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity transform translate-y-2 group-hover:translate-y-0">
+                    {game.available ? '开始游戏 →' : '敬请期待'}
+                  </div>
                 </div>
-              </div>
 
-              {/* 不可用标签 */}
-              {!game.available && (
-                <div className="absolute top-4 right-4 bg-slate-900/10 backdrop-blur-sm text-slate-900 text-xs font-bold px-3 py-1.5 rounded-full border border-slate-200/20">
-                  COMING SOON
-                </div>
-              )}
-            </div>
-          ))}
+                {/* 不可用标签 */}
+                {!game.available && (
+                  <div className="absolute top-4 right-4 bg-slate-900/10 backdrop-blur-sm text-slate-900 text-xs font-bold px-3 py-1.5 rounded-full border border-slate-200/20">
+                    COMING SOON
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* 规则说明 */}
