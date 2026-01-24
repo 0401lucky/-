@@ -91,62 +91,92 @@ export async function getAvailableCodesCount(projectId: string): Promise<number>
 }
 
 export async function claimCode(projectId: string, userId: number, username: string): Promise<{ success: boolean; code?: string; message: string }> {
-  // 检查是否已领取
-  const existingClaim = await kv.get<ClaimRecord>(`claimed:${projectId}:${userId}`);
-  if (existingClaim) {
-    return {
-      success: true,
-      code: existingClaim.code,
-      message: "你已经领取过了",
-    };
+  const now = Date.now();
+  const recordId = `claim_${now}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const projectKey = `projects:${projectId}`;
+  const codesKey = `codes:available:${projectId}`;
+  const claimKey = `claimed:${projectId}:${userId}`;
+  const recordsKey = `records:${projectId}`;
+
+  const luaScript = `
+    local projectKey = KEYS[1]
+    local codesKey = KEYS[2]
+    local claimKey = KEYS[3]
+    local recordsKey = KEYS[4]
+
+    local now = tonumber(ARGV[1])
+    local recordId = ARGV[2]
+    local projectId = ARGV[3]
+    local userIdRaw = ARGV[4]
+    local username = ARGV[5]
+
+    local existingJson = redis.call('GET', claimKey)
+    if existingJson then
+      local ok, existing = pcall(cjson.decode, existingJson)
+      if ok and existing and existing.code then
+        return {1, existing.code, '你已经领取过了'}
+      end
+      return {0, '', '领取记录异常，请联系管理员'}
+    end
+
+    local projectJson = redis.call('GET', projectKey)
+    if not projectJson then
+      return {0, '', '项目不存在'}
+    end
+
+    local okP, project = pcall(cjson.decode, projectJson)
+    if not okP or not project then
+      return {0, '', '项目数据异常，请联系管理员'}
+    end
+
+    if project.status == 'paused' then
+      return {0, '', '该项目已暂停领取'}
+    end
+
+    local claimedCount = tonumber(project.claimedCount) or 0
+    local maxClaims = tonumber(project.maxClaims) or 0
+
+    if project.status == 'exhausted' or (maxClaims > 0 and claimedCount >= maxClaims) then
+      return {0, '', '已达到领取上限'}
+    end
+
+    local code = redis.call('RPOP', codesKey)
+    if not code then
+      project.status = 'exhausted'
+      redis.call('SET', projectKey, cjson.encode(project))
+      return {0, '', '兑换码已领完'}
+    end
+
+    project.claimedCount = claimedCount + 1
+    if maxClaims > 0 and project.claimedCount >= maxClaims then
+      project.status = 'exhausted'
+    end
+
+    local userIdNum = tonumber(userIdRaw) or userIdRaw
+    local record = { id = recordId, projectId = projectId, userId = userIdNum, username = username, code = code, claimedAt = now }
+    local recordJson = cjson.encode(record)
+
+    redis.call('SET', claimKey, recordJson)
+    redis.call('LPUSH', recordsKey, recordJson)
+    redis.call('SET', projectKey, cjson.encode(project))
+
+    return {1, code, '领取成功'}
+  `;
+
+  const result = await kv.eval(
+    luaScript,
+    [projectKey, codesKey, claimKey, recordsKey],
+    [now, recordId, projectId, userId, username]
+  ) as [number, string, string];
+
+  const [ok, code, message] = result;
+
+  if (ok === 1) {
+    return { success: true, code: code || undefined, message };
   }
 
-  // 获取项目
-  const project = await getProject(projectId);
-  if (!project) {
-    return { success: false, message: "项目不存在" };
-  }
-
-  if (project.status === "paused") {
-    return { success: false, message: "该项目已暂停领取" };
-  }
-
-  if (project.status === "exhausted" || project.claimedCount >= project.maxClaims) {
-    return { success: false, message: "已达到领取上限" };
-  }
-
-  // 取出一个兑换码
-  const code = await kv.rpop<string>(`codes:available:${projectId}`);
-  if (!code) {
-    await updateProject(projectId, { status: "exhausted" });
-    return { success: false, message: "兑换码已领完" };
-  }
-
-  // 记录领取
-  const record: ClaimRecord = {
-    id: `claim_${Date.now()}`,
-    projectId,
-    userId,
-    username,
-    code,
-    claimedAt: Date.now(),
-  };
-
-  await kv.set(`claimed:${projectId}:${userId}`, record);
-  await kv.lpush(`records:${projectId}`, record);
-
-  // 更新项目统计
-  const newClaimedCount = project.claimedCount + 1;
-  await updateProject(projectId, {
-    claimedCount: newClaimedCount,
-    status: newClaimedCount >= project.maxClaims ? "exhausted" : project.status,
-  });
-
-  return {
-    success: true,
-    code,
-    message: "领取成功",
-  };
+  return { success: false, message };
 }
 
 export async function getClaimRecord(projectId: string, userId: number): Promise<ClaimRecord | null> {

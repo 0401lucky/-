@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthUser, isAdmin } from "@/lib/auth";
 import { kv } from "@vercel/kv";
+import type { LotteryConfig } from "@/lib/lottery";
 
 export const dynamic = "force-dynamic";
 
@@ -37,14 +38,14 @@ export async function POST() {
     }
 
     // 重置配置中的库存计数（保留概率设置）
-    const config = await kv.get<any>('lottery:config');
+    const config = await kv.get<Partial<LotteryConfig>>("lottery:config");
     if (config && config.tiers) {
-      const updatedTiers = config.tiers.map((tier: any) => ({
+      const updatedTiers = config.tiers.map((tier) => ({
         ...tier,
         codesCount: 0,
         usedCount: 0,
       }));
-      await kv.set('lottery:config', { ...config, tiers: updatedTiers });
+      await kv.set("lottery:config", { ...config, tiers: updatedTiers });
     }
 
     return NextResponse.json({

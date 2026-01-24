@@ -13,7 +13,7 @@
 
 ## 技术栈
 
-- **框架**: Next.js 15 (App Router)
+- **框架**: Next.js 16 (App Router)
 - **样式**: Tailwind CSS
 - **数据库**: Vercel KV (Redis)
 - **部署**: Vercel
@@ -51,6 +51,9 @@ git push -u origin main
 |--------|-----|------|
 | `NEW_API_URL` | `https://your-new-api-domain.com` | new-api 服务地址 |
 | `ADMIN_USERNAMES` | `lucky` | 管理员用户名列表，逗号分隔 |
+| `SESSION_SECRET` | `random-long-secret` | Session 签名密钥（生产环境必填，建议 ≥32 位随机字符串） |
+| `NEW_API_ADMIN_USERNAME` | `admin` | new-api 管理员账号（用于商店直充/同步用户等管理员能力） |
+| `NEW_API_ADMIN_PASSWORD` | `password` | new-api 管理员密码 |
 
 > KV 相关的环境变量 (`KV_REST_API_URL`, `KV_REST_API_TOKEN`) 会在连接 KV 数据库后自动配置。
 
@@ -73,6 +76,11 @@ npm install
 ```env
 NEW_API_URL=https://your-new-api-domain.com
 ADMIN_USERNAMES=lucky
+SESSION_SECRET=change-me-to-a-long-random-string
+
+# 可选：用于商店直充/用户同步等管理员能力
+NEW_API_ADMIN_USERNAME=your-admin-username
+NEW_API_ADMIN_PASSWORD=your-admin-password
 
 # 本地开发需要 Vercel KV 配置
 # 可以从 Vercel 项目设置中复制
@@ -87,6 +95,14 @@ npm run dev
 ```
 
 访问 http://localhost:3000
+
+### 代码检查
+
+```bash
+npm run lint
+```
+
+> Next.js 16 已移除 `next lint` 子命令，本项目使用 ESLint CLI（`eslint .`）进行检查。
 
 ## 使用说明
 

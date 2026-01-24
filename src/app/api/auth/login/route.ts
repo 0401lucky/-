@@ -60,18 +60,24 @@ export async function POST(request: NextRequest) {
     });
 
     // 保存 new-api 的原始 session cookie（用于签到等需要调用 new-api 的功能）
-    if (result.cookies) {
-      // 从 set-cookie 头解析出 session 值
-      const sessionMatch = result.cookies.match(/session=([^;]+)/);
-      if (sessionMatch) {
-        response.cookies.set("new_api_session", sessionMatch[1], {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
-          sameSite: "lax",
-          maxAge: 60 * 60 * 24 * 7, // 7 天
-          path: "/",
-        });
-      }
+    // 注意：若本次登录未拿到 new-api 的 session，则清理旧 cookie，避免残留导致“错号签到”
+    const sessionMatch = result.cookies?.match(/(?:^|;\s*)session=([^;]+)/);
+    if (sessionMatch?.[1]) {
+      response.cookies.set("new_api_session", sessionMatch[1], {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 60 * 60 * 24 * 7, // 7 天
+        path: "/",
+      });
+    } else {
+      response.cookies.set("new_api_session", "", {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 0,
+        path: "/",
+      });
     }
 
     return response;

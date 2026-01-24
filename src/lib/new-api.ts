@@ -1,5 +1,18 @@
-export const NEW_API_URL =
-  process.env.NEW_API_URL || "https://katqnmhfsssn.ap-northeast-1.clawcloudrun.com";
+let _newApiUrl: string | null = null;
+
+export function getNewApiUrl(): string {
+  if (_newApiUrl) return _newApiUrl;
+
+  const rawUrl = process.env.NEW_API_URL;
+  if (!rawUrl) {
+    throw new Error(
+      "NEW_API_URL is not set. Please configure it (e.g. in .env.local / Vercel env vars)."
+    );
+  }
+
+  _newApiUrl = rawUrl.replace(/\/+$/, "");
+  return _newApiUrl;
+}
 
 export interface NewApiUser {
   id: number;
@@ -20,9 +33,10 @@ export interface LoginResponse {
 
 export async function loginToNewApi(username: string, password: string): Promise<{ success: boolean; message: string; cookies?: string; user?: NewApiUser }> {
   try {
-    console.log(`Attempting login to ${NEW_API_URL}/api/user/login with username: ${username}`);
+    const baseUrl = getNewApiUrl();
+    console.log(`Attempting login to ${baseUrl}/api/user/login with username: ${username}`);
     
-    const response = await fetch(`${NEW_API_URL}/api/user/login`, {
+    const response = await fetch(`${baseUrl}/api/user/login`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -84,7 +98,8 @@ export async function loginToNewApi(username: string, password: string): Promise
 
 export async function getUserFromNewApi(sessionCookie: string): Promise<NewApiUser | null> {
   try {
-    const response = await fetch(`${NEW_API_URL}/api/user/self`, {
+    const baseUrl = getNewApiUrl();
+    const response = await fetch(`${baseUrl}/api/user/self`, {
       headers: {
         Cookie: sessionCookie,
       },
@@ -104,6 +119,7 @@ export async function getUserFromNewApi(sessionCookie: string): Promise<NewApiUs
 
 export async function checkinToNewApi(sessionCookie: string, userId?: number): Promise<{ success: boolean; message: string; quotaAwarded?: number }> {
   try {
+    const baseUrl = getNewApiUrl();
     const headers: Record<string, string> = {
       Cookie: sessionCookie,
     };
@@ -113,7 +129,7 @@ export async function checkinToNewApi(sessionCookie: string, userId?: number): P
       headers["New-Api-User"] = String(userId);
     }
     
-    const response = await fetch(`${NEW_API_URL}/api/user/checkin`, {
+    const response = await fetch(`${baseUrl}/api/user/checkin`, {
       method: "POST",
       headers,
     });
@@ -199,6 +215,7 @@ export async function creditQuotaToUser(
   userId: number,
   dollars: number
 ): Promise<{ success: boolean; message: string; newQuota?: number }> {
+  const baseUrl = getNewApiUrl();
   const loginResult = await getAdminSessionWithUser();
   if (!loginResult) {
     return { success: false, message: '管理员会话获取失败' };
@@ -208,7 +225,7 @@ export async function creditQuotaToUser(
 
   try {
     // 先获取用户完整信息（必须，因为 PUT 会覆盖所有字段）
-    const userResponse = await fetch(`${NEW_API_URL}/api/user/${userId}`, {
+    const userResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
       headers: { 
         Cookie: adminCookies,
         'New-Api-User': String(adminUserId),
@@ -229,7 +246,7 @@ export async function creditQuotaToUser(
     const newQuota = currentQuota + quotaToAdd;
 
     // 更新用户额度（必须传递完整用户对象，否则其他字段会被清空）
-    const updateResponse = await fetch(`${NEW_API_URL}/api/user/`, {
+    const updateResponse = await fetch(`${baseUrl}/api/user/`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -317,7 +334,8 @@ async function verifyQuotaUpdate(
   adminUserId: number
 ): Promise<{ success: boolean; message: string; newQuota?: number; uncertain?: boolean }> {
   try {
-    const verifyResponse = await fetch(`${NEW_API_URL}/api/user/${userId}`, {
+    const baseUrl = getNewApiUrl();
+    const verifyResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
       headers: { 
         Cookie: adminCookies,
         'New-Api-User': String(adminUserId),

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAuthUser, isAdmin } from "@/lib/auth";
 import { getAllProjects, getProjectRecords, type User } from "@/lib/kv";
-import { loginToNewApi, NEW_API_URL, type NewApiUser } from "@/lib/new-api";
+import { loginToNewApi, getNewApiUrl, type NewApiUser } from "@/lib/new-api";
+import type { LotteryRecord } from "@/lib/lottery";
 import { kv } from "@vercel/kv";
 
 export const dynamic = "force-dynamic";
@@ -45,9 +46,9 @@ export async function POST() {
     }
 
     // 2. 从抽奖记录中同步
-    const lotteryRecords = await kv.lrange('lottery:records', 0, -1);
+    const lotteryRecords = await kv.lrange<LotteryRecord>("lottery:records", 0, -1);
     if (lotteryRecords) {
-      for (const record of lotteryRecords as any[]) {
+      for (const record of lotteryRecords) {
         const key = `${record.oderId}`;
         if (!syncedUsers.has(key)) {
           const existing = await kv.get(`user:${record.oderId}`);
@@ -69,6 +70,7 @@ export async function POST() {
     let newApiRemoved = 0;
     let newApiFailed = 0;
     let newApiNote: string | null = null;
+    const baseUrl = process.env.NEW_API_URL ?? null;
     const adminUsername = process.env.NEW_API_ADMIN_USERNAME;
     const adminPassword = process.env.NEW_API_ADMIN_PASSWORD;
     if (adminUsername && adminPassword) {
@@ -76,6 +78,7 @@ export async function POST() {
       if (adminLogin.success && adminLogin.cookies && adminLogin.user?.id) {
         const adminCookies = adminLogin.cookies;
         const adminUserId = adminLogin.user.id;
+        const strictBaseUrl = getNewApiUrl();
 
         const userIdsRaw = (await kv.smembers('users:all')) as Array<string | number>;
         const userIds = userIdsRaw
@@ -84,7 +87,7 @@ export async function POST() {
 
         const syncOne = async (userId: number) => {
           try {
-            const response = await fetch(`${NEW_API_URL}/api/user/${userId}`, {
+            const response = await fetch(`${strictBaseUrl}/api/user/${userId}`, {
               headers: {
                 Cookie: adminCookies,
                 'New-Api-User': String(adminUserId),
@@ -158,7 +161,7 @@ export async function POST() {
         removed: newApiRemoved,
         failed: newApiFailed,
         note: newApiNote,
-        baseUrl: NEW_API_URL,
+        baseUrl,
       },
     });
   } catch (error) {

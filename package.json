@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.18",
@@ -32,6 +32,8 @@
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
     "@types/matter-js": "^0.20.2",
-    "@types/seedrandom": "^3.0.8"
+    "@types/seedrandom": "^3.0.8",
+    "eslint": "^9.39.2",
+    "eslint-config-next": "^16.1.4"
   }
 }
