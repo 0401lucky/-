@@ -25,6 +25,7 @@ export async function GET() {
     const config = await getLotteryConfig();
     const hasSpunToday = await checkDailyLimit(user.id);
     const extraSpins = await getExtraSpinCount(user.id);
+    const bypassSpinLimit = user.isAdmin;
     const allTiersHaveCodes = await checkAllTiersHaveCodes();
     const tiersStats = await getTiersStats();
 
@@ -64,7 +65,7 @@ export async function GET() {
       enabled: config.enabled,
       mode: config.mode,
       tiers: tiersWithStats,
-      canSpin: config.enabled && (!hasSpunToday || extraSpins > 0) && canSpinByMode,
+      canSpin: config.enabled && canSpinByMode && (bypassSpinLimit || !hasSpunToday || extraSpins > 0),
       hasSpunToday,
       extraSpins,
       allTiersHaveCodes,
