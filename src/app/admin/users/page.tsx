@@ -18,6 +18,12 @@ interface UserWithStats {
   isNewUser: boolean;
 }
 
+interface UsersStatsSummary {
+  total: number;
+  newUserCount: number;
+  claimedUserCount: number;
+}
+
 interface ClaimRecord {
   id: string;
   projectId: string;
@@ -69,6 +75,7 @@ export default function UsersPage() {
   const [totalUsers, setTotalUsers] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [usersStats, setUsersStats] = useState<UsersStatsSummary | null>(null);
   
   // 用户详情模态框
   const [selectedUser, setSelectedUser] = useState<UserWithStats | null>(null);
@@ -133,6 +140,7 @@ export default function UsersPage() {
         if (data.success) {
           setUsers(data.users);
           setTotalUsers(data.pagination?.total || data.users.length);
+          setUsersStats(data.stats ?? null);
           setHasMore(data.pagination?.hasMore ?? false);
           setPage(1);
         }
@@ -338,8 +346,8 @@ export default function UsersPage() {
     );
   }
 
-  const newUserCount = users.filter(u => u.isNewUser).length;
-  const claimedUserCount = users.filter(u => !u.isNewUser).length;
+  const newUserCount = usersStats?.newUserCount ?? users.filter(u => u.isNewUser).length;
+  const claimedUserCount = usersStats?.claimedUserCount ?? users.filter(u => !u.isNewUser).length;
 
   return (
     <div className="min-h-screen">
@@ -405,7 +413,7 @@ export default function UsersPage() {
               </div>
               <span className="text-sm font-medium text-stone-500">总用户数</span>
             </div>
-            <p className="text-3xl font-bold text-stone-800">{totalUsers || users.length}</p>
+            <p className="text-3xl font-bold text-stone-800">{usersStats?.total ?? (totalUsers || users.length)}</p>
           </div>
           <div className="glass rounded-2xl p-5 border border-white/50">
             <div className="flex items-center gap-3 mb-2">

@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser, isAdmin } from "@/lib/auth";
-import { getAllUsers, getUserAllClaims, hasUserClaimedAny, getUserLotteryCount } from "@/lib/kv";
+import {
+  getAllUsers,
+  getUserAllClaims,
+  getUserLotteryCount,
+  getAllProjects,
+  getClaimRecord,
+} from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 
@@ -56,7 +62,6 @@ export async function GET(request: NextRequest) {
       paginatedUsers.map(async (u) => {
         const claims = await getUserAllClaims(u.id);
         const lotteryCount = await getUserLotteryCount(u.id);
-        const hasClaimed = await hasUserClaimedAny(u.id);
         
         return {
           id: u.id,
@@ -64,10 +69,42 @@ export async function GET(request: NextRequest) {
           firstSeen: u.firstSeen,
           claimsCount: claims.length,
           lotteryCount,
-          isNewUser: !hasClaimed,
+          isNewUser: claims.length === 0 && lotteryCount === 0,
         };
       })
     );
+
+    // 统计：用于顶部卡片显示（不依赖是否加载更多）
+    let stats:
+      | { total: number; newUserCount: number; claimedUserCount: number }
+      | undefined;
+    if (page === 1) {
+      const projects = await getAllProjects();
+      const userIds = filteredUsers.map((u) => u.id);
+
+      let newUserCount = 0;
+      const CONCURRENCY = 10;
+      for (let i = 0; i < userIds.length; i += CONCURRENCY) {
+        const batch = userIds.slice(i, i + CONCURRENCY);
+        const batchResults = await Promise.all(
+          batch.map(async (userId) => {
+            const lotteryCount = await getUserLotteryCount(userId);
+            if (lotteryCount > 0) return false;
+            for (const project of projects) {
+              const record = await getClaimRecord(project.id, userId);
+              if (record) return false;
+            }
+            return true;
+          })
+        );
+        newUserCount += batchResults.filter(Boolean).length;
+      }
+      stats = {
+        total,
+        newUserCount,
+        claimedUserCount: total - newUserCount,
+      };
+    }
 
     return NextResponse.json({
       success: true,
@@ -79,6 +116,7 @@ export async function GET(request: NextRequest) {
         totalPages: Math.ceil(total / limit),
         hasMore: endIndex < total,
       },
+      stats,
     });
   } catch (error) {
     console.error("Get users error:", error);
