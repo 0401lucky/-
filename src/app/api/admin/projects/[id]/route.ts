@@ -82,8 +82,22 @@ export async function PATCH(
     if (body.description !== undefined) {
       updates.description = body.description;
     }
-    if (body.maxClaims && typeof body.maxClaims === "number") {
-      updates.maxClaims = body.maxClaims;
+    if (body.maxClaims !== undefined) {
+      if (typeof body.maxClaims !== "number" || !Number.isFinite(body.maxClaims) || body.maxClaims < 1) {
+        return NextResponse.json(
+          { success: false, message: "限领人数必须是正整数（≥1）" },
+          { status: 400 }
+        );
+      }
+      updates.maxClaims = Math.floor(body.maxClaims);
+      // 直充项目：库存与名额一致
+      if (project.rewardType === "direct") {
+        updates.codesCount = updates.maxClaims;
+        // 如因名额耗尽变为 exhausted，增加名额后可恢复 active（paused 不变）
+        if (project.status === "exhausted" && project.claimedCount < updates.maxClaims) {
+          updates.status = "active";
+        }
+      }
     }
 
     await updateProject(id, updates);
@@ -157,6 +171,38 @@ export async function POST(
     }
 
     const formData = await request.formData();
+    // 直充项目：追加名额
+    if (project.rewardType === "direct") {
+      const appendClaimsRaw = formData.get("appendClaims") as string | null;
+      const appendClaims = appendClaimsRaw ? parseInt(appendClaimsRaw, 10) : NaN;
+      if (!Number.isFinite(appendClaims) || appendClaims < 1) {
+        return NextResponse.json(
+          { success: false, message: "追加名额必须是正整数（≥1）" },
+          { status: 400 }
+        );
+      }
+
+      const newMaxClaims = project.maxClaims + appendClaims;
+      const updates: Partial<typeof project> = {
+        maxClaims: newMaxClaims,
+        codesCount: newMaxClaims, // 直充项目库存=名额
+      };
+      // exhausted 追加名额后恢复 active（paused 不变）
+      if (project.status === "exhausted" && project.claimedCount < newMaxClaims) {
+        updates.status = "active";
+      }
+
+      await updateProject(id, updates);
+
+      return NextResponse.json({
+        success: true,
+        message: `成功追加 ${appendClaims} 个名额`,
+        appended: appendClaims,
+        maxClaims: newMaxClaims,
+      });
+    }
+
+    // 兑换码项目：追加兑换码
     const codesFile = formData.get("codes") as File | null;
 
     if (!codesFile) {

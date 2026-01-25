@@ -15,6 +15,8 @@ interface Project {
   status: 'active' | 'paused' | 'exhausted';
   createdAt: number;
   createdBy: string;
+  rewardType?: 'code' | 'direct';
+  directDollars?: number;
 }
 
 interface ClaimRecord {
@@ -24,6 +26,10 @@ interface ClaimRecord {
   username: string;
   code: string;
   claimedAt: number;
+  directCredit?: boolean;
+  creditedDollars?: number;
+  creditStatus?: 'pending' | 'success' | 'uncertain';
+  creditMessage?: string;
 }
 
 export default function AdminProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -32,6 +38,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
   const [records, setRecords] = useState<ClaimRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [appendClaims, setAppendClaims] = useState('10');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const router = useRouter();
@@ -106,7 +113,44 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
     }
   };
 
+  const handleAppendClaims = async () => {
+    const delta = parseInt(appendClaims, 10);
+    if (!Number.isFinite(delta) || delta < 1) {
+      setError('追加名额必须是正整数（≥1）');
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('appendClaims', String(delta));
+
+      const res = await fetch(`/api/admin/projects/${id}`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        setSuccess(`成功追加 ${data.appended ?? delta} 个名额`);
+        fetchData();
+        setTimeout(() => setSuccess(null), 5000);
+      } else {
+        setError(data.message || '追加失败');
+      }
+    } catch {
+      setError('追加失败');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleCopyCode = (code: string) => {
+    if (!code) return;
     navigator.clipboard.writeText(code);
     // Optional: could add a toast here, but keeping it simple as per requirements to not add new dependencies
   };
@@ -144,6 +188,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
   }
 
   const remaining = Math.max(0, project.maxClaims - project.claimedCount);
+  const isDirectProject = project.rewardType === 'direct';
 
   return (
     <div className="min-h-screen bg-[#fafaf9]">
@@ -203,6 +248,11 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
               <div>
                 <div className="flex flex-wrap items-center gap-3">
                   <h1 className="text-2xl md:text-3xl font-bold text-stone-800 tracking-tight">{project.name}</h1>
+                  {isDirectProject && (
+                    <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-orange-50 text-orange-700 border border-orange-200">
+                      💰 直充 ${project.directDollars}
+                    </span>
+                  )}
                   <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
                     project.status === 'active' 
                       ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' 
@@ -217,11 +267,34 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
               </div>
             </div>
             
-            <label className={`group relative inline-flex items-center justify-center gap-2 px-6 py-3 gradient-warm text-white rounded-xl font-semibold shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 transition-all duration-300 active:scale-95 cursor-pointer overflow-hidden ${uploading ? 'opacity-70 cursor-not-allowed' : ''}`}>
-              <Upload className={`w-4 h-4 relative z-10 ${uploading ? 'animate-bounce' : ''}`} />
-              <span className="relative z-10 text-sm">{uploading ? '上传中...' : '追加兑换码'}</span>
-              <input type="file" accept=".txt" onChange={handleUploadCodes} disabled={uploading} className="hidden" />
-            </label>
+            {isDirectProject ? (
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+                <input
+                  type="number"
+                  min="1"
+                  value={appendClaims}
+                  onChange={(e) => setAppendClaims(e.target.value)}
+                  className="w-full sm:w-32 px-4 py-3 bg-white border border-stone-200 rounded-xl focus:border-orange-500 focus:ring-4 focus:ring-orange-100 transition-all outline-none text-stone-800 font-medium"
+                  placeholder="追加名额"
+                  disabled={uploading}
+                />
+                <button
+                  type="button"
+                  onClick={handleAppendClaims}
+                  disabled={uploading}
+                  className={`group relative inline-flex items-center justify-center gap-2 px-6 py-3 gradient-warm text-white rounded-xl font-semibold shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 transition-all duration-300 active:scale-95 overflow-hidden ${uploading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                >
+                  <Users className={`w-4 h-4 relative z-10 ${uploading ? 'animate-bounce' : ''}`} />
+                  <span className="relative z-10 text-sm">{uploading ? '处理中...' : '追加名额'}</span>
+                </button>
+              </div>
+            ) : (
+              <label className={`group relative inline-flex items-center justify-center gap-2 px-6 py-3 gradient-warm text-white rounded-xl font-semibold shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 transition-all duration-300 active:scale-95 cursor-pointer overflow-hidden ${uploading ? 'opacity-70 cursor-not-allowed' : ''}`}>
+                <Upload className={`w-4 h-4 relative z-10 ${uploading ? 'animate-bounce' : ''}`} />
+                <span className="relative z-10 text-sm">{uploading ? '上传中...' : '追加兑换码'}</span>
+                <input type="file" accept=".txt" onChange={handleUploadCodes} disabled={uploading} className="hidden" />
+              </label>
+            )}
           </div>
 
           {/* 统计网格 */}
@@ -309,18 +382,36 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
                   </div>
                   
                   <div className="mb-4">
-                    <div 
-                      onClick={() => handleCopyCode(record.code)}
-                      className="relative bg-stone-50/80 rounded-xl p-3 border border-stone-100 group-hover:border-orange-200 transition-colors cursor-pointer active:scale-[0.98]"
-                      title="点击复制"
-                    >
-                      <p className="font-mono text-sm text-stone-700 break-all text-center font-semibold group-hover:text-orange-600 transition-colors">
-                        {record.code}
-                      </p>
-                      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Copy className="w-3 h-3 text-stone-400" />
+                    {record.directCredit ? (
+                      <div className="relative bg-stone-50/80 rounded-xl p-4 border border-stone-100 group-hover:border-orange-200 transition-colors">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-stone-400 uppercase tracking-wide">直充金额</span>
+                          <span className="text-lg font-extrabold text-stone-800 tabular-nums">${record.creditedDollars}</span>
+                        </div>
+                        <div className="mt-3 flex items-center justify-center">
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold border ${
+                            record.creditStatus === 'uncertain'
+                              ? 'bg-amber-50 text-amber-700 border-amber-200'
+                              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          }`}>
+                            {record.creditStatus === 'uncertain' ? '待确认' : '已直充'}
+                          </span>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div 
+                        onClick={() => handleCopyCode(record.code)}
+                        className="relative bg-stone-50/80 rounded-xl p-3 border border-stone-100 group-hover:border-orange-200 transition-colors cursor-pointer active:scale-[0.98]"
+                        title="点击复制"
+                      >
+                        <p className="font-mono text-sm text-stone-700 break-all text-center font-semibold group-hover:text-orange-600 transition-colors">
+                          {record.code}
+                        </p>
+                        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Copy className="w-3 h-3 text-stone-400" />
+                        </div>
+                      </div>
+                    )}
                   </div>
                   
                   <div className="flex items-center gap-1.5 text-xs text-stone-400 border-t border-stone-100 pt-3">

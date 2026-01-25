@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getProject, claimCode, getClaimRecord, hasUserClaimedAny, recordUser } from "@/lib/kv";
+import {
+  getProject,
+  claimCode,
+  getClaimRecord,
+  hasUserClaimedAny,
+  recordUser,
+  reserveDirectClaim,
+  finalizeDirectClaim,
+  rollbackDirectClaim,
+} from "@/lib/kv";
 import { getAuthUser } from "@/lib/auth";
+import { creditQuotaToUser } from "@/lib/new-api";
 
 export async function GET(
   request: NextRequest,
@@ -28,7 +38,14 @@ export async function GET(
     return NextResponse.json({
       success: true,
       project,
-      claimed: claimRecord ? { code: claimRecord.code, claimedAt: claimRecord.claimedAt } : null,
+      claimed: claimRecord ? {
+        code: claimRecord.code,
+        claimedAt: claimRecord.claimedAt,
+        directCredit: claimRecord.directCredit,
+        creditedDollars: claimRecord.creditedDollars,
+        creditStatus: claimRecord.creditStatus,
+        creditMessage: claimRecord.creditMessage,
+      } : null,
     });
   } catch (error) {
     console.error("Get project error:", error);
@@ -64,6 +81,94 @@ export async function POST(
           { status: 403 }
         );
       }
+    }
+
+    // 直充项目：先原子预占名额，再调用 new-api 直充，最后落库/回滚
+    if (project?.rewardType === "direct") {
+      if (!Number.isFinite(project.directDollars) || (project.directDollars as number) <= 0) {
+        return NextResponse.json(
+          { success: false, message: "项目直充金额配置异常，请联系管理员" },
+          { status: 500 }
+        );
+      }
+
+      const reserveResult = await reserveDirectClaim(id, user.id, user.username);
+      if (!reserveResult.success) {
+        return NextResponse.json(
+          { success: false, message: reserveResult.message || "领取失败" },
+          { status: 400 }
+        );
+      }
+
+      const existing = reserveResult.record;
+      if (existing?.creditStatus === "success") {
+        await recordUser(user.id, user.username);
+        return NextResponse.json({
+          success: true,
+          message: reserveResult.message,
+          directCredit: true,
+          creditedDollars: existing.creditedDollars,
+          creditStatus: "success",
+        });
+      }
+      if (existing?.creditStatus === "uncertain") {
+        await recordUser(user.id, user.username);
+        return NextResponse.json({
+          success: true,
+          message: existing.creditMessage || "充值结果不确定，请稍后检查余额。如有问题请联系管理员",
+          directCredit: true,
+          creditedDollars: existing.creditedDollars,
+          creditStatus: "uncertain",
+          uncertain: true,
+        });
+      }
+      if (existing?.creditStatus === "pending" && reserveResult.message.includes("处理中")) {
+        return NextResponse.json({
+          success: true,
+          message: reserveResult.message,
+          directCredit: true,
+          creditedDollars: existing.creditedDollars,
+          creditStatus: "pending",
+        });
+      }
+
+      const creditResult = await creditQuotaToUser(user.id, project.directDollars as number) as {
+        success: boolean;
+        message: string;
+        newQuota?: number;
+        uncertain?: boolean;
+      };
+
+      if (creditResult.uncertain) {
+        await finalizeDirectClaim(id, user.id, "uncertain", creditResult.message);
+        await recordUser(user.id, user.username);
+        return NextResponse.json({
+          success: true,
+          message: "充值结果不确定，请稍后检查余额。如有问题请联系管理员",
+          directCredit: true,
+          creditedDollars: project.directDollars,
+          creditStatus: "uncertain",
+          uncertain: true,
+        });
+      }
+
+      if (!creditResult.success) {
+        await rollbackDirectClaim(id, user.id);
+        return NextResponse.json(
+          { success: false, message: creditResult.message || "充值失败，请稍后重试" },
+          { status: 400 }
+        );
+      }
+
+      await finalizeDirectClaim(id, user.id, "success", creditResult.message);
+      await recordUser(user.id, user.username);
+      return NextResponse.json({
+        success: true,
+        message: `领取成功！已直充 $${project.directDollars} 到您的账户`,
+        directCredit: true,
+        creditedDollars: project.directDollars,
+        creditStatus: "success",
+      });
     }
 
     const result = await claimCode(id, user.id, user.username);

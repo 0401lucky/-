@@ -11,6 +11,14 @@ export interface Project {
   status: "active" | "paused" | "exhausted";
   createdAt: number;
   createdBy: string;
+  /**
+   * 项目奖励类型：
+   * - code: 发放兑换码（默认）
+   * - direct: 直充到 new-api 账户额度
+   */
+  rewardType?: "code" | "direct";
+  /** rewardType=direct 时每人直充金额（美元） */
+  directDollars?: number;
   newUserOnly?: boolean;  // 仅限未领取过福利的用户
   pinned?: boolean; // 置顶项目
   pinnedAt?: number; // 置顶时间（用于排序）
@@ -31,6 +39,16 @@ export interface ClaimRecord {
   username: string;
   code: string;
   claimedAt: number;
+  /** 是否直充项目 */
+  directCredit?: boolean;
+  /** 直充金额（美元） */
+  creditedDollars?: number;
+  /** 直充状态：pending=处理中，success=成功，uncertain=不确定 */
+  creditStatus?: "pending" | "success" | "uncertain";
+  /** 直充结果描述（用于审计/展示） */
+  creditMessage?: string;
+  /** 直充确认时间（毫秒时间戳） */
+  creditedAt?: number;
 }
 
 // 项目操作
@@ -177,6 +195,231 @@ export async function claimCode(projectId: string, userId: number, username: str
   }
 
   return { success: false, message };
+}
+
+/**
+ * 直充项目：原子预占名额并创建 pending 领取记录
+ */
+export async function reserveDirectClaim(
+  projectId: string,
+  userId: number,
+  username: string
+): Promise<{ success: boolean; message: string; record?: ClaimRecord }> {
+  const now = Date.now();
+  const recordId = `claim_${now}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const projectKey = `projects:${projectId}`;
+  const claimKey = `claimed:${projectId}:${userId}`;
+
+  const luaScript = `
+    local projectKey = KEYS[1]
+    local claimKey = KEYS[2]
+
+    local now = tonumber(ARGV[1])
+    local recordId = ARGV[2]
+    local projectId = ARGV[3]
+    local userIdRaw = ARGV[4]
+    local username = ARGV[5]
+
+    local existingJson = redis.call('GET', claimKey)
+    if existingJson then
+      local okE, existing = pcall(cjson.decode, existingJson)
+      if okE and existing and existing.creditStatus == 'pending' then
+        return {2, existingJson, '领取处理中，请稍后刷新'}
+      end
+      return {2, existingJson, '你已经领取过了'}
+    end
+
+    local projectJson = redis.call('GET', projectKey)
+    if not projectJson then
+      return {0, '', '项目不存在'}
+    end
+
+    local okP, project = pcall(cjson.decode, projectJson)
+    if not okP or not project then
+      return {0, '', '项目数据异常，请联系管理员'}
+    end
+
+    if project.status == 'paused' then
+      return {0, '', '该项目已暂停领取'}
+    end
+
+    local dollars = tonumber(project.directDollars) or 0
+    if dollars <= 0 then
+      return {0, '', '项目直充金额配置异常，请联系管理员'}
+    end
+
+    local claimedCount = tonumber(project.claimedCount) or 0
+    local maxClaims = tonumber(project.maxClaims) or 0
+
+    if project.status == 'exhausted' or (maxClaims > 0 and claimedCount >= maxClaims) then
+      return {0, '', '已达到领取上限'}
+    end
+
+    project.claimedCount = claimedCount + 1
+    if maxClaims > 0 and project.claimedCount >= maxClaims then
+      project.status = 'exhausted'
+    end
+
+    local userIdNum = tonumber(userIdRaw) or userIdRaw
+    local record = { id = recordId, projectId = projectId, userId = userIdNum, username = username, code = '', claimedAt = now, directCredit = true, creditedDollars = dollars, creditStatus = 'pending' }
+    local recordJson = cjson.encode(record)
+
+    redis.call('SET', claimKey, recordJson)
+    redis.call('SET', projectKey, cjson.encode(project))
+
+    return {1, recordJson, 'ok'}
+  `;
+
+  const result = await kv.eval(
+    luaScript,
+    [projectKey, claimKey],
+    [now, recordId, projectId, userId, username]
+  ) as [number, string, string];
+
+  const [ok, recordJson, message] = result;
+  if (ok === 1 || ok === 2) {
+    try {
+      const record = JSON.parse(recordJson) as ClaimRecord;
+      return { success: true, message, record };
+    } catch {
+      return { success: true, message };
+    }
+  }
+  return { success: false, message };
+}
+
+/**
+ * 直充项目：更新领取记录状态并写入项目记录列表（幂等）
+ */
+export async function finalizeDirectClaim(
+  projectId: string,
+  userId: number,
+  status: "success" | "uncertain",
+  creditMessage: string
+): Promise<{ success: boolean; message: string; record?: ClaimRecord }> {
+  const now = Date.now();
+
+  const claimKey = `claimed:${projectId}:${userId}`;
+  const recordsKey = `records:${projectId}`;
+
+  const luaScript = `
+    local claimKey = KEYS[1]
+    local recordsKey = KEYS[2]
+
+    local status = ARGV[1]
+    local creditMessage = ARGV[2]
+    local creditedAt = tonumber(ARGV[3])
+
+    local existingJson = redis.call('GET', claimKey)
+    if not existingJson then
+      return {0, '', '领取记录不存在'}
+    end
+
+    local okR, record = pcall(cjson.decode, existingJson)
+    if not okR or not record then
+      return {0, '', '领取记录异常，请联系管理员'}
+    end
+
+    if record.creditStatus == 'success' or record.creditStatus == 'uncertain' then
+      return {2, existingJson, 'ok'}
+    end
+
+    record.creditStatus = status
+    record.creditMessage = creditMessage
+    record.creditedAt = creditedAt
+
+    local recordJson = cjson.encode(record)
+    redis.call('SET', claimKey, recordJson)
+    redis.call('LPUSH', recordsKey, recordJson)
+
+    return {1, recordJson, 'ok'}
+  `;
+
+  const result = await kv.eval(
+    luaScript,
+    [claimKey, recordsKey],
+    [status, creditMessage, now]
+  ) as [number, string, string];
+
+  const [ok, recordJson, message] = result;
+  if (ok === 1 || ok === 2) {
+    try {
+      const record = JSON.parse(recordJson) as ClaimRecord;
+      return { success: true, message, record };
+    } catch {
+      return { success: true, message };
+    }
+  }
+
+  return { success: false, message };
+}
+
+/**
+ * 直充项目：直充失败时回滚名额占位（仅对 pending 生效）
+ */
+export async function rollbackDirectClaim(
+  projectId: string,
+  userId: number
+): Promise<{ success: boolean; message: string }> {
+  const projectKey = `projects:${projectId}`;
+  const claimKey = `claimed:${projectId}:${userId}`;
+
+  const luaScript = `
+    local projectKey = KEYS[1]
+    local claimKey = KEYS[2]
+
+    local existingJson = redis.call('GET', claimKey)
+    if not existingJson then
+      return {2, 'ok'}
+    end
+
+    local okR, record = pcall(cjson.decode, existingJson)
+    if okR and record and record.creditStatus and record.creditStatus ~= 'pending' then
+      return {2, 'ok'}
+    end
+
+    redis.call('DEL', claimKey)
+
+    local projectJson = redis.call('GET', projectKey)
+    if not projectJson then
+      return {1, 'ok'}
+    end
+
+    local okP, project = pcall(cjson.decode, projectJson)
+    if not okP or not project then
+      return {1, 'ok'}
+    end
+
+    local claimedCount = tonumber(project.claimedCount) or 0
+    local maxClaims = tonumber(project.maxClaims) or 0
+
+    if claimedCount > 0 then
+      project.claimedCount = claimedCount - 1
+    else
+      project.claimedCount = 0
+    end
+
+    -- 如果之前因为达到上限变为 exhausted，回滚后可能恢复 active（paused 不变）
+    if project.status == 'exhausted' and project.status ~= 'paused' then
+      if maxClaims > 0 and project.claimedCount < maxClaims then
+        project.status = 'active'
+      end
+    end
+
+    redis.call('SET', projectKey, cjson.encode(project))
+
+    return {1, 'ok'}
+  `;
+
+  const result = await kv.eval(
+    luaScript,
+    [projectKey, claimKey],
+    []
+  ) as [number, string];
+
+  const [ok, message] = result;
+  return { success: ok === 1 || ok === 2, message };
 }
 
 export async function getClaimRecord(projectId: string, userId: number): Promise<ClaimRecord | null> {

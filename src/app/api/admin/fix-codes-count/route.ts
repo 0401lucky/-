@@ -41,6 +41,17 @@ export async function POST() {
     }> = [];
 
     for (const project of projects) {
+      // 直充项目不依赖兑换码库存，跳过
+      if (project.rewardType === "direct") {
+        results.push({
+          id: project.id,
+          name: project.name,
+          oldCount: project.codesCount,
+          newCount: project.codesCount,
+          fixed: false,
+        });
+        continue;
+      }
       // 获取当前可用的兑换码数量
       const availableCodes = await getAvailableCodesCount(project.id);
       // 正确的 codesCount = 可用数量 + 已领取数量

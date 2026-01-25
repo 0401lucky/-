@@ -15,6 +15,8 @@ interface Project {
   status: 'active' | 'paused' | 'exhausted';
   createdAt: number;
   createdBy: string;
+  rewardType?: 'code' | 'direct';
+  directDollars?: number;
   newUserOnly?: boolean;
 }
 
@@ -28,6 +30,10 @@ interface UserData {
 interface ClaimedInfo {
   code: string;
   claimedAt: number;
+  directCredit?: boolean;
+  creditedDollars?: number;
+  creditStatus?: 'pending' | 'success' | 'uncertain';
+  creditMessage?: string;
 }
 
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -98,15 +104,14 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       
       if (data.success) {
         setClaimedInfo({
-          code: data.code,
-          claimedAt: Date.now()
+          code: data.code || '',
+          claimedAt: Date.now(),
+          directCredit: data.directCredit,
+          creditedDollars: data.creditedDollars,
+          creditStatus: data.creditStatus,
+          creditMessage: data.message,
         });
-        if (project) {
-          setProject({
-            ...project,
-            claimedCount: project.claimedCount + 1
-          });
-        }
+        void fetchData();
       } else {
         setError(data.message || '领取失败');
       }
@@ -166,6 +171,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const canClaim = !isPaused && !isSoldOut && !claimedInfo && user;
   const remaining = Math.max(0, project.maxClaims - project.claimedCount);
   const progress = Math.min(100, (project.claimedCount / project.maxClaims) * 100);
+  const isDirectProject = project.rewardType === 'direct';
 
   return (
     <div className="min-h-screen bg-[#fafaf9] relative overflow-hidden">
@@ -223,6 +229,11 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                         🆕 新用户专享
                       </span>
                     )}
+                    {isDirectProject && (
+                      <span className="flex items-center gap-1.5 px-2.5 py-1 bg-orange-100 rounded-full text-xs font-bold text-orange-700 border border-orange-200">
+                        💰 直充 ${project.directDollars}
+                      </span>
+                    )}
                     <span className="flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 rounded-full text-xs font-bold text-stone-500">
                       <Package className="w-3.5 h-3.5" />
                       剩余 {remaining} / {project.maxClaims}
@@ -271,34 +282,93 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
               {/* 背景装饰 */}
               <div className="absolute top-0 right-0 w-64 h-64 bg-white/40 rounded-full blur-3xl -z-10 translate-x-1/2 -translate-y-1/2"></div>
               
-              {claimedInfo ? (
-                <div className="animate-fade-in">
-                  <div className="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-100/50 animate-[bounce_1s_ease-out]">
-                    <Check className="w-8 h-8 sm:w-10 sm:h-10 text-emerald-600" />
-                  </div>
-                  <h3 className="text-2xl sm:text-3xl font-bold text-stone-800 mb-2">领取成功!</h3>
-                  <p className="text-stone-500 mb-8 text-sm sm:text-base">这是您的专属兑换码，请妥善保管</p>
-                  
-                  <div className="relative max-w-md mx-auto group">
-                    <div className="bg-white border-2 border-orange-200 rounded-2xl py-5 pl-8 pr-16 font-mono text-xl sm:text-2xl font-bold text-stone-800 break-all shadow-xl shadow-orange-900/5 tracking-wider">
-                      {claimedInfo.code}
-                    </div>
-                    <button 
-                      onClick={handleCopy} 
-                      className={`absolute right-3 top-1/2 -translate-y-1/2 p-3 rounded-xl transition-all hover:scale-105 active:scale-95 ${
-                        copied ? 'bg-emerald-100 text-emerald-600' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'
-                      }`}
-                      aria-label="复制兑换码"
-                    >
-                      {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
-                    </button>
-                  </div>
-                  
-                  <p className="mt-6 text-xs text-stone-400 font-medium">
-                    领取时间: {new Date(claimedInfo.claimedAt).toLocaleString()}
-                  </p>
-                </div>
-              ) : (
+               {claimedInfo ? (
+                 <div className="animate-fade-in">
+                   <div className={`w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg animate-[bounce_1s_ease-out] ${
+                     claimedInfo.directCredit && claimedInfo.creditStatus === 'uncertain'
+                       ? 'bg-amber-100 shadow-amber-100/50'
+                       : claimedInfo.directCredit && claimedInfo.creditStatus === 'pending'
+                         ? 'bg-stone-100 shadow-stone-100/50'
+                         : 'bg-emerald-100 shadow-emerald-100/50'
+                   }`}>
+                     {claimedInfo.directCredit && claimedInfo.creditStatus === 'pending' ? (
+                       <Loader2 className="w-8 h-8 sm:w-10 sm:h-10 text-stone-500 animate-spin" />
+                     ) : claimedInfo.directCredit && claimedInfo.creditStatus === 'uncertain' ? (
+                       <AlertCircle className="w-8 h-8 sm:w-10 sm:h-10 text-amber-600" />
+                     ) : (
+                       <Check className="w-8 h-8 sm:w-10 sm:h-10 text-emerald-600" />
+                     )}
+                   </div>
+                   <h3 className="text-2xl sm:text-3xl font-bold text-stone-800 mb-2">
+                     {claimedInfo.directCredit && claimedInfo.creditStatus === 'pending'
+                       ? '领取处理中'
+                       : claimedInfo.directCredit && claimedInfo.creditStatus === 'uncertain'
+                         ? '领取已提交'
+                         : '领取成功!'}
+                   </h3>
+
+                   {claimedInfo.directCredit ? (
+                     <>
+                       <p className="text-stone-500 mb-8 text-sm sm:text-base">
+                         {claimedInfo.creditStatus === 'uncertain'
+                           ? '充值结果不确定，请稍后检查余额。如有问题请联系管理员。'
+                           : claimedInfo.creditStatus === 'pending'
+                             ? '正在处理，请稍后刷新页面查看结果。'
+                             : `已直充 $${(claimedInfo.creditedDollars ?? project.directDollars) ?? ''} 到您的账户`}
+                       </p>
+
+                       <div className="max-w-md mx-auto">
+                         <div className="bg-white border-2 border-orange-200 rounded-2xl p-6 shadow-xl shadow-orange-900/5">
+                           <div className="flex items-center justify-between">
+                             <span className="text-xs font-bold text-stone-400 uppercase tracking-wide">直充金额</span>
+                             <span className="text-2xl font-extrabold text-stone-800 tabular-nums">
+                               ${String((claimedInfo.creditedDollars ?? project.directDollars) ?? '')}
+                             </span>
+                           </div>
+                           <div className="mt-4 flex items-center justify-center">
+                             <span className={`px-3 py-1 rounded-full text-xs font-bold border ${
+                               claimedInfo.creditStatus === 'uncertain'
+                                 ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                 : claimedInfo.creditStatus === 'pending'
+                                   ? 'bg-stone-100 text-stone-600 border-stone-200'
+                                   : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                             }`}>
+                               {claimedInfo.creditStatus === 'uncertain'
+                                 ? '待确认'
+                                 : claimedInfo.creditStatus === 'pending'
+                                   ? '处理中'
+                                   : '已直充'}
+                             </span>
+                           </div>
+                         </div>
+                       </div>
+                     </>
+                   ) : (
+                     <>
+                       <p className="text-stone-500 mb-8 text-sm sm:text-base">这是您的专属兑换码，请妥善保管</p>
+                       
+                       <div className="relative max-w-md mx-auto group">
+                         <div className="bg-white border-2 border-orange-200 rounded-2xl py-5 pl-8 pr-16 font-mono text-xl sm:text-2xl font-bold text-stone-800 break-all shadow-xl shadow-orange-900/5 tracking-wider">
+                           {claimedInfo.code}
+                         </div>
+                         <button 
+                           onClick={handleCopy} 
+                           className={`absolute right-3 top-1/2 -translate-y-1/2 p-3 rounded-xl transition-all hover:scale-105 active:scale-95 ${
+                             copied ? 'bg-emerald-100 text-emerald-600' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'
+                           }`}
+                           aria-label="复制兑换码"
+                         >
+                           {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+                         </button>
+                       </div>
+                     </>
+                   )}
+                   
+                   <p className="mt-6 text-xs text-stone-400 font-medium">
+                     领取时间: {new Date(claimedInfo.claimedAt).toLocaleString()}
+                   </p>
+                 </div>
+               ) : (
                 <div>
                   {!user ? (
                     <div>
@@ -306,7 +376,9 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                         <UserIcon className="w-8 h-8 text-stone-300" />
                       </div>
                       <h3 className="text-xl font-bold text-stone-800 mb-2">请先登录</h3>
-                      <p className="text-stone-500 mb-8 text-sm sm:text-base">登录账号后即可领取专属兑换码</p>
+                      <p className="text-stone-500 mb-8 text-sm sm:text-base">
+                        登录账号后即可领取{isDirectProject ? '直充福利' : '专属兑换码'}
+                      </p>
                       <Link 
                         href={`/login?redirect=/project/${id}`} 
                         className="inline-flex items-center px-8 py-3.5 gradient-warm text-white rounded-xl text-base font-bold shadow-lg shadow-orange-500/25 hover:shadow-orange-500/35 hover:-translate-y-0.5 transition-all active:translate-y-0 active:shadow-sm"
@@ -340,7 +412,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                             ) : (
                               <span className="flex items-center gap-2">
                                 <Sparkles className="w-5 h-5" />
-                                立即领取兑换码
+                                {isDirectProject ? '立即领取并直充' : '立即领取兑换码'}
                               </span>
                             )}
                           </button>

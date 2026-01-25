@@ -142,7 +142,7 @@ export default function ProjectsPage() {
             所有福利项目
           </h1>
           <p className="text-stone-500 max-w-2xl leading-relaxed">
-            浏览并领取我们为您准备的全部专属福利。点击卡片进入详情页领取兑换码。
+            浏览并领取我们为您准备的全部专属福利。点击卡片进入详情页领取奖励。
           </p>
         </div>
 

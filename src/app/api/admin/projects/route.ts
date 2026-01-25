@@ -56,9 +56,14 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const name = formData.get("name") as string;
     const description = formData.get("description") as string || "";
-    const maxClaims = parseInt(formData.get("maxClaims") as string) || 100;
+    const maxClaimsParsed = parseInt(formData.get("maxClaims") as string, 10);
+    const maxClaims = Number.isFinite(maxClaimsParsed) ? maxClaimsParsed : 100;
     const codesFile = formData.get("codes") as File | null;
     const newUserOnly = formData.get("newUserOnly") === "true";
+    const rewardTypeRaw = (formData.get("rewardType") as string | null) || "code";
+    const rewardType = rewardTypeRaw === "direct" ? "direct" : "code";
+    const directDollarsRaw = formData.get("directDollars") as string | null;
+    const directDollars = directDollarsRaw ? parseFloat(directDollarsRaw) : undefined;
 
     if (!name) {
       return NextResponse.json(
@@ -66,10 +71,24 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    if (!Number.isFinite(maxClaims) || maxClaims < 1) {
+      return NextResponse.json(
+        { success: false, message: "限领人数必须是正整数（≥1）" },
+        { status: 400 }
+      );
+    }
+    if (rewardType === "direct") {
+      if (!Number.isFinite(directDollars) || (directDollars as number) <= 0) {
+        return NextResponse.json(
+          { success: false, message: "直充金额必须是正数" },
+          { status: 400 }
+        );
+      }
+    }
 
     // 解析兑换码文件
     let codes: string[] = [];
-    if (codesFile) {
+    if (rewardType === "code" && codesFile) {
       const text = await codesFile.text();
       codes = text
         .split(/[\r\n]+/)
@@ -84,16 +103,18 @@ export async function POST(request: NextRequest) {
       description,
       maxClaims,
       claimedCount: 0,
-      codesCount: 0,  // 初始化为0，由 addCodesToProject 统一处理计数
+      codesCount: rewardType === "direct" ? maxClaims : 0,  // 直充项目用作名额总量；兑换码项目由 addCodesToProject 统一处理计数
       status: "active",
       createdAt: Date.now(),
       createdBy: user!.username,
+      rewardType,
+      directDollars: rewardType === "direct" ? (directDollars as number) : undefined,
       newUserOnly,
     };
 
     await createProject(project);
 
-    if (codes.length > 0) {
+    if (rewardType === "code" && codes.length > 0) {
       await addCodesToProject(projectId, codes);
     }
 

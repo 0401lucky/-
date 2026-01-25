@@ -19,6 +19,8 @@ interface Project {
   status: 'active' | 'paused' | 'exhausted';
   createdAt: number;
   createdBy: string;
+  rewardType?: 'code' | 'direct';
+  directDollars?: number;
   newUserOnly?: boolean;
   pinned?: boolean;
   pinnedAt?: number;
@@ -44,6 +46,8 @@ export default function AdminPage() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [maxClaims, setMaxClaims] = useState('100');
+  const [rewardType, setRewardType] = useState<'code' | 'direct'>('code');
+  const [directDollars, setDirectDollars] = useState('5');
   const [codesFile, setCodesFile] = useState<File | null>(null);
   const [newUserOnly, setNewUserOnly] = useState(false);
 
@@ -85,6 +89,13 @@ export default function AdminPage() {
       setError('请输入项目名称');
       return;
     }
+    if (rewardType === 'direct') {
+      const dollars = parseFloat(directDollars);
+      if (!Number.isFinite(dollars) || dollars <= 0) {
+        setError('请输入有效的直充金额（> 0）');
+        return;
+      }
+    }
 
     setCreating(true);
     setError(null);
@@ -95,7 +106,11 @@ export default function AdminPage() {
       formData.append('description', description.trim());
       formData.append('maxClaims', maxClaims);
       formData.append('newUserOnly', newUserOnly.toString());
-      if (codesFile) {
+      formData.append('rewardType', rewardType);
+      if (rewardType === 'direct') {
+        formData.append('directDollars', directDollars);
+      }
+      if (rewardType === 'code' && codesFile) {
         formData.append('codes', codesFile);
       }
 
@@ -107,11 +122,18 @@ export default function AdminPage() {
       const data = await res.json();
       
       if (data.success) {
-        setSuccess(`项目创建成功! 添加了 ${data.codesAdded} 个兑换码`);
+        const created = data.project as Project | undefined;
+        if (created?.rewardType === 'direct') {
+          setSuccess(`项目创建成功! 每人直充 $${created.directDollars}，共 ${created.maxClaims} 份`);
+        } else {
+          setSuccess(`项目创建成功! 添加了 ${data.codesAdded} 个兑换码`);
+        }
         setShowCreateModal(false);
         setName('');
         setDescription('');
         setMaxClaims('100');
+        setRewardType('code');
+        setDirectDollars('5');
         setCodesFile(null);
         setNewUserOnly(false);
         fetchData();
@@ -631,8 +653,68 @@ export default function AdminPage() {
 
                 <div>
                   <label className="block text-xs font-bold text-stone-500 uppercase tracking-wide mb-2">
+                    奖励方式 <span className="text-red-500">*</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRewardType('code');
+                      }}
+                      className={`px-4 py-3 rounded-xl border text-sm font-bold transition-colors ${
+                        rewardType === 'code'
+                          ? 'bg-orange-50 text-orange-700 border-orange-200'
+                          : 'bg-stone-50 text-stone-600 border-stone-200 hover:bg-stone-100'
+                      }`}
+                    >
+                      兑换码
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRewardType('direct');
+                        setCodesFile(null);
+                      }}
+                      className={`px-4 py-3 rounded-xl border text-sm font-bold transition-colors ${
+                        rewardType === 'direct'
+                          ? 'bg-orange-50 text-orange-700 border-orange-200'
+                          : 'bg-stone-50 text-stone-600 border-stone-200 hover:bg-stone-100'
+                      }`}
+                    >
+                      直充额度
+                    </button>
+                  </div>
+                </div>
+
+                {rewardType === 'direct' && (
+                  <div>
+                    <label className="block text-xs font-bold text-stone-500 uppercase tracking-wide mb-2">
+                      直充金额（USD） <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      value={directDollars}
+                      onChange={(e) => setDirectDollars(e.target.value)}
+                      min="0.01"
+                      step="0.01"
+                      className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-100 transition-all outline-none text-stone-800 placeholder-stone-400 font-medium"
+                    />
+                    <p className="mt-2 text-xs text-stone-400 font-medium">
+                      用户领取后将直接充值到其 new-api 账户余额。
+                    </p>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-500 uppercase tracking-wide mb-2">
                     导入兑换码
                   </label>
+                  {rewardType === 'direct' ? (
+                    <div className="border border-stone-200 rounded-2xl p-5 bg-stone-50 text-center">
+                      <p className="text-sm font-medium text-stone-600">直充项目无需上传兑换码</p>
+                      <p className="text-xs text-stone-400 mt-1">库存与限领人数一致</p>
+                    </div>
+                  ) : (
                   <div className="group relative border-2 border-dashed border-stone-200 hover:border-orange-400 rounded-2xl p-6 transition-colors bg-stone-50 hover:bg-orange-50/30 text-center">
                     <input
                       type="file"
@@ -652,6 +734,7 @@ export default function AdminPage() {
                     </p>
                     <p className="text-xs text-stone-400 mt-1">每行一个兑换码</p>
                   </div>
+                  )}
                 </div>
 
                 {/* 仅限新用户开关 */}

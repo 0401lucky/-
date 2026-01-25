@@ -209,7 +209,7 @@ export default function HomePage() {
                 </div>
                 <h2 className="text-2xl font-bold text-stone-800 mb-3 group-hover:text-orange-600 transition-colors">福利兑换</h2>
                 <p className="text-stone-500 leading-relaxed mb-8 text-sm">
-                  领取限时限量的专属福利兑换码，先到先得。
+                  领取限时限量的专属福利，先到先得。
                 </p>
               </div>
               <div className="flex items-center text-orange-600 font-bold group/btn">
