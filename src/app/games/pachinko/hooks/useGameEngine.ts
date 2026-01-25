@@ -8,18 +8,18 @@ import type { BallLaunch } from '@/lib/types/game';
 export function useGameEngine(seed: string | null) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<PhysicsEngine | null>(null);
+  const gameStartTimeRef = useRef<number | null>(null);
   
   const [ballsRemaining, setBallsRemaining] = useState(BALLS_PER_GAME);
   const [currentScore, setCurrentScore] = useState(0);
   const [ballResults, setBallResults] = useState<BallLaunch[]>([]);
   const [isLaunching, setIsLaunching] = useState(false);
-  const [gameStartTime, setGameStartTime] = useState<number | null>(null);
 
   // 初始化物理引擎
   useEffect(() => {
     if (!canvasRef.current || !seed) return;
 
-    const onBallLanded = (slotIndex: number, score: number, duration: number) => {
+    const onBallLanded = () => {
       // 分数已在 launchBall 中更新，这里只需重置发射状态
       setIsLaunching(false);
     };
@@ -27,7 +27,7 @@ export function useGameEngine(seed: string | null) {
     const engine = createPhysicsEngine(canvasRef.current, seed, onBallLanded);
     engine.start();
     engineRef.current = engine;
-    setGameStartTime(Date.now());
+    gameStartTimeRef.current = Date.now();
 
     return () => {
       engine.stop();
@@ -68,7 +68,7 @@ export function useGameEngine(seed: string | null) {
     setCurrentScore(0);
     setBallResults([]);
     setIsLaunching(false);
-    setGameStartTime(null);
+    gameStartTimeRef.current = null;
     if (engineRef.current) {
       engineRef.current.reset();
     }
@@ -76,8 +76,8 @@ export function useGameEngine(seed: string | null) {
 
   // 获取游戏时长
   const getGameDuration = useCallback(() => {
-    return gameStartTime ? Date.now() - gameStartTime : 0;
-  }, [gameStartTime]);
+    return gameStartTimeRef.current ? Date.now() - gameStartTimeRef.current : 0;
+  }, []);
 
   return {
     canvasRef,

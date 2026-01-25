@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { 
@@ -47,11 +47,7 @@ export default function AdminPage() {
   const [codesFile, setCodesFile] = useState<File | null>(null);
   const [newUserOnly, setNewUserOnly] = useState(false);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const userRes = await fetch('/api/auth/me');
       if (!userRes.ok) {
@@ -77,7 +73,11 @@ export default function AdminPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [router]);
+
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,7 +119,7 @@ export default function AdminPage() {
       } else {
         setError(data.message || '创建失败');
       }
-    } catch (err) {
+    } catch {
       setError('请求失败，请稍后重试');
     } finally {
       setCreating(false);

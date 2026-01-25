@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getAuthUser, isAdmin } from "@/lib/auth";
 import { kv } from "@vercel/kv";
 import { getLotteryRecords } from "@/lib/lottery";
@@ -25,7 +25,7 @@ type TierSample = {
 };
 
 // GET - 调试：查看已发放记录中的码是否存在于各档位
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const user = await getAuthUser();
 

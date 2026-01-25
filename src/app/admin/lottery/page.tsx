@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { 
@@ -104,11 +104,7 @@ export default function AdminLotteryPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       // 验证权限
       const userRes = await fetch('/api/auth/me');
@@ -158,7 +154,11 @@ export default function AdminLotteryPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [router]);
+
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
   // 加载更多记录
   const loadMoreRecords = async () => {
@@ -229,7 +229,7 @@ export default function AdminLotteryPage() {
       } else {
         setError(data.message || '保存失败');
       }
-    } catch (err) {
+    } catch {
       setError('网络请求失败');
     } finally {
       setSavingConfig(false);
@@ -263,7 +263,7 @@ export default function AdminLotteryPage() {
       } else {
         setError(data.message || '上传失败');
       }
-    } catch (err) {
+    } catch {
       setError('上传请求失败');
     } finally {
       setUploading(false);
@@ -293,7 +293,7 @@ export default function AdminLotteryPage() {
       } else {
         setError(data.message || '清空失败');
       }
-    } catch (err) {
+    } catch {
       setError('请求失败');
     } finally {
       setClearing(null);
@@ -325,7 +325,7 @@ export default function AdminLotteryPage() {
       } else {
         setError(data.message || '重新统计失败');
       }
-    } catch (err) {
+    } catch {
       setError('请求失败');
     } finally {
       setRecalculating(false);
@@ -346,7 +346,7 @@ export default function AdminLotteryPage() {
         setError(data.message || '获取详情失败');
         setDetailTier(null);
       }
-    } catch (err) {
+    } catch {
       setError('请求失败');
       setDetailTier(null);
     } finally {

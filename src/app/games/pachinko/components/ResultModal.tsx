@@ -23,13 +23,10 @@ export function ResultModal({
   const [showContent, setShowContent] = useState(false);
   
   useEffect(() => {
-    if (isOpen) {
-      // 延迟显示内容，创建结算动画效果
-      const timer = setTimeout(() => setShowContent(true), 500);
-      return () => clearTimeout(timer);
-    } else {
-      setShowContent(false);
-    }
+    if (!isOpen) return;
+    // 延迟显示内容，创建结算动画效果
+    const timer = setTimeout(() => setShowContent(true), 500);
+    return () => clearTimeout(timer);
   }, [isOpen]);
 
   if (!isOpen) return null;
