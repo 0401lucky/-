@@ -74,7 +74,7 @@ export function useGameSession() {
       setSession(newSession);
       setIsRestored(false); // 新开的游戏，不是恢复
       return newSession;
-    } catch {
+    } catch (err) {
       setError('网络错误');
       return null;
     } finally {
@@ -99,7 +99,7 @@ export function useGameSession() {
       
       setError(data.message || '取消失败');
       return false;
-    } catch {
+    } catch (err) {
       setError('网络错误');
       return false;
     } finally {
@@ -144,7 +144,7 @@ export function useGameSession() {
       }
       
       return { success: false, message: data.message };
-    } catch {
+    } catch (err) {
       return { success: false, message: '网络错误' };
     } finally {
       setLoading(false);

@@ -122,7 +122,7 @@ export default function AdminStorePage() {
       } else {
         setMessage({ type: 'error', text: data.message || '操作失败' });
       }
-    } catch {
+    } catch (err) {
       setMessage({ type: 'error', text: '网络请求错误' });
     } finally {
       setSaving(false);
@@ -146,7 +146,7 @@ export default function AdminStorePage() {
       } else {
         setMessage({ type: 'error', text: data.message || '删除失败' });
       }
-    } catch {
+    } catch (err) {
       setMessage({ type: 'error', text: '网络请求错误' });
     }
   };
@@ -165,7 +165,7 @@ export default function AdminStorePage() {
       } else {
         setMessage({ type: 'error', text: data.message || '状态更新失败' });
       }
-    } catch {
+    } catch (err) {
       setMessage({ type: 'error', text: '网络请求错误' });
     }
   };

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { 
@@ -103,7 +103,32 @@ export default function LotteryPage() {
     };
   }, []);
 
-  const fetchData = useCallback(async () => {
+  // 初始化数据
+  useEffect(() => {
+    fetchData();
+    fetchRanking();
+
+    // [LIVE] 轮询刷新排行榜，避免榜单停留在首屏数据
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchRanking();
+      }
+    }, 15000);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchRanking();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
+
+  const fetchData = async () => {
     try {
       const userRes = await fetch('/api/auth/me');
 
@@ -141,9 +166,9 @@ export default function LotteryPage() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  };
 
-  const fetchRanking = useCallback(async () => {
+  const fetchRanking = async () => {
     try {
       const res = await fetch('/api/lottery/ranking?limit=10', { cache: 'no-store' });
       if (res.ok) {
@@ -157,32 +182,7 @@ export default function LotteryPage() {
     } finally {
       setRankingLoading(false);
     }
-  }, []);
-
-  // 初始化数据
-  useEffect(() => {
-    void fetchData();
-    void fetchRanking();
-
-    // [LIVE] 轮询刷新排行榜，避免榜单停留在首屏数据
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        void fetchRanking();
-      }
-    }, 15000);
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        void fetchRanking();
-      }
-    };
-    document.addEventListener('visibilitychange', onVisibilityChange);
-
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    };
-  }, [fetchData, fetchRanking]);
+  };
 
   const handleSpin = async () => {
     if (!canSpin || spinning) return;
@@ -505,7 +505,7 @@ export default function LotteryPage() {
                   <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_50%_50%,transparent_30%,rgba(0,0,0,0.1)_100%)]"></div>
 
                   {/* 奖品内容 */}
-                  {PRIZES_WITH_ANGLES.map((prize) => (
+                  {PRIZES_WITH_ANGLES.map((prize, idx) => (
                     <div 
                       key={prize.id}
                       className="absolute w-full h-full top-0 left-0"
@@ -636,7 +636,7 @@ export default function LotteryPage() {
                     <p className="text-xs mt-1">快去试试手气吧！</p>
                   </div>
                 ) : (
-                  records.map((record) => (
+                  records.map((record, idx) => (
                     <div key={record.id} className="group relative bg-white rounded-xl border border-stone-100 p-3 shadow-sm hover:shadow-md transition-all hover:border-orange-200 overflow-hidden">
                       {/* 装饰性背景 */}
                       <div className="absolute right-0 top-0 w-16 h-16 bg-gradient-to-bl from-orange-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-tr-xl"></div>

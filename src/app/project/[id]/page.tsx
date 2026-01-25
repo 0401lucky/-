@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, use, useCallback } from 'react';
+import { useEffect, useState, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Loader2, ArrowLeft, Copy, Check, Package, AlertCircle, LogOut, User as UserIcon, Gift, Sparkles } from 'lucide-react';
@@ -41,7 +41,11 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
-  const fetchData = useCallback(async () => {
+  useEffect(() => {
+    fetchData();
+  }, [id]);
+
+  const fetchData = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -69,16 +73,12 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       } else {
         setError('项目不存在或已被删除');
       }
-    } catch {
+    } catch (err) {
       setError('网络请求失败');
     } finally {
       setLoading(false);
     }
-  }, [id]);
-
-  useEffect(() => {
-    void fetchData();
-  }, [fetchData]);
+  };
 
   const handleClaim = async () => {
     if (!user) {
@@ -110,7 +110,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       } else {
         setError(data.message || '领取失败');
       }
-    } catch {
+    } catch (err) {
       setError('领取请求失败，请稍后重试');
     } finally {
       setClaiming(false);

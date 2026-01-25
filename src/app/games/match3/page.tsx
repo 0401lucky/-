@@ -68,15 +68,10 @@ function clearMoves(sessionId: string) {
 // Score counting hook
 function useAnimatedNumber(value: number, duration: number = 500) {
   const [displayValue, setDisplayValue] = useState(value);
-  const displayValueRef = useRef(displayValue);
   
   useEffect(() => {
-    displayValueRef.current = displayValue;
-  }, [displayValue]);
-
-  useEffect(() => {
     let startTimestamp: number | null = null;
-    const startValue = displayValueRef.current;
+    const startValue = displayValue;
     const endValue = value;
     
     if (startValue === endValue) return;
@@ -89,7 +84,6 @@ function useAnimatedNumber(value: number, duration: number = 500) {
       const ease = 1 - Math.pow(1 - progress, 3);
       
       const current = Math.floor(startValue + (endValue - startValue) * ease);
-      displayValueRef.current = current;
       setDisplayValue(current);
 
       if (progress < 1) {
@@ -98,7 +92,7 @@ function useAnimatedNumber(value: number, duration: number = 500) {
     };
 
     window.requestAnimationFrame(step);
-  }, [value, duration]);
+  }, [value, duration]); // Removed displayValue from deps to avoid re-triggering mid-animation incorrectly
 
   return displayValue;
 }
@@ -206,41 +200,32 @@ export default function Match3Page() {
   // 初始化/恢复局面
   useEffect(() => {
     if (!session) return;
-    let cancelled = false;
 
-    Promise.resolve().then(() => {
-      if (cancelled) return;
+    finishedRef.current = false;
+    setSelectedIndex(null);
 
-      finishedRef.current = false;
-      setSelectedIndex(null);
-
-      const restoredMoves = loadMoves(session.sessionId);
-      movesRef.current = restoredMoves;
-      const sim = simulateMatch3Game(session.seed, session.config, restoredMoves, { maxMoves: 250 });
-      if (sim.ok) {
-        setMoves(restoredMoves);
-        setBoard(sim.finalBoard);
-        setScore(sim.score);
-        prevScoreRef.current = sim.score; // Init prevScore
-      } else {
-        clearMoves(session.sessionId);
-        const init = createInitialBoard(session.seed, session.config);
-        if (init.ok) {
-          movesRef.current = [];
-          setMoves([]);
-          setBoard(init.finalBoard);
-          setScore(0);
-          prevScoreRef.current = 0;
-        }
-        setError('本地进度异常，已重置该局');
+    const restoredMoves = loadMoves(session.sessionId);
+    movesRef.current = restoredMoves;
+    const sim = simulateMatch3Game(session.seed, session.config, restoredMoves, { maxMoves: 250 });
+    if (sim.ok) {
+      setMoves(restoredMoves);
+      setBoard(sim.finalBoard);
+      setScore(sim.score);
+      prevScoreRef.current = sim.score; // Init prevScore
+    } else {
+      clearMoves(session.sessionId);
+      const init = createInitialBoard(session.seed, session.config);
+      if (init.ok) {
+        movesRef.current = [];
+        setMoves([]);
+        setBoard(init.finalBoard);
+        setScore(0);
+        prevScoreRef.current = 0;
       }
+      setError('本地进度异常，已重置该局');
+    }
 
-      setPhase('playing');
-    });
-
-    return () => {
-      cancelled = true;
-    };
+    setPhase('playing');
   }, [session, setError]);
 
   // 计时器

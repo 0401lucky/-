@@ -50,10 +50,8 @@ export default function MemoryGamePage() {
   // 同步 session 状态
   useEffect(() => {
     if (session && phase === 'select') {
-      Promise.resolve().then(() => {
-        setSelectedDifficulty(session.difficulty);
-        setPhase('playing');
-      });
+      setSelectedDifficulty(session.difficulty);
+      setPhase('playing');
     }
   }, [session, phase]);
 

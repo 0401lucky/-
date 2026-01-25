@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Check, CalendarDays, Gift, ChevronLeft, Loader2, PartyPopper, Sparkles } from 'lucide-react';
@@ -18,8 +18,13 @@ export default function CheckinPage() {
   const [checkedIn, setCheckedIn] = useState(false);
   const [extraSpins, setExtraSpins] = useState(0);
   const [checkinResult, setCheckinResult] = useState<CheckinResult | null>(null);
+  const [user, setUser] = useState<{ id: number; username: string } | null>(null);
 
-  const checkStatus = useCallback(async () => {
+  useEffect(() => {
+    checkStatus();
+  }, []);
+
+  const checkStatus = async () => {
     try {
       const [userRes, statusRes] = await Promise.all([
         fetch('/api/auth/me'),
@@ -28,7 +33,9 @@ export default function CheckinPage() {
 
       if (userRes.ok) {
         const userData = await userRes.json();
-        if (!userData.success) {
+        if (userData.success) {
+          setUser(userData.user);
+        } else {
           router.push('/login?redirect=/checkin');
           return;
         }
@@ -44,11 +51,7 @@ export default function CheckinPage() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
-
-  useEffect(() => {
-    void checkStatus();
-  }, [checkStatus]);
+  };
 
   const handleCheckin = async () => {
     if (submitting || checkedIn) return;
@@ -77,7 +80,7 @@ export default function CheckinPage() {
       } else {
         alert(data.message || '签到失败');
       }
-    } catch {
+    } catch (error) {
       alert('签到请求失败，请稍后重试');
     } finally {
       setSubmitting(false);

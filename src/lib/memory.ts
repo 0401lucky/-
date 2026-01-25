@@ -12,6 +12,7 @@ import type {
   MemoryGameSession,
   MemoryGameResultSubmit,
   MemoryGameRecord,
+  MemoryMove,
   DailyGameStats,
 } from './types/game';
 
@@ -306,6 +307,7 @@ export function validateMemoryResult(
   
   // 重放验证
   const matchedCards = new Set<number>();
+  let matchedPairs = 0;
   
   for (const move of result.moves) {
     // P0: 严格类型检查 - 防止非整数索引绕过验证
@@ -351,6 +353,7 @@ export function validateMemoryResult(
     if (move.matched) {
       matchedCards.add(move.card1);
       matchedCards.add(move.card2);
+      matchedPairs++;
     }
   }
   

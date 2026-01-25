@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, Loader2, Search, Users, 
-  LogOut, User as UserIcon, X, 
+  LayoutDashboard, LogOut, User as UserIcon, X, 
   ChevronRight, Gift, Sparkles, Clock, CheckCircle2, Star, RefreshCw, Coins
 } from 'lucide-react';
 
@@ -91,6 +91,10 @@ export default function UsersPage() {
   const router = useRouter();
 
   useEffect(() => {
+    fetchData();
+  }, []);
+
+  useEffect(() => {
     let result = users;
     
     // 类型过滤（前端过滤，因为搜索在后端）
@@ -103,9 +107,7 @@ export default function UsersPage() {
     setFilteredUsers(result);
   }, [users, filterType]);
 
-  const fetchData = useCallback(async (
-    { resetPage = true, search = '' }: { resetPage?: boolean; search?: string } = {}
-  ) => {
+  const fetchData = async (resetPage = true) => {
     try {
       const userRes = await fetch('/api/auth/me');
       if (!userRes.ok) {
@@ -125,8 +127,7 @@ export default function UsersPage() {
         setUsers([]);
       }
       
-      const trimmedSearch = search.trim();
-      const searchParam = trimmedSearch ? `&search=${encodeURIComponent(trimmedSearch)}` : '';
+      const searchParam = searchQuery.trim() ? `&search=${encodeURIComponent(searchQuery.trim())}` : '';
       const usersRes = await fetch(`/api/admin/users?page=1&limit=50${searchParam}`);
       if (usersRes.ok) {
         const data = await usersRes.json();
@@ -142,11 +143,7 @@ export default function UsersPage() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
-
-  useEffect(() => {
-    void fetchData({ resetPage: true, search: '' });
-  }, [fetchData]);
+  };
 
   // 加载更多用户
   const loadMoreUsers = async () => {
@@ -178,11 +175,12 @@ export default function UsersPage() {
   useEffect(() => {
     const timer = setTimeout(() => {
       if (!loading) {
-        void fetchData({ resetPage: true, search: searchQuery });
+        fetchData(true);
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [fetchData, loading, searchQuery]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
 
   const handleUserClick = async (u: UserWithStats) => {
     // 递增请求序号，用于防止竞态
@@ -314,7 +312,7 @@ export default function UsersPage() {
       const data = await res.json();
       if (data.success) {
         // 刷新用户列表
-        await fetchData({ resetPage: true, search: searchQuery });
+        await fetchData();
         alert(data.message);
       } else {
         alert(data.message || '同步失败');

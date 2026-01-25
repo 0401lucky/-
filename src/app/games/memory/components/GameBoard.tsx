@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card } from './Card';
 import type { MemoryDifficulty, MemoryDifficultyConfig, MemoryMove } from '@/lib/types/game';
-import { DIFFICULTY_META } from '../lib/constants';
+import { DIFFICULTY_CONFIG, DIFFICULTY_META } from '../lib/constants';
 
 interface GameBoardProps {
   difficulty: MemoryDifficulty;
@@ -28,9 +28,8 @@ export function GameBoard({
   const [moveCount, setMoveCount] = useState(0);
   const [timeLeft, setTimeLeft] = useState(config.timeLimit);
   const [isChecking, setIsChecking] = useState(false);
-  const [hasEnded, setHasEnded] = useState(false);
   
-  const startTimeRef = useRef<number>(0);
+  const startTimeRef = useRef(Date.now());
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const flipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const endCalledRef = useRef(false);  // P2: 防止 onGameEnd 调用两次
@@ -43,10 +42,6 @@ export function GameBoard({
     movesRef.current = moves;
   }, [moves]);
 
-  useEffect(() => {
-    startTimeRef.current = Date.now();
-  }, []);
-
   // 计算预估得分
   const estimatedScore = useCallback(() => {
     const optimalMoves = config.pairs;
@@ -58,7 +53,6 @@ export function GameBoard({
   const handleGameEnd = useCallback((completed: boolean) => {
     if (endCalledRef.current) return;
     endCalledRef.current = true;
-    setHasEnded(true);
     
     // 清理定时器
     if (timerRef.current) {
@@ -100,7 +94,7 @@ export function GameBoard({
   // 检查是否完成
   useEffect(() => {
     if (matchedCards.size === cardLayout.length && !endCalledRef.current) {
-      Promise.resolve().then(() => handleGameEnd(true));
+      handleGameEnd(true);
     }
   }, [matchedCards.size, cardLayout.length, handleGameEnd]);
 
@@ -215,7 +209,7 @@ export function GameBoard({
             isFlipped={flippedCards.includes(index)}
             isMatched={matchedCards.has(index)}
             onClick={handleCardClick}
-            disabled={isChecking || hasEnded}
+            disabled={isChecking || endCalledRef.current}
           />
         ))}
       </div>

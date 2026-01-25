@@ -73,6 +73,16 @@ export default function ProjectsPage() {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#fafaf9]">
+        <div className="text-center text-orange-500">
+          <Loader2 className="w-10 h-10 animate-spin mx-auto" />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#fafaf9] overflow-x-hidden">
       {/* 导航栏 */}
@@ -146,11 +156,7 @@ export default function ProjectsPage() {
           </p>
         </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center py-20 text-orange-500">
-            <Loader2 className="w-8 h-8 animate-spin" />
-          </div>
-        ) : projects.length === 0 ? (
+        {projects.length === 0 ? (
           <div className="glass rounded-3xl p-10 sm:p-20 text-center mx-auto max-w-2xl">
             <div className="w-20 h-20 bg-stone-50 rounded-full flex items-center justify-center mx-auto mb-6">
               <Gift className="w-9 h-9 text-stone-300" />

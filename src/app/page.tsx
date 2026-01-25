@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LogOut, User, LayoutDashboard, Gift, ChevronRight, Sparkles, Trophy, ArrowRight, CalendarDays, Gamepad2 } from 'lucide-react';
+import { LogOut, User, LayoutDashboard, Loader2, Gift, ChevronRight, Sparkles, Trophy, ArrowRight, CalendarDays, Gamepad2 } from 'lucide-react';
 
 interface UserData {
   id: number;
@@ -26,8 +26,13 @@ interface Project {
 
 export default function HomePage() {
   const [user, setUser] = useState<UserData | null>(null);
+  const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<Project[]>([]);
   const router = useRouter();
+
+  useEffect(() => {
+    fetchData();
+  }, []);
 
   const fetchData = async () => {
     try {
@@ -51,21 +56,10 @@ export default function HomePage() {
       }
     } catch (error) {
       console.error('Failed to fetch data', error);
+    } finally {
+      setLoading(false);
     }
   };
-
-  useEffect(() => {
-    let cancelled = false;
-
-    Promise.resolve().then(() => {
-      if (cancelled) return;
-      void fetchData();
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const handleLogout = async () => {
     try {
@@ -76,6 +70,16 @@ export default function HomePage() {
       console.error('Logout failed', error);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#fafaf9]">
+        <div className="text-center text-orange-500">
+          <Loader2 className="w-10 h-10 animate-spin mx-auto" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#fafaf9] overflow-x-hidden">

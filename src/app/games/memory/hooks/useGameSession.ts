@@ -88,7 +88,7 @@ export function useGameSession() {
       
       setSession(data.data);
       return true;
-    } catch {
+    } catch (err) {
       setError('网络错误');
       return false;
     } finally {
@@ -116,7 +116,7 @@ export function useGameSession() {
       
       setError(data.message || '取消游戏失败');
       return false;
-    } catch {
+    } catch (err) {
       setError('网络错误');
       return false;
     } finally {
@@ -158,7 +158,7 @@ export function useGameSession() {
       await fetchStatus();
       
       return data.data;
-    } catch {
+    } catch (err) {
       hasSubmittedRef.current = false;
       setError('网络错误');
       return null;
