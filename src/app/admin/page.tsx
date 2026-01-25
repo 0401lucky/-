@@ -580,7 +580,7 @@ export default function AdminPage() {
 
       {/* 创建项目弹窗 */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+        <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center p-4 sm:p-6 overflow-y-auto">
           {/* Backdrop */}
           <div 
             className="absolute inset-0 bg-stone-900/20 backdrop-blur-sm transition-opacity"
@@ -588,7 +588,7 @@ export default function AdminPage() {
           />
           
           {/* Modal Content */}
-          <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden animate-fade-in ring-1 ring-black/5">
+          <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden animate-fade-in ring-1 ring-black/5 max-h-[90vh] my-6">
             {/* Header */}
             <div className="px-6 py-4 border-b border-stone-100 flex justify-between items-center bg-stone-50/50">
               <h2 className="text-lg font-bold text-stone-800 flex items-center gap-2">
@@ -603,7 +603,7 @@ export default function AdminPage() {
             </div>
 
             {/* Form */}
-            <form onSubmit={handleCreateProject} className="p-6">
+            <form onSubmit={handleCreateProject} className="p-6 overflow-y-auto max-h-[calc(90vh-72px)]">
               {error && (
                 <div className="mb-5 p-3.5 bg-red-50 border border-red-100 rounded-xl flex items-center gap-2.5 text-red-600 text-sm font-medium">
                   <AlertCircle className="w-4 h-4 flex-shrink-0" />
