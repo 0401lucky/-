@@ -405,7 +405,7 @@ export default function UsersPage() {
               </div>
               <span className="text-sm font-medium text-stone-500">总用户数</span>
             </div>
-            <p className="text-3xl font-bold text-stone-800">{users.length}</p>
+            <p className="text-3xl font-bold text-stone-800">{totalUsers || users.length}</p>
           </div>
           <div className="glass rounded-2xl p-5 border border-white/50">
             <div className="flex items-center gap-3 mb-2">
