@@ -77,7 +77,7 @@ export default function StorePage() {
       } else {
         setMessage({ type: 'error', text: data.message || '兑换失败' });
       }
-    } catch (err) {
+    } catch {
       setMessage({ type: 'error', text: '网络错误' });
     } finally {
       setExchanging(null);
@@ -86,12 +86,6 @@ export default function StorePage() {
 
   const getItemIcon = (type: string) => {
     return type === 'lottery_spin' ? '🎟️' : '💰';
-  };
-
-  const getItemGradient = (type: string) => {
-    return type === 'lottery_spin' 
-      ? 'from-purple-600 to-pink-600' 
-      : 'from-green-600 to-teal-600';
   };
 
   return (

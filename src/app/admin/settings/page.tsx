@@ -65,7 +65,7 @@ export default function AdminSettingsPage() {
             : SLOT_BET_OPTIONS[0];
         setBetCost(String(safeBetCost));
       }
-    } catch (err) {
+    } catch {
       setError('网络错误');
     } finally {
       setLoading(false);
@@ -96,7 +96,7 @@ export default function AdminSettingsPage() {
       } else {
         setError(data.message || '保存失败');
       }
-    } catch (err) {
+    } catch {
       setError('网络错误');
     } finally {
       setSaving(false);
@@ -126,7 +126,7 @@ export default function AdminSettingsPage() {
       } else {
         setError(data.message || '保存失败');
       }
-    } catch (err) {
+    } catch {
       setError('网络错误');
     } finally {
       setSavingSlot(false);

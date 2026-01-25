@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, use } from 'react';
+import { useEffect, useState, use, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Upload, Loader2, AlertCircle, Users, Package, Clock, User as UserIcon, Check, X, Gift, FileText, Copy } from 'lucide-react';
@@ -36,11 +36,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
   const [success, setSuccess] = useState<string | null>(null);
   const router = useRouter();
 
-  useEffect(() => {
-    fetchData();
-  }, [id]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const userRes = await fetch('/api/auth/me');
       if (!userRes.ok) {
@@ -65,12 +61,16 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
       } else {
         setError('项目不存在');
       }
-    } catch (err) {
+    } catch {
       setError('加载失败');
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, router]);
+
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
   const handleUploadCodes = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -98,7 +98,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
       } else {
         setError(data.message || '上传失败');
       }
-    } catch (err) {
+    } catch {
       setError('上传失败');
     } finally {
       setUploading(false);

@@ -15,7 +15,6 @@ export default function PachinkoPage() {
   
   const [showResult, setShowResult] = useState(false);
   const [resultPoints, setResultPoints] = useState<number | undefined>();
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [showLimitWarning, setShowLimitWarning] = useState(false); // 积分上限警告
   const submitTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const hasSubmittedRef = useRef(false); // 防止重复提交
@@ -28,9 +27,8 @@ export default function PachinkoPage() {
   // 游戏结束时自动提交
   useEffect(() => {
     // 必须满足：游戏结束、有会话、未在提交中、未提交过
-    if (isGameOver && session && !isSubmitting && !hasSubmittedRef.current) {
+    if (isGameOver && session && !hasSubmittedRef.current) {
       hasSubmittedRef.current = true;
-      setIsSubmitting(true);
       
       const submit = async () => {
         try {
@@ -42,13 +40,12 @@ export default function PachinkoPage() {
           console.error('Submit error:', err);
         }
         setShowResult(true);
-        setIsSubmitting(false);
       };
       
       // 延迟提交，让玩家看到最后一颗球落入
       submitTimeoutRef.current = setTimeout(submit, 1000);
     }
-  }, [isGameOver, session, isSubmitting, currentScore, ballResults, getGameDuration, submitResult]);
+  }, [isGameOver, session, currentScore, ballResults, getGameDuration, submitResult]);
 
   // 组件卸载时清理 timeout
   useEffect(() => {
@@ -228,17 +225,19 @@ export default function PachinkoPage() {
         )}
 
         {/* 结算弹窗 */}
-        <ResultModal
-          isOpen={showResult}
-          score={currentScore}
-          ballResults={ballResults}
-          pointsEarned={resultPoints}
-          onClose={() => {
-            setShowResult(false);
-            router.push('/games');
-          }}
-          onPlayAgain={handlePlayAgain}
-        />
+        {showResult && (
+          <ResultModal
+            isOpen={true}
+            score={currentScore}
+            ballResults={ballResults}
+            pointsEarned={resultPoints}
+            onClose={() => {
+              setShowResult(false);
+              router.push('/games');
+            }}
+            onPlayAgain={handlePlayAgain}
+          />
+        )}
 
         {/* 积分上限警告弹窗 */}
         {showLimitWarning && (

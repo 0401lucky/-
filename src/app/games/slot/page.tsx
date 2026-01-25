@@ -131,16 +131,22 @@ const ANIMATION_STYLES = `
   }
 `;
 
+function pseudoRandom(seed: number): number {
+  const x = Math.sin(seed) * 10000;
+  return x - Math.floor(x);
+}
+
 function Confetti({ active }: { active: boolean }) {
   if (!active) return null;
   
+  const colors = ['#FCD34D', '#F87171', '#60A5FA', '#34D399', '#A78BFA', '#F472B6', '#FFFFFF'];
   const particles = Array.from({ length: 80 }).map((_, i) => {
-    const left = Math.random() * 100;
-    const delay = Math.random() * 1.5;
-    const duration = 2.5 + Math.random() * 2;
-    // Enhanced vibrant colors
-    const bg = ['#FCD34D', '#F87171', '#60A5FA', '#34D399', '#A78BFA', '#F472B6', '#FFFFFF'][Math.floor(Math.random() * 7)];
-    const size = 6 + Math.random() * 8;
+    const left = pseudoRandom((i + 1) * 12.9898) * 100;
+    const delay = pseudoRandom((i + 1) * 78.233) * 1.5;
+    const duration = 2.5 + pseudoRandom((i + 1) * 37.719) * 2;
+    const bg = colors[Math.floor(pseudoRandom((i + 1) * 45.164) * colors.length)];
+    const size = 6 + pseudoRandom((i + 1) * 93.989) * 8;
+    const heightScale = pseudoRandom((i + 1) * 15.111) > 0.5 ? 1 : 0.4;
     
     return (
       <div
@@ -149,7 +155,7 @@ function Confetti({ active }: { active: boolean }) {
         style={{
           left: `${left}%`,
           width: `${size}px`,
-          height: `${size * (Math.random() > 0.5 ? 1 : 0.4)}px`, // Mix squares and rectangles
+          height: `${size * heightScale}px`,
           backgroundColor: bg,
           boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
           animation: `confetti-fall ${duration}s ease-in ${delay}s both`,
@@ -306,7 +312,7 @@ export default function SlotPage() {
       } else {
         setRankingError(true);
       }
-    } catch (err) {
+    } catch {
       setRankingError(true);
     }
   }, []);
