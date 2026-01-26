@@ -9,6 +9,7 @@ import { creditQuotaToUser } from './new-api';
 // ============ 商店商品管理 ============
 
 const STORE_ITEMS_KEY = 'store:items';
+const STORE_ITEM_PURCHASE_COUNTS_KEY = 'store:item:purchase_counts';
 
 // 预定义商品（首次访问时初始化）
 const DEFAULT_STORE_ITEMS: Omit<StoreItem, 'id' | 'createdAt' | 'updatedAt'>[] = [
@@ -294,6 +295,13 @@ export async function exchangeItem(
   } catch (logError) {
     // 日志写入失败不影响兑换成功，仅记录错误
     console.error('Exchange log write failed (non-critical):', logError);
+  }
+
+  // 7. 统计商品被兑换次数（best-effort，失败不影响成功响应）
+  try {
+    await kv.hincrby(STORE_ITEM_PURCHASE_COUNTS_KEY, itemId, 1);
+  } catch (countError) {
+    console.error('Store item purchase count increment failed (non-critical):', countError);
   }
 
   return { 

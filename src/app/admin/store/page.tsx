@@ -10,6 +10,7 @@ interface StoreItem {
   type: 'lottery_spin' | 'quota_direct';
   pointsCost: number;
   value: number;
+  purchaseCount?: number;
   dailyLimit?: number;
   sortOrder: number;
   enabled: boolean;
@@ -222,6 +223,7 @@ export default function AdminStorePage() {
                     <th className="p-5 font-semibold">类型</th>
                     <th className="p-5 font-semibold">定价 / 价值</th>
                     <th className="p-5 font-semibold">每日限购</th>
+                    <th className="p-5 font-semibold">已购买</th>
                     <th className="p-5 font-semibold">排序权重</th>
                     <th className="p-5 font-semibold">状态</th>
                     <th className="p-5 font-semibold text-right">操作</th>
@@ -256,6 +258,9 @@ export default function AdminStorePage() {
                       </td>
                       <td className="p-5 text-slate-600 text-sm font-medium">
                         {item.dailyLimit ? `${item.dailyLimit} 次` : <span className="text-slate-400 font-normal">无限制</span>}
+                      </td>
+                      <td className="p-5 text-slate-600 text-sm font-medium">
+                        {(item.purchaseCount ?? 0).toLocaleString()} 次
                       </td>
                       <td className="p-5 text-slate-600 font-mono text-sm">
                         {item.sortOrder}
@@ -295,7 +300,7 @@ export default function AdminStorePage() {
                   ))}
                   {items.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="p-16 text-center">
+                      <td colSpan={8} className="p-16 text-center">
                         <div className="text-slate-400 text-4xl mb-4">📦</div>
                         <p className="text-slate-500 font-medium">暂无商品数据</p>
                         <p className="text-slate-400 text-sm mt-1">点击右上角新增按钮添加第一个商品</p>

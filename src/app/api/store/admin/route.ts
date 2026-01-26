@@ -2,6 +2,7 @@
 // 商品管理 API（管理员）
 
 import { NextRequest, NextResponse } from 'next/server';
+import { kv } from '@vercel/kv';
 import { getAuthUser, isAdmin } from '@/lib/auth';
 import {
   getAllStoreItems,
@@ -11,12 +12,27 @@ import {
 } from '@/lib/store';
 import type { StoreItemType } from '@/lib/types/store';
 
+const STORE_ITEM_PURCHASE_COUNTS_KEY = 'store:item:purchase_counts';
+
 // 统一响应格式
 function jsonResponse(
   data: { success: boolean; data?: unknown; message?: string },
   status = 200
 ) {
   return NextResponse.json(data, { status });
+}
+
+function normalizePurchaseCount(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value >= 0 ? Math.floor(value) : 0;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+  return 0;
 }
 
 // 验证管理员权限
@@ -47,7 +63,25 @@ export async function GET() {
 
   try {
     const items = await getAllStoreItems();
-    return jsonResponse({ success: true, data: { items } });
+
+    let purchaseCounts: Record<string, unknown> | null = null;
+    try {
+      if (items.length > 0) {
+        purchaseCounts = await kv.hmget<Record<string, unknown>>(
+          STORE_ITEM_PURCHASE_COUNTS_KEY,
+          ...items.map(item => item.id)
+        );
+      }
+    } catch (error) {
+      console.error('Get store item purchase counts error:', error);
+    }
+
+    const itemsWithStats = items.map(item => ({
+      ...item,
+      purchaseCount: normalizePurchaseCount(purchaseCounts?.[item.id]),
+    }));
+
+    return jsonResponse({ success: true, data: { items: itemsWithStats } });
   } catch (error) {
     console.error('Get all store items error:', error);
     return jsonResponse({ success: false, message: '获取商品列表失败' }, 500);
