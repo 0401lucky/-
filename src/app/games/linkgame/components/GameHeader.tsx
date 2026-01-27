@@ -36,65 +36,81 @@ export function GameHeader({
   };
 
   return (
-    <div className="bg-white rounded-2xl p-4 mb-6 shadow-sm border border-slate-100 w-full max-w-2xl mx-auto">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <div className="text-center relative">
-            <div className="text-xs text-slate-400 uppercase tracking-wider">得分</div>
-            <div 
-              className={`text-xl font-bold text-slate-900 tabular-nums ${scorePopping ? 'animate-score-pop' : ''}`}
-            >
-              {score}
+    <div className="bg-white/80 backdrop-blur-xl rounded-[2.5rem] p-3 sm:p-4 mb-8 shadow-xl shadow-indigo-500/5 border-2 border-white w-full max-w-2xl mx-auto relative overflow-visible transform hover:scale-[1.02] transition-transform duration-500">
+      <div className="absolute -top-4 -right-4 w-24 h-24 bg-pink-200 rounded-full blur-2xl opacity-60 -z-10 animate-pulse" />
+      <div className="absolute -bottom-4 -left-4 w-20 h-20 bg-cyan-200 rounded-full blur-2xl opacity-60 -z-10 animate-pulse" style={{ animationDelay: '1s' }} />
+      
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="flex items-center gap-3 w-full sm:w-auto justify-center sm:justify-start">
+          <div className="flex items-center gap-3 bg-gradient-to-r from-orange-50 to-amber-50 px-4 py-2 rounded-2xl border border-orange-100 relative group">
+            <div className="text-center">
+              <div className="text-[10px] text-orange-400 font-black uppercase tracking-widest mb-0.5">SCORE</div>
+              <div 
+                className={`text-2xl font-black text-slate-800 tabular-nums leading-none ${scorePopping ? 'animate-score-pop text-orange-500' : ''}`}
+              >
+                {score}
+              </div>
             </div>
             {combo > 1 && (
               <div 
                 key={combo}
-                className="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap text-orange-500 font-bold text-lg animate-bounce-in"
+                className="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap bg-orange-500 text-white px-3 py-1 rounded-full font-black text-sm animate-bounce-in shadow-lg rotate-[-5deg] z-20 border-2 border-white"
               >
-                🔥 Combo x{combo}!
+                🔥 {combo} COMBO!
               </div>
             )}
           </div>
           
-          <div className="text-center">
-            <div className="text-xs text-slate-400 uppercase tracking-wider">时间</div>
-            <div className={`text-xl font-bold tabular-nums transition-colors duration-300 ${
-              timeRemaining < 30 ? 'text-red-500 animate-tile-pulse' : 'text-slate-900'
+          <div className={`flex items-center gap-3 px-4 py-2 rounded-2xl border relative transition-all duration-300 ${
+              timeRemaining < 30 
+                ? 'bg-red-50 border-red-200 animate-pulse' 
+                : 'bg-gradient-to-r from-blue-50 to-cyan-50 border-blue-100'
             }`}>
-              {formatTime(timeRemaining)}
+            <div className="text-center">
+              <div className={`text-[10px] font-black uppercase tracking-widest mb-0.5 ${timeRemaining < 30 ? 'text-red-400' : 'text-cyan-600'}`}>TIME</div>
+              <div className={`text-2xl font-black tabular-nums leading-none transition-all duration-300 ${
+                timeRemaining < 30 ? 'text-red-500 scale-110' : 'text-slate-800'
+              }`}>
+                {formatTime(timeRemaining)}
+              </div>
             </div>
+            {timeRemaining < 10 && (
+              <span className="absolute -top-2 -right-2 text-xl animate-bounce">⏰</span>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 w-full sm:w-auto justify-center sm:justify-end">
           <button
             onClick={onHint}
             disabled={hintsRemaining <= 0}
             className={`
-              flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+              flex items-center gap-2 px-4 py-3 rounded-2xl text-sm font-black transition-all active:scale-95 border-b-4 relative overflow-hidden group
               ${hintsRemaining > 0 
-                ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200' 
-                : 'bg-slate-50 text-slate-400 cursor-not-allowed border border-slate-100'}
+                ? 'bg-amber-300 border-amber-500 text-amber-900 hover:bg-amber-400 hover:-translate-y-1 hover:border-b-[6px]' 
+                : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'}
             `}
             title="提示 (-10分)"
           >
-            <span>💡</span>
-            <span>提示 ({hintsRemaining})</span>
+            <span className="text-xl relative z-10 group-hover:rotate-12 transition-transform">💡</span>
+            <span className="relative z-10">{hintsRemaining}</span>
+            <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300" />
           </button>
 
           <button
             onClick={onShuffle}
             disabled={shufflesRemaining <= 0}
             className={`
-              flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+              flex items-center gap-2 px-4 py-3 rounded-2xl text-sm font-black transition-all active:scale-95 border-b-4 relative overflow-hidden group
               ${shufflesRemaining > 0 
-                ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200' 
-                : 'bg-slate-50 text-slate-400 cursor-not-allowed border border-slate-100'}
+                ? 'bg-indigo-300 border-indigo-500 text-indigo-900 hover:bg-indigo-400 hover:-translate-y-1 hover:border-b-[6px]' 
+                : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'}
             `}
             title="重排 (-20分)"
           >
-            <span>🔄</span>
-            <span>重排 ({shufflesRemaining})</span>
+            <span className="text-xl relative z-10 group-hover:animate-spin transition-transform">🔄</span>
+            <span className="relative z-10">{shufflesRemaining}</span>
+            <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300" />
           </button>
         </div>
       </div>

@@ -156,12 +156,28 @@ body {
   }
   
   /* 透视和3D效果 */
+  .perspective-500 {
+    perspective: 500px;
+  }
+  
   .perspective-1000 {
     perspective: 1000px;
   }
   
-  .clip-path-pointer {
-    clip-path: polygon(20% 0%, 80% 0%, 100% 20%, 50% 100%, 0% 20%);
+  /* Cute/Candy Utilities */
+  .font-round {
+    font-family: "Varela Round", "Nunito", var(--font-family-sans);
+  }
+  
+  .candy-shadow {
+    box-shadow: 
+      inset 0 2px 4px 0 rgba(255, 255, 255, 0.5),
+      0 4px 12px -2px rgba(0, 0, 0, 0.1),
+      0 2px 6px -1px rgba(0, 0, 0, 0.06);
+  }
+
+  .candy-border {
+    border: 3px solid white;
   }
 }
 

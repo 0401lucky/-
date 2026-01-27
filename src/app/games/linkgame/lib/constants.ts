@@ -18,24 +18,32 @@ export const DIFFICULTY_META: Record<LinkGameDifficulty, {
   description: string;
   icon: string;
   color: string;
+  textColor: string;
+  borderColor: string;
 }> = {
   easy: {
     name: '简单',
-    description: '4x4 网格，时间充裕，适合新手',
+    description: '4x4 轻松休闲，适合新手宝宝',
     icon: '🌱',
-    color: 'from-green-400 to-emerald-500',
+    color: 'from-emerald-300 to-teal-400',
+    textColor: 'text-emerald-600',
+    borderColor: 'border-emerald-200',
   },
   normal: {
     name: '普通',
-    description: '6x6 网格，适中难度，挑战手速',
-    icon: '🔥',
-    color: 'from-orange-400 to-red-500',
+    description: '6x6 适中难度，挑战手速',
+    icon: '🍬',
+    color: 'from-pink-400 to-rose-400',
+    textColor: 'text-pink-600',
+    borderColor: 'border-pink-200',
   },
   hard: {
     name: '困难',
-    description: '8x8 网格，争分夺秒，极限挑战',
+    description: '8x8 争分夺秒，极限挑战',
     icon: '⚡',
-    color: 'from-purple-500 to-indigo-600',
+    color: 'from-violet-400 to-fuchsia-500',
+    textColor: 'text-violet-600',
+    borderColor: 'border-violet-200',
   },
 };
 

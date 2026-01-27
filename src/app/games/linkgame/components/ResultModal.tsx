@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { DIFFICULTY_META } from '../lib/constants';
 import type { LinkGameDifficulty } from '@/lib/types/game';
@@ -28,19 +28,25 @@ export function ResultModal({
 }: ResultModalProps) {
   const [displayScore, setDisplayScore] = useState(0);
 
+  const playAgainRef = useRef<HTMLButtonElement>(null);
+
   useEffect(() => {
     if (isOpen && completed) {
+      const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (prefersReducedMotion) return;
+
       const duration = 3000;
       const animationEnd = Date.now() + duration;
       const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 60 };
 
       const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
 
-      const interval: any = setInterval(function() {
+      const interval = window.setInterval(() => {
         const timeLeft = animationEnd - Date.now();
 
         if (timeLeft <= 0) {
-          return clearInterval(interval);
+          window.clearInterval(interval);
+          return;
         }
 
         const particleCount = 50 * (timeLeft / duration);
@@ -56,12 +62,17 @@ export function ResultModal({
         });
       }, 250);
 
-      return () => clearInterval(interval);
+      return () => window.clearInterval(interval);
     }
   }, [isOpen, completed]);
 
   useEffect(() => {
     if (isOpen) {
+      // Focus play again button when modal opens
+      setTimeout(() => {
+        playAgainRef.current?.focus();
+      }, 100);
+      
       const duration = 1000;
       const steps = 30;
       const increment = score / steps;
@@ -86,21 +97,25 @@ export function ResultModal({
   const meta = DIFFICULTY_META[difficulty];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm animate-in fade-in duration-300" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="result-title">
+      <div className="absolute inset-0 bg-indigo-900/60 backdrop-blur-md animate-fade-in" />
       
-      <div className="relative bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden animate-bounce-in">
-        <div className={`h-32 bg-gradient-to-br ${meta.color} flex items-center justify-center relative overflow-hidden`}>
-          <div className="absolute inset-0 bg-white/10 animate-pulse" />
+      <div className="relative bg-white rounded-[3rem] shadow-2xl shadow-indigo-500/20 max-w-md w-full overflow-hidden animate-bounce-in border-[6px] border-white ring-4 ring-indigo-100">
+        <div className={`h-48 bg-gradient-to-br ${meta.color} flex items-center justify-center relative overflow-hidden`}>
+          <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMiIgY3k9IjIiIHI9IjIiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4yKSIvPjwvc3ZnPg==')] opacity-30" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
           
+          <div className="absolute top-4 left-4 w-12 h-12 rounded-full border-4 border-white/20 animate-spin-slow" />
+          <div className="absolute bottom-4 right-4 w-8 h-8 rounded-full bg-white/20 animate-bounce" />
+
           {completed && (
             <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              {['🎉', '⭐', '✨', '🎊'].map((emoji, i) => (
+              {['🎉', '⭐', '✨', '🎊', '🍭'].map((emoji, i) => (
                 <span 
                   key={i}
-                  className="absolute animate-confetti text-2xl"
+                  className="absolute animate-confetti text-4xl filter drop-shadow-md"
                   style={{
-                    left: `${20 + i * 20}%`,
+                    left: `${20 + i * 15}%`,
                     animationDelay: `${i * 150}ms`
                   }}
                 >
@@ -110,64 +125,67 @@ export function ResultModal({
             </div>
           )}
 
-          <div className="text-center text-white relative z-10">
-            <div className="text-6xl mb-2 animate-bounce">
+          <div className="text-center text-white relative z-10 transform translate-y-2">
+            <div className="text-8xl mb-4 animate-bounce filter drop-shadow-lg transform hover:scale-110 transition-transform cursor-default">
               {completed ? '🎉' : '⏰'}
             </div>
-            <div className="text-xl font-bold">
-              {completed ? '恭喜通关！' : '时间到！'}
+            <div id="result-title" className="text-3xl font-black tracking-tight drop-shadow-md">
+              {completed ? '恭喜通关！' : '时间到啦！'}
             </div>
           </div>
         </div>
         
-        <div className="p-6">
+        <div className="p-8">
           <div className="space-y-4">
-            <div className="flex justify-between items-center py-3 border-b border-slate-100">
-              <span className="text-slate-500">难度</span>
-              <span className="font-semibold text-slate-900 flex items-center gap-2">
+            <div className="flex justify-between items-center py-3 border-b-2 border-dashed border-slate-100">
+              <span className="text-slate-400 font-black text-sm uppercase tracking-wider">难度</span>
+              <span className={`font-black flex items-center gap-2 bg-slate-50 px-4 py-1.5 rounded-full ${meta.textColor}`}>
                 <span>{meta.icon}</span>
                 {meta.name}
               </span>
             </div>
             
-            <div className="flex justify-between items-center py-3 border-b border-slate-100">
-              <span className="text-slate-500">完成对数</span>
-              <span className="font-semibold text-slate-900">{matchedPairs} 对</span>
+            <div className="flex justify-between items-center py-3 border-b-2 border-dashed border-slate-100">
+              <span className="text-slate-400 font-black text-sm uppercase tracking-wider">完成对数</span>
+              <span className="font-black text-slate-800 text-lg">{matchedPairs} 对</span>
             </div>
             
-            <div className="flex justify-between items-center py-3 border-b border-slate-100">
-              <span className="text-slate-500">游戏得分</span>
-              <span className="font-bold text-xl text-slate-900 tabular-nums">{displayScore}</span>
+            <div className="flex justify-between items-center py-3 border-b-2 border-dashed border-slate-100">
+              <span className="text-slate-400 font-black text-sm uppercase tracking-wider">游戏得分</span>
+              <span className="font-black text-2xl text-slate-800 tabular-nums tracking-tight">{displayScore}</span>
             </div>
             
-            <div className="flex justify-between items-center py-4 bg-gradient-to-r from-yellow-50 to-orange-50 -mx-6 px-6">
-              <span className="text-slate-700 font-medium">获得积分</span>
-              <span className="font-bold text-2xl text-orange-500 flex items-center gap-1">
-                <span>⭐</span>
+            <div className="flex justify-between items-center py-6 bg-gradient-to-r from-orange-50 via-yellow-50 to-orange-50 rounded-3xl px-6 border-2 border-orange-100 shadow-inner mt-2">
+              <span className="text-orange-900/60 font-black text-sm uppercase tracking-wider">获得积分</span>
+              <span className="font-black text-4xl text-orange-500 flex items-center gap-2 filter drop-shadow-sm">
+                <span className="text-2xl">⭐</span>
                 +{pointsEarned}
               </span>
             </div>
             
             {pointsEarned < score && (
-              <p className="text-center text-sm text-slate-400">
-                今日积分已达上限，部分积分未发放
+              <p className="text-center text-xs text-orange-400 font-bold bg-orange-50 py-2 rounded-xl mt-2">
+                ⚠️ 今日积分已达上限，部分积分未发放
               </p>
             )}
           </div>
           
-          <div className="mt-6 flex gap-3">
+          <div className="mt-8 flex gap-4">
             <button
               onClick={onBackToGames}
-              className="group relative flex-1 py-3 px-4 rounded-xl border-2 border-slate-200 text-slate-600 font-semibold hover:bg-slate-50 transition-colors overflow-hidden"
+              className="group relative flex-1 py-4 px-4 rounded-2xl border-2 border-slate-200 text-slate-500 font-black hover:bg-slate-50 hover:text-slate-700 hover:border-slate-300 transition-all overflow-hidden active:scale-95"
             >
               <span className="relative z-10">返回</span>
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/50 to-transparent -translate-x-full group-hover:animate-shimmer" />
             </button>
             <button
+              ref={playAgainRef}
               onClick={onPlayAgain}
-              className={`group relative flex-1 py-3 px-4 rounded-xl bg-gradient-to-r ${meta.color} text-white font-semibold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all overflow-hidden`}
+              className={`group relative flex-1 py-4 px-4 rounded-2xl bg-gradient-to-r ${meta.color} text-white font-black shadow-xl shadow-indigo-500/20 hover:shadow-2xl hover:shadow-indigo-500/30 hover:-translate-y-1 active:scale-95 transition-all overflow-hidden border-b-4 border-black/10 active:border-b-0 active:translate-y-1`}
             >
-              <span className="relative z-10">再来一局</span>
+              <span className="relative z-10 flex items-center justify-center gap-2">
+                <span>再来一局</span>
+                <span className="group-hover:rotate-180 transition-transform duration-500">🔄</span>
+              </span>
               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:animate-shimmer" />
             </button>
           </div>

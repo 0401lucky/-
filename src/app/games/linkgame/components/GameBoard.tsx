@@ -75,9 +75,11 @@ export function GameBoard({
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto p-4">
+    <div className="w-full max-w-2xl mx-auto p-8 bg-white/40 backdrop-blur-xl rounded-[2.5rem] border-4 border-white shadow-2xl shadow-indigo-500/10 relative overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-transparent pointer-events-none" />
+      
       <div 
-        className="grid gap-2 sm:gap-3 mx-auto relative"
+        className="grid gap-2 sm:gap-3 mx-auto relative z-10"
         style={{
           gridTemplateColumns: `repeat(${config.cols}, minmax(0, 1fr))`,
           maxWidth: '100%',
@@ -99,42 +101,46 @@ export function GameBoard({
           const delay = (row + col) * 50; 
 
           return (
-            <div key={index} className="relative group">
+            <div key={index} className="relative group perspective-500">
               <button
                 onClick={() => isVisible && onSelect(index)}
                 disabled={!isVisible || isMatching}
                 onAnimationEnd={(e) => handleAnimationEnd(index, e.animationName)}
                 className={cn(
-                  "relative w-full h-full flex items-center justify-center text-3xl sm:text-4xl select-none transition-all duration-200",
-                  "rounded-xl aspect-square shadow-sm",
+                  "relative w-full h-full flex items-center justify-center text-3xl sm:text-5xl select-none transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]",
+                  "rounded-3xl aspect-square shadow-[0_4px_0_0_rgba(0,0,0,0.05)] active:shadow-none active:translate-y-[4px]",
                   isVisible 
-                    ? "bg-white border-2 border-slate-200 cursor-pointer hover:border-blue-300 hover:shadow-md hover:-translate-y-0.5 active:scale-95" 
+                    ? "bg-white border-b-4 border-r-2 border-l-2 border-t-2 border-white cursor-pointer hover:-translate-y-1 hover:shadow-[0_8px_0_0_rgba(0,0,0,0.05)]" 
                     : "invisible opacity-0",
                   
                   // Entrance animation - only run if not complete
                   isVisible && !entranceComplete && "animate-tile-entrance",
                   
+                  // Normal state gradient (subtle)
+                  isVisible && !isSelected && !isMatching && !isShaking && "bg-gradient-to-br from-white to-slate-50",
+
                   // Selection state
-                  isSelected && isVisible && "animate-tile-pulse ring-4 ring-blue-400 scale-110 border-blue-500 z-10 shadow-xl",
+                  isSelected && isVisible && "animate-tile-pulse ring-4 ring-pink-400 border-pink-500 z-10 shadow-xl scale-110 bg-pink-50 text-6xl rotate-3",
                   
                   // Shaking state (error)
-                  isShaking && "animate-tile-shake bg-red-50 border-red-300 text-red-500 ring-2 ring-red-200",
+                  isShaking && "animate-tile-shake bg-red-50 border-red-400 text-red-500 ring-4 ring-red-200 z-10 rotate-12",
                   
                   // Matching state (success)
-                  isMatching && "animate-tile-match z-20 border-green-400 bg-green-50 ring-4 ring-green-200"
+                  isMatching && "animate-tile-match z-20 border-emerald-400 bg-emerald-50 ring-4 ring-emerald-200 scale-125 rotate-[-12deg]"
                 )}
                 style={{
                   animationDelay: isVisible && !entranceComplete && !isShaking && !isMatching ? `${delay}ms` : '0ms'
                 }}
               >
-                {getTileContent(tile)}
+                <span className="drop-shadow-sm filter transform hover:scale-110 transition-transform">{getTileContent(tile)}</span>
                 
                 {/* Sparkle effects for matching tiles */}
                 {isMatching && (
                   <>
-                    <span className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 text-xl animate-sparkle" style={{ animationDelay: '0.1s' }}>✨</span>
-                    <span className="absolute bottom-0 left-0 -translate-x-1/4 translate-y-1/4 text-lg animate-sparkle" style={{ animationDelay: '0.2s' }}>✨</span>
-                    <span className="absolute top-1/2 right-0 translate-x-1/2 -translate-y-1/2 text-lg animate-sparkle" style={{ animationDelay: '0.3s' }}>⭐</span>
+                    <span className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 text-2xl animate-sparkle" style={{ animationDelay: '0.1s' }}>✨</span>
+                    <span className="absolute bottom-0 left-0 -translate-x-1/4 translate-y-1/4 text-xl animate-sparkle" style={{ animationDelay: '0.2s' }}>💖</span>
+                    <span className="absolute top-1/2 right-0 translate-x-1/2 -translate-y-1/2 text-xl animate-sparkle" style={{ animationDelay: '0.3s' }}>⭐</span>
+                    <span className="absolute -top-2 -right-2 text-xl animate-sparkle" style={{ animationDelay: '0.4s' }}>🍬</span>
                   </>
                 )}
               </button>
