@@ -232,19 +232,19 @@ export function GameBoard({
                   isVisible && !isSelected && !isMatching && !isShaking && "bg-gradient-to-br from-white to-slate-50",
 
                   // Selection state
-                  isSelected && isVisible && "animate-tile-pulse ring-4 ring-pink-400 border-pink-500 z-10 shadow-xl scale-110 bg-pink-50 text-6xl rotate-3",
+                  isSelected && isVisible && "animate-tile-pulse ring-4 ring-pink-400 border-pink-500 z-10 shadow-xl bg-pink-50 rotate-3 text-4xl sm:text-6xl scale-[1.06] sm:scale-110",
                   
                   // Shaking state (error)
                   isShaking && "animate-tile-shake bg-red-50 border-red-400 text-red-500 ring-4 ring-red-200 z-10 rotate-12",
                   
                   // Matching state (success)
-                  isMatching && "animate-tile-match z-20 border-emerald-400 bg-emerald-50 ring-4 ring-emerald-200 scale-125 rotate-[-12deg]"
+                  isMatching && "animate-tile-match z-20 border-emerald-400 bg-emerald-50 ring-4 ring-emerald-200 rotate-[-12deg] scale-110 sm:scale-125"
                 )}
                 style={{
                   animationDelay: isVisible && !entranceComplete && !isShaking && !isMatching ? `${delay}ms` : '0ms'
                 }}
               >
-                <span className="drop-shadow-sm filter transform hover:scale-110 transition-transform">{getTileContent(tile)}</span>
+                <span className="drop-shadow-sm filter transform sm:hover:scale-110 transition-transform">{getTileContent(tile)}</span>
                 
                 {/* Sparkle effects for matching tiles */}
                 {isMatching && (
