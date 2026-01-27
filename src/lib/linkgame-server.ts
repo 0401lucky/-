@@ -15,6 +15,7 @@ import {
   calculateScore,
   positionOf,
   indexOf,
+  shuffleBoard,
 } from './linkgame';
 import type {
   LinkGameDifficulty,
@@ -96,6 +97,7 @@ export interface ValidationResult {
   matchedPairs?: number;
   maxStreak?: number;
   completed?: boolean;
+  shufflesUsed?: number;
 }
 
 /**
@@ -138,6 +140,7 @@ export function validateLinkGameResult(
   let matchedPairs = 0;
   let currentStreak = 0;
   let maxStreak = 0;
+  let serverShufflesUsed = 0;
 
   for (const move of payload.moves) {
     // 类型检查
@@ -145,7 +148,23 @@ export function validateLinkGameResult(
       return { ok: false, message: '无效的操作格式' };
     }
 
-    const { pos1, pos2, matched } = move;
+    // Handle shuffle moves
+    const moveType = (move as { type?: string }).type;
+    if (moveType === 'shuffle') {
+      serverShufflesUsed++;
+      if (serverShufflesUsed > shuffleLimit) {
+        return { ok: false, message: '洗牌次数超过限制' };
+      }
+      // Apply shuffle with deterministic seed matching client
+      const shuffleSeed = `${session.id}-shuffle-${serverShufflesUsed}`;
+      board = shuffleBoard(board, shuffleSeed);
+      currentStreak = 0;
+      continue;
+    }
+
+    // Handle match moves (including legacy format without type field)
+    const matchMove = move as { pos1?: LinkGamePosition; pos2?: LinkGamePosition; matched?: boolean };
+    const { pos1, pos2, matched } = matchMove;
 
     // 位置类型检查
     if (!pos1 || !pos2 || typeof pos1 !== 'object' || typeof pos2 !== 'object') {
@@ -212,6 +231,7 @@ export function validateLinkGameResult(
     matchedPairs,
     maxStreak,
     completed: actuallyCompleted,
+    shufflesUsed: serverShufflesUsed,
   };
 }
 
@@ -370,13 +390,15 @@ export async function submitLinkGameResult(
     const combo = Math.max(0, (validation.maxStreak ?? 0) - 1);
     const timeRemainingSeconds = Math.max(0, config.timeLimit - Math.floor(serverDuration / 1000));
 
+    // Use server-counted shufflesUsed for scoring (don't trust client)
+    const validatedShufflesUsed = validation.shufflesUsed ?? 0;
     score = calculateScore({
       matchedPairs: validation.matchedPairs ?? 0,
       baseScore: config.baseScore,
       combo,
       timeRemainingSeconds,
       hintsUsed: payload.hintsUsed,
-      shufflesUsed: payload.shufflesUsed,
+      shufflesUsed: validatedShufflesUsed,
       hintPenalty: config.hintPenalty,
       shufflePenalty: config.shufflePenalty,
     });

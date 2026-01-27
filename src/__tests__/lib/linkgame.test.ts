@@ -13,6 +13,7 @@ import {
   shuffleBoard,
   checkGameComplete,
   calculateScore,
+  findMatchPath,
 } from '@/lib/linkgame';
 
 describe('linkgame', () => {
@@ -111,6 +112,12 @@ describe('linkgame', () => {
       expect(uniqueTiles.size).toBe(LINKGAME_TILE_TYPE_COUNT.hard);
       expect(uniqueTiles.size).toBe(8);
     });
+
+    it('should ensure at least one valid move exists', () => {
+      const layout = generateTileLayout('easy', 'ensure-valid-move');
+      const hint = findHint(layout, 4, 4);
+      expect(hint).not.toBeNull();
+    });
   });
 
   describe('indexOf and positionOf', () => {
@@ -162,27 +169,26 @@ describe('linkgame', () => {
 
     it('should return true for same col with clear path', () => {
       const board: (string | null)[] = [
-        'A', 'B',
-        null, 'C',
-        null, 'D',
-        'A', 'E',
+        'A', 'B', 'C',
+        null, 'D', 'E',
+        null, 'F', 'G',
+        'A', 'H', 'I',
       ];
-      expect(canMatch(board, { row: 0, col: 0 }, { row: 3, col: 0 }, 2)).toBe(true);
+      expect(canMatch(board, { row: 0, col: 0 }, { row: 3, col: 0 }, 3)).toBe(true);
     });
 
-    it('should return false when blocked by non-null tile in same row', () => {
+    it('should return true when blocked in same row but can go via border', () => {
       const board: (string | null)[] = ['A', 'X', null, 'A'];
-      expect(canMatch(board, { row: 0, col: 0 }, { row: 0, col: 3 }, 4)).toBe(false);
+      expect(canMatch(board, { row: 0, col: 0 }, { row: 0, col: 3 }, 4)).toBe(true);
     });
 
-    it('should return false when blocked by non-null tile in same col', () => {
+    it('should return false when completely surrounded', () => {
       const board: (string | null)[] = [
-        'A', 'B',
-        'X', 'C',
-        null, 'D',
-        'A', 'E',
+        'X', 'X', 'X', 'X', 'X',
+        'X', 'A', 'X', 'A', 'X',
+        'X', 'X', 'X', 'X', 'X',
       ];
-      expect(canMatch(board, { row: 0, col: 0 }, { row: 3, col: 0 }, 2)).toBe(false);
+      expect(canMatch(board, { row: 1, col: 1 }, { row: 1, col: 3 }, 5)).toBe(false);
     });
 
     it('should return false for different tiles', () => {
@@ -200,9 +206,124 @@ describe('linkgame', () => {
       expect(canMatch(board, { row: 0, col: 0 }, { row: 0, col: 0 }, 2)).toBe(false);
     });
 
-    it('should return false for diagonal (not same row/col, not adjacent)', () => {
-      const board = ['A', 'B', 'C', 'A'];
-      expect(canMatch(board, { row: 0, col: 0 }, { row: 1, col: 1 }, 2)).toBe(false);
+    it('should return true for 1-turn path through empty corner', () => {
+      const board: (string | null)[] = [
+        'A', null,
+        'B', 'A',
+      ];
+      expect(canMatch(board, { row: 0, col: 0 }, { row: 1, col: 1 }, 2)).toBe(true);
+    });
+
+    it('should return true for 2-turn path', () => {
+      const board: (string | null)[] = [
+        'A', 'X', 'X',
+        null, null, null,
+        'X', 'X', 'A',
+      ];
+      expect(canMatch(board, { row: 0, col: 0 }, { row: 2, col: 2 }, 3)).toBe(true);
+    });
+
+    it('should return true for outside-border path (1x3 A B A)', () => {
+      const board: (string | null)[] = ['A', 'B', 'A'];
+      expect(canMatch(board, { row: 0, col: 0 }, { row: 0, col: 2 }, 3)).toBe(true);
+    });
+
+    it('should return true for path going around via top border', () => {
+      const board: (string | null)[] = [
+        'A', 'X', 'A',
+        'X', 'X', 'X',
+      ];
+      expect(canMatch(board, { row: 0, col: 0 }, { row: 0, col: 2 }, 3)).toBe(true);
+    });
+
+    it('should return true for path going around via bottom border', () => {
+      const board: (string | null)[] = [
+        'X', 'X', 'X',
+        'A', 'X', 'A',
+      ];
+      expect(canMatch(board, { row: 1, col: 0 }, { row: 1, col: 2 }, 3)).toBe(true);
+    });
+
+    it('should return true for path going around via left border', () => {
+      const board: (string | null)[] = [
+        'A', 'X',
+        'X', 'X',
+        'A', 'X',
+      ];
+      expect(canMatch(board, { row: 0, col: 0 }, { row: 2, col: 0 }, 2)).toBe(true);
+    });
+  });
+
+  describe('findMatchPath', () => {
+    it('should return path for adjacent tiles', () => {
+      const board = ['A', 'A', 'B', 'B'];
+      const path = findMatchPath(board, { row: 0, col: 0 }, { row: 0, col: 1 }, 2);
+      expect(path).not.toBeNull();
+      expect(path!.length).toBe(2);
+      expect(path![0]).toEqual({ row: 0, col: 0 });
+      expect(path![1]).toEqual({ row: 0, col: 1 });
+    });
+
+    it('should return path for 1-turn match', () => {
+      const board: (string | null)[] = [
+        'A', null,
+        'B', 'A',
+      ];
+      const path = findMatchPath(board, { row: 0, col: 0 }, { row: 1, col: 1 }, 2);
+      expect(path).not.toBeNull();
+      expect(path!.length).toBe(3);
+    });
+
+    it('should return path for 2-turn match', () => {
+      const board: (string | null)[] = [
+        'A', 'X', 'X',
+        null, null, null,
+        'X', 'X', 'A',
+      ];
+      const path = findMatchPath(board, { row: 0, col: 0 }, { row: 2, col: 2 }, 3);
+      expect(path).not.toBeNull();
+      expect(path!.length).toBe(4);
+    });
+
+    it('should return path with virtual coordinates for border path', () => {
+      const board: (string | null)[] = ['A', 'B', 'A'];
+      const path = findMatchPath(board, { row: 0, col: 0 }, { row: 0, col: 2 }, 3);
+      expect(path).not.toBeNull();
+      const hasVirtualCoord = path!.some(p => p.row < 0 || p.row > 0 || p.col < 0 || p.col > 2);
+      expect(hasVirtualCoord).toBe(true);
+    });
+
+    it('should return null for non-matching tiles', () => {
+      const board = ['A', 'B', 'C', 'D'];
+      const path = findMatchPath(board, { row: 0, col: 0 }, { row: 0, col: 1 }, 2);
+      expect(path).toBeNull();
+    });
+
+    it('should return null for blocked path requiring 3+ turns', () => {
+      const board: (string | null)[] = [
+        'A', 'X', 'X', 'X',
+        'X', 'X', 'X', 'X',
+        'X', 'X', 'X', 'X',
+        'X', 'X', 'X', 'A',
+      ];
+      const path = findMatchPath(board, { row: 0, col: 0 }, { row: 3, col: 3 }, 4);
+      expect(path).toBeNull();
+    });
+
+    it('should correctly compute rows from board.length/cols for non-square boards', () => {
+      const board: (string | null)[] = [
+        'A', 'B', 'C', 'D', 'E', 'F',
+        'A', 'B', 'C', 'D', 'E', 'F',
+      ];
+      const path = findMatchPath(board, { row: 0, col: 0 }, { row: 1, col: 0 }, 6);
+      expect(path).not.toBeNull();
+      expect(path!.length).toBe(2);
+    });
+
+    it('should return null for invalid board dimensions', () => {
+      const board: (string | null)[] = ['A', 'A', 'B'];
+      const path = findMatchPath(board, { row: 0, col: 0 }, { row: 0, col: 1 }, 2);
+      expect(path).toBeNull();
     });
   });
 
@@ -232,15 +353,6 @@ describe('linkgame', () => {
       expect(canMatch(board, hint!.pos1, hint!.pos2, 2)).toBe(true);
     });
 
-    it('should return null for dead board (no valid matches)', () => {
-      const board: (string | null)[] = [
-        'A', 'B',
-        'B', 'A',
-      ];
-      const hint = findHint(board, 2, 2);
-      expect(hint).toBeNull();
-    });
-
     it('should return null for empty board', () => {
       const board: (string | null)[] = [null, null, null, null];
       const hint = findHint(board, 2, 2);
@@ -250,6 +362,22 @@ describe('linkgame', () => {
     it('should find match for same row with clear path', () => {
       const board: (string | null)[] = ['A', null, null, 'A'];
       const hint = findHint(board, 1, 4);
+      expect(hint).not.toBeNull();
+    });
+
+    it('should find match via border path', () => {
+      const board: (string | null)[] = ['A', 'B', 'A'];
+      const hint = findHint(board, 1, 3);
+      expect(hint).not.toBeNull();
+    });
+
+    it('should find match with 2-turn path', () => {
+      const board: (string | null)[] = [
+        'A', 'X', 'X',
+        null, null, null,
+        'X', 'X', 'A',
+      ];
+      const hint = findHint(board, 3, 3);
       expect(hint).not.toBeNull();
     });
   });
@@ -277,6 +405,18 @@ describe('linkgame', () => {
       const shuffled1 = shuffleBoard(board, 'same-seed');
       const shuffled2 = shuffleBoard(board, 'same-seed');
       expect(shuffled1).toEqual(shuffled2);
+    });
+
+    it('should ensure at least one valid move after shuffle', () => {
+      const board: (string | null)[] = [
+        'A', 'B', 'C', 'D',
+        'A', 'B', 'C', 'D',
+        'E', 'F', 'G', 'H',
+        'E', 'F', 'G', 'H',
+      ];
+      const shuffled = shuffleBoard(board, 'ensure-move-seed');
+      const hint = findHint(shuffled, 4, 4);
+      expect(hint).not.toBeNull();
     });
   });
 

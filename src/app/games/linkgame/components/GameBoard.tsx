@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import type { LinkGameDifficulty, LinkGameDifficultyConfig } from '@/lib/types/game';
+import { useState, useEffect, useRef } from 'react';
+import type { LinkGameDifficulty, LinkGameDifficultyConfig, LinkGamePosition } from '@/lib/types/game';
 import { cn } from '@/lib/utils';
 
 interface GameBoardProps {
@@ -11,6 +11,7 @@ interface GameBoardProps {
   selected: number | null;
   shakingIndices?: number[];
   matchingIndices?: number[];
+  matchPath?: LinkGamePosition[];
   onSelect: (index: number) => void;
   onMatch?: (index1: number, index2: number) => void;
   onGameEnd?: () => void;
@@ -23,11 +24,64 @@ export function GameBoard({
   selected,
   shakingIndices = [],
   matchingIndices = [],
+  matchPath,
   onSelect,
 }: GameBoardProps) {
   const [entranceComplete, setEntranceComplete] = useState(false);
   const [matchingTiles, setMatchingTiles] = useState<number[]>([]);
   const [shakingTiles, setShakingTiles] = useState<number[]>([]);
+  const [pathPoints, setPathPoints] = useState('');
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  // Calculate path points for the connecting line
+  useEffect(() => {
+    if (!matchPath || matchPath.length < 2 || !gridRef.current) {
+      setPathPoints('');
+      return;
+    }
+
+    const updatePath = () => {
+      if (!gridRef.current) return;
+      const { width, height } = gridRef.current.getBoundingClientRect();
+      const computedStyle = getComputedStyle(gridRef.current);
+      const gap = parseFloat(computedStyle.columnGap) || 0;
+      const { rows, cols } = config;
+
+      // Calculate cell dimensions including gap distribution
+      // Grid width = cols * cellWidth + (cols - 1) * gap
+      const cellWidth = (width - (cols - 1) * gap) / cols;
+      const cellHeight = (height - (rows - 1) * gap) / rows;
+
+      const getX = (c: number) => {
+        // Center of tile: col * (size + gap) + size/2
+        // Border left (-1): -gap/2 (in the gap before start) -> actually inside the padding
+        // Let's place border lines in the middle of the padding area effectively
+        // We have p-8 (32px) padding in parent.
+        // Let's offset border paths by roughly half a cell or just outside the grid
+        const offset = gap * 1.5; 
+        if (c < 0) return -offset; 
+        if (c >= cols) return width + offset;
+        return c * (cellWidth + gap) + cellWidth / 2;
+      };
+
+      const getY = (r: number) => {
+        const offset = gap * 1.5;
+        if (r < 0) return -offset;
+        if (r >= rows) return height + offset;
+        return r * (cellHeight + gap) + cellHeight / 2;
+      };
+
+      const points = matchPath.map(p => `${getX(p.col)},${getY(p.row)}`).join(' ');
+      setPathPoints(points);
+    };
+
+    updatePath();
+    // Use ResizeObserver for more robust resizing support
+    const resizeObserver = new ResizeObserver(updatePath);
+    resizeObserver.observe(gridRef.current);
+    
+    return () => resizeObserver.disconnect();
+  }, [matchPath, config.rows, config.cols]);
 
   // Sync props to local state for animation control
   useEffect(() => {
@@ -79,6 +133,7 @@ export function GameBoard({
       <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-transparent pointer-events-none" />
       
       <div 
+        ref={gridRef}
         className="grid gap-2 sm:gap-3 mx-auto relative z-10"
         style={{
           gridTemplateColumns: `repeat(${config.cols}, minmax(0, 1fr))`,
@@ -86,6 +141,50 @@ export function GameBoard({
           aspectRatio: `${config.cols} / ${config.rows}`,
         }}
       >
+        {pathPoints && (
+          <svg className="absolute inset-0 w-full h-full pointer-events-none z-50 overflow-visible">
+            <defs>
+              <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+                <feMerge>
+                  <feMergeNode in="coloredBlur"/>
+                  <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+              </filter>
+            </defs>
+            {/* Outer glow/stroke */}
+            <polyline
+              points={pathPoints}
+              fill="none"
+              stroke="#f472b6" // pink-400
+              strokeWidth="8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="opacity-60 blur-sm"
+            />
+            {/* Main stroke */}
+            <polyline
+              points={pathPoints}
+              fill="none"
+              stroke="#f472b6" // pink-400
+              strokeWidth="6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              filter="url(#glow)"
+              className="animate-draw-line"
+            />
+            {/* Inner highlight */}
+            <polyline
+              points={pathPoints}
+              fill="none"
+              stroke="white"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="opacity-80"
+            />
+          </svg>
+        )}
         {tileLayout.map((tile, index) => {
           const isSelected = selected === index;
           const isVisible = tile !== null;

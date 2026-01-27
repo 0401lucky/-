@@ -4,6 +4,8 @@ import type {
   LinkGameDifficultyConfig,
   LinkGamePosition,
   LinkGameMove,
+  LinkGameMatchMove,
+  LinkGameShuffleMove,
   LinkGameSession,
   LinkGameResultSubmit,
   LinkGameRecord,
@@ -36,13 +38,25 @@ describe('LinkGame Types', () => {
     }>();
   });
 
-  it('should have correct LinkGameMove interface', () => {
-    expectTypeOf<LinkGameMove>().toMatchTypeOf<{
+  it('should have correct LinkGameMatchMove interface', () => {
+    expectTypeOf<LinkGameMatchMove>().toMatchTypeOf<{
+      type: 'match';
       pos1: LinkGamePosition;
       pos2: LinkGamePosition;
       matched: boolean;
       timestamp: number;
     }>();
+  });
+
+  it('should have correct LinkGameShuffleMove interface', () => {
+    expectTypeOf<LinkGameShuffleMove>().toMatchTypeOf<{
+      type: 'shuffle';
+      timestamp: number;
+    }>();
+  });
+
+  it('should have LinkGameMove as union of match and shuffle', () => {
+    expectTypeOf<LinkGameMove>().toEqualTypeOf<LinkGameMatchMove | LinkGameShuffleMove>();
   });
 
   it('should have correct LinkGameSession interface', () => {

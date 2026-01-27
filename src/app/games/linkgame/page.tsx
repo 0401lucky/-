@@ -12,13 +12,14 @@ import {
   canMatch,
   removeMatch,
   findHint,
+  findMatchPath,
   shuffleBoard,
   checkGameComplete,
   calculateScore,
   positionOf,
   indexOf,
 } from '@/lib/linkgame';
-import type { LinkGameDifficulty, LinkGameMove } from '@/lib/types/game';
+import type { LinkGameDifficulty, LinkGameMove, LinkGamePosition } from '@/lib/types/game';
 
 type GamePhase = 'loading' | 'select' | 'playing' | 'result';
 
@@ -62,6 +63,7 @@ export default function LinkGamePage() {
   const [moves, setMoves] = useState<LinkGameMove[]>([]);
   const [shakingIndices, setShakingIndices] = useState<number[]>([]);
   const [matchingIndices, setMatchingIndices] = useState<number[]>([]);
+  const [matchPath, setMatchPath] = useState<LinkGamePosition[] | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -201,6 +203,7 @@ export default function LinkGamePage() {
       setMoves([]);
       movesRef.current = [];
       setSelected(null);
+      setMatchPath(null);
     }
   };
 
@@ -234,6 +237,7 @@ export default function LinkGamePage() {
       const matched = canMatch(board, pos1, pos2, session.config.cols);
 
       const newMove: LinkGameMove = {
+        type: 'match',
         pos1,
         pos2,
         matched,
@@ -250,6 +254,10 @@ export default function LinkGamePage() {
         setIsProcessing(true);
         setMatchingIndices([selected, index]);
         
+        // Compute and show path
+        const path = findMatchPath(board, pos1, pos2, session.config.cols);
+        setMatchPath(path);
+        
         // Calculate score updates immediately for UI response
         const newMatchedPairs = matchedPairsRef.current + 1;
         const newCombo = combo + 1;
@@ -261,6 +269,7 @@ export default function LinkGamePage() {
           setBoard(newBoard);
           setSelected(null);
           setMatchingIndices([]);
+          setMatchPath(null);
           setIsProcessing(false);
 
           setMatchedPairs(newMatchedPairs);
@@ -332,11 +341,26 @@ export default function LinkGamePage() {
     const limit = session.config.shuffleLimit;
     if (shufflesUsed >= limit) return;
 
-    const newBoard = shuffleBoard(board);
+    const newShufflesUsed = shufflesUsed + 1;
+    
+    // Record shuffle move before applying
+    const shuffleMove: LinkGameMove = {
+      type: 'shuffle',
+      timestamp: Date.now(),
+    };
+    setMoves((prev) => {
+      const next = [...prev, shuffleMove];
+      movesRef.current = next;
+      return next;
+    });
+
+    // Deterministic seed: sessionId + shuffle index
+    const shuffleSeed = `${session.sessionId}-shuffle-${newShufflesUsed}`;
+    const newBoard = shuffleBoard(board, shuffleSeed);
     setBoard(newBoard);
     setSelected(null);
+    setMatchPath(null);
 
-    const newShufflesUsed = shufflesUsed + 1;
     shufflesUsedRef.current = newShufflesUsed;
     setShufflesUsed(newShufflesUsed);
 
@@ -490,6 +514,7 @@ export default function LinkGamePage() {
               onSelect={handleTileClick}
               shakingIndices={shakingIndices}
               matchingIndices={matchingIndices}
+              matchPath={matchPath ?? undefined}
             />
           </div>
         )}

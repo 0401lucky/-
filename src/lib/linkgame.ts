@@ -1,7 +1,6 @@
 import seedrandom from 'seedrandom';
 import type { LinkGameDifficulty, LinkGameDifficultyConfig, LinkGamePosition } from './types/game';
 
-// Fruit-themed tile IDs (emojis)
 export const LINKGAME_TILE_IDS = [
   '🍎', '🍊', '🍋', '🍇', '🍓', '🍒', '🍑', '🥝',
   '🍌', '🍉', '🥭', '🍍', '🫐', '🍈', '🍐', '🥥',
@@ -51,9 +50,8 @@ export const LINKGAME_DIFFICULTY_CONFIG: Record<LinkGameDifficulty, LinkGameDiff
 
 type Rng = () => number;
 
-/**
- * Fisher-Yates shuffle using provided RNG
- */
+const MAX_SHUFFLE_ATTEMPTS = 100;
+
 function shuffleArray<T>(arr: T[], rng: Rng): T[] {
   const result = [...arr];
   for (let i = result.length - 1; i > 0; i--) {
@@ -63,41 +61,29 @@ function shuffleArray<T>(arr: T[], rng: Rng): T[] {
   return result;
 }
 
-/**
- * Generate a deterministic tile layout for the game board.
- * Returns a 1D array (row-major) of tile IDs, each tile appears in pairs.
- */
-export function generateTileLayout(difficulty: LinkGameDifficulty, seed: string): string[] {
-  const config = LINKGAME_DIFFICULTY_CONFIG[difficulty];
-  const totalCells = config.rows * config.cols;
-  const pairs = config.pairs;
-  const tileTypeCount = LINKGAME_TILE_TYPE_COUNT[difficulty];
+function inferDimensions(boardLength: number): { rows: number; cols: number } {
+  if (boardLength === 16) return { rows: 4, cols: 4 };
+  if (boardLength === 36) return { rows: 6, cols: 6 };
+  if (boardLength === 64) return { rows: 8, cols: 8 };
 
-  if (pairs !== totalCells / 2) {
-    throw new Error(`Invalid config: pairs (${pairs}) must equal totalCells/2 (${totalCells / 2})`);
+  const side = Math.sqrt(boardLength);
+  if (Number.isInteger(side)) {
+    return { rows: side, cols: side };
   }
 
-  const rng = seedrandom(seed);
-
-  const tiles: string[] = [];
-  for (let i = 0; i < pairs; i++) {
-    const tileId = LINKGAME_TILE_IDS[i % tileTypeCount];
-    tiles.push(tileId, tileId);
+  for (let c = Math.ceil(Math.sqrt(boardLength)); c <= boardLength; c++) {
+    if (boardLength % c === 0) {
+      return { rows: boardLength / c, cols: c };
+    }
   }
 
-  return shuffleArray(tiles, rng);
+  return { rows: 1, cols: boardLength };
 }
 
-/**
- * Convert 2D position to 1D index (row-major order)
- */
 export function indexOf(pos: LinkGamePosition, cols: number): number {
   return pos.row * cols + pos.col;
 }
 
-/**
- * Convert 1D index to 2D position
- */
 export function positionOf(index: number, cols: number): LinkGamePosition {
   return {
     row: Math.floor(index / cols),
@@ -105,99 +91,178 @@ export function positionOf(index: number, cols: number): LinkGamePosition {
   };
 }
 
-/**
- * Get tile at position from board
- */
 export function getTile(board: (string | null)[], pos: LinkGamePosition, cols: number): string | null {
   const idx = indexOf(pos, cols);
   if (idx < 0 || idx >= board.length) return null;
   return board[idx];
 }
 
-/**
- * Check if two positions are adjacent (up/down/left/right)
- */
-function areAdjacent(pos1: LinkGamePosition, pos2: LinkGamePosition): boolean {
-  const dr = Math.abs(pos1.row - pos2.row);
-  const dc = Math.abs(pos1.col - pos2.col);
-  return (dr === 1 && dc === 0) || (dr === 0 && dc === 1);
+function isEmptyInPaddedGrid(
+  board: (string | null)[],
+  rows: number,
+  cols: number,
+  pr: number,
+  pc: number,
+  startPr: number,
+  startPc: number,
+  endPr: number,
+  endPc: number
+): boolean {
+  if (pr < 0 || pr > rows + 1 || pc < 0 || pc > cols + 1) return false;
+  if (pr === 0 || pr === rows + 1 || pc === 0 || pc === cols + 1) return true;
+  if ((pr === startPr && pc === startPc) || (pr === endPr && pc === endPc)) return true;
+  const origRow = pr - 1;
+  const origCol = pc - 1;
+  return board[origRow * cols + origCol] === null;
+}
+
+function isSegmentClearPadded(
+  board: (string | null)[],
+  rows: number,
+  cols: number,
+  r1: number,
+  c1: number,
+  r2: number,
+  c2: number,
+  startPr: number,
+  startPc: number,
+  endPr: number,
+  endPc: number
+): boolean {
+  if (r1 === r2) {
+    const minC = Math.min(c1, c2);
+    const maxC = Math.max(c1, c2);
+    for (let c = minC; c <= maxC; c++) {
+      if (!isEmptyInPaddedGrid(board, rows, cols, r1, c, startPr, startPc, endPr, endPc)) return false;
+    }
+    return true;
+  } else if (c1 === c2) {
+    const minR = Math.min(r1, r2);
+    const maxR = Math.max(r1, r2);
+    for (let r = minR; r <= maxR; r++) {
+      if (!isEmptyInPaddedGrid(board, rows, cols, r, c1, startPr, startPc, endPr, endPc)) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+function paddedToVirtual(pr: number, pc: number): LinkGamePosition {
+  return { row: pr - 1, col: pc - 1 };
+}
+
+function compactPath(path: LinkGamePosition[]): LinkGamePosition[] {
+  if (path.length <= 2) return path;
+
+  const result: LinkGamePosition[] = [path[0]];
+  for (let i = 1; i < path.length; i++) {
+    const prev = result[result.length - 1];
+    const curr = path[i];
+
+    if (prev.row === curr.row && prev.col === curr.col) continue;
+
+    if (result.length >= 2) {
+      const prevPrev = result[result.length - 2];
+      const isColinear =
+        (prevPrev.row === prev.row && prev.row === curr.row) ||
+        (prevPrev.col === prev.col && prev.col === curr.col);
+      if (isColinear) {
+        result[result.length - 1] = curr;
+        continue;
+      }
+    }
+
+    result.push(curr);
+  }
+
+  return result;
 }
 
 /**
- * Check if path between two positions in same row/col is clear (all nulls)
+ * Find a path between two tiles with at most 2 turns.
+ * Returns path points in virtual coordinates (row/col may be -1..rows or cols for border).
+ * Returns null if no valid path exists.
  */
-function hasClearPath(
+export function findMatchPath(
   board: (string | null)[],
   pos1: LinkGamePosition,
   pos2: LinkGamePosition,
   cols: number
-): boolean {
-  // Must be same row or same col
-  if (pos1.row !== pos2.row && pos1.col !== pos2.col) {
-    return false;
+): LinkGamePosition[] | null {
+  if (pos1.row === pos2.row && pos1.col === pos2.col) return null;
+
+  const tile1 = getTile(board, pos1, cols);
+  const tile2 = getTile(board, pos2, cols);
+  if (tile1 === null || tile2 === null || tile1 !== tile2) return null;
+
+  const rows = Math.floor(board.length / cols);
+  if (rows <= 0 || rows * cols !== board.length) {
+    return null;
   }
 
-  if (pos1.row === pos2.row) {
-    // Same row - check horizontal path
-    const minCol = Math.min(pos1.col, pos2.col);
-    const maxCol = Math.max(pos1.col, pos2.col);
-    for (let c = minCol + 1; c < maxCol; c++) {
-      const idx = pos1.row * cols + c;
-      if (board[idx] !== null) return false;
-    }
-    return true;
-  } else {
-    // Same col - check vertical path
-    const minRow = Math.min(pos1.row, pos2.row);
-    const maxRow = Math.max(pos1.row, pos2.row);
-    for (let r = minRow + 1; r < maxRow; r++) {
-      const idx = r * cols + pos1.col;
-      if (board[idx] !== null) return false;
-    }
-    return true;
+  const pr1 = pos1.row + 1;
+  const pc1 = pos1.col + 1;
+  const pr2 = pos2.row + 1;
+  const pc2 = pos2.col + 1;
+
+  const check = (r1: number, c1: number, r2: number, c2: number) =>
+    isSegmentClearPadded(board, rows, cols, r1, c1, r2, c2, pr1, pc1, pr2, pc2);
+
+  if ((pr1 === pr2 || pc1 === pc2) && check(pr1, pc1, pr2, pc2)) {
+    return compactPath([paddedToVirtual(pr1, pc1), paddedToVirtual(pr2, pc2)]);
   }
+
+  if (check(pr1, pc1, pr1, pc2) && check(pr1, pc2, pr2, pc2)) {
+    return compactPath([
+      paddedToVirtual(pr1, pc1),
+      paddedToVirtual(pr1, pc2),
+      paddedToVirtual(pr2, pc2),
+    ]);
+  }
+  if (check(pr1, pc1, pr2, pc1) && check(pr2, pc1, pr2, pc2)) {
+    return compactPath([
+      paddedToVirtual(pr1, pc1),
+      paddedToVirtual(pr2, pc1),
+      paddedToVirtual(pr2, pc2),
+    ]);
+  }
+
+  for (let midR = 0; midR <= rows + 1; midR++) {
+    if (midR === pr1 || midR === pr2) continue;
+    if (check(pr1, pc1, midR, pc1) && check(midR, pc1, midR, pc2) && check(midR, pc2, pr2, pc2)) {
+      return compactPath([
+        paddedToVirtual(pr1, pc1),
+        paddedToVirtual(midR, pc1),
+        paddedToVirtual(midR, pc2),
+        paddedToVirtual(pr2, pc2),
+      ]);
+    }
+  }
+
+  for (let midC = 0; midC <= cols + 1; midC++) {
+    if (midC === pc1 || midC === pc2) continue;
+    if (check(pr1, pc1, pr1, midC) && check(pr1, midC, pr2, midC) && check(pr2, midC, pr2, pc2)) {
+      return compactPath([
+        paddedToVirtual(pr1, pc1),
+        paddedToVirtual(pr1, midC),
+        paddedToVirtual(pr2, midC),
+        paddedToVirtual(pr2, pc2),
+      ]);
+    }
+  }
+
+  return null;
 }
 
-/**
- * Check if two positions can be matched.
- * Rules:
- * - Both positions must have the same non-null tile
- * - Positions must be different
- * - Either adjacent OR same row/col with all intermediate cells empty
- */
 export function canMatch(
   board: (string | null)[],
   pos1: LinkGamePosition,
   pos2: LinkGamePosition,
   cols: number
 ): boolean {
-  // Same position check
-  if (pos1.row === pos2.row && pos1.col === pos2.col) {
-    return false;
-  }
-
-  const tile1 = getTile(board, pos1, cols);
-  const tile2 = getTile(board, pos2, cols);
-
-  // Both must be non-null and same tile
-  if (tile1 === null || tile2 === null || tile1 !== tile2) {
-    return false;
-  }
-
-  // Check if adjacent
-  if (areAdjacent(pos1, pos2)) {
-    return true;
-  }
-
-  // Check if same row/col with clear path
-  return hasClearPath(board, pos1, pos2, cols);
+  return findMatchPath(board, pos1, pos2, cols) !== null;
 }
 
-/**
- * Remove matched tiles from board.
- * Returns a new board with positions set to null.
- * Does NOT mutate the original board.
- */
 export function removeMatch(
   board: (string | null)[],
   pos1: LinkGamePosition,
@@ -212,13 +277,9 @@ export function removeMatch(
   return newBoard;
 }
 
-/**
- * Find a valid match (hint) on the board.
- * Returns positions of a matchable pair, or null if none exists (dead board).
- */
-export function findHint(
+function findHintInternal(
   board: (string | null)[],
-  _rows: number,
+  rows: number,
   cols: number
 ): { pos1: LinkGamePosition; pos2: LinkGamePosition } | null {
   const tilePositions: Map<string, LinkGamePosition[]> = new Map();
@@ -234,7 +295,6 @@ export function findHint(
     }
   }
 
-  // For each tile type, check all pairs
   for (const positions of tilePositions.values()) {
     for (let i = 0; i < positions.length; i++) {
       for (let j = i + 1; j < positions.length; j++) {
@@ -248,18 +308,20 @@ export function findHint(
   return null;
 }
 
-/**
- * Shuffle the board while preserving the multiset of remaining tiles.
- * Null positions remain null.
- * Returns a new shuffled board.
- */
+export function findHint(
+  board: (string | null)[],
+  rows: number,
+  cols: number
+): { pos1: LinkGamePosition; pos2: LinkGamePosition } | null {
+  return findHintInternal(board, rows, cols);
+}
+
 export function shuffleBoard(
   board: (string | null)[],
   seed?: string
 ): (string | null)[] {
-  const rng = seed ? seedrandom(seed) : seedrandom(Date.now().toString());
+  const { rows, cols } = inferDimensions(board.length);
 
-  // Collect non-null tiles and their original indices
   const nonNullTiles: string[] = [];
   const nonNullIndices: number[] = [];
 
@@ -270,28 +332,69 @@ export function shuffleBoard(
     }
   }
 
-  // Shuffle the tiles
-  const shuffledTiles = shuffleArray(nonNullTiles, rng);
-
-  // Create new board with shuffled tiles
-  const newBoard: (string | null)[] = new Array(board.length).fill(null);
-  for (let i = 0; i < nonNullIndices.length; i++) {
-    newBoard[nonNullIndices[i]] = shuffledTiles[i];
+  if (nonNullTiles.length === 0) {
+    return [...board];
   }
 
-  return newBoard;
+  let lastBoard: (string | null)[] = [...board];
+
+  for (let attempt = 0; attempt < MAX_SHUFFLE_ATTEMPTS; attempt++) {
+    const rng = seed
+      ? seedrandom(`${seed}-shuffle-${attempt}`)
+      : seedrandom(`${Date.now()}-${attempt}`);
+
+    const shuffledTiles = shuffleArray(nonNullTiles, rng);
+
+    const newBoard: (string | null)[] = new Array(board.length).fill(null);
+    for (let i = 0; i < nonNullIndices.length; i++) {
+      newBoard[nonNullIndices[i]] = shuffledTiles[i];
+    }
+    lastBoard = newBoard;
+
+    const hint = findHintInternal(newBoard, rows, cols);
+    if (hint !== null) {
+      return newBoard;
+    }
+  }
+
+  return lastBoard;
 }
 
-/**
- * Check if the game is complete (all tiles removed)
- */
+export function generateTileLayout(difficulty: LinkGameDifficulty, seed: string): string[] {
+  const config = LINKGAME_DIFFICULTY_CONFIG[difficulty];
+  const { rows, cols, pairs } = config;
+  const totalCells = rows * cols;
+  const tileTypeCount = LINKGAME_TILE_TYPE_COUNT[difficulty];
+
+  if (pairs !== totalCells / 2) {
+    throw new Error(`Invalid config: pairs (${pairs}) must equal totalCells/2 (${totalCells / 2})`);
+  }
+
+  const tiles: string[] = [];
+  for (let i = 0; i < pairs; i++) {
+    const tileId = LINKGAME_TILE_IDS[i % tileTypeCount];
+    tiles.push(tileId, tileId);
+  }
+
+  let lastLayout: string[] = [];
+  for (let attempt = 0; attempt < MAX_SHUFFLE_ATTEMPTS; attempt++) {
+    const rng = seedrandom(`${seed}-gen-${attempt}`);
+    const layout = shuffleArray(tiles, rng);
+    lastLayout = layout;
+
+    const hint = findHintInternal(layout, rows, cols);
+    if (hint !== null) {
+      return layout;
+    }
+  }
+
+  return lastLayout;
+}
+
 export function checkGameComplete(board: (string | null)[]): boolean {
   return board.every((tile) => tile === null);
 }
 
-/**
- * Score calculation parameters
- */
 export interface ScoreParams {
   matchedPairs: number;
   baseScore: number;
@@ -303,14 +406,6 @@ export interface ScoreParams {
   shufflePenalty: number;
 }
 
-/**
- * Calculate final score based on game performance.
- * Formula:
- * - comboMultiplier = min(2.0, 1 + combo * 0.1)
- * - timeBonus = timeRemainingSeconds * 2
- * - finalScore = matchedPairs * baseScore * comboMultiplier + timeBonus - hintsUsed * hintPenalty - shufflesUsed * shufflePenalty
- * - Clamped to >= 0 and rounded to integer
- */
 export function calculateScore(params: ScoreParams): number {
   const {
     matchedPairs,

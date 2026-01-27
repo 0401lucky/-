@@ -25,8 +25,26 @@ export interface LinkGamePosition {
   col: number;
 }
 
-/** 连连看操作记录 */
-export interface LinkGameMove {
+/** 连连看匹配操作 */
+export interface LinkGameMatchMove {
+  type: 'match';
+  pos1: LinkGamePosition;
+  pos2: LinkGamePosition;
+  matched: boolean;
+  timestamp: number;
+}
+
+/** 连连看洗牌操作 */
+export interface LinkGameShuffleMove {
+  type: 'shuffle';
+  timestamp: number;
+}
+
+/** 连连看操作记录（联合类型） */
+export type LinkGameMove = LinkGameMatchMove | LinkGameShuffleMove;
+
+/** 兼容旧格式的操作记录（用于服务端向后兼容） */
+export interface LinkGameLegacyMove {
   pos1: LinkGamePosition;
   pos2: LinkGamePosition;
   matched: boolean;
