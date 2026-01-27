@@ -1,7 +1,75 @@
 // src/lib/types/game.ts
 
 /** 游戏类型 */
-export type GameType = 'pachinko' | 'memory' | 'slot' | 'match3';
+export type GameType = 'pachinko' | 'memory' | 'slot' | 'match3' | 'linkgame';
+
+/** 连连看难度 */
+export type LinkGameDifficulty = 'easy' | 'normal' | 'hard';
+
+/** 连连看难度配置 */
+export interface LinkGameDifficultyConfig {
+  rows: number;
+  cols: number;
+  pairs: number;
+  baseScore: number;
+  timeLimit: number;
+  hintLimit: number;
+  shuffleLimit: number;
+  hintPenalty: number;
+  shufflePenalty: number;
+}
+
+/** 连连看坐标 */
+export interface LinkGamePosition {
+  row: number;
+  col: number;
+}
+
+/** 连连看操作记录 */
+export interface LinkGameMove {
+  pos1: LinkGamePosition;
+  pos2: LinkGamePosition;
+  matched: boolean;
+  timestamp: number;
+}
+
+/** 连连看游戏会话 */
+export interface LinkGameSession {
+  id: string;
+  userId: number;
+  gameType: 'linkgame';
+  difficulty: LinkGameDifficulty;
+  seed: string;
+  tileLayout: string[];    // 瓦片布局（iconId数组）
+  startedAt: number;
+  expiresAt: number;
+  status: GameSessionStatus;
+}
+
+/** 连连看游戏结果提交 */
+export interface LinkGameResultSubmit {
+  sessionId: string;
+  moves: LinkGameMove[];
+  completed: boolean;
+  duration: number;
+  hintsUsed: number;
+  shufflesUsed: number;
+}
+
+/** 连连看游戏记录 */
+export interface LinkGameRecord {
+  id: string;
+  userId: number;
+  sessionId: string;
+  gameType: 'linkgame';
+  difficulty: LinkGameDifficulty;
+  moves: number;
+  completed: boolean;
+  score: number;
+  pointsEarned: number;
+  duration: number;
+  createdAt: number;
+}
 
 /** 记忆游戏难度 */
 export type MemoryDifficulty = 'easy' | 'normal' | 'hard';
