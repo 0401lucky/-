@@ -67,6 +67,15 @@ export default function GamesPage() {
       href: '/games/match3',
       available: true,
     },
+    {
+      id: 'linkgame',
+      name: '连连看',
+      description: '消除相同水果，考验眼力和反应速度！',
+      icon: '🍎',
+      color: 'from-green-500 to-emerald-600',
+      href: '/games/linkgame',
+      available: true,
+    },
   ];
 
   return (
