@@ -9,6 +9,8 @@ import {
   getTile,
   canMatch,
   removeMatch,
+  canTripleMatch,
+  removeTripleMatch,
   findHint,
   shuffleBoard,
   checkGameComplete,
@@ -461,7 +463,7 @@ describe('linkgame', () => {
       expect(score).toBe(150);
     });
 
-    it('should cap combo multiplier at 2.0', () => {
+    it('should cap combo multiplier at 1.5', () => {
       const score = calculateScore({
         matchedPairs: 10,
         baseScore: 10,
@@ -472,7 +474,7 @@ describe('linkgame', () => {
         hintPenalty: 10,
         shufflePenalty: 20,
       });
-      expect(score).toBe(200);
+      expect(score).toBe(150);
     });
 
     it('should add time bonus', () => {
@@ -486,7 +488,7 @@ describe('linkgame', () => {
         hintPenalty: 10,
         shufflePenalty: 20,
       });
-      expect(score).toBe(140);
+      expect(score).toBe(110);
     });
 
     it('should apply hint penalty', () => {
@@ -543,6 +545,86 @@ describe('linkgame', () => {
         shufflePenalty: 20,
       });
       expect(score).toBe(33);
+    });
+  });
+
+  describe('canTripleMatch', () => {
+    it('should return true when all 3 pairs can connect', () => {
+      const board: (string | null)[] = [
+        'A', null, 'A',
+        null, null, null,
+        'A', null, 'B',
+      ];
+      const pos1 = { row: 0, col: 0 };
+      const pos2 = { row: 0, col: 2 };
+      const pos3 = { row: 2, col: 0 };
+      expect(canTripleMatch(board, pos1, pos2, pos3, 3)).toBe(true);
+    });
+
+    it('should return false when tiles are different types', () => {
+      const board: (string | null)[] = [
+        'A', null, 'A',
+        null, null, null,
+        'B', null, 'C',
+      ];
+      const pos1 = { row: 0, col: 0 };
+      const pos2 = { row: 0, col: 2 };
+      const pos3 = { row: 2, col: 0 };
+      expect(canTripleMatch(board, pos1, pos2, pos3, 3)).toBe(false);
+    });
+
+    it('should return false when one pair cannot connect', () => {
+      const board: (string | null)[] = [
+        'A', 'X', 'A',
+        'X', 'X', 'X',
+        'A', 'X', 'B',
+      ];
+      const pos1 = { row: 0, col: 0 };
+      const pos2 = { row: 0, col: 2 };
+      const pos3 = { row: 2, col: 0 };
+      expect(canTripleMatch(board, pos1, pos2, pos3, 3)).toBe(false);
+    });
+
+    it('should return false when any tile is null', () => {
+      const board: (string | null)[] = [
+        'A', null, 'A',
+        null, null, null,
+        null, null, 'B',
+      ];
+      const pos1 = { row: 0, col: 0 };
+      const pos2 = { row: 0, col: 2 };
+      const pos3 = { row: 2, col: 0 };
+      expect(canTripleMatch(board, pos1, pos2, pos3, 3)).toBe(false);
+    });
+  });
+
+  describe('removeTripleMatch', () => {
+    it('should set all 3 positions to null', () => {
+      const board: (string | null)[] = [
+        'A', 'B', 'A',
+        'C', 'D', 'E',
+        'A', 'F', 'G',
+      ];
+      const pos1 = { row: 0, col: 0 };
+      const pos2 = { row: 0, col: 2 };
+      const pos3 = { row: 2, col: 0 };
+      const newBoard = removeTripleMatch(board, pos1, pos2, pos3, 3);
+      expect(newBoard[0]).toBe(null);
+      expect(newBoard[2]).toBe(null);
+      expect(newBoard[6]).toBe(null);
+      expect(newBoard[1]).toBe('B');
+      expect(newBoard[4]).toBe('D');
+    });
+
+    it('should not mutate original board', () => {
+      const board: (string | null)[] = ['A', 'A', 'A', 'B'];
+      const pos1 = { row: 0, col: 0 };
+      const pos2 = { row: 0, col: 1 };
+      const pos3 = { row: 0, col: 2 };
+      removeTripleMatch(board, pos1, pos2, pos3, 4);
+      expect(board[0]).toBe('A');
+      expect(board[1]).toBe('A');
+      expect(board[2]).toBe('A');
     });
   });
 });

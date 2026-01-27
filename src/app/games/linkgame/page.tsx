@@ -11,6 +11,8 @@ import { ResultModal } from './components/ResultModal';
 import {
   canMatch,
   removeMatch,
+  canTripleMatch,
+  removeTripleMatch,
   findHint,
   findMatchPath,
   shuffleBoard,
@@ -53,7 +55,7 @@ export default function LinkGamePage() {
   const [showLimitWarning, setShowLimitWarning] = useState(false);
 
   const [board, setBoard] = useState<(string | null)[]>([]);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [selected, setSelected] = useState<number[]>([]);
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
   const [hintsUsed, setHintsUsed] = useState(0);
@@ -63,8 +65,9 @@ export default function LinkGamePage() {
   const [moves, setMoves] = useState<LinkGameMove[]>([]);
   const [shakingIndices, setShakingIndices] = useState<number[]>([]);
   const [matchingIndices, setMatchingIndices] = useState<number[]>([]);
-  const [matchPath, setMatchPath] = useState<LinkGamePosition[] | null>(null);
+  const [matchPaths, setMatchPaths] = useState<LinkGamePosition[][] | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [tripleMode, setTripleMode] = useState(false);
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const matchTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -202,8 +205,9 @@ export default function LinkGamePage() {
       matchedPairsRef.current = 0;
       setMoves([]);
       movesRef.current = [];
-      setSelected(null);
-      setMatchPath(null);
+      setSelected([]);
+      setMatchPaths(null);
+      setTripleMode(false);
     }
   };
 
@@ -220,91 +224,209 @@ export default function LinkGamePage() {
 
   const handleTileClick = (index: number) => {
     if (!session || isProcessing) return;
-    
+
     const tile = board[index];
     if (tile === null) return;
-    if (selected === index) {
-      setSelected(null);
+
+    // Allow deselect by clicking selected tile again
+    if (selected.includes(index)) {
+      setSelected(selected.filter((i) => i !== index));
       return;
     }
 
-    if (selected === null) {
-      setSelected(index);
-    } else {
-      const pos1 = positionOf(selected, session.config.cols);
-      const pos2 = positionOf(index, session.config.cols);
+    const cols = session.config.cols;
 
-      const matched = canMatch(board, pos1, pos2, session.config.cols);
-
-      const newMove: LinkGameMove = {
-        type: 'match',
-        pos1,
-        pos2,
-        matched,
-        timestamp: Date.now(),
-      };
-      setMoves((prev) => {
-        const next = [...prev, newMove];
-        movesRef.current = next;
-        return next;
-      });
-
-      if (matched) {
-        // Show match animation first
-        setIsProcessing(true);
-        setMatchingIndices([selected, index]);
-        
-        // Compute and show path
-        const path = findMatchPath(board, pos1, pos2, session.config.cols);
-        setMatchPath(path);
-        
-        // Calculate score updates immediately for UI response
-        const newMatchedPairs = matchedPairsRef.current + 1;
-        const newCombo = combo + 1;
-        
-        // Wait for animation
-        matchTimerRef.current = setTimeout(() => {
-          matchTimerRef.current = null;
-          const newBoard = removeMatch(board, pos1, pos2, session.config.cols);
-          setBoard(newBoard);
-          setSelected(null);
-          setMatchingIndices([]);
-          setMatchPath(null);
-          setIsProcessing(false);
-
-          setMatchedPairs(newMatchedPairs);
-          matchedPairsRef.current = newMatchedPairs;
-          setCombo(newCombo);
-
-          const currentScore = calculateScore({
-            matchedPairs: newMatchedPairs,
-            baseScore: session.config.baseScore,
-            combo: Math.max(0, newCombo - 1),
-            timeRemainingSeconds: timeRemainingRef.current,
-            hintsUsed: hintsUsedRef.current,
-            shufflesUsed: shufflesUsedRef.current,
-            hintPenalty: session.config.hintPenalty,
-            shufflePenalty: session.config.shufflePenalty
-          });
-          setScore(currentScore);
-
-          if (checkGameComplete(newBoard)) {
-            void handleGameOver(true);
-          }
-        }, 500); // 500ms match animation
-      } else {
-        // Mismatch - shake animation
-        setIsProcessing(true);
-        setShakingIndices([selected, index]);
-        
-        matchTimerRef.current = setTimeout(() => {
-          matchTimerRef.current = null;
-          setSelected(null);
-          setCombo(0);
-          setShakingIndices([]);
-          setIsProcessing(false);
-        }, 400); // 400ms shake animation
+    // Triple mode: collect 3 same tiles, then attempt a triple match.
+    if (tripleMode) {
+      // Safety: triple match with current board setup is not suitable for easy (tile counts are 4 each).
+      if (session.difficulty === 'easy') {
+        setTripleMode(false);
+        setSelected([index]);
+        return;
       }
+
+      if (selected.length === 0) {
+        setSelected([index]);
+        return;
+      }
+
+      const firstTile = board[selected[0]];
+      if (firstTile !== tile) {
+        setSelected([index]);
+        return;
+      }
+
+      if (selected.length === 1) {
+        setSelected([selected[0], index]);
+        return;
+      }
+
+      if (selected.length === 2) {
+        const idx1 = selected[0];
+        const idx2 = selected[1];
+        const idx3 = index;
+
+        const pos1 = positionOf(idx1, cols);
+        const pos2 = positionOf(idx2, cols);
+        const pos3 = positionOf(idx3, cols);
+
+        const matched = canTripleMatch(board, pos1, pos2, pos3, cols);
+        const move: LinkGameMove = {
+          type: 'match',
+          pos1,
+          pos2,
+          pos3,
+          matched,
+          isTriple: true,
+          timestamp: Date.now(),
+        };
+        setMoves((prev) => {
+          const next = [...prev, move];
+          movesRef.current = next;
+          return next;
+        });
+
+        setIsProcessing(true);
+        // Treat triple mode as a one-shot power-up: always turn it off after attempting.
+        setTripleMode(false);
+
+        if (matched) {
+          setMatchingIndices([idx1, idx2, idx3]);
+          const p12 = findMatchPath(board, pos1, pos2, cols);
+          const p13 = findMatchPath(board, pos1, pos3, cols);
+          const p23 = findMatchPath(board, pos2, pos3, cols);
+          setMatchPaths([p12, p13, p23].filter(Boolean) as LinkGamePosition[][]);
+
+          const newMatchedPairs = matchedPairsRef.current + 2;
+          const newCombo = combo + 1;
+
+          matchTimerRef.current = setTimeout(() => {
+            matchTimerRef.current = null;
+            const newBoard = removeTripleMatch(board, pos1, pos2, pos3, cols);
+            setBoard(newBoard);
+            setSelected([]);
+            setMatchingIndices([]);
+            setMatchPaths(null);
+            setIsProcessing(false);
+
+            setMatchedPairs(newMatchedPairs);
+            matchedPairsRef.current = newMatchedPairs;
+            setCombo(newCombo);
+
+            const currentScore = calculateScore({
+              matchedPairs: newMatchedPairs,
+              baseScore: session.config.baseScore,
+              combo: Math.max(0, newCombo - 1),
+              timeRemainingSeconds: timeRemainingRef.current,
+              hintsUsed: hintsUsedRef.current,
+              shufflesUsed: shufflesUsedRef.current,
+              hintPenalty: session.config.hintPenalty,
+              shufflePenalty: session.config.shufflePenalty,
+            });
+            setScore(currentScore);
+
+            if (checkGameComplete(newBoard)) {
+              void handleGameOver(true);
+            }
+          }, 500);
+        } else {
+          setMatchPaths(null);
+          setShakingIndices([idx1, idx2, idx3]);
+          matchTimerRef.current = setTimeout(() => {
+            matchTimerRef.current = null;
+            setSelected([]);
+            setCombo(0);
+            setShakingIndices([]);
+            setIsProcessing(false);
+          }, 400);
+        }
+
+        return;
+      }
+
+      // Should not happen, but keep selection sane.
+      setSelected([index]);
+      return;
+    }
+
+    // Normal mode: 2-click attempt match.
+    if (selected.length === 0) {
+      setSelected([index]);
+      return;
+    }
+
+    const firstIndex = selected[0];
+    const firstTile = board[firstIndex];
+    if (firstTile !== tile) {
+      setSelected([index]);
+      return;
+    }
+
+    const pos1 = positionOf(firstIndex, cols);
+    const pos2 = positionOf(index, cols);
+    const matched = canMatch(board, pos1, pos2, cols);
+
+    const move: LinkGameMove = {
+      type: 'match',
+      pos1,
+      pos2,
+      matched,
+      timestamp: Date.now(),
+    };
+    setMoves((prev) => {
+      const next = [...prev, move];
+      movesRef.current = next;
+      return next;
+    });
+
+    setIsProcessing(true);
+    if (matched) {
+      setMatchingIndices([firstIndex, index]);
+      const path = findMatchPath(board, pos1, pos2, cols);
+      setMatchPaths(path ? [path] : null);
+
+      const newMatchedPairs = matchedPairsRef.current + 1;
+      const newCombo = combo + 1;
+
+      matchTimerRef.current = setTimeout(() => {
+        matchTimerRef.current = null;
+        const newBoard = removeMatch(board, pos1, pos2, cols);
+        setBoard(newBoard);
+        setSelected([]);
+        setMatchingIndices([]);
+        setMatchPaths(null);
+        setIsProcessing(false);
+
+        setMatchedPairs(newMatchedPairs);
+        matchedPairsRef.current = newMatchedPairs;
+        setCombo(newCombo);
+
+        const currentScore = calculateScore({
+          matchedPairs: newMatchedPairs,
+          baseScore: session.config.baseScore,
+          combo: Math.max(0, newCombo - 1),
+          timeRemainingSeconds: timeRemainingRef.current,
+          hintsUsed: hintsUsedRef.current,
+          shufflesUsed: shufflesUsedRef.current,
+          hintPenalty: session.config.hintPenalty,
+          shufflePenalty: session.config.shufflePenalty,
+        });
+        setScore(currentScore);
+
+        if (checkGameComplete(newBoard)) {
+          void handleGameOver(true);
+        }
+      }, 500);
+    } else {
+      setMatchPaths(null);
+      setShakingIndices([firstIndex, index]);
+      matchTimerRef.current = setTimeout(() => {
+        matchTimerRef.current = null;
+        setSelected([]);
+        setCombo(0);
+        setShakingIndices([]);
+        setIsProcessing(false);
+      }, 400);
     }
   };
 
@@ -316,7 +438,7 @@ export default function LinkGamePage() {
     const hint = findHint(board, session.config.rows, session.config.cols);
     if (hint) {
       const index1 = indexOf(hint.pos1, session.config.cols);
-      setSelected(index1);
+      setSelected([index1]);
       
       const newHintsUsed = hintsUsed + 1;
       hintsUsedRef.current = newHintsUsed;
@@ -358,8 +480,8 @@ export default function LinkGamePage() {
     const shuffleSeed = `${session.sessionId}-shuffle-${newShufflesUsed}`;
     const newBoard = shuffleBoard(board, shuffleSeed);
     setBoard(newBoard);
-    setSelected(null);
-    setMatchPath(null);
+    setSelected([]);
+    setMatchPaths(null);
 
     shufflesUsedRef.current = newShufflesUsed;
     setShufflesUsed(newShufflesUsed);
@@ -486,6 +608,20 @@ export default function LinkGamePage() {
               shufflesRemaining={session.config.shuffleLimit - shufflesUsed}
               onHint={handleHint}
               onShuffle={handleShuffle}
+              tripleMode={tripleMode}
+              tripleModeDisabled={isProcessing || session.difficulty === 'easy'}
+              tripleModeDisabledReason={
+                session.difficulty === 'easy'
+                  ? '简单模式不支持三连（会导致无法清盘）'
+                  : '请等待当前操作完成'
+              }
+              onToggleTripleMode={() => {
+                if (isProcessing) return;
+                if (session.difficulty === 'easy') return;
+                setTripleMode((prev) => !prev);
+                setSelected([]);
+                setMatchPaths(null);
+              }}
             />
 
             <div className="mb-6 text-center">
@@ -507,15 +643,14 @@ export default function LinkGamePage() {
             </div>
             
             <GameBoard
-              difficulty={session.difficulty}
               tileLayout={board}
               config={session.config}
               selected={selected}
               onSelect={handleTileClick}
               shakingIndices={shakingIndices}
               matchingIndices={matchingIndices}
-              matchPath={matchPath ?? undefined}
-            />
+               matchPaths={matchPaths ?? undefined}
+             />
           </div>
         )}
 

@@ -11,9 +11,10 @@ import {
   LINKGAME_DIFFICULTY_CONFIG,
   canMatch,
   removeMatch,
+  canTripleMatch,
+  removeTripleMatch,
   checkGameComplete,
   calculateScore,
-  positionOf,
   indexOf,
   shuffleBoard,
 } from './linkgame';
@@ -22,7 +23,6 @@ import type {
   LinkGameSession,
   LinkGameResultSubmit,
   LinkGameRecord,
-  LinkGameMove,
   LinkGamePosition,
   DailyGameStats,
 } from './types/game';
@@ -110,7 +110,6 @@ export function validateLinkGameResult(
 ): ValidationResult {
   const config = LINKGAME_DIFFICULTY_CONFIG[session.difficulty];
   const { rows, cols, hintLimit, shuffleLimit } = config;
-  const totalCells = rows * cols;
 
   // 基础类型检查
   if (!Array.isArray(payload.moves)) {
@@ -163,8 +162,8 @@ export function validateLinkGameResult(
     }
 
     // Handle match moves (including legacy format without type field)
-    const matchMove = move as { pos1?: LinkGamePosition; pos2?: LinkGamePosition; matched?: boolean };
-    const { pos1, pos2, matched } = matchMove;
+    const matchMove = move as { pos1?: LinkGamePosition; pos2?: LinkGamePosition; pos3?: LinkGamePosition; matched?: boolean; isTriple?: boolean };
+    const { pos1, pos2, pos3, matched } = matchMove;
 
     // 位置类型检查
     if (!pos1 || !pos2 || typeof pos1 !== 'object' || typeof pos2 !== 'object') {
@@ -203,20 +202,48 @@ export function validateLinkGameResult(
       return { ok: false, message: '位置2没有瓦片' };
     }
 
-    // 服务端验证是否可匹配
-    const serverCanMatch = canMatch(board, pos1, pos2, cols);
-    if (matched !== serverCanMatch) {
-      return { ok: false, message: '匹配结果不一致' };
-    }
+    if (pos3 && typeof pos3 === 'object') {
+      if (!Number.isInteger(pos3.row) || !Number.isInteger(pos3.col)) {
+        return { ok: false, message: '位置3坐标必须为整数' };
+      }
+      if (pos3.row < 0 || pos3.row >= rows || pos3.col < 0 || pos3.col >= cols) {
+        return { ok: false, message: '位置3超出边界' };
+      }
+      const idx3 = indexOf(pos3, cols);
+      if (idx3 === idx1 || idx3 === idx2) {
+        return { ok: false, message: '不能选择相同位置' };
+      }
+      if (board[idx3] === null) {
+        return { ok: false, message: '位置3没有瓦片' };
+      }
 
-    // 如果匹配成功，移除瓦片
-    if (matched) {
-      board = removeMatch(board, pos1, pos2, cols);
-      matchedPairs++;
-      currentStreak++;
-      maxStreak = Math.max(maxStreak, currentStreak);
+      const serverCanTripleMatch = canTripleMatch(board, pos1, pos2, pos3, cols);
+      if (matched !== serverCanTripleMatch) {
+        return { ok: false, message: '三消匹配结果不一致' };
+      }
+
+      if (matched) {
+        board = removeTripleMatch(board, pos1, pos2, pos3, cols);
+        matchedPairs += 2;
+        currentStreak++;
+        maxStreak = Math.max(maxStreak, currentStreak);
+      } else {
+        currentStreak = 0;
+      }
     } else {
-      currentStreak = 0;
+      const serverCanMatch = canMatch(board, pos1, pos2, cols);
+      if (matched !== serverCanMatch) {
+        return { ok: false, message: '匹配结果不一致' };
+      }
+
+      if (matched) {
+        board = removeMatch(board, pos1, pos2, cols);
+        matchedPairs++;
+        currentStreak++;
+        maxStreak = Math.max(maxStreak, currentStreak);
+      } else {
+        currentStreak = 0;
+      }
     }
   }
 

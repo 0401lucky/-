@@ -10,6 +10,10 @@ interface GameHeaderProps {
   shufflesRemaining: number;
   onHint: () => void;
   onShuffle: () => void;
+  tripleMode: boolean;
+  onToggleTripleMode: () => void;
+  tripleModeDisabled?: boolean;
+  tripleModeDisabledReason?: string;
 }
 
 export function GameHeader({
@@ -20,6 +24,10 @@ export function GameHeader({
   shufflesRemaining,
   onHint,
   onShuffle,
+  tripleMode,
+  onToggleTripleMode,
+  tripleModeDisabled = false,
+  tripleModeDisabledReason,
 }: GameHeaderProps) {
   const [scorePopping, setScorePopping] = useState(false);
 
@@ -81,6 +89,32 @@ export function GameHeader({
         </div>
 
         <div className="flex items-center gap-3 w-full sm:w-auto justify-center sm:justify-end">
+          <button
+            onClick={onToggleTripleMode}
+            disabled={tripleModeDisabled}
+            aria-pressed={tripleMode}
+            className={`
+              flex items-center gap-2 px-4 py-3 rounded-2xl text-sm font-black transition-all active:scale-95 border-b-4 relative overflow-hidden group
+              ${tripleModeDisabled
+                ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                : tripleMode
+                  ? 'bg-pink-300 border-pink-500 text-pink-900 hover:bg-pink-400 hover:-translate-y-1 hover:border-b-[6px]'
+                  : 'bg-purple-200 border-purple-400 text-purple-900 hover:bg-purple-300 hover:-translate-y-1 hover:border-b-[6px]'
+              }
+            `}
+            title={
+              tripleModeDisabled
+                ? (tripleModeDisabledReason ?? '三连模式不可用')
+                : (tripleMode ? '三连模式：已开启（再次点击关闭）' : '三连模式：选择3个相同图案进行三消')
+            }
+          >
+            <span className="text-xl relative z-10 group-hover:rotate-6 transition-transform">3️⃣</span>
+            <span className="relative z-10">
+              {tripleMode ? '三连ON' : '三连'}
+            </span>
+            <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300" />
+          </button>
+
           <button
             onClick={onHint}
             disabled={hintsRemaining <= 0}

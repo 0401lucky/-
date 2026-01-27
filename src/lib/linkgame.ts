@@ -17,7 +17,7 @@ export const LINKGAME_DIFFICULTY_CONFIG: Record<LinkGameDifficulty, LinkGameDiff
     rows: 4,
     cols: 4,
     pairs: 8,
-    baseScore: 10,
+    baseScore: 5,
     timeLimit: 120,
     hintLimit: 3,
     shuffleLimit: 2,
@@ -28,7 +28,7 @@ export const LINKGAME_DIFFICULTY_CONFIG: Record<LinkGameDifficulty, LinkGameDiff
     rows: 6,
     cols: 6,
     pairs: 18,
-    baseScore: 15,
+    baseScore: 8,
     timeLimit: 150,
     hintLimit: 3,
     shuffleLimit: 2,
@@ -39,7 +39,7 @@ export const LINKGAME_DIFFICULTY_CONFIG: Record<LinkGameDifficulty, LinkGameDiff
     rows: 8,
     cols: 8,
     pairs: 32,
-    baseScore: 20,
+    baseScore: 10,
     timeLimit: 180,
     hintLimit: 3,
     shuffleLimit: 2,
@@ -418,8 +418,8 @@ export function calculateScore(params: ScoreParams): number {
     shufflePenalty,
   } = params;
 
-  const comboMultiplier = Math.min(2.0, 1 + combo * 0.1);
-  const timeBonus = timeRemainingSeconds * 2;
+  const comboMultiplier = Math.min(1.5, 1 + combo * 0.1);
+  const timeBonus = timeRemainingSeconds * 1;
   const rawScore =
     matchedPairs * baseScore * comboMultiplier +
     timeBonus -
@@ -427,4 +427,49 @@ export function calculateScore(params: ScoreParams): number {
     shufflesUsed * shufflePenalty;
 
   return Math.round(Math.max(0, rawScore));
+}
+
+/**
+ * Check if three tiles can all be matched together (triple match).
+ * All 3 pairs must be able to connect with ≤2 turns each.
+ */
+export function canTripleMatch(
+  board: (string | null)[],
+  pos1: LinkGamePosition,
+  pos2: LinkGamePosition,
+  pos3: LinkGamePosition,
+  cols: number
+): boolean {
+  const tile1 = getTile(board, pos1, cols);
+  const tile2 = getTile(board, pos2, cols);
+  const tile3 = getTile(board, pos3, cols);
+  
+  if (tile1 === null || tile2 === null || tile3 === null) return false;
+  if (tile1 !== tile2 || tile2 !== tile3) return false;
+  
+  return (
+    canMatch(board, pos1, pos2, cols) &&
+    canMatch(board, pos1, pos3, cols) &&
+    canMatch(board, pos2, pos3, cols)
+  );
+}
+
+/**
+ * Remove three tiles from the board (triple match).
+ */
+export function removeTripleMatch(
+  board: (string | null)[],
+  pos1: LinkGamePosition,
+  pos2: LinkGamePosition,
+  pos3: LinkGamePosition,
+  cols: number
+): (string | null)[] {
+  const newBoard = [...board];
+  const idx1 = indexOf(pos1, cols);
+  const idx2 = indexOf(pos2, cols);
+  const idx3 = indexOf(pos3, cols);
+  newBoard[idx1] = null;
+  newBoard[idx2] = null;
+  newBoard[idx3] = null;
+  return newBoard;
 }

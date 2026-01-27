@@ -30,7 +30,9 @@ export interface LinkGameMatchMove {
   type: 'match';
   pos1: LinkGamePosition;
   pos2: LinkGamePosition;
+  pos3?: LinkGamePosition;
   matched: boolean;
+  isTriple?: boolean;
   timestamp: number;
 }
 
