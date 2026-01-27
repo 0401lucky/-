@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -63,109 +63,157 @@ const REEL_TRACK_LENGTHS: [number, number, number] = [30, 35, 40]; // Increased 
 const REEL_DURATIONS_MS: [number, number, number] = [2000, 2400, 2800]; // Slower for dramatic effect
 const REEL_EASING = 'cubic-bezier(0.2, 0.8, 0.2, 1)'; // Smooth easing
 
-// Enhanced CSS Animation Keyframes
-const ANIMATION_STYLES = `
-  @keyframes bounce-land {
-    0% { transform: translateY(0); }
-    30% { transform: translateY(8%); }
-    60% { transform: translateY(-4%); }
-    80% { transform: translateY(2%); }
-    100% { transform: translateY(0); }
-  }
-  @keyframes win-pulse {
-    0% { transform: scale(1); filter: brightness(100%) drop-shadow(0 0 0 rgba(234, 179, 8, 0)); }
-    50% { transform: scale(1.15); filter: brightness(120%) drop-shadow(0 0 20px rgba(234, 179, 8, 0.8)); }
-    100% { transform: scale(1); filter: brightness(100%) drop-shadow(0 0 0 rgba(234, 179, 8, 0)); }
-  }
-  @keyframes shine {
-    from { mask-position: 150%; }
-    to { mask-position: -50%; }
-  }
-  @keyframes confetti-fall {
-    0% { transform: translateY(-20vh) rotate(0deg) scale(0.5); opacity: 1; }
-    100% { transform: translateY(120vh) rotate(720deg) scale(0.8); opacity: 0; }
-  }
-  @keyframes spin-blur {
-    0% { filter: blur(0); }
-    10% { filter: blur(4px); }
-    90% { filter: blur(4px); }
-    100% { filter: blur(0); }
-  }
-  @keyframes gradient-x {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
-  }
-  @keyframes border-glow {
-    0%, 100% { opacity: 0.5; box-shadow: 0 0 10px rgba(234, 179, 8, 0.2); }
-    50% { opacity: 1; box-shadow: 0 0 25px rgba(234, 179, 8, 0.6); }
-  }
-  .reel-bounce {
-    animation: bounce-land 0.5s cubic-bezier(0.36, 0, 0.66, -0.56) forwards;
-  }
-  .symbol-win {
-    animation: win-pulse 1.2s ease-in-out infinite;
-    z-index: 20;
-    position: relative;
-  }
-  .spinning-blur {
-    animation: spin-blur 0.1s linear infinite;
-  }
-  .btn-shine {
-    mask-image: linear-gradient(-75deg, rgba(0,0,0,.6) 30%, #000 50%, rgba(0,0,0,.6) 70%);
-    mask-size: 200%;
-    animation: shine 3s infinite;
-  }
-  .glass-panel {
-    background: rgba(255, 255, 255, 0.7);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.5);
-  }
-  .slot-machine-gradient {
-    background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
-  }
-  .gold-text-gradient {
-    background: linear-gradient(to bottom, #fde68a, #d97706);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-`;
+  // Enhanced CSS Animation Keyframes
+  const ANIMATION_STYLES = `
+    :root {
+      --cartoon-bg: #f0f9ff;
+      --cartoon-panel: #ffffff;
+      --cartoon-border: #e0f2fe;
+      --cartoon-shadow: rgba(14, 165, 233, 0.15);
+      --cartoon-text-main: #0f172a;
+      --cartoon-text-sub: #475569;
+    }
+
+    @keyframes bounce-land {
+      0% { transform: translateY(0); }
+      30% { transform: translateY(8%); }
+      60% { transform: translateY(-4%); }
+      80% { transform: translateY(2%); }
+      100% { transform: translateY(0); }
+    }
+    @keyframes win-pulse {
+      0% { transform: scale(1); filter: brightness(100%); }
+      50% { transform: scale(1.1); filter: brightness(110%) drop-shadow(0 0 15px rgba(250, 204, 21, 0.6)); }
+      100% { transform: scale(1); filter: brightness(100%); }
+    }
+    @keyframes shine {
+      from { mask-position: 150%; }
+      to { mask-position: -50%; }
+    }
+    @keyframes confetti-fall {
+      0% { transform: translateY(-20vh) rotate(0deg) scale(0.5); opacity: 1; }
+      100% { transform: translateY(120vh) rotate(720deg) scale(0.8); opacity: 0; }
+    }
+    @keyframes spin-blur {
+      0% { filter: blur(0); }
+      10% { filter: blur(2px); }
+      90% { filter: blur(2px); }
+      100% { filter: blur(0); }
+    }
+    @keyframes pop-in {
+      0% { transform: scale(0.9); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    /* Accessibility: Reduced Motion */
+    @media (prefers-reduced-motion: reduce) {
+      *, ::before, ::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+      .reel-bounce, .symbol-win, .spinning-blur, .btn-shine, .animate-bounce, .animate-spin, .animate-pulse, .pop-in {
+        animation: none !important;
+        transform: none !important;
+      }
+    }
+
+    .reel-bounce {
+      animation: bounce-land 0.5s cubic-bezier(0.36, 0, 0.66, -0.56) forwards;
+    }
+    .symbol-win {
+      animation: win-pulse 1.2s ease-in-out infinite;
+      z-index: 20;
+    }
+    .spinning-blur {
+      animation: spin-blur 0.1s linear infinite;
+    }
+    .btn-shine {
+      mask-image: linear-gradient(-75deg, rgba(0,0,0,.6) 30%, #000 50%, rgba(0,0,0,.6) 70%);
+      mask-size: 200%;
+      animation: shine 3s infinite;
+    }
+    
+    /* Cartoon / Game Theme Classes */
+    .cartoon-panel {
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(12px);
+      border: 2px solid #e2e8f0;
+      border-radius: 1.5rem;
+      box-shadow: 0 8px 0 #cbd5e1, 0 8px 16px rgba(0,0,0,0.05);
+      transition: transform 0.2s;
+    }
+    
+    .cartoon-panel:hover {
+      transform: translateY(-2px);
+    }
+
+    .game-btn {
+      position: relative;
+      border: none;
+      transition: all 0.1s;
+    }
+    .game-btn:active {
+      transform: translateY(4px);
+      box-shadow: none !important;
+    }
+    
+    .pop-in {
+      animation: pop-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    }
+  `;
 
 function pseudoRandom(seed: number): number {
   const x = Math.sin(seed) * 10000;
   return x - Math.floor(x);
 }
 
-function Confetti({ active }: { active: boolean }) {
-  if (!active) return null;
-  
-  const colors = ['#FCD34D', '#F87171', '#60A5FA', '#34D399', '#A78BFA', '#F472B6', '#FFFFFF'];
-  const particles = Array.from({ length: 80 }).map((_, i) => {
-    const left = pseudoRandom((i + 1) * 12.9898) * 100;
-    const delay = pseudoRandom((i + 1) * 78.233) * 1.5;
-    const duration = 2.5 + pseudoRandom((i + 1) * 37.719) * 2;
-    const bg = colors[Math.floor(pseudoRandom((i + 1) * 45.164) * colors.length)];
-    const size = 6 + pseudoRandom((i + 1) * 93.989) * 8;
-    const heightScale = pseudoRandom((i + 1) * 15.111) > 0.5 ? 1 : 0.4;
-    
-    return (
-      <div
-        key={i}
-        className="fixed top-0 rounded-sm pointer-events-none z-[100]"
-        style={{
-          left: `${left}%`,
-          width: `${size}px`,
-          height: `${size * heightScale}px`,
-          backgroundColor: bg,
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-          animation: `confetti-fall ${duration}s ease-in ${delay}s both`,
-        }}
-      />
-    );
+const Confetti = memo(function Confetti({ active }: { active: boolean }) {
+  const [isReduced, setIsReduced] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   });
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const q = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const handler = (e: MediaQueryListEvent) => setIsReduced(e.matches);
+    q.addEventListener('change', handler);
+    return () => q.removeEventListener('change', handler);
+  }, []);
+
+  const particles = useMemo(() => {
+    const colors = ['#FCD34D', '#F87171', '#60A5FA', '#34D399', '#A78BFA', '#F472B6', '#FFFFFF'];
+    return Array.from({ length: 80 }).map((_, i) => {
+      const left = pseudoRandom((i + 1) * 12.9898) * 100;
+      const delay = pseudoRandom((i + 1) * 78.233) * 1.5;
+      const duration = 2.5 + pseudoRandom((i + 1) * 37.719) * 2;
+      const bg = colors[Math.floor(pseudoRandom((i + 1) * 45.164) * colors.length)];
+      const size = 6 + pseudoRandom((i + 1) * 93.989) * 8;
+      const heightScale = pseudoRandom((i + 1) * 15.111) > 0.5 ? 1 : 0.4;
+      
+      return (
+        <div
+          key={i}
+          className="fixed top-0 rounded-sm pointer-events-none z-[100] confetti-piece"
+          style={{
+            left: `${left}%`,
+            width: `${size}px`,
+            height: `${size * heightScale}px`,
+            backgroundColor: bg,
+            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+            animation: `confetti-fall ${duration}s ease-in ${delay}s both`,
+          }}
+        />
+      );
+    });
+  }, []);
+
+  if (!active || isReduced) return null;
+  
   return <>{particles}</>;
-}
+});
 
 const REEL_INDEXES = [0, 1, 2] as const;
 
@@ -564,22 +612,25 @@ export default function SlotPage() {
   }, [lastResult, fallbackBetCost]);
 
   return (
-    <div className="min-h-screen bg-slate-100 py-6 px-4 sm:py-10 selection:bg-yellow-200 font-sans">
+    <div className="min-h-screen bg-slate-50 py-6 px-4 sm:py-10 selection:bg-yellow-300 selection:text-yellow-900 font-sans text-slate-800 overflow-x-hidden">
       <style>{ANIMATION_STYLES}</style>
       <Confetti active={showConfetti} />
       
-      {/* Dynamic Background Pattern */}
-      <div className="fixed inset-0 z-0 pointer-events-none opacity-40">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-indigo-100 via-slate-100 to-slate-200" />
-        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150" />
+      {/* Cartoon Background Pattern */}
+      <div className="fixed inset-0 z-0 pointer-events-none">
+        <div className="absolute inset-0 bg-gradient-to-br from-sky-100 via-indigo-50 to-purple-100" />
+        <div className="absolute inset-0 bg-[url('/noise.svg')] opacity-[0.03] mix-blend-multiply" />
+        <div className="absolute -top-40 -left-40 w-[600px] h-[600px] bg-yellow-200/60 blur-[80px] rounded-full mix-blend-multiply animate-pulse" style={{ animationDuration: '4s' }} />
+        <div className="absolute top-40 right-0 w-[500px] h-[500px] bg-pink-200/60 blur-[80px] rounded-full mix-blend-multiply" />
+        <div className="absolute bottom-0 left-1/3 w-[800px] h-[600px] bg-blue-200/50 blur-[100px] rounded-full mix-blend-multiply" />
       </div>
 
-      <div className="relative z-10 max-w-6xl mx-auto">
+      <div className="relative z-10 max-w-7xl mx-auto">
         {/* 顶部导航 */}
         <div className="flex items-center justify-between mb-8">
           <button
             onClick={() => router.push('/games')}
-            className="group flex items-center text-slate-500 hover:text-indigo-600 transition-colors font-semibold bg-white/50 px-4 py-2 rounded-full backdrop-blur-sm border border-slate-200/60 shadow-sm hover:shadow-md"
+            className="group flex items-center text-slate-600 hover:text-slate-900 transition-colors font-bold bg-white/70 px-5 py-2.5 rounded-2xl backdrop-blur-md border border-white/60 shadow-sm hover:shadow-md ring-1 ring-black/5 focus-visible:ring-2 focus-visible:ring-indigo-500 outline-none"
           >
             <span className="mr-2 group-hover:-translate-x-1 transition-transform">←</span>
             游戏中心
@@ -587,23 +638,23 @@ export default function SlotPage() {
 
           <Link
             href="/store"
-            className="flex items-center gap-2 bg-white/80 backdrop-blur-md px-5 py-2.5 rounded-full shadow-lg border border-white/40 ring-1 ring-slate-100 hover:ring-yellow-300 hover:scale-105 transition-all group"
+            className="flex items-center gap-2 bg-white/80 backdrop-blur-md px-6 py-2.5 rounded-2xl shadow-sm border border-white/60 ring-1 ring-black/5 hover:ring-yellow-400 hover:bg-white hover:scale-105 transition-all group focus-visible:ring-2 focus-visible:ring-yellow-500 outline-none"
           >
-            <span className="text-yellow-500 drop-shadow-sm text-lg">⭐</span>
+            <span className="text-yellow-500 text-lg filter drop-shadow-sm">⭐</span>
             <span className="font-extrabold text-slate-800 text-lg tabular-nums tracking-tight">{loading ? '...' : status?.balance ?? 0}</span>
-            <div className="w-px h-4 bg-slate-200 mx-1" />
+            <div className="w-px h-4 bg-slate-300 mx-2" />
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wide group-hover:text-yellow-600 transition-colors">商店</span>
           </Link>
         </div>
 
         {/* 错误提示 */}
         {error && (
-          <div className="mb-8 p-4 bg-red-50/90 backdrop-blur border border-red-200 rounded-2xl text-red-700 text-center shadow-lg animate-pulse">
+          <div className="mb-8 p-4 bg-rose-50 backdrop-blur border border-rose-200 rounded-2xl text-rose-600 text-center shadow-md animate-pop-in">
             <span className="font-bold">错误:</span> {error}{' '}
             {error.includes('登录') && (
               <button
                 onClick={() => router.push('/login?redirect=/games/slot')}
-                className="ml-2 font-bold underline hover:no-underline hover:text-red-800"
+                className="ml-2 font-bold underline hover:no-underline hover:text-rose-800 focus-visible:ring-2 focus-visible:ring-rose-500 rounded outline-none"
               >
                 去登录
               </button>
@@ -616,43 +667,44 @@ export default function SlotPage() {
           {/* Left Column (Desktop): History */}
           {/* Mobile: Order 3 (Bottom) */}
           <div className="order-3 lg:order-1 space-y-6">
-            <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+            <div className="cartoon-panel p-6 relative overflow-hidden">
+              <div className="flex items-center justify-between mb-4 relative z-10">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-blue-400 ring-2 ring-blue-100"></span>
                   历史记录
                 </h3>
                 <button
                   onClick={fetchStatus}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                  className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500 outline-none"
+                  aria-label="刷新记录"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
                 </button>
               </div>
 
-              <div className="space-y-2 max-h-[500px] lg:max-h-[600px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+              <div className="space-y-2 max-h-[500px] lg:max-h-[600px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-indigo-100 scrollbar-track-transparent relative z-10">
                 {(status?.records?.length ?? 0) === 0 ? (
-                  <div className="text-center py-8 text-slate-400 text-xs italic">
+                  <div className="text-center py-8 text-slate-400 text-xs italic font-medium">
                     暂无游戏记录
                   </div>
                 ) : (
                   status?.records?.map((r) => (
                     <div
                       key={r.id}
-                      className="flex items-center justify-between p-2.5 rounded-xl border border-transparent hover:border-slate-100 hover:bg-white/50 transition-all"
+                      className="flex items-center justify-between p-2.5 rounded-2xl border-2 border-transparent hover:border-indigo-100 hover:bg-white/60 transition-all group"
                     >
-                      <div className="flex items-center gap-1.5 opacity-80 text-lg grayscale-[30%] hover:grayscale-0 transition-all">
+                      <div className="flex items-center gap-1.5 text-lg group-hover:scale-105 transition-transform origin-left">
                         {r.reels.map((id, i) => (
-                          <span key={`${r.id}-${id}-${i}`}>{symbolById[id].emoji}</span>
+                          <span key={`${r.id}-${id}-${i}`} className="filter drop-shadow-sm">{symbolById[id].emoji}</span>
                         ))}
                       </div>
                       <div className="text-right">
                         <div
                           className={`text-sm font-black ${
                             getRecordDelta(r, fallbackBetCost) > 0
-                              ? 'text-green-600'
+                              ? 'text-emerald-500'
                               : getRecordDelta(r, fallbackBetCost) < 0
-                                ? 'text-red-600'
+                                ? 'text-rose-500'
                                 : 'text-slate-400'
                           }`}
                         >
@@ -660,12 +712,12 @@ export default function SlotPage() {
                             ? `+${getRecordDelta(r, fallbackBetCost)}`
                             : `${getRecordDelta(r, fallbackBetCost)}`}
                         </div>
-                        <div className="text-[10px] text-slate-400 font-medium flex items-center justify-end gap-2">
+                        <div className="text-[10px] text-slate-400 font-bold flex items-center justify-end gap-2 mt-0.5">
                           <span
-                            className={`px-1.5 py-0.5 rounded-full border ${
+                            className={`px-1.5 py-0.5 rounded-md border ${
                               getRecordMode(r) === 'bet'
-                                ? 'bg-red-50 text-red-600 border-red-200'
-                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                ? 'bg-rose-50 text-rose-500 border-rose-100'
+                                : 'bg-emerald-50 text-emerald-600 border-emerald-100'
                             }`}
                           >
                             {getRecordMode(r) === 'bet' ? '挑战' : '赚'}
@@ -684,35 +736,32 @@ export default function SlotPage() {
 
           {/* Center Column (Desktop): Slot Machine */}
           {/* Mobile: Order 1 (Top) */}
-          <div className="order-1 lg:order-2 bg-slate-900 rounded-[2.5rem] p-6 sm:p-8 shadow-2xl ring-8 ring-slate-800/50 relative overflow-hidden isolate">
+          <div className="order-1 lg:order-2 bg-indigo-500 rounded-[3rem] p-6 sm:p-8 shadow-2xl border-b-[12px] border-r-[8px] border-indigo-700 relative overflow-hidden isolate">
             {/* Glossy Overlay */}
-            <div className="absolute inset-0 z-0 bg-gradient-to-br from-slate-800 to-slate-950" />
-            <div className="absolute -top-[200px] -right-[200px] w-[500px] h-[500px] bg-purple-500/20 rounded-full blur-[120px] mix-blend-screen" />
-            <div className="absolute -bottom-[200px] -left-[200px] w-[500px] h-[500px] bg-indigo-500/20 rounded-full blur-[120px] mix-blend-screen" />
+            <div className="absolute inset-0 z-0 bg-gradient-to-br from-indigo-400 to-indigo-600" />
+            <div className="absolute top-2 left-4 right-4 h-4 bg-white/20 rounded-full blur-[2px]" />
             
             <div className="relative z-10 flex flex-col h-full">
               {/* Header */}
-              <div className="flex items-center justify-between gap-4 mb-6 px-2">
+              <div className="flex items-center justify-between gap-4 mb-8 px-2">
                 <div>
-                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-yellow-500/80 mb-1">幸运老虎机</div>
-                  <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight flex items-center gap-2">
-                    <span className="bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-200 to-slate-400">
-                      幸运转盘
-                    </span>
+                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-200 mb-1 drop-shadow-sm">Classic Slot</div>
+                  <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight flex items-center gap-2 drop-shadow-md" style={{ textShadow: '0 2px 0 rgba(0,0,0,0.2)' }}>
+                    幸运转盘
                   </h1>
                 </div>
-                <div className="text-right bg-slate-800/50 rounded-xl px-4 py-2 border border-slate-700/50 backdrop-blur-md">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">冷却中</div>
-                  <div className={`text-sm font-mono font-bold ${cooldownRemainingMs > 0 ? 'text-amber-400 animate-pulse' : 'text-emerald-400'}`}>
-                    {cooldownRemainingMs > 0 ? `${(cooldownRemainingMs / 1000).toFixed(1)}s` : '就绪'}
+                <div className="text-right bg-indigo-800/50 rounded-xl px-4 py-2 border border-indigo-400/30 shadow-inner">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-200 mb-0.5">Status</div>
+                  <div className={`text-sm font-mono font-bold ${cooldownRemainingMs > 0 ? 'text-yellow-300 animate-pulse' : 'text-emerald-300 drop-shadow-sm'}`}>
+                    {cooldownRemainingMs > 0 ? `${(cooldownRemainingMs / 1000).toFixed(1)}s` : 'READY'}
                   </div>
                 </div>
               </div>
 
               {/* 转轴显示区 - Machine Display */}
-              <div className="bg-slate-950 rounded-3xl p-4 sm:p-6 shadow-[inset_0_4px_24px_rgba(0,0,0,0.6)] ring-1 ring-white/10 relative overflow-hidden group mb-6">
-                {/* Metallic Mesh Background */}
-                <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#334155_2px,transparent_2px)] [background-size:24px_24px]" />
+              <div className="bg-sky-200 rounded-3xl p-4 sm:p-5 shadow-[inset_0_4px_8px_rgba(0,0,0,0.15)] ring-4 ring-indigo-300 relative overflow-hidden group mb-8 border-b-8 border-sky-300">
+                {/* Pattern Background */}
+                <div className="absolute inset-0 opacity-30 bg-[radial-gradient(#38bdf8_3px,transparent_3px)] [background-size:20px_20px]" />
                 
                 <div className="grid grid-cols-3 gap-3 sm:gap-4 relative z-10">
                   {REEL_INDEXES.map((idx) => {
@@ -723,14 +772,14 @@ export default function SlotPage() {
                     return (
                       <div
                         key={`reel-${idx}`}
-                        className={`relative rounded-xl overflow-hidden transform transition-all duration-500 ${
+                        className={`relative rounded-xl overflow-hidden transform transition-all duration-500 bg-white border-2 ${
                           highlight 
-                            ? 'z-10 scale-[1.02] ring-2 ring-yellow-400 shadow-[0_0_50px_rgba(250,204,21,0.3)]' 
-                            : 'ring-1 ring-slate-700/50 shadow-lg'
+                            ? 'z-10 scale-[1.02] border-yellow-400 shadow-[0_0_0_4px_rgba(250,204,21,0.5)]' 
+                            : 'border-sky-100 shadow-sm'
                         }`}
                       >
-                        {/* Reel Background - Curved glass effect */}
-                        <div className="absolute inset-0 bg-gradient-to-b from-slate-200 via-white to-slate-200 z-0" />
+                        {/* Reel Background */}
+                        <div className="absolute inset-0 bg-white z-0" />
                         
                         {/* Reel Content */}
                         <div className="relative bg-transparent z-10">
@@ -753,34 +802,26 @@ export default function SlotPage() {
                                 <div
                                   key={`${spinId}-${idx}-${i}-${symbolId}`}
                                   className={`h-28 sm:h-36 w-full flex items-center justify-center select-none transition-all duration-300 ${
-                                    highlight && i === track.length - 1 ? 'symbol-win' : 'opacity-90'
+                                    highlight && i === track.length - 1 ? 'symbol-win scale-110' : 'opacity-100'
                                   }`}
                                 >
-                                  <span className="text-6xl sm:text-7xl filter drop-shadow-sm transform hover:scale-110 transition-transform cursor-default">
+                                  <span className="text-6xl sm:text-7xl filter drop-shadow-sm transform transition-transform cursor-default">
                                     {symbolById[symbolId].emoji}
                                   </span>
                                 </div>
                               ))}
                             </div>
 
-                            {/* Enhanced 3D Glass Reflections & Shadows */}
-                            <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/20 mix-blend-multiply z-20" />
-                            <div className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-black/40 to-transparent z-20" />
-                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/40 to-transparent z-20" />
-                            
-                            {/* High-gloss reflection line */}
-                            <div className="pointer-events-none absolute inset-x-0 top-[40%] h-[1px] bg-white/40 blur-[1px] z-30 opacity-30" />
+                            {/* Inner Shadows for Depth */}
+                            <div className="pointer-events-none absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-black/10 to-transparent z-20" />
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-black/10 to-transparent z-20" />
                           </div>
 
                           {/* Reel Label */}
-                          <div className={`text-center py-1.5 border-t border-slate-300/50 transition-colors duration-300 ${
-                              highlight ? 'bg-yellow-100' : 'bg-slate-100'
+                          <div className={`text-center py-1.5 border-t-2 border-slate-100 transition-colors duration-300 ${
+                              highlight ? 'bg-yellow-50 text-yellow-700' : 'bg-slate-50 text-slate-400'
                           }`}>
-                            <div
-                              className={`text-[10px] font-bold uppercase tracking-wider ${
-                                highlight ? 'text-yellow-700' : 'text-slate-400'
-                              }`}
-                            >
+                            <div className="text-[10px] font-black uppercase tracking-wider">
                               {spinning ? '•••' : symbolById[reels[idx]].name}
                             </div>
                           </div>
@@ -790,46 +831,43 @@ export default function SlotPage() {
                   })}
                 </div>
 
-                {/* Payline Indicators */}
-                <div className="absolute top-1/2 left-0 w-3 h-1 bg-yellow-500/50 -translate-y-1/2 rounded-r-full shadow-[0_0_10px_rgba(234,179,8,0.5)] z-20" />
-                <div className="absolute top-1/2 right-0 w-3 h-1 bg-yellow-500/50 -translate-y-1/2 rounded-l-full shadow-[0_0_10px_rgba(234,179,8,0.5)] z-20" />
+                {/* Payline Indicators - Cute Triangles */}
+                <div className="absolute top-1/2 left-0 w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-yellow-400 border-b-[8px] border-b-transparent -translate-y-1/2 drop-shadow-md z-20" />
+                <div className="absolute top-1/2 right-0 w-0 h-0 border-t-[8px] border-t-transparent border-r-[12px] border-r-yellow-400 border-b-[8px] border-b-transparent -translate-y-1/2 drop-shadow-md z-20" />
               </div>
 
               {/* Status & Win Message */}
-              <div className="relative mb-6">
+              <div className="relative mb-8 px-2">
                  <div
-                  className={`relative overflow-hidden rounded-2xl border px-6 py-4 text-center transition-all duration-500 ${
+                  className={`relative overflow-hidden rounded-2xl border-2 px-6 py-5 text-center transition-all duration-500 shadow-sm ${
                     lastResult
                       ? lastResult.payout > 0
-                        ? 'bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border-yellow-500/30 shadow-[0_0_30px_rgba(234,179,8,0.1)]'
-                        : 'bg-slate-800/50 border-slate-700/50'
-                      : 'bg-slate-800/30 border-slate-700/30'
+                        ? 'bg-yellow-50 border-yellow-300'
+                        : 'bg-indigo-800/30 border-indigo-400/30'
+                      : 'bg-indigo-800/20 border-indigo-400/20'
                   }`}
                 >
                   <div className={`text-lg font-bold flex items-center justify-center gap-3 ${
-                     lastResult && lastResult.payout > 0 ? 'text-yellow-400' : 'text-slate-300'
+                     lastResult && lastResult.payout > 0 ? 'text-yellow-600' : 'text-indigo-100'
                   }`}>
                     {lastResult && lastResult.payout > 0 && <span className="animate-bounce">🎉</span>}
-                    <span>{payoutText ?? '点击按钮开始旋转'}</span>
+                    <span className="tracking-wide drop-shadow-sm">{payoutText ?? '准备就绪，祝君好运'}</span>
                     {lastResult && lastResult.payout > 0 && <span className="animate-bounce">🎉</span>}
                   </div>
-                  {!lastResult && (
-                     <div className="text-xs text-slate-500 mt-1">三连更高奖励，二连也有保底！</div>
-                  )}
                 </div>
               </div>
 
               {/* Action Buttons */}
-              <div className="mt-auto">
-                <div className="mb-4 flex items-center justify-center">
-                  <div className="inline-flex rounded-2xl bg-slate-800/70 p-1 ring-1 ring-white/10 backdrop-blur-sm">
+              <div className="mt-auto px-2">
+                <div className="mb-6 flex items-center justify-center">
+                  <div className="inline-flex rounded-2xl bg-indigo-800/40 p-1.5 ring-1 ring-white/10 shadow-inner">
                     <button
                       type="button"
                       onClick={() => setPlayMode('earn')}
-                      className={`px-4 py-2 rounded-xl text-xs font-black tracking-wider transition-all ${
+                      className={`px-5 py-2.5 rounded-xl text-xs font-black tracking-wider transition-all focus-visible:ring-2 focus-visible:ring-white outline-none ${
                         playMode === 'earn'
-                          ? 'bg-white text-slate-900 shadow-sm'
-                          : 'text-slate-300 hover:text-white'
+                          ? 'bg-white text-indigo-600 shadow-md transform scale-105'
+                          : 'text-indigo-200 hover:text-white hover:bg-white/10'
                       }`}
                     >
                       赚积分
@@ -838,10 +876,10 @@ export default function SlotPage() {
                       type="button"
                       onClick={() => setPlayMode('bet')}
                       disabled={!betModeEnabled}
-                      className={`px-4 py-2 rounded-xl text-xs font-black tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                      className={`px-5 py-2.5 rounded-xl text-xs font-black tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-rose-300 outline-none ${
                         playMode === 'bet'
-                          ? 'bg-rose-200 text-rose-950 shadow-sm'
-                          : 'text-slate-300 hover:text-white'
+                          ? 'bg-rose-500 text-white shadow-md transform scale-105'
+                          : 'text-indigo-200 hover:text-white hover:bg-white/10'
                       }`}
                       title={betModeEnabled ? '' : '管理员未开启挑战模式'}
                     >
@@ -851,9 +889,9 @@ export default function SlotPage() {
                 </div>
 
                 {playMode === 'bet' && (
-                  <div className="mb-4 space-y-3">
+                  <div className="mb-6 space-y-3">
                     <div className="flex items-center justify-center">
-                      <div className="inline-flex flex-wrap justify-center gap-1.5 rounded-2xl bg-slate-800/70 p-1 ring-1 ring-white/10 backdrop-blur-sm">
+                      <div className="inline-flex flex-wrap justify-center gap-2 rounded-2xl bg-indigo-800/40 p-2 ring-1 ring-white/10">
                         {SLOT_BET_OPTIONS.map((opt) => {
                           const active = selectedBetCost === opt;
                           return (
@@ -862,8 +900,10 @@ export default function SlotPage() {
                               type="button"
                               onClick={() => setSelectedBetCost(opt)}
                               disabled={spinning || cooldownRemainingMs > 0}
-                              className={`px-3 py-2 rounded-xl text-xs font-black tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
-                                active ? 'bg-rose-200 text-rose-950 shadow-sm' : 'text-slate-200 hover:text-white'
+                              className={`w-12 h-10 rounded-xl text-xs font-black tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-rose-300 outline-none ${
+                                active 
+                                  ? 'bg-rose-500 text-white shadow-md transform scale-110' 
+                                  : 'text-indigo-200 hover:text-white hover:bg-white/10'
                               }`}
                               aria-label={`Bet ${opt}`}
                             >
@@ -873,39 +913,38 @@ export default function SlotPage() {
                         })}
                       </div>
                     </div>
-
-                    <div className="text-center text-xs text-slate-300">
-                      下注 <span className="font-black text-white tabular-nums">{selectedBetCost}</span> 积分/次（返奖=下注×倍率，净赢分=返奖-下注）
-                    </div>
                   </div>
                 )}
 
                 <button
                   onClick={() => handleSpin()}
                   disabled={loading || spinning || cooldownRemainingMs > 0 || (playMode === 'bet' && !betModeEnabled)}
-                  className="group relative w-full h-16 rounded-2xl font-black text-xl tracking-widest text-white transition-all 
-                  disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none
-                  transform hover:-translate-y-1 hover:shadow-[0_10px_40px_-10px_rgba(234,179,8,0.4)]
-                  active:translate-y-0.5 active:shadow-none"
+                  className="game-btn group relative w-full h-24 rounded-3xl font-black text-2xl tracking-[0.1em] text-white overflow-hidden
+                  disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none focus-visible:ring-4 focus-visible:ring-yellow-300 outline-none"
                 >
-                  <div className="absolute inset-0 rounded-2xl bg-gradient-to-b from-yellow-400 to-yellow-600 shadow-[inset_0_2px_4px_rgba(255,255,255,0.4),0_4px_0_#b45309] group-active:shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)] group-active:translate-y-[4px] transition-all"></div>
-                  <div className="absolute inset-0 rounded-2xl btn-shine opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                  <div className="relative flex items-center justify-center gap-3 drop-shadow-sm group-active:translate-y-[4px] transition-all">
+                  <div className="absolute inset-0 bg-gradient-to-b from-yellow-400 to-orange-500 shadow-[inset_0_4px_4px_rgba(255,255,255,0.4),0_8px_0_#c2410c] group-active:shadow-[inset_0_4px_8px_rgba(0,0,0,0.2)] group-active:translate-y-[8px] transition-all rounded-3xl"></div>
+                  
+                  {/* Stripes Pattern on Button */}
+                  <div className="absolute inset-0 opacity-10 bg-[linear-gradient(45deg,transparent_25%,#000_25%,#000_50%,transparent_50%,transparent_75%,#000_75%,#000_100%)] [background-size:20px_20px] rounded-3xl pointer-events-none" />
+
+                  <div className="absolute inset-0 btn-shine opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl"></div>
+                  
+                  <div className="relative flex flex-col items-center justify-center h-full pb-2 group-active:translate-y-[8px] transition-all">
                     {spinning ? (
-                      <>
-                        <span className="w-5 h-5 border-3 border-white/40 border-t-white rounded-full animate-spin" />
-                        <span className="text-lg">旋转中...</span>
-                      </>
+                      <div className="flex items-center gap-3">
+                        <span className="w-6 h-6 border-[4px] border-white/40 border-t-white rounded-full animate-spin" />
+                        <span className="text-xl drop-shadow-md">转动中...</span>
+                      </div>
                     ) : (
                       <>
-                        <span>开始旋转</span>
-                        <span className="text-yellow-200 opacity-80 group-hover:translate-x-1 transition-transform">➤</span>
+                        <span className="drop-shadow-md text-3xl">SPIN!</span>
+                        <span className="text-[10px] opacity-80 font-bold uppercase tracking-widest">Start Game</span>
                       </>
                     )}
                   </div>
                 </button>
-                <div className="text-center mt-3 text-[10px] uppercase tracking-wider text-slate-500 font-medium">
-                  {cooldownRemainingMs > 0 ? '请等待冷却...' : '公平游戏 • 随机生成'}
+                <div className="text-center mt-4 text-[10px] uppercase tracking-wider text-indigo-200 font-bold opacity-60">
+                  {cooldownRemainingMs > 0 ? 'COOLDOWN ACTIVE' : 'PROVABLY FAIR • RANDOM GENERATED'}
                 </div>
               </div>
             </div>
@@ -916,26 +955,27 @@ export default function SlotPage() {
           <div className="order-2 lg:order-3 space-y-6">
              {/* 今日统计 - Card Style */}
               {status?.dailyStats && (
-                <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-4 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                <div className="cartoon-panel p-6 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-100 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2" />
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-4 flex items-center gap-2 relative z-10">
+                    <span className="w-2 h-2 rounded-full bg-indigo-400 ring-2 ring-indigo-100"></span>
                     今日统计
                   </h3>
                   
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-slate-50/50 rounded-2xl p-4 border border-slate-100">
-                      <div className="text-xs text-slate-400 font-bold mb-1">已玩</div>
+                  <div className="grid grid-cols-2 gap-4 relative z-10">
+                    <div className="bg-white/60 rounded-2xl p-4 border border-indigo-50 shadow-sm">
+                      <div className="text-xs text-slate-500 font-bold mb-1">已玩</div>
                       <div className="text-2xl font-black text-slate-800">
                         {status.dailyStats.gamesPlayed}
                         <span className="text-sm font-bold text-slate-400 ml-1">局</span>
                       </div>
                     </div>
                     
-                    <div className={`rounded-2xl p-4 border ${status.pointsLimitReached ? 'bg-orange-50/50 border-orange-100' : 'bg-green-50/50 border-green-100'}`}>
-                      <div className={`text-xs font-bold mb-1 ${status.pointsLimitReached ? 'text-orange-400' : 'text-green-500'}`}>积分</div>
-                      <div className={`text-2xl font-black ${status.pointsLimitReached ? 'text-orange-600' : 'text-green-700'}`}>
+                    <div className={`rounded-2xl p-4 border shadow-sm ${status.pointsLimitReached ? 'bg-orange-50 border-orange-100' : 'bg-emerald-50 border-emerald-100'}`}>
+                      <div className={`text-xs font-bold mb-1 ${status.pointsLimitReached ? 'text-orange-500' : 'text-emerald-500'}`}>积分</div>
+                      <div className={`text-2xl font-black ${status.pointsLimitReached ? 'text-orange-600' : 'text-emerald-600'}`}>
                         {status.dailyStats.pointsEarned}
-                      <span className="text-xs font-bold opacity-60 ml-1">/ {status.dailyLimit ?? 2000}</span>
+                      <span className="text-xs font-bold opacity-60 ml-1 text-slate-500">/ {status.dailyLimit ?? 2000}</span>
                     </div>
                   </div>
                 </div>
@@ -943,51 +983,51 @@ export default function SlotPage() {
             )}
 
             {/* 今日排行榜 */}
-            <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+            <div className="cartoon-panel p-6 relative overflow-hidden">
+              <div className="flex items-center justify-between mb-4 relative z-10">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-emerald-100"></span>
                   今日排行榜
                 </h3>
                 <button
                   onClick={fetchRanking}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                  className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-colors focus-visible:ring-2 focus-visible:ring-emerald-500 outline-none"
                   aria-label="刷新排行榜"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
                 </button>
               </div>
 
-              <div className="text-[11px] text-slate-400 font-medium mb-3">
+              <div className="text-[11px] text-slate-400 font-medium mb-3 relative z-10">
                 统计口径：净赢分（仅累计正净赢分）
               </div>
 
               {ranking.length === 0 ? (
-                <div className="text-center py-6 text-slate-400 text-xs bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="text-center py-6 text-slate-400 text-xs bg-slate-50 rounded-2xl border border-slate-100 relative z-10 font-medium">
                   暂无上榜记录
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-2 relative z-10">
                   {ranking.map((entry, idx) => {
                     const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '•';
                     return (
                       <div
                         key={`${entry.userId}-${idx}`}
-                        className="flex items-center justify-between gap-3 p-2.5 rounded-2xl bg-white/60 border border-slate-100"
+                        className="flex items-center justify-between gap-3 p-2.5 rounded-2xl bg-white/40 border border-transparent hover:border-emerald-100 hover:bg-white/80 transition-colors"
                       >
                         <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center text-sm font-black text-slate-700 shrink-0">
+                          <div className="w-8 h-8 rounded-xl bg-white border border-slate-100 flex items-center justify-center text-sm font-black text-slate-500 shrink-0 shadow-sm">
                             {medal}
                           </div>
                           <div className="min-w-0">
-                            <div className="text-sm font-black text-slate-900 truncate">
+                            <div className="text-sm font-bold text-slate-700 truncate">
                               {entry.username}
                             </div>
                             <div className="text-[10px] text-slate-400 font-medium">#{idx + 1}</div>
                           </div>
                         </div>
                         <div className="text-right shrink-0">
-                          <div className="text-sm font-black text-emerald-700 tabular-nums">+{entry.score}</div>
+                          <div className="text-sm font-black text-emerald-500 tabular-nums">+{entry.score}</div>
                           <div className="text-[10px] text-slate-400 font-medium">分</div>
                         </div>
                       </div>
@@ -997,47 +1037,48 @@ export default function SlotPage() {
               )}
 
               {rankingError && (
-                <div className="mt-3 text-xs text-red-500">排行榜加载失败</div>
+                <div className="mt-3 text-xs text-rose-500 relative z-10 font-medium">排行榜加载失败</div>
               )}
             </div>
 
             {/* 规则与倍率 */}
-            <div className="glass-panel rounded-3xl p-6 shadow-xl shadow-slate-200/50">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-pink-500"></span>
+            <div className="cartoon-panel p-6 relative overflow-hidden">
+              <div className="absolute top-10 right-0 w-40 h-40 bg-pink-100 rounded-full blur-3xl translate-x-1/2" />
+              <div className="flex items-center justify-between mb-4 relative z-10">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-pink-400 ring-2 ring-pink-100"></span>
                   规则与倍率
                 </h3>
                 <button
                   type="button"
                   onClick={() => setShowRules(true)}
-                  className="text-[10px] font-black bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full hover:bg-slate-200 transition-colors"
+                  className="text-[10px] font-black bg-white border border-slate-200 text-slate-500 px-3 py-1.5 rounded-full hover:bg-pink-50 hover:text-pink-600 hover:border-pink-200 transition-colors focus-visible:ring-2 focus-visible:ring-pink-500 outline-none"
                 >
                   规则
                 </button>
               </div>
 
-              <div className="text-[11px] text-slate-400 font-medium mb-3">
+              <div className="text-[11px] text-slate-400 font-medium mb-3 relative z-10">
                 赚积分：{SLOT_EARN_BASE}×倍率；挑战模式：返奖=下注×倍率
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-2 relative z-10">
                 {SLOT_SYMBOLS.map((s) => (
                   <div
                     key={s.id}
-                    className="group flex items-center justify-between gap-3 p-2 hover:bg-white rounded-xl transition-colors cursor-default"
+                    className="group flex items-center justify-between gap-3 p-2 hover:bg-white/60 rounded-2xl transition-colors cursor-default border border-transparent hover:border-pink-100"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 flex items-center justify-center bg-slate-50 rounded-lg text-2xl group-hover:scale-110 transition-transform shadow-sm border border-slate-100 shrink-0">
+                      <div className="w-10 h-10 flex items-center justify-center bg-white rounded-xl text-2xl group-hover:scale-110 transition-transform shadow-sm border border-slate-100 shrink-0">
                         {s.emoji}
                       </div>
-                      <span className="text-xs font-bold text-slate-600 truncate">{s.name}</span>
+                      <span className="text-xs font-bold text-slate-500 truncate group-hover:text-slate-800 transition-colors">{s.name}</span>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <div className="text-[10px] font-black text-slate-700 bg-slate-100 px-2 py-1 rounded-md tabular-nums">
+                      <div className="text-[10px] font-black text-slate-400 bg-slate-50 border border-slate-100 px-2 py-1 rounded-lg tabular-nums group-hover:text-slate-600 group-hover:border-slate-200">
                         二连 x{SLOT_PAIR_MULTIPLIERS[s.id].toFixed(1)}
                       </div>
-                      <div className="text-[10px] font-black text-slate-700 bg-slate-100 px-2 py-1 rounded-md tabular-nums">
+                      <div className="text-[10px] font-black text-slate-400 bg-slate-50 border border-slate-100 px-2 py-1 rounded-lg tabular-nums group-hover:text-slate-600 group-hover:border-slate-200">
                         三连 x{SLOT_TRIPLE_MULTIPLIERS[s.id]}
                       </div>
                     </div>
@@ -1045,7 +1086,7 @@ export default function SlotPage() {
                 ))}
               </div>
 
-              <div className="mt-4 space-y-1 text-xs text-slate-500 font-medium">
+              <div className="mt-4 space-y-1 text-xs text-slate-400 font-medium relative z-10">
                 <div>二连 +💎 加成：+{SLOT_PAIR_BONUS_WITH_DIAMOND.toFixed(1)}</div>
                 <div>二连 +7️⃣ 加成：+{SLOT_PAIR_BONUS_WITH_SEVEN.toFixed(1)}</div>
                 <div>特殊爆：💎💎+7️⃣ x{SLOT_SPECIAL_MIX_DIAMOND_DIAMOND_SEVEN_MULTIPLIER}</div>
@@ -1058,12 +1099,21 @@ export default function SlotPage() {
       {/* 积分上限提示 - Styled Modal */}
       {showLimitWarning && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowLimitWarning(false)} />
-          <div className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl overflow-hidden animate-[bounce-land_0.5s_ease-out]">
+          <div className="absolute inset-0 bg-indigo-900/20 backdrop-blur-sm" onClick={() => setShowLimitWarning(false)} />
+          <div 
+            className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl overflow-hidden ring-1 ring-black/5 animate-[bounce-land_0.5s_ease-out] outline-none"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="limit-modal-title"
+            tabIndex={-1}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setShowLimitWarning(false);
+            }}
+          >
             <div className="bg-orange-50 p-6 border-b border-orange-100 text-center">
               <div className="text-4xl mb-3">⚠️</div>
-              <h3 className="text-xl font-black text-slate-900">今日积分已达上限</h3>
-              <p className="text-sm text-slate-600 mt-2 font-medium">
+              <h3 id="limit-modal-title" className="text-xl font-black text-slate-800">今日积分已达上限</h3>
+              <p className="text-sm text-slate-500 mt-2 font-medium">
                 您已达到今日积分上限，继续游戏将不再获得积分，直到明天重置。
               </p>
             </div>
@@ -1071,7 +1121,7 @@ export default function SlotPage() {
             <div className="p-6 grid grid-cols-2 gap-3 bg-white">
               <button
                 onClick={() => setShowLimitWarning(false)}
-                className="py-3 px-4 rounded-xl font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors"
+                className="py-3 px-4 rounded-xl font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors focus-visible:ring-2 focus-visible:ring-slate-400 outline-none"
               >
                 取消
               </button>
@@ -1081,9 +1131,10 @@ export default function SlotPage() {
                   setShowLimitWarning(false);
                   handleSpin({ ignoreLimit: true });
                 }}
-                className="py-3 px-4 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 shadow-lg shadow-slate-200 transition-all active:scale-95"
+                className="py-3 px-4 rounded-xl bg-indigo-500 text-white font-bold hover:bg-indigo-600 shadow-md shadow-indigo-200 transition-all active:scale-95 focus-visible:ring-2 focus-visible:ring-indigo-500 outline-none"
+                autoFocus
               >
-                继续娱乐 (无积分)
+                继续娱乐
               </button>
             </div>
           </div>
@@ -1093,80 +1144,85 @@ export default function SlotPage() {
       {/* 规则说明 - Modal */}
       {showRules && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowRules(false)} />
-          <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex items-start justify-between gap-4">
+          <div className="absolute inset-0 bg-indigo-900/20 backdrop-blur-sm" onClick={() => setShowRules(false)} />
+          <div 
+            className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl overflow-hidden ring-1 ring-black/5 outline-none"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rules-modal-title"
+            tabIndex={-1}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setShowRules(false);
+            }}
+          >
+            <div className="p-6 border-b border-slate-100 flex items-start justify-between gap-4 bg-slate-50/50">
               <div>
                 <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-1">Rules</div>
-                <h3 className="text-xl font-black text-slate-900">老虎机规则说明</h3>
+                <h3 id="rules-modal-title" className="text-xl font-black text-slate-800">老虎机规则说明</h3>
               </div>
               <button
                 type="button"
                 onClick={() => setShowRules(false)}
-                className="w-9 h-9 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors font-black"
+                className="w-9 h-9 rounded-xl bg-white border border-slate-200 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors font-black flex items-center justify-center focus-visible:ring-2 focus-visible:ring-slate-400 outline-none shadow-sm"
                 aria-label="Close rules"
+                autoFocus
               >
                 ✕
               </button>
             </div>
 
-            <div className="p-6 max-h-[70vh] overflow-y-auto space-y-5">
+            <div className="p-6 max-h-[70vh] overflow-y-auto space-y-6 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
               <div className="space-y-2">
-                <div className="text-xs font-black uppercase tracking-wider text-slate-400">玩法模式</div>
-                <div className="text-sm text-slate-700 leading-relaxed">
-                  <div className="font-bold text-slate-900">赚积分</div>
-                  <div className="text-slate-600">
-                    免费旋转，中奖获得 <span className="font-bold tabular-nums">{SLOT_EARN_BASE}</span>×倍率 积分（受每日积分上限限制）。
+                <div className="text-xs font-black uppercase tracking-wider text-indigo-500">玩法模式</div>
+                <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 space-y-2">
+                  <div className="text-sm text-slate-600 leading-relaxed">
+                    <span className="font-bold text-slate-800">赚积分：</span>
+                    免费旋转，中奖获得 <span className="font-bold tabular-nums text-emerald-500">{SLOT_EARN_BASE}</span> × 倍率 积分（受每日积分上限限制）。
                   </div>
-                </div>
-                <div className="text-sm text-slate-700 leading-relaxed">
-                  <div className="font-bold text-slate-900">挑战模式</div>
-                  <div className="text-slate-600">
-                    选择下注档位 <span className="font-bold tabular-nums">{SLOT_BET_OPTIONS.join(' / ')}</span>。
-                    结算口径：返奖=下注×倍率，净赢分=返奖-下注（可能亏损，不受每日上限限制）。
+                  <div className="text-sm text-slate-600 leading-relaxed border-t border-slate-200 pt-2">
+                    <span className="font-bold text-slate-800">挑战模式：</span>
+                    选择下注档位 <span className="font-bold tabular-nums text-rose-500">{SLOT_BET_OPTIONS.join(' / ')}</span>。
+                    返奖=下注×倍率，净赢分=返奖-下注。
                   </div>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <div className="text-xs font-black uppercase tracking-wider text-slate-400">判定顺序（只取最高，不叠加）</div>
-                <ul className="text-sm text-slate-700 space-y-1 list-disc pl-5">
+                <div className="text-xs font-black uppercase tracking-wider text-indigo-500">判定顺序（不叠加）</div>
+                <ul className="text-sm text-slate-600 space-y-2 list-disc pl-4 marker:text-indigo-400">
                   <li>三连（AAA）</li>
                   <li>
-                    特殊爆：<span className="font-bold">💎💎+7️⃣</span>（任意顺序）倍率 x{SLOT_SPECIAL_MIX_DIAMOND_DIAMOND_SEVEN_MULTIPLIER}
+                    特殊爆：<span className="font-bold text-slate-800">💎💎+7️⃣</span>（任意顺序）倍率 x{SLOT_SPECIAL_MIX_DIAMOND_DIAMOND_SEVEN_MULTIPLIER}
                   </li>
-                  <li>二连 + 7️⃣：在二连倍率基础上 +{SLOT_PAIR_BONUS_WITH_SEVEN.toFixed(1)}（不含 💎💎+7️⃣）</li>
+                  <li>二连 + 7️⃣：在二连倍率基础上 +{SLOT_PAIR_BONUS_WITH_SEVEN.toFixed(1)}</li>
                   <li>二连 + 💎：在二连倍率基础上 +{SLOT_PAIR_BONUS_WITH_DIAMOND.toFixed(1)}</li>
                   <li>普通二连（任意两格相同）</li>
-                  <li>其他：0</li>
                 </ul>
               </div>
 
               <div className="space-y-2">
-                <div className="text-xs font-black uppercase tracking-wider text-slate-400">倍率表</div>
-                <div className="space-y-2">
+                <div className="text-xs font-black uppercase tracking-wider text-indigo-500">倍率表</div>
+                <div className="grid grid-cols-1 gap-2">
                   {SLOT_SYMBOLS.map((s) => (
                     <div
                       key={`rule-${s.id}`}
-                      className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-100"
+                      className="flex items-center justify-between gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100"
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-xl bg-white border border-slate-100 flex items-center justify-center text-2xl shrink-0">
+                        <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-xl shrink-0 shadow-sm">
                           {s.emoji}
                         </div>
                         <div className="min-w-0">
-                          <div className="text-sm font-black text-slate-900 truncate">{s.name}</div>
-                          <div className="text-[11px] text-slate-500 font-medium">
-                            权重 {s.weight}%
-                          </div>
+                          <div className="text-sm font-bold text-slate-700">{s.name}</div>
+                          <div className="text-[10px] text-slate-400">权重 {s.weight}%</div>
                         </div>
                       </div>
-                      <div className="text-right shrink-0 space-y-1">
-                        <div className="text-[11px] font-black text-slate-700 tabular-nums">
-                          二连 x{SLOT_PAIR_MULTIPLIERS[s.id].toFixed(1)}
+                      <div className="text-right shrink-0 space-y-0.5">
+                        <div className="text-[10px] font-bold text-slate-400 tabular-nums">
+                          二连 x<span className="text-slate-600">{SLOT_PAIR_MULTIPLIERS[s.id].toFixed(1)}</span>
                         </div>
-                        <div className="text-[11px] font-black text-slate-700 tabular-nums">
-                          三连 x{SLOT_TRIPLE_MULTIPLIERS[s.id]}
+                        <div className="text-[10px] font-bold text-slate-400 tabular-nums">
+                          三连 x<span className="text-yellow-600">{SLOT_TRIPLE_MULTIPLIERS[s.id]}</span>
                         </div>
                       </div>
                     </div>
@@ -1176,7 +1232,7 @@ export default function SlotPage() {
 
               <div className="space-y-2">
                 <div className="text-xs font-black uppercase tracking-wider text-slate-400">公平性</div>
-                <div className="text-sm text-slate-600 leading-relaxed">
+                <div className="text-xs text-slate-500 leading-relaxed">
                   每次旋转由服务端按权重随机生成结果，客户端动画仅用于展示；最终积分结算以服务端为准。
                 </div>
               </div>
@@ -1186,7 +1242,7 @@ export default function SlotPage() {
               <button
                 type="button"
                 onClick={() => setShowRules(false)}
-                className="px-5 py-2.5 rounded-xl bg-slate-900 text-white font-black hover:bg-slate-800 transition-colors"
+                className="px-6 py-2.5 rounded-2xl font-black bg-gradient-to-b from-sky-400 to-sky-600 text-white shadow-[0_4px_0_#0ea5e9] active:shadow-none active:translate-y-[4px] hover:brightness-110 transition-all focus-visible:ring-4 focus-visible:ring-sky-300 outline-none border-2 border-white"
               >
                 知道了
               </button>
