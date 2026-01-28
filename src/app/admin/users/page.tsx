@@ -482,7 +482,8 @@ export default function UsersPage() {
         </div>
 
         {/* 用户列表 */}
-        <div className="glass rounded-3xl shadow-sm overflow-hidden">
+        {/* [Perf] 移除 glass 类避免 backdrop-blur 影响滚动性能 */}
+        <div className="bg-white/95 rounded-3xl shadow-sm overflow-hidden border border-stone-200/60">
           {filteredUsers.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 px-4">
               <div className="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mb-4">
@@ -505,22 +506,23 @@ export default function UsersPage() {
                 <div className="text-right pr-2">操作</div>
               </div>
               
-              <div className="divide-y divide-stone-100">
+              {/* [Perf] 添加 transform 提升为合成层，优化滚动性能 */}
+              <div className="divide-y divide-stone-100" style={{ transform: 'translateZ(0)' }}>
                 {filteredUsers.map((u) => (
-                  <div 
+                  <div
                     key={u.id}
                     onClick={() => handleUserClick(u)}
-                    className="group cursor-pointer hover:bg-stone-50/50 transition-colors duration-200"
+                    className="group cursor-pointer hover:bg-stone-50/80"
                   >
                     {/* Desktop View */}
                     <div className="hidden lg:grid grid-cols-[2fr_1fr_1fr_1fr_1fr_80px] px-8 py-5 items-center gap-4">
                       {/* User */}
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-50 to-stone-100 flex items-center justify-center border border-stone-200 group-hover:border-blue-200 transition-colors">
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-50 to-stone-100 flex items-center justify-center border border-stone-200 group-hover:border-blue-200">
                           <UserIcon className="w-5 h-5 text-blue-500" />
                         </div>
                         <div>
-                          <span className="font-bold text-stone-700 text-[15px] group-hover:text-blue-600 transition-colors">{u.username}</span>
+                          <span className="font-bold text-stone-700 text-[15px] group-hover:text-blue-600">{u.username}</span>
                           <p className="text-xs text-stone-400">ID: {u.id}</p>
                         </div>
                       </div>
@@ -555,7 +557,7 @@ export default function UsersPage() {
 
                       {/* Actions */}
                       <div className="flex justify-end">
-                        <div className="w-8 h-8 rounded-lg bg-stone-50 text-stone-400 flex items-center justify-center border border-stone-100 group-hover:bg-white group-hover:border-blue-200 group-hover:text-blue-500 transition-all">
+                        <div className="w-8 h-8 rounded-lg bg-stone-50 text-stone-400 flex items-center justify-center border border-stone-100 group-hover:bg-white group-hover:border-blue-200 group-hover:text-blue-500">
                           <ChevronRight className="w-4 h-4" />
                         </div>
                       </div>
@@ -634,8 +636,8 @@ export default function UsersPage() {
       {/* 用户详情模态框 */}
       {selectedUser && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
-          <div 
-            className="absolute inset-0 bg-stone-900/20 backdrop-blur-sm transition-opacity"
+          <div
+            className="absolute inset-0 bg-stone-900/30"
             onClick={() => setSelectedUser(null)}
           />
           
