@@ -36,7 +36,7 @@ export const MATCH3_DEFAULT_CONFIG: Match3Config = {
 };
 
 const EMPTY = -1;
-const BASE_TILE_SCORE = 2;
+const BASE_TILE_SCORE = 4;
 
 type Rng = () => number;
 
