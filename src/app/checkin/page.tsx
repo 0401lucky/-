@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Check, CalendarDays, Gift, ChevronLeft, Loader2, PartyPopper, Sparkles } from 'lucide-react';
-import confetti from 'canvas-confetti';
 
 interface CheckinResult {
   quotaDisplay?: string;
@@ -67,12 +66,14 @@ export default function CheckinPage() {
           quotaDisplay: data.quotaDisplay,
           extraSpins: data.extraSpins,
         });
-        // 触发彩带特效
-        confetti({
-          particleCount: 100,
-          spread: 70,
-          origin: { y: 0.6 },
-          colors: ['#f97316', '#fbbf24', '#ffffff']
+        // [Perf] 动态导入彩带特效，减少首屏 JS 体积
+        import('canvas-confetti').then(({ default: confetti }) => {
+          confetti({
+            particleCount: 100,
+            spread: 70,
+            origin: { y: 0.6 },
+            colors: ['#f97316', '#fbbf24', '#ffffff']
+          });
         });
       } else {
         alert(data.message || '签到失败');

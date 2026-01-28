@@ -10,7 +10,6 @@ import { Board } from './components/Board';
 import { useGameSession } from './hooks/useGameSession';
 import { createInitialBoard, simulateMatch3Game } from '@/lib/match3-engine';
 import type { Match3Move } from '@/lib/match3-engine';
-import confetti from 'canvas-confetti';
 import { cn } from '@/lib/utils';
 
 type Phase = 'loading' | 'ready' | 'playing' | 'result';
@@ -159,33 +158,35 @@ export default function Match3Page() {
     prevScoreRef.current = score;
   }, [score]);
 
-  // Result confetti
+  // [Perf] 动态导入彩带特效，减少首屏 JS 体积
   useEffect(() => {
     if (phase === 'result' && result) {
-      const duration = 3000;
-      const end = Date.now() + duration;
+      import('canvas-confetti').then(({ default: confetti }) => {
+        const duration = 3000;
+        const end = Date.now() + duration;
 
-      const frame = () => {
-        confetti({
-          particleCount: 2,
-          angle: 60,
-          spread: 55,
-          origin: { x: 0 },
-          colors: ['#ef4444', '#3b82f6', '#10b981', '#f59e0b']
-        });
-        confetti({
-          particleCount: 2,
-          angle: 120,
-          spread: 55,
-          origin: { x: 1 },
-          colors: ['#ef4444', '#3b82f6', '#10b981', '#f59e0b']
-        });
+        const frame = () => {
+          confetti({
+            particleCount: 2,
+            angle: 60,
+            spread: 55,
+            origin: { x: 0 },
+            colors: ['#ef4444', '#3b82f6', '#10b981', '#f59e0b']
+          });
+          confetti({
+            particleCount: 2,
+            angle: 120,
+            spread: 55,
+            origin: { x: 1 },
+            colors: ['#ef4444', '#3b82f6', '#10b981', '#f59e0b']
+          });
 
-        if (Date.now() < end) {
-          requestAnimationFrame(frame);
-        }
-      };
-      frame();
+          if (Date.now() < end) {
+            requestAnimationFrame(frame);
+          }
+        };
+        frame();
+      });
     }
   }, [phase, result]);
 

@@ -457,69 +457,81 @@ export async function spinLottery(
 
     // === 第三步：选择档位并原子性获取兑换码 ===
     const selectedTier = weightedRandomSelect(config.tiers);
-    
+
     // [Opt-3] 配置保护：如果所有概率都为0，返回错误
     if (!selectedTier) {
       await rollbackSpinCount();
       return { success: false, message: "抽奖配置异常，请联系管理员" };
     }
-    
-    // [P1-1修复] 使用可用集合计算
-    const allCodesResult = await kv.smembers(`${LOTTERY_CODES_PREFIX}${selectedTier.id}`);
-    const usedCodesResult = await kv.smembers(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`);
-    const allCodes: string[] = Array.isArray(allCodesResult) ? allCodesResult as string[] : [];
-    const usedCodes: string[] = Array.isArray(usedCodesResult) ? usedCodesResult as string[] : [];
-    const usedSet = new Set(usedCodes);
-    const availableCodes = allCodes.filter((c: string) => !usedSet.has(c));
-    
-    if (availableCodes.length === 0) {
+
+    // [Perf] 使用 Lua 脚本在 Redis 端原子性随机选取并标记已使用
+    // 避免全量 smembers 数据传输和内存过滤
+    const allCodesKey = `${LOTTERY_CODES_PREFIX}${selectedTier.id}`;
+    const usedCodesKey = `${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`;
+
+    const luaScript = `
+      local allKey = KEYS[1]
+      local usedKey = KEYS[2]
+      local maxAttempts = tonumber(ARGV[1]) or 100
+
+      -- 获取所有码的数量
+      local total = redis.call('SCARD', allKey)
+      if total == 0 then
+        return {0, '', 'empty'}
+      end
+
+      -- 获取已使用码的数量
+      local usedCount = redis.call('SCARD', usedKey)
+      if usedCount >= total then
+        return {0, '', 'exhausted'}
+      end
+
+      -- 随机尝试获取一个未使用的码
+      for i = 1, maxAttempts do
+        local code = redis.call('SRANDMEMBER', allKey)
+        if code and redis.call('SISMEMBER', usedKey, code) == 0 then
+          -- 原子性标记为已使用
+          local added = redis.call('SADD', usedKey, code)
+          if added == 1 then
+            return {1, code, 'ok'}
+          end
+          -- 如果 SADD 返回 0，说明刚被别人抢了，继续尝试
+        end
+      end
+
+      -- 随机尝试失败，使用 SDIFF 获取精确可用集合（降级方案）
+      local available = redis.call('SDIFF', allKey, usedKey)
+      if #available == 0 then
+        return {0, '', 'exhausted'}
+      end
+
+      -- 随机选一个
+      local idx = math.random(1, #available)
+      local code = available[idx]
+      local added = redis.call('SADD', usedKey, code)
+      if added == 1 then
+        return {1, code, 'ok'}
+      end
+
+      return {0, '', 'conflict'}
+    `;
+
+    const result = await kv.eval(
+      luaScript,
+      [allCodesKey, usedCodesKey],
+      [100]  // maxAttempts
+    ) as [number, string, string];
+
+    const [ok, selectedCode, status] = result;
+
+    if (ok !== 1 || !selectedCode) {
       await rollbackSpinCount();
-      return { success: false, message: "该档位兑换码已用尽，请联系管理员" };
+      if (status === 'empty' || status === 'exhausted') {
+        return { success: false, message: "该档位兑换码已用尽，请联系管理员" };
+      }
+      return { success: false, message: "系统繁忙，请稍后再试" };
     }
-    
-    // 随机选择一个可用码
-    const randomIndex = Math.floor(Math.random() * availableCodes.length);
-    const selectedCode = availableCodes[randomIndex];
-    
-    // 原子性标记为已使用（SADD 返回 1 表示成功）
-    const addResult = await kv.sadd(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`, selectedCode);
-    
-    if (addResult !== 1) {
-      // 极小概率：刚好被别人抢了，重试一次
-      const retryUsedCodesResult = await kv.smembers(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`);
-      const retryUsedCodes: string[] = Array.isArray(retryUsedCodesResult) ? retryUsedCodesResult as string[] : [];
-      const retryUsedSet = new Set(retryUsedCodes);
-      const retryAvailable = allCodes.filter((c: string) => !retryUsedSet.has(c));
-      
-      if (retryAvailable.length === 0) {
-        await rollbackSpinCount();
-        return { success: false, message: "兑换码已用尽，请联系管理员" };
-      }
-      
-      const retryCode = retryAvailable[Math.floor(Math.random() * retryAvailable.length)];
-      const retryResult = await kv.sadd(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`, retryCode);
-      
-      if (retryResult !== 1) {
-        await rollbackSpinCount();
-        return { success: false, message: "系统繁忙，请稍后再试" };
-      }
-      
-      // 使用重试成功的码
-      // [Opt-1] 提交点失败时释放码
-      try {
-        return await completeSpinWithCode(retryCode, selectedTier, userId, username);
-      } catch (commitError) {
-        // 提交点（全局记录写入）失败，尝试释放已占用的码
-        console.error("提交点失败，尝试释放码:", commitError);
-        try {
-          await kv.srem(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`, retryCode);
-        } catch (releaseError) {
-          console.error("释放码失败:", releaseError);
-        }
-        throw commitError; // 继续抛出让外层 catch 处理回滚次数
-      }
-    }
-    
+
     // 使用成功抢占的码
     // [Opt-1] 提交点失败时释放码
     try {
@@ -534,7 +546,7 @@ export async function spinLottery(
       }
       throw commitError; // 继续抛出让外层 catch 处理回滚次数
     }
-    
+
   } catch (error) {
     // [P1-2补充] 全局异常兜底：确保次数被回滚
     console.error("spinLottery 异常:", error);

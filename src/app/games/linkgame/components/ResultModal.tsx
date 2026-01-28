@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import confetti from 'canvas-confetti';
 import { DIFFICULTY_META } from '../lib/constants';
 import type { LinkGameDifficulty } from '@/lib/types/game';
 
@@ -30,39 +29,48 @@ export function ResultModal({
 
   const playAgainRef = useRef<HTMLButtonElement>(null);
 
+  // [Perf] 动态导入彩带特效，减少首屏 JS 体积
   useEffect(() => {
     if (isOpen && completed) {
       const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (prefersReducedMotion) return;
 
-      const duration = 3000;
-      const animationEnd = Date.now() + duration;
-      const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 60 };
+      let intervalId: number | undefined;
 
-      const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
+      import('canvas-confetti').then(({ default: confetti }) => {
+        const duration = 3000;
+        const animationEnd = Date.now() + duration;
+        const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 60 };
 
-      const interval = window.setInterval(() => {
-        const timeLeft = animationEnd - Date.now();
+        const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
 
-        if (timeLeft <= 0) {
-          window.clearInterval(interval);
-          return;
+        intervalId = window.setInterval(() => {
+          const timeLeft = animationEnd - Date.now();
+
+          if (timeLeft <= 0) {
+            window.clearInterval(intervalId);
+            return;
+          }
+
+          const particleCount = 50 * (timeLeft / duration);
+          confetti({
+            ...defaults,
+            particleCount,
+            origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }
+          });
+          confetti({
+            ...defaults,
+            particleCount,
+            origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }
+          });
+        }, 250);
+      });
+
+      return () => {
+        if (intervalId !== undefined) {
+          window.clearInterval(intervalId);
         }
-
-        const particleCount = 50 * (timeLeft / duration);
-        confetti({
-          ...defaults, 
-          particleCount,
-          origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }
-        });
-        confetti({
-          ...defaults, 
-          particleCount,
-          origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }
-        });
-      }, 250);
-
-      return () => window.clearInterval(interval);
+      };
     }
   }, [isOpen, completed]);
 

@@ -70,16 +70,13 @@ export async function updateProject(projectId: string, updates: Partial<Project>
 
 export async function getAllProjects(): Promise<Project[]> {
   const projectIds = await kv.lrange<string>("project:list", 0, -1);
-  const projects: Project[] = [];
-  
-  for (const id of projectIds) {
-    const project = await getProject(id);
-    if (project) {
-      projects.push(project);
-    }
-  }
-  
-  return projects;
+  if (projectIds.length === 0) return [];
+
+  // [Perf] 使用 mget 批量获取，避免 N+1 查询
+  const keys = projectIds.map(id => `projects:${id}`);
+  const results = await kv.mget<(Project | null)[]>(...keys);
+
+  return (results ?? []).filter((p): p is Project => p !== null);
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
@@ -116,12 +113,14 @@ export async function claimCode(projectId: string, userId: number, username: str
   const codesKey = `codes:available:${projectId}`;
   const claimKey = `claimed:${projectId}:${userId}`;
   const recordsKey = `records:${projectId}`;
+  const userClaimedKey = `claimed:user:${userId}`;  // [Perf] 用户领取索引
 
   const luaScript = `
     local projectKey = KEYS[1]
     local codesKey = KEYS[2]
     local claimKey = KEYS[3]
     local recordsKey = KEYS[4]
+    local userClaimedKey = KEYS[5]
 
     local now = tonumber(ARGV[1])
     local recordId = ARGV[2]
@@ -178,13 +177,14 @@ export async function claimCode(projectId: string, userId: number, username: str
     redis.call('SET', claimKey, recordJson)
     redis.call('LPUSH', recordsKey, recordJson)
     redis.call('SET', projectKey, cjson.encode(project))
+    redis.call('SADD', userClaimedKey, projectId)
 
     return {1, code, '领取成功'}
   `;
 
   const result = await kv.eval(
     luaScript,
-    [projectKey, codesKey, claimKey, recordsKey],
+    [projectKey, codesKey, claimKey, recordsKey, userClaimedKey],
     [now, recordId, projectId, userId, username]
   ) as [number, string, string];
 
@@ -210,10 +210,12 @@ export async function reserveDirectClaim(
 
   const projectKey = `projects:${projectId}`;
   const claimKey = `claimed:${projectId}:${userId}`;
+  const userClaimedKey = `claimed:user:${userId}`;  // [Perf] 用户领取索引
 
   const luaScript = `
     local projectKey = KEYS[1]
     local claimKey = KEYS[2]
+    local userClaimedKey = KEYS[3]
 
     local now = tonumber(ARGV[1])
     local recordId = ARGV[2]
@@ -267,13 +269,14 @@ export async function reserveDirectClaim(
 
     redis.call('SET', claimKey, recordJson)
     redis.call('SET', projectKey, cjson.encode(project))
+    redis.call('SADD', userClaimedKey, projectId)
 
     return {1, recordJson, 'ok'}
   `;
 
   const result = await kv.eval(
     luaScript,
-    [projectKey, claimKey],
+    [projectKey, claimKey, userClaimedKey],
     [now, recordId, projectId, userId, username]
   ) as [number, string, string];
 
@@ -430,17 +433,16 @@ export async function getProjectRecords(projectId: string, start = 0, end = 49):
   return await kv.lrange<ClaimRecord>(`records:${projectId}`, start, end);
 }
 
-// 检查用户是否领取过任何福利（包括兑换码和抽奖）
+// [Perf] 检查用户是否领取过任何福利（包括兑换码和抽奖）- 优化为 O(1) 查询
 export async function hasUserClaimedAny(userId: number): Promise<boolean> {
-  // 检查所有项目的领取记录
-  const projects = await getAllProjects();
-  for (const project of projects) {
-    const record = await getClaimRecord(project.id, userId);
-    if (record) return true;
-  }
+  // 检查用户领取索引集合（O(1) 操作）
+  const claimCount = await kv.scard(`claimed:user:${userId}`);
+  if (claimCount > 0) return true;
+
   // 检查抽奖记录
   const lotteryRecords = await kv.lrange(`lottery:user:records:${userId}`, 0, 0);
   if (lotteryRecords && lotteryRecords.length > 0) return true;
+
   return false;
 }
 
@@ -466,23 +468,25 @@ export async function recordUser(userId: number, username: string): Promise<void
 // 获取所有用户
 export async function getAllUsers(): Promise<User[]> {
   const userIds = await kv.smembers('users:all') as number[];
-  const users: User[] = [];
-  for (const id of userIds) {
-    const user = await kv.get<User>(`user:${id}`);
-    if (user) users.push(user);
-  }
-  return users;
+  if (userIds.length === 0) return [];
+
+  // [Perf] 使用 mget 批量获取，避免 N+1 查询
+  const keys = userIds.map(id => `user:${id}`);
+  const results = await kv.mget<(User | null)[]>(...keys);
+
+  return (results ?? []).filter((u): u is User => u !== null);
 }
 
 // 获取用户的所有领取记录
 export async function getUserAllClaims(userId: number): Promise<ClaimRecord[]> {
   const projects = await getAllProjects();
-  const records: ClaimRecord[] = [];
-  for (const project of projects) {
-    const record = await getClaimRecord(project.id, userId);
-    if (record) records.push(record);
-  }
-  return records;
+  if (projects.length === 0) return [];
+
+  // [Perf] 使用 mget 批量获取，避免 N+1 查询
+  const keys = projects.map(project => `claimed:${project.id}:${userId}`);
+  const results = await kv.mget<(ClaimRecord | null)[]>(...keys);
+
+  return (results ?? []).filter((r): r is ClaimRecord => r !== null);
 }
 
 // 获取用户的抽奖记录数

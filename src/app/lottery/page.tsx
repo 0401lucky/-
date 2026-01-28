@@ -3,11 +3,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { 
-  ArrowLeft, Gift, Loader2, Sparkles, History, 
+import {
+  ArrowLeft, Gift, Loader2, Sparkles, History,
   User as UserIcon, LogOut, Trophy, AlertCircle, Copy, Check, Crown, Star, Zap, ChevronRight
 } from 'lucide-react';
-import confetti from 'canvas-confetti';
 
 // 奖品配置 - 视觉角度更均匀，实际概率由后端控制
 const PRIZES = [
@@ -255,34 +254,36 @@ export default function LotteryPage() {
             } catch (err) {
               console.error('刷新状态失败', err);
             }
-            
-            // 播放庆祝彩带
+
+            // [Perf] 动态导入彩带特效，减少首屏 JS 体积
             // [M2修复] 使用 ref 控制动画循环
-            const duration = 3000;
-            confettiEndTimeRef.current = Date.now() + duration;
+            import('canvas-confetti').then(({ default: confetti }) => {
+              const duration = 3000;
+              confettiEndTimeRef.current = Date.now() + duration;
 
-            const frame = () => {
-              confetti({
-                particleCount: 7,
-                angle: 60,
-                spread: 55,
-                origin: { x: 0 },
-                colors: ['#fbbf24', '#f97316', '#ef4444', '#8b5cf6']
-              });
-              confetti({
-                particleCount: 7,
-                angle: 120,
-                spread: 55,
-                origin: { x: 1 },
-                colors: ['#fbbf24', '#f97316', '#ef4444', '#8b5cf6']
-              });
+              const frame = () => {
+                confetti({
+                  particleCount: 7,
+                  angle: 60,
+                  spread: 55,
+                  origin: { x: 0 },
+                  colors: ['#fbbf24', '#f97316', '#ef4444', '#8b5cf6']
+                });
+                confetti({
+                  particleCount: 7,
+                  angle: 120,
+                  spread: 55,
+                  origin: { x: 1 },
+                  colors: ['#fbbf24', '#f97316', '#ef4444', '#8b5cf6']
+                });
 
-              if (Date.now() < confettiEndTimeRef.current) {
-                confettiFrameRef.current = requestAnimationFrame(frame);
-              }
-            };
-            confettiFrameRef.current = requestAnimationFrame(frame);
-            
+                if (Date.now() < confettiEndTimeRef.current) {
+                  confettiFrameRef.current = requestAnimationFrame(frame);
+                }
+              };
+              confettiFrameRef.current = requestAnimationFrame(frame);
+            });
+
           }, 6000);
         } else {
           setSpinning(false);
