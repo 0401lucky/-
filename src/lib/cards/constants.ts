@@ -42,4 +42,12 @@ export const EXCHANGE_PRICES: Record<Rarity, number> = {
   legendary_rare: 1000,
 };
 
+export const RARITY_LEVELS: Record<Rarity, number> = {
+  common: 0,
+  rare: 1,
+  epic: 2,
+  legendary: 3,
+  legendary_rare: 4,
+};
+
 export const getCardImagePath = (name: string) => `${CARD_IMAGE_BASE_PATH}/${name}.png`;
