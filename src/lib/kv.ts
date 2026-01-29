@@ -691,3 +691,58 @@ export async function grantCheckinLocalRewards(
     drawsAvailable: Number.isFinite(drawsAvailable) ? drawsAvailable : 0,
   };
 }
+
+/**
+ * 增加用户卡牌抽奖次数（用于商店兑换）
+ */
+export async function addCardDraws(
+  userId: number,
+  amount: number
+): Promise<{ success: boolean; drawsAvailable: number }> {
+  const cardsKey = `cards:user:${userId}`;
+
+  const luaScript = `
+    local cardsKey = KEYS[1]
+    local amount = tonumber(ARGV[1])
+
+    local cardDataJson = redis.call('GET', cardsKey)
+    local cardData
+    if cardDataJson then
+      local okDecode, decoded = pcall(cjson.decode, cardDataJson)
+      if okDecode and decoded then
+        cardData = decoded
+      else
+        return {0, 0, 'card_data_corrupt'}
+      end
+    else
+      cardData = {
+        inventory = {},
+        fragments = 0,
+        pityCounter = 0,
+        drawsAvailable = 0,
+        collectionRewards = {}
+      }
+    end
+
+    if not cardData.inventory then cardData.inventory = {} end
+    if not cardData.fragments then cardData.fragments = 0 end
+    if not cardData.pityCounter then cardData.pityCounter = 0 end
+    if not cardData.collectionRewards then cardData.collectionRewards = {} end
+    cardData.drawsAvailable = (tonumber(cardData.drawsAvailable) or 0) + amount
+    if cardData.drawsAvailable < 0 then cardData.drawsAvailable = 0 end
+
+    redis.call('SET', cardsKey, cjson.encode(cardData))
+    return {1, cardData.drawsAvailable, 'ok'}
+  `;
+
+  const raw = await kv.eval(luaScript, [cardsKey], [amount]);
+  if (!Array.isArray(raw) || raw.length < 3) {
+    return { success: false, drawsAvailable: 0 };
+  }
+
+  const [ok, drawsRaw] = raw as unknown[];
+  return {
+    success: Number(ok) === 1,
+    drawsAvailable: Number(drawsRaw) || 0,
+  };
+}

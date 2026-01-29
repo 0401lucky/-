@@ -7,7 +7,7 @@ interface StoreItem {
   id: string;
   name: string;
   description: string;
-  type: 'lottery_spin' | 'quota_direct';
+  type: 'lottery_spin' | 'quota_direct' | 'card_draw';
   pointsCost: number;
   value: number;
   purchaseCount?: number;
@@ -240,9 +240,11 @@ export default function AdminStorePage() {
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide border ${
                           item.type === 'lottery_spin' 
                             ? 'bg-purple-50 text-purple-700 border-purple-100' 
+                            : item.type === 'card_draw'
+                            ? 'bg-amber-50 text-amber-700 border-amber-100'
                             : 'bg-blue-50 text-blue-700 border-blue-100'
                         }`}>
-                          {item.type === 'lottery_spin' ? '🎟️ 抽奖次数' : '💰 直充额度'}
+                          {item.type === 'lottery_spin' ? '🎟️ 抽奖次数' : item.type === 'card_draw' ? '🃏 卡牌抽奖' : '💰 直充额度'}
                         </span>
                       </td>
                       <td className="p-5">
@@ -410,6 +412,29 @@ export default function AdminStorePage() {
                        <div>
                          <span className="font-bold text-sm block mb-0.5">抽奖次数</span>
                          <span className="text-xs opacity-70 block">增加游戏机会</span>
+                       </div>
+                     </label>
+
+                     <label className={`cursor-pointer border-2 rounded-xl p-4 flex flex-col gap-3 transition-all ${
+                       formData.type === 'card_draw' 
+                         ? 'bg-amber-50 border-amber-500/50 text-amber-900' 
+                         : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                     }`}>
+                       <input 
+                         type="radio" 
+                         name="type" 
+                         value="card_draw"
+                         checked={formData.type === 'card_draw'}
+                         onChange={() => setFormData({...formData, type: 'card_draw'})}
+                         className="hidden" 
+                       />
+                       <div className="flex items-center justify-between">
+                          <span className="text-2xl">🃏</span>
+                          {formData.type === 'card_draw' && <span className="w-2 h-2 rounded-full bg-amber-500"></span>}
+                       </div>
+                       <div>
+                         <span className="font-bold text-sm block mb-0.5">卡牌抽奖</span>
+                         <span className="text-xs opacity-70 block">动物卡抽卡次数</span>
                        </div>
                      </label>
                    </div>

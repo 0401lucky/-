@@ -24,6 +24,7 @@ export interface PointsLog {
 export type StoreItemType =
   | 'lottery_spin'    // 抽奖次数
   | 'quota_direct'    // 直充额度
+  | 'card_draw'       // 卡牌抽奖次数
 
 /** 商店商品 */
 export interface StoreItem {

@@ -37,7 +37,7 @@ const DEFAULT_STORE_ITEMS: Omit<StoreItem, 'id' | 'createdAt' | 'updatedAt'>[] =
   {
     name: '动物卡抽卡次数 x1',
     description: '兑换一次动物卡抽卡机会',
-    type: 'card_draw' as any,
+    type: 'card_draw',
     pointsCost: CARD_DRAW_PRICE,
     value: 1,
     dailyLimit: 0, // 不限购
@@ -173,7 +173,7 @@ export async function deleteStoreItem(id: string): Promise<boolean> {
 // ============ 兑换逻辑 ============
 
 // 导入抽奖次数增加函数（从kv.ts）
-import { addExtraSpinCount } from './kv';
+import { addExtraSpinCount, addCardDraws } from './kv';
 import { getTodayDateString } from './time';
 
 /**
@@ -252,6 +252,13 @@ export async function exchangeItem(
       await addExtraSpinCount(userId, item.value);
       rewardSuccess = true;
       rewardMessage = `获得 ${item.value} 次抽奖机会`;
+    } else if (item.type === 'card_draw') {
+      // 增加卡牌抽奖次数
+      const result = await addCardDraws(userId, item.value);
+      rewardSuccess = result.success;
+      rewardMessage = result.success 
+        ? `获得 ${item.value} 次卡牌抽奖机会` 
+        : '卡牌抽奖次数增加失败';
     } else if (item.type === 'quota_direct') {
       // 直充额度
       const creditResult = await creditQuotaToUser(userId, item.value);
