@@ -384,7 +384,7 @@ export default function LotteryPage() {
           <div className="inline-flex items-center justify-center p-3 bg-gradient-to-br from-orange-100 to-amber-50 rounded-2xl mb-4 shadow-glow-gold rotate-3 border border-orange-100">
             <Sparkles className="w-8 h-8 text-orange-500 fill-orange-500 animate-pulse" />
           </div>
-          <h1 className="text-4xl sm:text-5xl md:text-6xl font-black text-stone-800 tracking-tight mb-4 drop-shadow-sm">
+          <h1 className="text-4xl sm:text-5xl md:text-6xl font-black text-stone-700 tracking-tight mb-4 drop-shadow-sm">
             每日<span className="text-gradient-primary relative inline-block">
               幸运抽奖
               <svg className="absolute -bottom-2 left-0 w-full h-3 text-orange-400 opacity-50" viewBox="0 0 100 10" preserveAspectRatio="none">
@@ -408,7 +408,7 @@ export default function LotteryPage() {
                   <div className="p-2 bg-yellow-100 rounded-xl text-yellow-600 shadow-inner">
                     <Crown className="w-5 h-5 fill-yellow-600" />
                   </div>
-                  <h2 className="text-lg font-bold text-stone-800">今日欧皇榜</h2>
+                  <h2 className="text-lg font-bold text-stone-700">今日欧皇榜</h2>
                 </div>
                 <div className="px-2 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded-full uppercase tracking-wider">
                   Live
@@ -489,7 +489,7 @@ export default function LotteryPage() {
                 
                 {/* 内圈边框 - 金色/橙色装饰线 */}
                 <div className="absolute inset-3 rounded-full bg-gradient-to-tr from-orange-400 to-amber-300 shadow-inner p-1">
-                  <div className="w-full h-full rounded-full bg-stone-900 shadow-[inset_0_5px_15px_rgba(0,0,0,0.5)]"></div>
+                  <div className="w-full h-full rounded-full bg-gradient-to-br from-pink-200 via-orange-100 to-amber-200 shadow-[inset_0_4px_12px_rgba(251,146,60,0.2)]"></div>
                 </div>
 
                 {/* 转盘主体 */}
@@ -539,7 +539,7 @@ export default function LotteryPage() {
                 {/* 顶部指针 */}
                 <div className="absolute -top-6 left-1/2 -translate-x-1/2 z-20 filter drop-shadow-[0_4px_6px_rgba(0,0,0,0.3)]">
                   <div className="relative">
-                     <div className="w-12 h-16 bg-gradient-to-b from-stone-800 to-stone-700 clip-path-pointer flex items-center justify-center">
+                     <div className="w-12 h-16 bg-gradient-to-b from-pink-400 to-orange-400 clip-path-pointer flex items-center justify-center">
                         <div className="w-4 h-4 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)] animate-pulse mt-[-20px]"></div>
                      </div>
                   </div>
@@ -624,7 +624,7 @@ export default function LotteryPage() {
                 <div className="p-2 bg-orange-100 rounded-xl text-orange-600 shadow-inner">
                   <History className="w-5 h-5" />
                 </div>
-                <h2 className="text-lg font-bold text-stone-800">我的宝藏</h2>
+                <h2 className="text-lg font-bold text-stone-700">我的宝藏</h2>
               </div>
 
               <div className="space-y-3 max-h-[500px] overflow-y-auto scrollbar-hide pr-1">
@@ -699,7 +699,7 @@ export default function LotteryPage() {
       {/* 中奖弹窗 - 视觉升级 */}
       {showResultModal && result && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm transition-opacity" onClick={() => setShowResultModal(false)} />
+          <div className="absolute inset-0 bg-pink-900/40 backdrop-blur-sm transition-opacity" onClick={() => setShowResultModal(false)} />
           
           <div className="relative w-full max-w-sm bg-white rounded-[2rem] shadow-2xl p-8 text-center animate-scale-in overflow-hidden">
              {/* 弹窗背景装饰 */}
@@ -726,7 +726,7 @@ export default function LotteryPage() {
                 </div>
             </div>
 
-            <h3 className="text-3xl font-black text-stone-800 mb-2 tracking-tight">恭喜中奖！</h3>
+            <h3 className="text-3xl font-black text-stone-700 mb-2 tracking-tight">恭喜中奖！</h3>
             <p className="text-stone-500 mb-8 font-medium">
               运气爆棚！您获得了 <br/>
               <span className="text-2xl text-transparent bg-clip-text bg-gradient-to-r from-orange-600 to-red-600 font-black mt-2 inline-block">
@@ -751,12 +751,12 @@ export default function LotteryPage() {
             ) : (
               <div className="bg-stone-50 border-2 border-dashed border-orange-200 rounded-2xl p-1 mb-8 relative group hover:border-orange-300 transition-colors">
                 <div className="bg-white rounded-xl p-4 shadow-sm">
-                  <p className="font-mono text-xl font-bold text-stone-800 break-all tracking-wider">{result.code}</p>
+                  <p className="font-mono text-xl font-bold text-stone-700 break-all tracking-wider">{result.code}</p>
                 </div>
                 <button 
                   onClick={handleCopy}
                   className={`absolute -right-3 -top-3 p-2.5 rounded-xl shadow-lg transition-all transform hover:scale-110 ${
-                    copied ? 'bg-green-500 text-white' : 'bg-stone-800 text-white'
+                    copied ? 'bg-green-500 text-white' : 'bg-orange-500 text-white'
                   }`}
                 >
                   {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
