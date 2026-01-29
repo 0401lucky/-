@@ -245,7 +245,8 @@ body {
   .animate-float,
   .animate-pulse,
   .animate-pulse-glow,
-  .shine-effect::after {
+  .shine-effect::after,
+  .animate-pointer-wobble {
     animation: none !important;
   }
 }
