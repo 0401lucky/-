@@ -488,9 +488,10 @@ export default function LotteryPage() {
               <div className="relative w-[340px] h-[340px] sm:w-[400px] sm:h-[400px] md:w-[440px] md:h-[440px]">
                 {/* 外圈装饰 - 3D 边框 (花瓣) */}
                 <div 
-                  className="absolute inset-0 bg-gradient-to-br from-white to-pink-50 drop-shadow-xl"
+                  className="absolute inset-0 bg-gradient-to-br from-white to-pink-50 drop-shadow-xl will-change-auto"
                   style={{ 
-                    clipPath: 'polygon(50% 0%, 61% 5%, 65% 15%, 75% 10%, 80% 20%, 90% 15%, 93% 25%, 100% 25%, 98% 38%, 100% 50%, 98% 62%, 100% 75%, 93% 75%, 90% 85%, 80% 80%, 75% 90%, 65% 85%, 61% 95%, 50% 100%, 39% 95%, 35% 85%, 25% 90%, 20% 80%, 10% 85%, 7% 75%, 0% 75%, 2% 62%, 0% 50%, 2% 38%, 0% 25%, 7% 25%, 10% 15%, 20% 20%, 25% 10%, 35% 15%, 39% 5%)' 
+                    clipPath: 'polygon(50% 0%, 61% 5%, 65% 15%, 75% 10%, 80% 20%, 90% 15%, 93% 25%, 100% 25%, 98% 38%, 100% 50%, 98% 62%, 100% 75%, 93% 75%, 90% 85%, 80% 80%, 75% 90%, 65% 85%, 61% 95%, 50% 100%, 39% 95%, 35% 85%, 25% 90%, 20% 80%, 10% 85%, 7% 75%, 0% 75%, 2% 62%, 0% 50%, 2% 38%, 0% 25%, 7% 25%, 10% 15%, 20% 20%, 25% 10%, 35% 15%, 39% 5%)',
+                    transform: 'translateZ(0)'  // Force GPU layer
                   }}
                 ></div>
                 
@@ -501,12 +502,13 @@ export default function LotteryPage() {
 
                 {/* 转盘主体 */}
                 <div 
-                  className="absolute inset-[20px] rounded-full overflow-hidden border-4 border-white/20"
+                  className="absolute inset-[20px] rounded-full overflow-hidden border-4 border-white/20 will-change-transform"
                   style={{ 
                     background: getConicGradient(),
-                    transform: `rotate(${rotation}deg)`,
+                    transform: `rotate(${rotation}deg) translateZ(0)`,
                     transition: spinning ? 'transform 6s cubic-bezier(0.25, 0.1, 0.25, 1)' : 'none',
-                    boxShadow: 'inset 0 0 40px rgba(0,0,0,0.2)'
+                    boxShadow: 'inset 0 0 40px rgba(0,0,0,0.2)',
+                    backfaceVisibility: 'hidden'
                   }}
                 >
                   {/* 扇区内部高光/纹理叠加 */}
