@@ -385,7 +385,7 @@ Task 4 (签到集成) ← Task 5 (商店集成) ← Task 6 (集齐奖励) ← Ta
 
 ---
 
-- [ ] 7. 实现卡牌仓库页面
+- [x] 7. 实现卡牌仓库页面
 
   **What to do**:
   - 创建 `src/app/cards/page.tsx` 仓库主页面
