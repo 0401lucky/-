@@ -4,11 +4,20 @@ import { getAuthUser } from '@/lib/auth';
 import { CARD_DRAW_PRICE } from '@/lib/cards/constants';
 import { nanoid } from 'nanoid';
 import type { PointsLog } from '@/lib/types/store';
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 
 export async function POST() {
   const user = await getAuthUser();
   if (!user) {
     return NextResponse.json({ success: false, message: '未登录' }, { status: 401 });
+  }
+
+  // 速率限制检查
+  const rateLimitResult = await checkRateLimit(user.id.toString(), {
+    prefix: "ratelimit:cards:purchase",
+  });
+  if (!rateLimitResult.success) {
+    return rateLimitResponse(rateLimitResult);
   }
 
   const userId = user.id;

@@ -1,0 +1,119 @@
+import { kv } from "@vercel/kv";
+import { NextResponse } from "next/server";
+
+export interface RateLimitConfig {
+  /** 时间窗口（秒），默认 60 */
+  windowSeconds?: number;
+  /** 窗口内最大请求数，默认 10 */
+  maxRequests?: number;
+  /** 限制标识前缀 */
+  prefix?: string;
+}
+
+export interface RateLimitResult {
+  success: boolean;
+  remaining: number;
+  resetAt: number;
+}
+
+const DEFAULT_WINDOW = 60; // 1 分钟
+const DEFAULT_MAX_REQUESTS = 10;
+
+/**
+ * 检查速率限制（原子操作）
+ * 使用滑动窗口计数器算法
+ */
+export async function checkRateLimit(
+  userId: string,
+  config: RateLimitConfig = {}
+): Promise<RateLimitResult> {
+  const {
+    windowSeconds = DEFAULT_WINDOW,
+    maxRequests = DEFAULT_MAX_REQUESTS,
+    prefix = "ratelimit:cards",
+  } = config;
+
+  const key = `${prefix}:${userId}`;
+  const now = Math.floor(Date.now() / 1000);
+  const windowStart = now - windowSeconds;
+
+  // Lua 脚本：原子性地清理过期记录、检查限制、添加新记录
+  const luaScript = `
+    local key = KEYS[1]
+    local now = tonumber(ARGV[1])
+    local windowStart = tonumber(ARGV[2])
+    local maxRequests = tonumber(ARGV[3])
+    local windowSeconds = tonumber(ARGV[4])
+
+    -- 清理过期的请求记录
+    redis.call('ZREMRANGEBYSCORE', key, '-inf', windowStart)
+
+    -- 获取当前窗口内的请求数
+    local currentCount = redis.call('ZCARD', key)
+
+    if currentCount >= maxRequests then
+      -- 超过限制，返回失败
+      local oldestScore = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+      local resetAt = now + windowSeconds
+      if #oldestScore >= 2 then
+        resetAt = tonumber(oldestScore[2]) + windowSeconds
+      end
+      return {0, maxRequests - currentCount, resetAt}
+    end
+
+    -- 添加新请求记录
+    redis.call('ZADD', key, now, now .. ':' .. math.random(1000000))
+    
+    -- 设置过期时间（窗口时间 + 1秒缓冲）
+    redis.call('EXPIRE', key, windowSeconds + 1)
+
+    return {1, maxRequests - currentCount - 1, now + windowSeconds}
+  `;
+
+  try {
+    const result = (await kv.eval(
+      luaScript,
+      [key],
+      [now, windowStart, maxRequests, windowSeconds]
+    )) as [number, number, number];
+
+    const [success, remaining, resetAt] = result;
+
+    return {
+      success: success === 1,
+      remaining: Math.max(0, remaining),
+      resetAt,
+    };
+  } catch (error) {
+    console.error("Rate limit check error:", error);
+    // 出错时默认允许请求（fail-open）
+    return {
+      success: true,
+      remaining: maxRequests,
+      resetAt: now + windowSeconds,
+    };
+  }
+}
+
+/**
+ * 创建速率限制错误响应
+ */
+export function rateLimitResponse(result: RateLimitResult): NextResponse {
+  const retryAfter = Math.max(1, result.resetAt - Math.floor(Date.now() / 1000));
+  
+  return NextResponse.json(
+    {
+      success: false,
+      message: "请求过于频繁，请稍后再试",
+      retryAfter,
+    },
+    {
+      status: 429,
+      headers: {
+        "Retry-After": retryAfter.toString(),
+        "X-RateLimit-Remaining": result.remaining.toString(),
+        "X-RateLimit-Reset": result.resetAt.toString(),
+      },
+    }
+  );
+}

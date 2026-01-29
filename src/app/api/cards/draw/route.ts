@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import { drawCard } from "@/lib/cards/draw";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,14 @@ export async function POST() {
         { success: false, message: "请先登录" },
         { status: 401 }
       );
+    }
+
+    // 速率限制检查
+    const rateLimitResult = await checkRateLimit(user.id.toString(), {
+      prefix: "ratelimit:cards:draw",
+    });
+    if (!rateLimitResult.success) {
+      return rateLimitResponse(rateLimitResult);
     }
 
     const result = await drawCard(user.id.toString());
