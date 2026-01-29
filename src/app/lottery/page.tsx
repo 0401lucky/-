@@ -708,11 +708,11 @@ export default function LotteryPage() {
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-pink-900/40 backdrop-blur-sm transition-opacity" onClick={() => setShowResultModal(false)} />
           
-          <div className="relative w-full max-w-sm bg-white rounded-[2rem] shadow-2xl p-8 text-center animate-scale-in overflow-hidden">
+          <div className="relative w-full max-w-sm bg-gradient-to-br from-pink-50 via-orange-50 to-amber-50 rounded-[2.5rem] shadow-[0_20px_60px_rgba(251,146,60,0.3)] p-8 text-center animate-scale-in overflow-hidden border-4 border-white/80">
              {/* 弹窗背景装饰 */}
              <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-orange-50 to-transparent -z-10"></div>
-             <div className="absolute -top-10 -right-10 w-32 h-32 bg-yellow-100 rounded-full blur-3xl opacity-50"></div>
-             <div className="absolute -top-10 -left-10 w-32 h-32 bg-red-100 rounded-full blur-3xl opacity-50"></div>
+             <div className="absolute -top-10 -right-10 w-40 h-40 bg-pink-200 rounded-full blur-3xl opacity-40"></div>
+             <div className="absolute -top-10 -left-10 w-40 h-40 bg-amber-200 rounded-full blur-3xl opacity-40"></div>
 
             <button 
               onClick={() => setShowResultModal(false)}
