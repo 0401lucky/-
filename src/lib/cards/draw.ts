@@ -20,9 +20,32 @@ const DEFAULT_USER_CARDS: UserCards = {
   collectionRewards: [],
 };
 
+function normalizeUserCards(data: Partial<UserCards> | null | undefined): UserCards {
+  const inventory = Array.isArray(data?.inventory)
+    ? data.inventory.filter((id): id is string => typeof id === "string")
+    : [];
+
+  const fragmentsRaw = Number(data?.fragments);
+  const fragments = Number.isFinite(fragmentsRaw) ? Math.max(0, Math.floor(fragmentsRaw)) : DEFAULT_USER_CARDS.fragments;
+
+  const pityRaw = Number(data?.pityCounter);
+  const pityCounter = Number.isFinite(pityRaw) ? Math.max(0, Math.floor(pityRaw)) : DEFAULT_USER_CARDS.pityCounter;
+
+  const drawsRaw = Number(data?.drawsAvailable);
+  const drawsAvailable = Number.isFinite(drawsRaw)
+    ? Math.max(0, Math.floor(drawsRaw))
+    : DEFAULT_USER_CARDS.drawsAvailable;
+
+  const collectionRewards = Array.isArray(data?.collectionRewards)
+    ? data.collectionRewards.filter((id): id is string => typeof id === "string")
+    : [];
+
+  return { inventory, fragments, pityCounter, drawsAvailable, collectionRewards };
+}
+
 export async function getUserCardData(userId: string): Promise<UserCards> {
   const data = await kv.get<UserCards>(`cards:user:${userId}`);
-  return data || { ...DEFAULT_USER_CARDS };
+  return normalizeUserCards(data || null);
 }
 
 export async function updateUserCardData(userId: string, data: UserCards): Promise<void> {

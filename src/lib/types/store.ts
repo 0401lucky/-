@@ -8,6 +8,7 @@ export type PointsSource =
   | 'checkin_bonus'  // 签到奖励
   | 'exchange'       // 商店兑换（扣除）
   | 'admin_adjust'   // 管理员调整
+  | 'card_collection' // 卡牌集齐奖励
 
 /** 积分流水记录 */
 export interface PointsLog {

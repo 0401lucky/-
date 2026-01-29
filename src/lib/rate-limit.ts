@@ -71,18 +71,29 @@ export async function checkRateLimit(
   `;
 
   try {
-    const result = (await kv.eval(
+    const raw = await kv.eval(
       luaScript,
       [key],
       [now, windowStart, maxRequests, windowSeconds]
-    )) as [number, number, number];
+    );
 
-    const [success, remaining, resetAt] = result;
+    if (!Array.isArray(raw) || raw.length < 3) {
+      throw new Error("Invalid rate limit response");
+    }
+
+    const [successRaw, remainingRaw, resetAtRaw] = raw as unknown[];
+    const success = Number(successRaw);
+    const remaining = Number(remainingRaw);
+    const resetAt = Number(resetAtRaw);
+
+    if (!Number.isFinite(success) || !Number.isFinite(remaining) || !Number.isFinite(resetAt)) {
+      throw new Error("Invalid rate limit response");
+    }
 
     return {
       success: success === 1,
-      remaining: Math.max(0, remaining),
-      resetAt,
+      remaining: Math.max(0, Math.floor(remaining)),
+      resetAt: Math.floor(resetAt),
     };
   } catch (error) {
     console.error("Rate limit check error:", error);
@@ -99,7 +110,10 @@ export async function checkRateLimit(
  * 创建速率限制错误响应
  */
 export function rateLimitResponse(result: RateLimitResult): NextResponse {
-  const retryAfter = Math.max(1, result.resetAt - Math.floor(Date.now() / 1000));
+  const now = Math.floor(Date.now() / 1000);
+  const resetAt = Number.isFinite(result.resetAt) ? result.resetAt : now + DEFAULT_WINDOW;
+  const remaining = Number.isFinite(result.remaining) ? result.remaining : 0;
+  const retryAfter = Math.max(1, resetAt - now);
   
   return NextResponse.json(
     {
@@ -111,8 +125,8 @@ export function rateLimitResponse(result: RateLimitResult): NextResponse {
       status: 429,
       headers: {
         "Retry-After": retryAfter.toString(),
-        "X-RateLimit-Remaining": result.remaining.toString(),
-        "X-RateLimit-Reset": result.resetAt.toString(),
+        "X-RateLimit-Remaining": remaining.toString(),
+        "X-RateLimit-Reset": resetAt.toString(),
       },
     }
   );

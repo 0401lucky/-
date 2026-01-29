@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { CARDS } from "../config";
 import { RARITY_PROBABILITIES, FRAGMENT_VALUES, EXCHANGE_PRICES, PITY_THRESHOLDS, RARITY_CARD_BACKS } from "../constants";
 import type { Rarity } from "../types";

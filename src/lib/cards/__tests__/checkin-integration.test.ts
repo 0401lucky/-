@@ -5,12 +5,14 @@ import { kv } from '@vercel/kv';
 import { getAuthUser } from '@/lib/auth';
 import { checkinToNewApi } from '@/lib/new-api';
 import { cookies } from 'next/headers';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 vi.mock('@vercel/kv', () => ({
   kv: {
     get: vi.fn(),
     set: vi.fn(),
     incrby: vi.fn(),
+    eval: vi.fn(),
   },
 }));
 
@@ -20,6 +22,11 @@ vi.mock('@/lib/auth', () => ({
 
 vi.mock('@/lib/new-api', () => ({
   checkinToNewApi: vi.fn(),
+}));
+
+vi.mock('@/lib/rate-limit', () => ({
+  checkRateLimit: vi.fn(),
+  rateLimitResponse: vi.fn(),
 }));
 
 vi.mock('next/headers', () => ({
@@ -36,6 +43,7 @@ describe('Checkin and Card Draw Integration', () => {
     (cookies as any).mockResolvedValue({
       get: vi.fn().mockReturnValue({ value: 'mock_session' }),
     });
+    (checkRateLimit as any).mockResolvedValue({ success: true, remaining: 10, resetAt: 0 });
   });
 
   describe('Checkin awarding draws', () => {
@@ -43,22 +51,22 @@ describe('Checkin and Card Draw Integration', () => {
       // Setup: Not checked in yet
       (kv.get as any).mockImplementation((key: string) => {
         if (key.includes('user:checkin')) return null;
-        if (key.includes('cards:user')) return null; // Default user card data
         return null;
       });
       (checkinToNewApi as any).mockResolvedValue({ success: true, quotaAwarded: 500000 });
+      (kv.eval as any).mockResolvedValue([1, 1, 11, 'ok']);
 
       const response = await checkinPOST();
       const data = await response.json();
 
       expect(data.success).toBe(true);
       
-      // Verify drawsAvailable was incremented
-      // Since it's stored in cards:user:{userId} object, we expect a get and then a set
-      expect(kv.set).toHaveBeenCalledWith(
-        `cards:user:${userId}`,
-        expect.objectContaining({ drawsAvailable: 11 }) // 10 (default) + 1
-      );
+      // Verify local rewards were granted via atomic Lua script
+      expect(kv.eval).toHaveBeenCalled();
+      const evalKeys = (kv.eval as any).mock.calls[0][1];
+      expect(evalKeys[0]).toMatch(new RegExp(`^user:checkin:${userId}:`));
+      expect(evalKeys[1]).toBe(`user:extra_spins:${userId}`);
+      expect(evalKeys[2]).toBe(`cards:user:${userId}`);
     });
 
     it('should not award extra draws if already checked in', async () => {
@@ -74,43 +82,30 @@ describe('Checkin and Card Draw Integration', () => {
       expect(data.success).toBe(false);
       expect(data.message).toContain('已经签到过了');
       
-      // kv.set for cards:user should NOT be called
-      const cardSetCalls = (kv.set as any).mock.calls.filter((call: any[]) => call[0].startsWith('cards:user:'));
-      expect(cardSetCalls.length).toBe(0);
+      // No local rewards script should run
+      expect(kv.eval).not.toHaveBeenCalled();
     });
   });
 
   describe('Draw API', () => {
     it('should allow drawing if draws available', async () => {
-      (kv.get as any).mockResolvedValue({
-        inventory: [],
-        fragments: 0,
-        pityCounter: 0,
-        drawsAvailable: 1,
-        collectionRewards: [],
-      });
+      // Mock kv.eval for two-phase draw:
+      // Phase 1 (RESERVE_DRAW_SCRIPT): returns [success, pityCounter, status]
+      // Phase 2 (FINALIZE_DRAW_SCRIPT): returns [success, status, fragmentsAdded]
+      (kv.eval as any)
+        .mockResolvedValueOnce([1, 1, 'ok']) // Reserve: success, pityCounter=1
+        .mockResolvedValueOnce([1, 'ok', 0]); // Finalize: success, not duplicate
 
       const response = await drawPOST();
       const data = await response.json();
 
       expect(data.success).toBe(true);
       expect(data.card).toBeDefined();
-      
-      // Verify draw was consumed
-      expect(kv.set).toHaveBeenCalledWith(
-        `cards:user:${userId}`,
-        expect.objectContaining({ drawsAvailable: 0 })
-      );
     });
 
     it('should return error if no draws available', async () => {
-      (kv.get as any).mockResolvedValue({
-        inventory: [],
-        fragments: 0,
-        pityCounter: 0,
-        drawsAvailable: 0,
-        collectionRewards: [],
-      });
+      // Phase 1 returns failure (no draws)
+      (kv.eval as any).mockResolvedValueOnce([0, 0, 'no_draws']);
 
       const response = await drawPOST();
       const data = await response.json();

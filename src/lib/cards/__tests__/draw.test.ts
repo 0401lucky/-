@@ -7,6 +7,7 @@ vi.mock('@vercel/kv', () => ({
   kv: {
     get: vi.fn(),
     set: vi.fn(),
+    eval: vi.fn(),
   },
 }));
 
@@ -91,24 +92,42 @@ describe('Card Draw System', () => {
 
   describe('drawCard', () => {
     it('should return null and message if user has no draws available', async () => {
-      (kv.get as any).mockResolvedValue({ ...getFreshMockData(), drawsAvailable: 0 });
+      // Phase 1 returns failure (no draws)
+      (kv.eval as any).mockResolvedValueOnce([0, 0, 'no_draws']);
+      
       const result = await drawCard(userId);
       expect(result).toEqual({ success: false, message: '抽卡次数不足' });
     });
 
     it('should return a card and update user data on success', async () => {
-      const mockUserData = getFreshMockData();
-      (kv.get as any).mockResolvedValue(mockUserData);
+      // Phase 1: Reserve draw success, returns pityCounter = 1
+      (kv.eval as any).mockResolvedValueOnce([1, 1, 'ok']);
+      // Phase 2: Finalize draw success, new card
+      (kv.eval as any).mockResolvedValueOnce([1, 'ok', 0]);
+
       const result = await drawCard(userId);
 
       expect(result.success).toBe(true);
       expect(result.card).toBeDefined();
       expect(CARDS).toContain(result.card);
+      expect(result.isDuplicate).toBe(false);
       
-      expect(kv.set).toHaveBeenCalled();
-      const updatedData = (kv.set as any).mock.calls[0][1] as any;
-      expect(updatedData.drawsAvailable).toBe(9);
-      expect(updatedData.inventory).toContain(result.card?.id);
+      // Verify kv.eval was called twice (two phases)
+      expect(kv.eval).toHaveBeenCalledTimes(2);
+    });
+
+    it('should handle duplicate cards and return fragments', async () => {
+      // Phase 1: Reserve draw success
+      (kv.eval as any).mockResolvedValueOnce([1, 1, 'ok']);
+      // Phase 2: Finalize draw - duplicate card, returns fragments
+      (kv.eval as any).mockResolvedValueOnce([1, 'duplicate', 5]);
+
+      const result = await drawCard(userId);
+
+      expect(result.success).toBe(true);
+      expect(result.card).toBeDefined();
+      expect(result.isDuplicate).toBe(true);
+      expect(result.fragmentsAdded).toBe(5);
     });
   });
 });

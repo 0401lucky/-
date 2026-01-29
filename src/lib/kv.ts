@@ -595,3 +595,99 @@ export async function setCheckedInToday(userId: number): Promise<void> {
   const ttl = getSecondsUntilMidnight();
   await kv.set(`user:checkin:${userId}:${dateStr}`, true, { ex: ttl });
 }
+
+export async function grantCheckinLocalRewards(
+  userId: number,
+  { extraSpins = 1, cardDraws = 1 }: { extraSpins?: number; cardDraws?: number } = {}
+): Promise<{
+  granted: boolean;
+  alreadyCheckedIn: boolean;
+  extraSpins: number;
+  drawsAvailable: number;
+}> {
+  const dateStr = getTodayDateString();
+  const ttl = getSecondsUntilMidnight();
+
+  const checkinKey = `user:checkin:${userId}:${dateStr}`;
+  const extraSpinsKey = `user:extra_spins:${userId}`;
+  const cardsKey = `cards:user:${userId}`;
+
+  const luaScript = `
+    local checkinKey = KEYS[1]
+    local extraSpinsKey = KEYS[2]
+    local cardsKey = KEYS[3]
+
+    local ttl = tonumber(ARGV[1])
+    local spinsAward = tonumber(ARGV[2])
+    local drawsAward = tonumber(ARGV[3])
+
+    -- Mark check-in (atomic, once per day)
+    local ok = redis.call('SET', checkinKey, '1', 'NX', 'EX', ttl)
+    if not ok then
+      local currentSpins = tonumber(redis.call('GET', extraSpinsKey) or '0')
+      local drawsAvailable = 10
+      local cardDataJson = redis.call('GET', cardsKey)
+      if cardDataJson then
+        local okDecode, cardData = pcall(cjson.decode, cardDataJson)
+        if okDecode and cardData then
+          drawsAvailable = tonumber(cardData.drawsAvailable) or 0
+        end
+      end
+      return {0, currentSpins, drawsAvailable, 'already'}
+    end
+
+    -- Load & validate card data (avoid overwriting on corrupt JSON)
+    local cardDataJson = redis.call('GET', cardsKey)
+    local cardData
+    if cardDataJson then
+      local okDecode, decoded = pcall(cjson.decode, cardDataJson)
+      if okDecode and decoded then
+        cardData = decoded
+      else
+        redis.call('DEL', checkinKey)
+        return {0, 0, 0, 'card_data_corrupt'}
+      end
+    else
+      cardData = {
+        inventory = {},
+        fragments = 0,
+        pityCounter = 0,
+        drawsAvailable = 10,
+        collectionRewards = {}
+      }
+    end
+
+    -- Award extra spins
+    local newSpins = redis.call('INCRBY', extraSpinsKey, spinsAward)
+
+    -- Award card draws (preserve existing state)
+    if not cardData.inventory then cardData.inventory = {} end
+    if not cardData.fragments then cardData.fragments = 0 end
+    if not cardData.pityCounter then cardData.pityCounter = 0 end
+    if not cardData.collectionRewards then cardData.collectionRewards = {} end
+    cardData.drawsAvailable = (tonumber(cardData.drawsAvailable) or 0) + drawsAward
+    if cardData.drawsAvailable < 0 then cardData.drawsAvailable = 0 end
+
+    redis.call('SET', cardsKey, cjson.encode(cardData))
+
+    return {1, newSpins, cardData.drawsAvailable, 'ok'}
+  `;
+
+  const raw = await kv.eval(luaScript, [checkinKey, extraSpinsKey, cardsKey], [ttl, extraSpins, cardDraws]);
+  if (!Array.isArray(raw) || raw.length < 4) {
+    throw new Error("Invalid checkin reward response");
+  }
+
+  const [ok, spinsRaw, drawsRaw, statusRaw] = raw as unknown[];
+  const granted = Number(ok) === 1;
+  const alreadyCheckedIn = String(statusRaw) === "already";
+  const currentSpins = Number(spinsRaw);
+  const drawsAvailable = Number(drawsRaw);
+
+  return {
+    granted,
+    alreadyCheckedIn,
+    extraSpins: Number.isFinite(currentSpins) ? currentSpins : 0,
+    drawsAvailable: Number.isFinite(drawsAvailable) ? drawsAvailable : 0,
+  };
+}

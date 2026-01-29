@@ -4,6 +4,7 @@ import { kv } from '@vercel/kv';
 import { getAuthUser } from '@/lib/auth';
 import { cookies } from 'next/headers';
 import { CARD_DRAW_PRICE } from '@/lib/cards/constants';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 vi.mock('@vercel/kv', () => ({
   kv: {
@@ -16,6 +17,11 @@ vi.mock('@vercel/kv', () => ({
 
 vi.mock('@/lib/auth', () => ({
   getAuthUser: vi.fn(),
+}));
+
+vi.mock('@/lib/rate-limit', () => ({
+  checkRateLimit: vi.fn(),
+  rateLimitResponse: vi.fn(),
 }));
 
 vi.mock('next/headers', () => ({
@@ -32,6 +38,7 @@ describe('Card Draw Store Integration', () => {
     (cookies as any).mockResolvedValue({
       get: vi.fn().mockReturnValue({ value: 'mock_session' }),
     });
+    (checkRateLimit as any).mockResolvedValue({ success: true, remaining: 10, resetAt: 0 });
   });
 
   it('should successfully purchase a card draw with sufficient points', async () => {
