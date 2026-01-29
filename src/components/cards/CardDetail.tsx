@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { X, Sparkles, Box, Calendar, Star } from 'lucide-react';
+import { X, Sparkles, Box, Calendar, Star, Repeat, Loader2 } from 'lucide-react';
 import type { CardConfig, Rarity } from '@/lib/cards/types';
-import { RARITY_LEVELS } from '@/lib/cards/constants';
+import { RARITY_LEVELS, EXCHANGE_PRICES } from '@/lib/cards/constants';
 
 interface CardDetailProps {
   card: CardConfig;
   count: number;
+  fragments?: number;
   firstAcquired?: number; // timestamp
   onClose: () => void;
+  onExchange?: (cardId: string) => Promise<void>;
 }
 
 const RARITY_COLORS: Record<Rarity, { bg: string; text: string; border: string; glow: string }> = {
@@ -26,10 +28,14 @@ const RARITY_NAMES: Record<Rarity, string> = {
   common: '普通',
 };
 
-export function CardDetail({ card, count, firstAcquired, onClose }: CardDetailProps) {
+export function CardDetail({ card, count, fragments = 0, firstAcquired, onClose, onExchange }: CardDetailProps) {
   const [isVisible, setIsVisible] = useState(false);
+  const [isExchanging, setIsExchanging] = useState(false);
   const styles = RARITY_COLORS[card.rarity] || RARITY_COLORS.common;
   const isOwned = count > 0;
+  
+  const exchangePrice = EXCHANGE_PRICES[card.rarity];
+  const canExchange = fragments >= exchangePrice;
 
   useEffect(() => {
     setIsVisible(true);
@@ -43,6 +49,21 @@ export function CardDetail({ card, count, firstAcquired, onClose }: CardDetailPr
   const handleClose = () => {
     setIsVisible(false);
     setTimeout(onClose, 300); // Wait for animation
+  };
+
+  const handleExchange = async () => {
+    if (!onExchange || !canExchange || isExchanging) return;
+    
+    setIsExchanging(true);
+    try {
+      await onExchange(card.id);
+      // Optional: Show success animation? 
+      // For now, let the parent handle the update and maybe we just close or stay open
+    } catch (error) {
+      console.error('Exchange failed', error);
+    } finally {
+      setIsExchanging(false);
+    }
   };
 
   return (
@@ -139,9 +160,39 @@ export function CardDetail({ card, count, firstAcquired, onClose }: CardDetailPr
               </p>
             </div>
             
+            {/* Exchange Action */}
+            {onExchange && (
+              <div className="pt-4 flex justify-center">
+                <button
+                  onClick={handleExchange}
+                  disabled={!canExchange || isExchanging}
+                  className={`
+                    w-full py-3 px-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all
+                    ${canExchange 
+                      ? 'bg-gradient-to-r from-amber-400 to-orange-500 text-white shadow-lg shadow-orange-500/20 hover:shadow-orange-500/40 hover:-translate-y-0.5 active:scale-95' 
+                      : 'bg-slate-100 text-slate-400 cursor-not-allowed'}
+                  `}
+                >
+                  {isExchanging ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <>
+                      <Repeat className="w-4 h-4" />
+                      <span>{exchangePrice} 碎片兑换</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+            {!canExchange && onExchange && (
+              <div className="text-center text-xs text-slate-400 mt-2">
+                当前碎片: <span className="text-amber-500 font-bold">{fragments}</span> / {exchangePrice}
+              </div>
+            )}
+            
             {/* Collection Progress */}
             {isOwned && count > 1 && (
-               <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 text-orange-600 rounded-lg text-xs font-bold">
+               <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 text-orange-600 rounded-lg text-xs font-bold mt-4">
                  <Sparkles className="w-3 h-3" />
                  重复获得 {count - 1} 张
                </div>

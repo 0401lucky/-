@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, Loader2, BookOpen, Gift, Trophy } from 'lucide-react';
 import { CARDS } from '@/lib/cards/config';
 import { CardGrid } from '@/components/cards/CardGrid';
+import { RewardsSection } from '@/components/cards/RewardsSection';
 import { UserCards } from '@/lib/cards/draw';
 
 interface UserData {
@@ -53,6 +54,62 @@ export default function CardsInventoryPage() {
 
     void init();
   }, [router]);
+
+  const handleClaimReward = async (type: string) => {
+    try {
+      const res = await fetch('/api/cards/claim-reward', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rewardType: type }),
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        // Refresh data
+        const cardsRes = await fetch('/api/cards/inventory');
+        if (cardsRes.ok) {
+          const cardsData = await cardsRes.json();
+          if (cardsData.success) {
+            setCardData(cardsData.data);
+          }
+        }
+        alert('领取成功！积分已发放');
+      } else {
+        alert(data.error || '领取失败');
+      }
+    } catch (err) {
+      console.error('Failed to claim reward', err);
+      alert('领取出错，请重试');
+    }
+  };
+
+  const handleExchange = async (cardId: string) => {
+    try {
+      const res = await fetch('/api/cards/exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cardId }),
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        // Refresh data
+        const cardsRes = await fetch('/api/cards/inventory');
+        if (cardsRes.ok) {
+          const cardsData = await cardsRes.json();
+          if (cardsData.success) {
+            setCardData(cardsData.data);
+          }
+        }
+        alert('兑换成功！');
+      } else {
+        alert(data.error || '兑换失败');
+      }
+    } catch (err) {
+      console.error('Failed to exchange card', err);
+      alert('兑换出错，请重试');
+    }
+  };
 
   if (loading) {
     return (
@@ -144,10 +201,20 @@ export default function CardsInventoryPage() {
         </div>
 
         {/* Card Grid */}
-        <div className="animate-fade-in-up">
+        <div className="space-y-8 animate-fade-in-up">
+          {cardData && (
+            <RewardsSection 
+              inventory={cardData.inventory}
+              claimedRewards={cardData.collectionRewards}
+              onClaim={handleClaimReward}
+            />
+          )}
+
           <CardGrid 
             cards={CARDS} 
             inventory={cardData?.inventory || []} 
+            fragments={cardData?.fragments || 0}
+            onExchange={handleExchange}
           />
         </div>
       </main>

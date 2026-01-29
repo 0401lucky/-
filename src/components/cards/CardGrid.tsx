@@ -7,7 +7,9 @@ import { CardDetail } from './CardDetail';
 interface CardGridProps {
   cards: CardConfig[];
   inventory: string[]; // List of card IDs owned by user
+  fragments?: number;
   onRefresh?: () => void;
+  onExchange?: (cardId: string) => Promise<void>;
 }
 
 type SortOption = 'rarity_desc' | 'rarity_asc' | 'count_desc' | 'name_asc';
@@ -29,7 +31,7 @@ const RARITY_COLORS: Record<Rarity, string> = {
   common: 'from-slate-400 to-slate-500',
 };
 
-export function CardGrid({ cards, inventory }: CardGridProps) {
+export function CardGrid({ cards, inventory, fragments = 0, onExchange }: CardGridProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState<FilterRarity>('all');
   const [sortBy, setSortBy] = useState<SortOption>('rarity_desc');
@@ -242,6 +244,8 @@ export function CardGrid({ cards, inventory }: CardGridProps) {
         <CardDetail 
           card={selectedCard}
           count={inventoryCounts[selectedCard.id] || 0}
+          fragments={fragments}
+          onExchange={onExchange}
           onClose={() => setSelectedCard(null)}
         />
       )}
