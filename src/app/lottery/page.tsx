@@ -257,27 +257,39 @@ export default function LotteryPage() {
 
             // [Perf] 动态导入彩带特效，减少首屏 JS 体积
             // [M2修复] 使用 ref 控制动画循环
+            // [Perf] 优化: 减少粒子数量，使用节流避免每帧都发射
             import('canvas-confetti').then(({ default: confetti }) => {
-              const duration = 3000;
+              const duration = 2500;
               confettiEndTimeRef.current = Date.now() + duration;
+              let lastFrame = 0;
+              const throttleMs = 80; // 每80ms发射一次，而不是每帧
 
-              const frame = () => {
-                confetti({
-                  particleCount: 12,
-                  angle: 60,
-                  spread: 55,
-                  origin: { x: 0 },
-                  shapes: ['star', 'circle'],
-                  colors: ['#fbbf24', '#f97316', '#ec4899', '#a78bfa', '#34d399', '#60a5fa']
-                });
-                confetti({
-                  particleCount: 12,
-                  angle: 120,
-                  spread: 55,
-                  origin: { x: 1 },
-                  shapes: ['star', 'circle'],
-                  colors: ['#fbbf24', '#f97316', '#ec4899', '#a78bfa', '#34d399', '#60a5fa']
-                });
+              const frame = (timestamp: number) => {
+                if (timestamp - lastFrame >= throttleMs) {
+                  lastFrame = timestamp;
+                  confetti({
+                    particleCount: 6,  // 减少粒子数
+                    angle: 60,
+                    spread: 55,
+                    origin: { x: 0 },
+                    shapes: ['circle'],  // 只用圆形，star性能开销大
+                    colors: ['#fbbf24', '#f97316', '#ec4899', '#a78bfa', '#34d399', '#60a5fa'],
+                    disableForReducedMotion: true,
+                    drift: 0,
+                    ticks: 150  // 粒子存活时间缩短
+                  });
+                  confetti({
+                    particleCount: 6,
+                    angle: 120,
+                    spread: 55,
+                    origin: { x: 1 },
+                    shapes: ['circle'],
+                    colors: ['#fbbf24', '#f97316', '#ec4899', '#a78bfa', '#34d399', '#60a5fa'],
+                    disableForReducedMotion: true,
+                    drift: 0,
+                    ticks: 150
+                  });
+                }
 
                 if (Date.now() < confettiEndTimeRef.current) {
                   confettiFrameRef.current = requestAnimationFrame(frame);
