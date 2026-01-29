@@ -52,4 +52,13 @@ export const RARITY_LEVELS: Record<Rarity, number> = {
 
 export const CARD_DRAW_PRICE = 900;
 
+export const COLLECTION_REWARDS: Record<Rarity | 'full_set', number> = {
+  common: 400,
+  rare: 650,
+  epic: 1200,
+  legendary: 1800,
+  legendary_rare: 3500,
+  full_set: 10000,
+};
+
 export const getCardImagePath = (name: string) => `${CARD_IMAGE_BASE_PATH}/${name}.png`;

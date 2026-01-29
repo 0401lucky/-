@@ -353,7 +353,7 @@ Task 4 (签到集成) ← Task 5 (商店集成) ← Task 6 (集齐奖励) ← Ta
 
 ---
 
-- [ ] 6. 实现集齐奖励系统
+- [x] 6. 实现集齐奖励系统
 
   **What to do**:
   - 创建 `src/lib/cards/rewards.ts` 实现奖励逻辑
