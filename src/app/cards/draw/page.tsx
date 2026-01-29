@@ -95,7 +95,7 @@ export default function DrawPage() {
           }
         }
       } else {
-        alert(data.data.message || '抽卡失败，请重试');
+        alert(data.data?.message || (data as any).message || '抽卡失败，请重试');
       }
     } catch (err) {
       console.error('Draw failed', err);

@@ -34,7 +34,12 @@ export async function POST() {
 
     return NextResponse.json({
       success: true,
-      card: result.card,
+      data: {
+        success: true,
+        card: result.card,
+        isDuplicate: result.isDuplicate,
+        fragmentsAdded: result.fragmentsAdded,
+      },
     });
   } catch (error) {
     console.error("Draw API error:", error);
