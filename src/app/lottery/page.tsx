@@ -484,8 +484,13 @@ export default function LotteryPage() {
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-[120%] bg-orange-500/10 blur-[80px] rounded-full animate-pulse-glow -z-10"></div>
               
               <div className="relative w-[340px] h-[340px] sm:w-[400px] sm:h-[400px] md:w-[440px] md:h-[440px]">
-                {/* 外圈装饰 - 3D 边框 */}
-                <div className="absolute inset-0 rounded-full bg-gradient-to-b from-stone-100 to-stone-300 shadow-[0_25px_60px_-12px_rgba(0,0,0,0.25),inset_0_-10px_20px_rgba(0,0,0,0.1)] border-4 border-white/50"></div>
+                {/* 外圈装饰 - 3D 边框 (花瓣) */}
+                <div 
+                  className="absolute inset-0 bg-gradient-to-br from-white to-pink-50 drop-shadow-xl"
+                  style={{ 
+                    clipPath: 'polygon(50% 0%, 61% 5%, 65% 15%, 75% 10%, 80% 20%, 90% 15%, 93% 25%, 100% 25%, 98% 38%, 100% 50%, 98% 62%, 100% 75%, 93% 75%, 90% 85%, 80% 80%, 75% 90%, 65% 85%, 61% 95%, 50% 100%, 39% 95%, 35% 85%, 25% 90%, 20% 80%, 10% 85%, 7% 75%, 0% 75%, 2% 62%, 0% 50%, 2% 38%, 0% 25%, 7% 25%, 10% 15%, 20% 20%, 25% 10%, 35% 15%, 39% 5%)' 
+                  }}
+                ></div>
                 
                 {/* 内圈边框 - 金色/橙色装饰线 */}
                 <div className="absolute inset-3 rounded-full bg-gradient-to-tr from-orange-400 to-amber-300 shadow-inner p-1">
