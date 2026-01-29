@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LogOut, User, LayoutDashboard, Gift, ChevronRight, Sparkles, Trophy, ArrowRight, CalendarDays, Gamepad2 } from 'lucide-react';
+import { LogOut, User, LayoutDashboard, Gift, ChevronRight, Sparkles, Trophy, ArrowRight, CalendarDays, Gamepad2, Album } from 'lucide-react';
 
 interface UserData {
   id: number;
@@ -235,6 +235,27 @@ export default function HomePage() {
               </div>
               <div className="flex items-center text-red-600 font-bold group/btn">
                 <span className="group-hover/btn:mr-2 transition-all">试试手气</span>
+                <ArrowRight className="w-5 h-5 ml-1 transition-transform group-hover/btn:translate-x-1" />
+              </div>
+            </div>
+          </Link>
+
+          {/* 卡牌收集入口 */}
+          <Link href="/cards" className="group relative overflow-hidden glass rounded-3xl p-8 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-500 hover:-translate-y-1 border border-white/60">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-blue-50 to-transparent rounded-full blur-3xl -z-10 translate-x-1/3 -translate-y-1/3 group-hover:bg-blue-100 transition-colors"></div>
+            
+            <div className="flex flex-col h-full justify-between relative z-10">
+              <div>
+                <div className="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center mb-6 border border-blue-100 group-hover:scale-110 transition-transform duration-300 shadow-sm">
+                  <Album className="w-7 h-7 text-blue-500" />
+                </div>
+                <h2 className="text-2xl font-bold text-stone-800 mb-3 group-hover:text-blue-600 transition-colors">卡牌收集</h2>
+                <p className="text-stone-500 leading-relaxed mb-8 text-sm">
+                  收集稀有卡牌，解锁图鉴奖励。
+                </p>
+              </div>
+              <div className="flex items-center text-blue-600 font-bold group/btn">
+                <span className="group-hover/btn:mr-2 transition-all">开始收集</span>
                 <ArrowRight className="w-5 h-5 ml-1 transition-transform group-hover/btn:translate-x-1" />
               </div>
             </div>
