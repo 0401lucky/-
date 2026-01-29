@@ -2,12 +2,14 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { Album } from 'lucide-react';
+import { CARD_DRAW_PRICE } from '@/lib/cards/constants';
 
 interface StoreItem {
   id: string;
   name: string;
   description: string;
-  type: 'lottery_spin' | 'quota_direct';
+  type: 'lottery_spin' | 'quota_direct' | 'card_draw';
   pointsCost: number;
   value: number;
   dailyLimit?: number;
@@ -34,7 +36,15 @@ export default function StorePage() {
       const res = await fetch('/api/store');
       const data = await res.json();
       if (data.success) {
-        setItems(data.data.items);
+        const cardDrawItem: StoreItem = {
+          id: 'card_draw_purchase',
+          name: '卡牌抽卡次数',
+          description: '购买1次卡牌抽卡机会，用于卡牌系统抽奖',
+          type: 'card_draw',
+          pointsCost: CARD_DRAW_PRICE,
+          value: 1,
+        };
+        setItems([...data.data.items, cardDrawItem]);
         setBalance(data.data.balance);
         setRecentExchanges(data.data.recentExchanges);
       }
@@ -61,6 +71,29 @@ export default function StorePage() {
     setExchanging(itemId);
     setMessage(null);
 
+    if (item.type === 'card_draw') {
+      try {
+        const res = await fetch('/api/cards/purchase', {
+          method: 'POST',
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          setMessage({ type: 'success', text: data.message || '购买成功！' });
+          setBalance(data.newBalance); // Note: API returns newBalance directly in root
+          // 刷新数据
+          fetchData();
+        } else {
+          setMessage({ type: 'error', text: data.message || '购买失败' });
+        }
+      } catch {
+        setMessage({ type: 'error', text: '网络错误' });
+      } finally {
+        setExchanging(null);
+      }
+      return;
+    }
+
     try {
       const res = await fetch('/api/store/exchange', {
         method: 'POST',
@@ -85,7 +118,31 @@ export default function StorePage() {
   };
 
   const getItemIcon = (type: string) => {
+    if (type === 'card_draw') return <Album className="w-8 h-8 text-blue-500" />;
     return type === 'lottery_spin' ? '🎟️' : '💰';
+  };
+
+  const getItemStyles = (type: string) => {
+    switch (type) {
+      case 'lottery_spin':
+        return {
+          bg: 'bg-gradient-to-r from-purple-50 to-pink-50',
+          badge: 'bg-purple-100 text-purple-700',
+          label: '抽奖'
+        };
+      case 'card_draw':
+        return {
+          bg: 'bg-gradient-to-r from-blue-50 to-indigo-50',
+          badge: 'bg-blue-100 text-blue-700',
+          label: '卡牌'
+        };
+      default:
+        return {
+          bg: 'bg-gradient-to-r from-green-50 to-teal-50',
+          badge: 'bg-green-100 text-green-700',
+          label: '直充'
+        };
+    }
   };
 
   return (
@@ -150,6 +207,7 @@ export default function StorePage() {
             {items.map((item) => {
               const canAfford = balance >= item.pointsCost;
               const isExchanging = exchanging === item.id;
+              const styles = getItemStyles(item.type);
 
               return (
                 <div
@@ -157,11 +215,7 @@ export default function StorePage() {
                   className="bg-white rounded-2xl overflow-hidden border border-slate-200 shadow-sm hover:shadow-xl transition-all duration-300 group flex flex-col h-full"
                 >
                   {/* 商品头部 */}
-                  <div className={`h-32 ${
-                    item.type === 'lottery_spin' 
-                      ? 'bg-gradient-to-r from-purple-50 to-pink-50' 
-                      : 'bg-gradient-to-r from-green-50 to-teal-50'
-                  } p-6 flex items-center gap-6 relative overflow-hidden`}>
+                  <div className={`h-32 ${styles.bg} p-6 flex items-center gap-6 relative overflow-hidden`}>
                     <div className="absolute right-[-20px] top-[-20px] w-32 h-32 rounded-full bg-white opacity-20 transform rotate-45"></div>
                     
                     <div className={`w-16 h-16 rounded-xl flex items-center justify-center text-3xl shadow-sm bg-white`}>
@@ -170,10 +224,8 @@ export default function StorePage() {
                     <div>
                       <h3 className="text-xl font-bold text-slate-900 mb-1">{item.name}</h3>
                       <div className="flex gap-2">
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${
-                            item.type === 'lottery_spin' ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'
-                        }`}>
-                           {item.type === 'lottery_spin' ? '抽奖' : '直充'}
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${styles.badge}`}>
+                           {styles.label}
                         </span>
                         {item.dailyLimit && (
                             <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
