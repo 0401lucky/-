@@ -214,6 +214,15 @@ body {
   100% { transform: translateX(250%) skewX(-25deg); }
 }
 
+@keyframes pointerWobble {
+  0%, 100% { transform: translateX(-50%) rotate(-3deg); }
+  50% { transform: translateX(-50%) rotate(3deg); }
+}
+
+.animate-pointer-wobble {
+  animation: pointerWobble 2s ease-in-out infinite;
+}
+
 /* ============================================
    [Perf-1] 移动端禁用 backdrop-filter（滚动性能优化）
    ============================================ */

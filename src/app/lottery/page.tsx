@@ -542,7 +542,7 @@ export default function LotteryPage() {
                 </div>
 
                 {/* 顶部指针 */}
-                <div className="absolute -top-6 left-1/2 -translate-x-1/2 z-20 filter drop-shadow-[0_4px_6px_rgba(0,0,0,0.3)]">
+                <div className={`absolute -top-6 left-1/2 z-20 filter drop-shadow-[0_4px_6px_rgba(0,0,0,0.3)] hover:drop-shadow-[0_0_15px_rgba(251,146,60,0.7)] transition-all duration-300 ${!spinning ? 'animate-pointer-wobble' : '-translate-x-1/2'}`}>
                   <div className="relative">
                      <div className="w-12 h-16 bg-gradient-to-b from-pink-400 to-orange-400 clip-path-pointer flex items-center justify-center">
                         <div className="w-4 h-4 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)] animate-pulse mt-[-20px]"></div>
