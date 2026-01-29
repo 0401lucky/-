@@ -283,7 +283,7 @@ export default function DrawPage() {
           <div 
             className={`w-full h-full relative transition-all duration-700 transform-style-3d 
               ${(showResult && isFlipped) ? 'rotate-y-180' : ''} 
-              ${drawing ? 'animate-shake' : 'animate-float'}
+              ${drawing ? 'animate-shake' : (showResult ? '' : 'animate-float')}
               cursor-pointer group
             `}
             onClick={!drawing && !showResult ? handleDraw : undefined}
