@@ -420,7 +420,7 @@ Task 4 (签到集成) ← Task 5 (商店集成) ← Task 6 (集齐奖励) ← Ta
 
 ---
 
-- [ ] 8. 实现管理功能
+- [x] 8. 实现管理功能
 
   **What to do**:
   - 创建 `src/app/admin/cards/page.tsx` 管理页面
