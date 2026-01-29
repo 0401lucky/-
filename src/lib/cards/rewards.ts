@@ -1,7 +1,8 @@
+import { kv } from "@vercel/kv";
 import { CARDS } from "./config";
 import { COLLECTION_REWARDS } from "./constants";
 import { Rarity } from "./types";
-import { getUserCardData, updateUserCardData, UserCards } from "./draw";
+import { UserCards } from "./draw";
 import { addPoints } from "../points";
 
 export type RewardType = Rarity | 'full_set';
@@ -109,38 +110,91 @@ export function getRewardStatuses(userData: UserCards): RewardStatus[] {
 
 /**
  * Claim a collection reward
+ * Uses Lua script for atomic check-and-claim to prevent race conditions
  */
 export async function claimCollectionReward(
   userId: string,
   rewardType: RewardType
 ): Promise<ClaimResult> {
-  const userData = await getUserCardData(userId);
+  // Get required card IDs for this reward type
+  const requiredCardIds = rewardType === 'full_set'
+    ? CARDS.map(c => c.id)
+    : getCardsByRarity(rewardType);
 
-  // Check if already claimed
-  if (isRewardClaimed(userData, rewardType)) {
-    return { success: false, message: "该奖励已领取" };
-  }
+  const rewardKey = getRewardKey(rewardType);
+  const userKey = `cards:user:${userId}`;
+  const points = COLLECTION_REWARDS[rewardType];
 
-  // Check eligibility
-  let eligible = false;
-  if (rewardType === 'full_set') {
-    eligible = isFullCollectionComplete(userData.inventory);
-  } else {
-    eligible = isTierComplete(userData.inventory, rewardType);
-  }
+  // Lua script for atomic claim operation
+  const luaScript = `
+    local userKey = KEYS[1]
+    local rewardKey = ARGV[1]
+    local requiredCardsJson = ARGV[2]
 
-  if (!eligible) {
+    local data = redis.call('GET', userKey)
+    local userData
+    if data then
+      userData = cjson.decode(data)
+    else
+      userData = {
+        inventory = {},
+        fragments = 0,
+        pityCounter = 0,
+        drawsAvailable = 10,
+        collectionRewards = {}
+      }
+    end
+
+    -- Ensure collectionRewards exists
+    if not userData.collectionRewards then
+      userData.collectionRewards = {}
+    end
+
+    -- Check if already claimed
+    for _, claimed in ipairs(userData.collectionRewards) do
+      if claimed == rewardKey then
+        return {0, 'already_claimed'}
+      end
+    end
+
+    -- Check eligibility: user must have all required cards
+    local requiredCards = cjson.decode(requiredCardsJson)
+    local inventorySet = {}
+    if userData.inventory then
+      for _, cardId in ipairs(userData.inventory) do
+        inventorySet[cardId] = true
+      end
+    end
+
+    for _, requiredId in ipairs(requiredCards) do
+      if not inventorySet[requiredId] then
+        return {0, 'not_eligible'}
+      end
+    end
+
+    -- Atomically mark as claimed
+    table.insert(userData.collectionRewards, rewardKey)
+    redis.call('SET', userKey, cjson.encode(userData))
+
+    return {1, 'ok'}
+  `;
+
+  const result = await kv.eval(
+    luaScript,
+    [userKey],
+    [rewardKey, JSON.stringify(requiredCardIds)]
+  ) as [number, string];
+
+  const [success, status] = result;
+
+  if (success !== 1) {
+    if (status === 'already_claimed') {
+      return { success: false, message: "该奖励已领取" };
+    }
     return { success: false, message: "尚未集齐该系列卡牌" };
   }
 
-  // Get reward points
-  const points = COLLECTION_REWARDS[rewardType];
-
-  // Mark as claimed
-  userData.collectionRewards.push(getRewardKey(rewardType));
-  await updateUserCardData(userId, userData);
-
-  // Award points
+  // Award points (outside Lua script - independent system)
   const rarityNames: Record<RewardType, string> = {
     common: '普通',
     rare: '稀有',
@@ -151,11 +205,11 @@ export async function claimCollectionReward(
   };
 
   const description = `集齐${rarityNames[rewardType]}卡牌奖励`;
-  const result = await addPoints(Number(userId), points, 'card_collection', description);
+  const pointsResult = await addPoints(Number(userId), points, 'card_collection', description);
 
   return {
     success: true,
     pointsAwarded: points,
-    newBalance: result.balance,
+    newBalance: pointsResult.balance,
   };
 }
