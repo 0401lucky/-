@@ -263,18 +263,20 @@ export default function LotteryPage() {
 
               const frame = () => {
                 confetti({
-                  particleCount: 7,
+                  particleCount: 12,
                   angle: 60,
                   spread: 55,
                   origin: { x: 0 },
-                  colors: ['#fbbf24', '#f97316', '#ef4444', '#8b5cf6']
+                  shapes: ['star', 'circle'],
+                  colors: ['#fbbf24', '#f97316', '#ec4899', '#a78bfa', '#34d399', '#60a5fa']
                 });
                 confetti({
-                  particleCount: 7,
+                  particleCount: 12,
                   angle: 120,
                   spread: 55,
                   origin: { x: 1 },
-                  colors: ['#fbbf24', '#f97316', '#ef4444', '#8b5cf6']
+                  shapes: ['star', 'circle'],
+                  colors: ['#fbbf24', '#f97316', '#ec4899', '#a78bfa', '#34d399', '#60a5fa']
                 });
 
                 if (Date.now() < confettiEndTimeRef.current) {
