@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import { checkinToNewApi } from "@/lib/new-api";
 import { hasCheckedInToday, setCheckedInToday, addExtraSpinCount, getExtraSpinCount } from "@/lib/kv";
+import { getUserCardData, updateUserCardData } from "@/lib/cards/draw";
 import { cookies } from "next/headers";
 
 export const dynamic = "force-dynamic";
@@ -61,13 +62,20 @@ export async function POST() {
 
     const result = await checkinToNewApi(cookieHeader, user.id);
 
+    const cardUserId = user.id.toString();
+
     if (!result.success) {
       // 如果 API 返回失败，但消息是"已签到"，说明用户今天在 new-api 已签到
       // 福利站本地没签过，仍然给额外抽奖次数
       if (result.message.includes("已经签到") || result.message.includes("已签到") || result.message.includes("Duplicate entry")) {
         await setCheckedInToday(user.id);
         await addExtraSpinCount(user.id, 1); // 仍然奖励1次额外抽奖机会
-        
+        const duplicateCardData = await getUserCardData(cardUserId);
+        await updateUserCardData(cardUserId, {
+          ...duplicateCardData,
+          drawsAvailable: duplicateCardData.drawsAvailable + 1,
+        });
+
         const extraSpins = await getExtraSpinCount(user.id);
         
         return NextResponse.json({
@@ -87,6 +95,11 @@ export async function POST() {
     // 3. 签到成功处理
     await setCheckedInToday(user.id);
     await addExtraSpinCount(user.id, 1); // 奖励1次额外抽奖机会
+    const cardData = await getUserCardData(cardUserId);
+    await updateUserCardData(cardUserId, {
+      ...cardData,
+      drawsAvailable: cardData.drawsAvailable + 1,
+    });
     
     const extraSpins = await getExtraSpinCount(user.id);
     

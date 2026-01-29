@@ -50,4 +50,6 @@ export const RARITY_LEVELS: Record<Rarity, number> = {
   legendary_rare: 4,
 };
 
+export const CARD_DRAW_PRICE = 900;
+
 export const getCardImagePath = (name: string) => `${CARD_IMAGE_BASE_PATH}/${name}.png`;

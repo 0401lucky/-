@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid';
 import { StoreItem, ExchangeLog } from './types/store';
 import { deductPoints } from './points';
 import { creditQuotaToUser } from './new-api';
+import { CARD_DRAW_PRICE } from './cards/constants';
 
 // ============ 商店商品管理 ============
 
@@ -31,6 +32,16 @@ const DEFAULT_STORE_ITEMS: Omit<StoreItem, 'id' | 'createdAt' | 'updatedAt'>[] =
     value: 2,
     dailyLimit: 1,
     sortOrder: 2,
+    enabled: true,
+  },
+  {
+    name: '动物卡抽卡次数 x1',
+    description: '兑换一次动物卡抽卡机会',
+    type: 'card_draw' as any,
+    pointsCost: CARD_DRAW_PRICE,
+    value: 1,
+    dailyLimit: 0, // 不限购
+    sortOrder: 5,
     enabled: true,
   },
   {
