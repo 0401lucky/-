@@ -28,23 +28,49 @@ interface DrawResponse {
   };
 }
 
-// 保底计数器组件
-function PityCounter({ pityCounter }: { pityCounter: number }) {
-  const thresholds = [
-    { val: 10, label: '稀有', color: 'text-cyan-500' },
-    { val: 50, label: '史诗', color: 'text-purple-500' },
-    { val: 100, label: '传说', color: 'text-yellow-500' },
-    { val: 200, label: '传稀', color: 'text-pink-500' },
+// 分档保底计数器（史诗/传说/传稀）
+function PityCounters({
+  epic,
+  legendary,
+  legendaryRare,
+}: {
+  epic: number;
+  legendary: number;
+  legendaryRare: number;
+}) {
+  const toRemaining = (threshold: number, counter: number) => Math.max(0, threshold - Math.max(0, Math.floor(counter || 0)));
+
+  const items = [
+    { label: '史诗', remaining: toRemaining(50, epic), color: 'text-purple-500' },
+    { label: '传说', remaining: toRemaining(100, legendary), color: 'text-yellow-500' },
+    { label: '传稀', remaining: toRemaining(200, legendaryRare), color: 'text-pink-500' },
   ];
-  const next = thresholds.find(t => pityCounter < t.val) || thresholds[3];
-  const remaining = next.val - pityCounter;
+
+  const nearest = items.reduce((best, cur) => (cur.remaining < best.remaining ? cur : best), items[0]);
 
   return (
-    <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 bg-gradient-to-r from-purple-50 to-pink-50 rounded-full border border-purple-200/50 text-[10px] sm:text-xs">
-      <Crown className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-purple-400" />
-      <span className="text-slate-500">{next.label}保底:</span>
-      <span className={`font-bold ${next.color}`}>{remaining}抽</span>
-    </div>
+    <>
+      {/* Desktop: show all */}
+      <div className="hidden md:flex items-center gap-2">
+        {items.map((it) => (
+          <div
+            key={it.label}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-50 to-pink-50 rounded-full border border-purple-200/50 text-xs"
+          >
+            <Crown className="w-3.5 h-3.5 text-purple-400" />
+            <span className="text-slate-500">{it.label}保底:</span>
+            <span className={`font-bold ${it.color}`}>{it.remaining}抽</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Mobile: show nearest */}
+      <div className="md:hidden flex items-center gap-1.5 px-2 py-1.5 bg-gradient-to-r from-purple-50 to-pink-50 rounded-full border border-purple-200/50 text-[10px]">
+        <Crown className="w-3 h-3 text-purple-400" />
+        <span className="text-slate-500">{nearest.label}保底:</span>
+        <span className={`font-bold ${nearest.color}`}>{nearest.remaining}抽</span>
+      </div>
+    </>
   );
 }
 
@@ -330,7 +356,11 @@ export default function DrawPage() {
             </Link>
             <div className="flex items-center gap-2 sm:gap-4">
               {/* Pity Counter - 保底计数器 */}
-              <PityCounter pityCounter={cardData?.pityCounter ?? 0} />
+              <PityCounters
+                epic={cardData?.pityEpic ?? 0}
+                legendary={cardData?.pityLegendary ?? 0}
+                legendaryRare={cardData?.pityLegendaryRare ?? cardData?.pityCounter ?? 0}
+              />
               <div className="flex items-center gap-2 px-2 sm:px-4 py-1.5 sm:py-2 bg-white rounded-full border border-pink-200 shadow-sm">
                 <Sparkles className="w-4 h-4 text-pink-400" />
                 <span className="text-sm font-bold text-slate-600">

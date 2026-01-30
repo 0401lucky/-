@@ -2,44 +2,41 @@ import { Rarity } from "./types";
 import { PITY_THRESHOLDS } from "./constants";
 
 /**
- * Check if pity should trigger based on current counter.
+ * Per-tier pity counters.
+ * Each counter represents "draws since last obtaining this rarity (or higher)".
  */
-export function checkPityTrigger(pityCounter: number): boolean {
-  return (
-    pityCounter === PITY_THRESHOLDS.rare ||
-    pityCounter === PITY_THRESHOLDS.epic ||
-    pityCounter === PITY_THRESHOLDS.legendary ||
-    pityCounter === PITY_THRESHOLDS.legendary_rare
-  );
+export interface PityCounters {
+  rare: number;
+  epic: number;
+  legendary: number;
+  legendary_rare: number;
 }
 
 /**
- * Get the guaranteed rarity level for the current pity counter.
+ * Normalize pity counters to safe non-negative integers.
  */
-export function getGuaranteedRarity(pityCounter: number): Rarity | null {
-  if (pityCounter === PITY_THRESHOLDS.legendary_rare) return "legendary_rare";
-  if (pityCounter === PITY_THRESHOLDS.legendary) return "legendary";
-  if (pityCounter === PITY_THRESHOLDS.epic) return "epic";
-  if (pityCounter === PITY_THRESHOLDS.rare) return "rare";
+export function normalizePityCounters(input?: Partial<PityCounters> | null): PityCounters {
+  const toSafeInt = (value: unknown) => {
+    const raw = Number(value);
+    return Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+  };
+
+  return {
+    rare: toSafeInt(input?.rare),
+    epic: toSafeInt(input?.epic),
+    legendary: toSafeInt(input?.legendary),
+    legendary_rare: toSafeInt(input?.legendary_rare),
+  };
+}
+
+/**
+ * Get the guaranteed rarity level for the current counters.
+ * Highest-tier guarantee takes precedence.
+ */
+export function getGuaranteedRarity(counters: PityCounters): Rarity | null {
+  if (counters.legendary_rare >= PITY_THRESHOLDS.legendary_rare) return "legendary_rare";
+  if (counters.legendary >= PITY_THRESHOLDS.legendary) return "legendary";
+  if (counters.epic >= PITY_THRESHOLDS.epic) return "epic";
+  if (counters.rare >= PITY_THRESHOLDS.rare) return "rare";
   return null;
-}
-
-/**
- * Determine if the pity counter should be reset.
- * Resets only when the TOP rarity is obtained (naturally or via pity),
- * so the counter can progress through all milestones (10/50/100/200)
- * and the UI can display higher-tier pity statuses.
- */
-export function shouldResetPity(pityCounter: number, drawnRarity: Rarity): boolean {
-  // Reset on top rarity
-  if (drawnRarity === "legendary_rare") {
-    return true;
-  }
-
-  // Defensive: if counter reaches/overflows the hard pity threshold, reset
-  if (pityCounter >= PITY_THRESHOLDS.legendary_rare) {
-    return true;
-  }
-
-  return false;
 }

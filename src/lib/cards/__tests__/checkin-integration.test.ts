@@ -103,10 +103,10 @@ describe('Checkin and Card Draw Integration', () => {
   describe('Draw API', () => {
     it('should allow drawing if draws available', async () => {
       // Mock kv.eval for two-phase draw:
-      // Phase 1 (RESERVE_DRAW_SCRIPT): returns [success, pityCounter, status]
+      // Phase 1 (RESERVE_DRAW_SCRIPT): returns [success, pityRare, pityEpic, pityLegendary, pityLegendaryRare, status]
       // Phase 2 (FINALIZE_DRAW_SCRIPT): returns [success, status, fragmentsAdded]
       (kv.eval as any)
-        .mockResolvedValueOnce([1, 1, 'ok']) // Reserve: success, pityCounter=1
+        .mockResolvedValueOnce([1, 1, 1, 1, 1, 'ok']) // Reserve: success, all pity counters=1
         .mockResolvedValueOnce([1, 'ok', 0]); // Finalize: success, not duplicate
 
       const response = await drawPOST(createMockRequest({ count: 1 }));
@@ -118,7 +118,7 @@ describe('Checkin and Card Draw Integration', () => {
 
     it('should return error if no draws available', async () => {
       // Phase 1 returns failure (no draws)
-      (kv.eval as any).mockResolvedValueOnce([0, 0, 'no_draws']);
+      (kv.eval as any).mockResolvedValueOnce([0, 0, 0, 0, 0, 'no_draws']);
 
       const response = await drawPOST(createMockRequest({ count: 1 }));
       const data = await response.json();
