@@ -4,23 +4,16 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, useParams } from 'next/navigation';
 import { ArrowLeft, Loader2, BookOpen, Gift, Trophy, Store } from 'lucide-react';
-import { ALBUMS, getCardsByAlbum, getAlbumById } from '@/lib/cards/config';
+import { getCardsByAlbum, getAlbumById } from '@/lib/cards/config';
 import { CardGrid } from '@/components/cards/CardGrid';
 import { RewardsSection } from '@/components/cards/RewardsSection';
 import { UserCards } from '@/lib/cards/draw';
-
-interface UserData {
-  id: number;
-  username: string;
-  displayName: string;
-}
 
 export default function AlbumDetailPage() {
   const router = useRouter();
   const params = useParams();
   const albumId = params.albumId as string;
 
-  const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [cardData, setCardData] = useState<UserCards | null>(null);
 
@@ -28,15 +21,33 @@ export default function AlbumDetailPage() {
   const albumCards = album ? getCardsByAlbum(albumId) : [];
 
   useEffect(() => {
-    const init = async () => {
-      try {
-        // Check if album exists
-        if (!album) {
-          router.push('/cards');
-          return;
-        }
+    let cancelled = false;
 
-        // 1. Check Auth
+    const fetchInventory = async () => {
+      try {
+        const cardsRes = await fetch('/api/cards/inventory');
+        if (!cardsRes.ok) return;
+
+        const cardsData = await cardsRes.json();
+        if (cardsData.success && !cancelled) {
+          setCardData(cardsData.data);
+        }
+      } catch (err) {
+        console.error('Failed to load inventory', err);
+      }
+    };
+
+    const init = async () => {
+      // Check if album exists
+      if (!album) {
+        router.push('/cards');
+        return;
+      }
+
+      let authed = false;
+
+      try {
+        // 1. Check Auth (block page only for auth)
         const authRes = await fetch('/api/auth/me');
         if (!authRes.ok) {
           router.push('/login?redirect=/cards/' + albumId);
@@ -47,24 +58,23 @@ export default function AlbumDetailPage() {
           router.push('/login?redirect=/cards/' + albumId);
           return;
         }
-        setUser(authData.user);
 
-        // 2. Fetch Inventory
-        const cardsRes = await fetch('/api/cards/inventory');
-        if (cardsRes.ok) {
-          const cardsData = await cardsRes.json();
-          if (cardsData.success) {
-            setCardData(cardsData.data);
-          }
-        }
+        authed = true;
       } catch (err) {
-        console.error('Failed to load inventory', err);
+        console.error('Failed to check auth', err);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
+
+      // 2. Fetch Inventory (do not block initial render)
+      if (!authed || cancelled) return;
+      await fetchInventory();
     };
 
     void init();
+    return () => {
+      cancelled = true;
+    };
   }, [router, albumId, album]);
 
   const handleClaimReward = async (type: string, albumId: string) => {

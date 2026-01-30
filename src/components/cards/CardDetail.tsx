@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
+import Image from 'next/image';
 import { X, Sparkles, Box, Calendar, Star, Repeat, Loader2 } from 'lucide-react';
 import type { CardConfig, Rarity } from '@/lib/cards/types';
-import { RARITY_LEVELS, EXCHANGE_PRICES } from '@/lib/cards/constants';
+import { EXCHANGE_PRICES } from '@/lib/cards/constants';
 
 interface CardDetailProps {
   card: CardConfig;
@@ -31,6 +32,7 @@ const RARITY_NAMES: Record<Rarity, string> = {
 export function CardDetail({ card, count, fragments = 0, firstAcquired, onClose, onExchange }: CardDetailProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [isExchanging, setIsExchanging] = useState(false);
+  const [imageError, setImageError] = useState(false);
   const styles = RARITY_COLORS[card.rarity] || RARITY_COLORS.common;
   const isOwned = count > 0;
   
@@ -45,6 +47,10 @@ export function CardDetail({ card, count, fragments = 0, firstAcquired, onClose,
       document.body.style.overflow = 'unset';
     };
   }, []);
+
+  useEffect(() => {
+    setImageError(false);
+  }, [card.image]);
 
   const handleClose = () => {
     setIsVisible(false);
@@ -96,15 +102,20 @@ export function CardDetail({ card, count, fragments = 0, firstAcquired, onClose,
               ${isOwned ? '' : 'grayscale opacity-80'}
             `}>
               <div className={`absolute inset-0 bg-gradient-to-tr ${styles.bg} opacity-20`}></div>
-              <img 
-                src={card.image} 
-                alt={card.name} 
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  // Fallback for missing images
-                  (e.target as HTMLImageElement).src = `https://placehold.co/400x600?text=${card.name}`;
-                }}
-              />
+              {imageError ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-200">
+                  <span className="text-slate-600 text-sm font-bold px-2 text-center">{card.name}</span>
+                </div>
+              ) : (
+                <Image
+                  src={card.image}
+                  alt={card.name}
+                  fill
+                  sizes="192px"
+                  className="object-cover"
+                  onError={() => setImageError(true)}
+                />
+              )}
               
               {!isOwned && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">

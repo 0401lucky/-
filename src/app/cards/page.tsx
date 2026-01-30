@@ -2,27 +2,39 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Loader2, BookOpen, Gift, ChevronRight, Store } from 'lucide-react';
 import { ALBUMS, getCardsByAlbum } from '@/lib/cards/config';
 import { UserCards } from '@/lib/cards/draw';
 
-interface UserData {
-  id: number;
-  username: string;
-  displayName: string;
-}
-
 export default function CardsAlbumsPage() {
   const router = useRouter();
-  const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [cardData, setCardData] = useState<UserCards | null>(null);
 
   useEffect(() => {
-    const init = async () => {
+    let cancelled = false;
+
+    const fetchInventory = async () => {
       try {
-        // 1. Check Auth
+        const cardsRes = await fetch('/api/cards/inventory');
+        if (!cardsRes.ok) return;
+
+        const cardsData = await cardsRes.json();
+        if (cardsData.success && !cancelled) {
+          setCardData(cardsData.data);
+        }
+      } catch (err) {
+        console.error('Failed to load inventory', err);
+      }
+    };
+
+    const init = async () => {
+      let authed = false;
+
+      try {
+        // 1. Check Auth (block page only for auth)
         const authRes = await fetch('/api/auth/me');
         if (!authRes.ok) {
           router.push('/login?redirect=/cards');
@@ -33,32 +45,35 @@ export default function CardsAlbumsPage() {
           router.push('/login?redirect=/cards');
           return;
         }
-        setUser(authData.user);
 
-        // 2. Fetch Inventory
-        const cardsRes = await fetch('/api/cards/inventory');
-        if (cardsRes.ok) {
-          const cardsData = await cardsRes.json();
-          if (cardsData.success) {
-            setCardData(cardsData.data);
-          }
-        }
+        authed = true;
       } catch (err) {
-        console.error('Failed to load inventory', err);
+        console.error('Failed to check auth', err);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
+
+      // 2. Fetch Inventory (do not block initial render)
+      if (!authed || cancelled) return;
+      await fetchInventory();
     };
 
     void init();
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   const getAlbumProgress = (albumId: string) => {
-    if (!cardData) return { owned: 0, total: 0, percent: 0 };
     const albumCards = getCardsByAlbum(albumId);
-    const owned = albumCards.filter(c => cardData.inventory.includes(c.id)).length;
     const total = albumCards.length;
-    return { owned, total, percent: Math.round((owned / total) * 100) };
+
+    if (!cardData) {
+      return { owned: 0, total, percent: 0, loading: true };
+    }
+
+    const owned = albumCards.filter(c => cardData.inventory.includes(c.id)).length;
+    return { owned, total, percent: total > 0 ? Math.round((owned / total) * 100) : 0, loading: false };
   };
 
   if (loading) {
@@ -138,8 +153,8 @@ export default function CardsAlbumsPage() {
 
         {/* Albums Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {ALBUMS.map((album) => {
-            const { owned, total, percent } = getAlbumProgress(album.id);
+          {ALBUMS.map((album, index) => {
+            const { owned, total, percent, loading: progressLoading } = getAlbumProgress(album.id);
             const isComplete = percent === 100;
 
             return (
@@ -154,11 +169,14 @@ export default function CardsAlbumsPage() {
               >
                 {/* Cover Image */}
                 <div className="relative h-48 overflow-hidden bg-gradient-to-br from-indigo-100 to-purple-100">
-                  <img
+                  <Image
                     src={album.coverImage}
                     alt={album.name}
-                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                    loading="lazy"
+                    fill
+                    sizes="(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                    className="object-cover transition-transform duration-700 group-hover:scale-110"
+                    quality={60}
+                    priority={index === 0}
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
 
@@ -191,7 +209,7 @@ export default function CardsAlbumsPage() {
                   <div className="space-y-2 mb-4">
                     <div className="flex justify-between text-sm font-medium">
                       <span className="text-slate-500">收集进度</span>
-                      <span className="text-slate-700">{owned} / {total}</span>
+                      <span className="text-slate-700">{progressLoading ? '—' : owned} / {total}</span>
                     </div>
                     <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                       <div
