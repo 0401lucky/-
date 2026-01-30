@@ -816,9 +816,23 @@ export default function UsersPage() {
                                 {new Date(claim.claimedAt).toLocaleString()}
                               </span>
                             </div>
-                            <code className="text-sm bg-white px-2 py-1 rounded border border-orange-200 font-mono text-orange-600">
-                              {claim.code}
-                            </code>
+                            {claim.directCredit ? (
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-orange-600">🎁 ${claim.creditedDollars}</span>
+                                <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                  claim.creditStatus === 'success' ? 'bg-green-100 text-green-600' :
+                                  claim.creditStatus === 'pending' ? 'bg-yellow-100 text-yellow-600' :
+                                  'bg-red-100 text-red-600'
+                                }`}>
+                                  {claim.creditStatus === 'success' ? '已直充' :
+                                   claim.creditStatus === 'pending' ? '处理中' : '不确定'}
+                                </span>
+                              </div>
+                            ) : (
+                              <code className="text-sm bg-white px-2 py-1 rounded border border-orange-200 font-mono text-orange-600">
+                                {claim.code}
+                              </code>
+                            )}
                           </div>
                         ))}
                       </div>

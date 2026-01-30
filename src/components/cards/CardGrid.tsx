@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
+import Image from 'next/image';
 import { Search, Filter, ArrowUpDown, LayoutGrid, Award } from 'lucide-react';
 import { CardConfig, Rarity } from '@/lib/cards/types';
 import { RARITY_LEVELS } from '@/lib/cards/constants';
@@ -178,70 +179,20 @@ export function CardGrid({ cards, inventory, fragments = 0, onExchange }: CardGr
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {displayedCards.map((card) => {
-            const count = inventoryCounts[card.id] || 0;
-            const isOwned = count > 0;
-            const rarityColor = RARITY_COLORS[card.rarity];
-
-            return (
-              <button
-                key={card.id}
-                onClick={() => setSelectedCard(card)}
-                className={`
-                  group relative aspect-[3/4] rounded-xl overflow-hidden transition-all duration-300
-                  ${isOwned 
-                    ? 'shadow-md hover:shadow-xl hover:-translate-y-1 cursor-pointer bg-white' 
-                    : 'bg-slate-100 opacity-70 grayscale hover:opacity-100 hover:grayscale-0'}
-                `}
-              >
-                {/* Card Back / Placeholder if not owned (optional style preference) */}
-                {/* We show the front but grayscale for unowned to let them see what they are missing */}
-                
-                <img 
-                  src={card.image} 
-                  alt={card.name}
-                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                  loading="lazy"
-                  onError={(e) => {
-                      (e.target as HTMLImageElement).src = `https://placehold.co/300x400?text=${card.name}`;
-                  }}
-                />
-                
-                {/* Overlay Gradient */}
-                <div className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60 group-hover:opacity-40 transition-opacity`}></div>
-                
-                {/* Content */}
-                <div className="absolute inset-x-0 bottom-0 p-3 text-left">
-                  <div className={`
-                    inline-block px-1.5 py-0.5 rounded text-[10px] font-bold text-white mb-1
-                    bg-gradient-to-r ${rarityColor} shadow-sm
-                  `}>
-                    {RARITY_LABELS[card.rarity]}
-                  </div>
-                  <h3 className="text-white font-bold text-sm truncate drop-shadow-md">{card.name}</h3>
-                  
-                  {isOwned && (
-                    <div className="absolute top-2 right-2 flex items-center justify-center w-6 h-6 bg-orange-500 text-white text-xs font-bold rounded-full shadow-lg border border-white">
-                      {count}
-                    </div>
-                  )}
-                </div>
-
-                {/* Unowned Lock Icon / Question Mark */}
-                {!isOwned && (
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                     <span className="text-4xl font-black text-white/40 drop-shadow-lg">?</span>
-                  </div>
-                )}
-              </button>
-            );
-          })}
+          {displayedCards.map((card) => (
+            <CardItem
+              key={card.id}
+              card={card}
+              count={inventoryCounts[card.id] || 0}
+              onClick={() => setSelectedCard(card)}
+            />
+          ))}
         </div>
       )}
 
       {/* Detail Modal */}
       {selectedCard && (
-        <CardDetail 
+        <CardDetail
           card={selectedCard}
           count={inventoryCounts[selectedCard.id] || 0}
           fragments={fragments}
@@ -252,3 +203,70 @@ export function CardGrid({ cards, inventory, fragments = 0, onExchange }: CardGr
     </div>
   );
 }
+
+// Memoized Card Item for better performance
+const CardItem = React.memo(function CardItem({
+  card,
+  count,
+  onClick
+}: {
+  card: CardConfig;
+  count: number;
+  onClick: () => void;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const isOwned = count > 0;
+  const rarityColor = RARITY_COLORS[card.rarity];
+
+  return (
+    <button
+      onClick={onClick}
+      className={`
+        group relative aspect-[3/4] rounded-xl overflow-hidden transition-all duration-300
+        ${isOwned
+          ? 'shadow-md hover:shadow-xl hover:-translate-y-1 cursor-pointer bg-white'
+          : 'bg-slate-100 opacity-70 grayscale hover:opacity-100 hover:grayscale-0'}
+      `}
+    >
+      {/* Loading Skeleton */}
+      {!loaded && (
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-200 to-slate-300 animate-pulse" />
+      )}
+
+      <Image
+        src={card.image}
+        alt={card.name}
+        fill
+        sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, (max-width: 1024px) 25vw, 16vw"
+        className={`object-cover transition-all duration-700 group-hover:scale-110 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+        loading="lazy"
+        onLoad={() => setLoaded(true)}
+        onError={() => setLoaded(true)}
+      />
+
+      {/* Overlay Gradient */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60 group-hover:opacity-40 transition-opacity" />
+
+      {/* Content */}
+      <div className="absolute inset-x-0 bottom-0 p-3 text-left">
+        <div className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold text-white mb-1 bg-gradient-to-r ${rarityColor} shadow-sm`}>
+          {RARITY_LABELS[card.rarity]}
+        </div>
+        <h3 className="text-white font-bold text-sm truncate drop-shadow-md">{card.name}</h3>
+
+        {isOwned && (
+          <div className="absolute top-2 right-2 flex items-center justify-center w-6 h-6 bg-orange-500 text-white text-xs font-bold rounded-full shadow-lg border border-white">
+            {count}
+          </div>
+        )}
+      </div>
+
+      {/* Unowned Question Mark */}
+      {!isOwned && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span className="text-4xl font-black text-white/40 drop-shadow-lg">?</span>
+        </div>
+      )}
+    </button>
+  );
+});

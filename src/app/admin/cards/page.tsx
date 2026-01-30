@@ -7,7 +7,7 @@ import {
   ArrowLeft, Loader2, Search, Users,
   LogOut, User as UserIcon, X,
   ChevronRight, RefreshCw, Trash2, CreditCard, LayoutGrid, Layers,
-  BookOpen, Save, Edit2
+  BookOpen, Save, Edit2, Star
 } from 'lucide-react';
 import { CARDS, ALBUMS } from '@/lib/cards/config';
 
@@ -45,6 +45,13 @@ interface AlbumData {
   currentReward: number;
 }
 
+interface TierData {
+  id: string;
+  name: string;
+  defaultReward: number;
+  currentReward: number;
+}
+
 export default function AdminCardsPage() {
   const [users, setUsers] = useState<UserWithCardStats[]>([]);
   const [user, setUser] = useState<UserData | null>(null);
@@ -65,7 +72,9 @@ export default function AdminCardsPage() {
 
   // 卡册管理
   const [albums, setAlbums] = useState<AlbumData[]>([]);
+  const [tiers, setTiers] = useState<TierData[]>([]);
   const [editingAlbum, setEditingAlbum] = useState<string | null>(null);
+  const [editingTier, setEditingTier] = useState<string | null>(null);
   const [editReward, setEditReward] = useState<number>(0);
   const [savingReward, setSavingReward] = useState(false);
   const [activeTab, setActiveTab] = useState<'users' | 'albums'>('users');
@@ -119,6 +128,7 @@ export default function AdminCardsPage() {
         const data = await res.json();
         if (data.success) {
           setAlbums(data.albums);
+          setTiers(data.tiers || []);
         }
       }
     } catch (error) {
@@ -216,17 +226,21 @@ export default function AdminCardsPage() {
     router.push('/');
   };
 
-  const handleSaveReward = async (albumId: string) => {
+  const handleSaveReward = async (albumId?: string, tierId?: string) => {
     setSavingReward(true);
     try {
+      const body = tierId
+        ? { tierId, reward: editReward }
+        : { albumId, reward: editReward };
       const res = await fetch('/api/admin/cards/albums', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ albumId, reward: editReward })
+        body: JSON.stringify(body)
       });
       const data = await res.json();
       if (data.success) {
         setEditingAlbum(null);
+        setEditingTier(null);
         fetchAlbums();
         alert('奖励更新成功');
       } else {
@@ -242,7 +256,14 @@ export default function AdminCardsPage() {
 
   const startEditReward = (album: AlbumData) => {
     setEditingAlbum(album.id);
+    setEditingTier(null);
     setEditReward(album.currentReward);
+  };
+
+  const startEditTierReward = (tier: TierData) => {
+    setEditingTier(tier.id);
+    setEditingAlbum(null);
+    setEditReward(tier.currentReward);
   };
 
   // Helper to get card name from ID
@@ -489,7 +510,8 @@ export default function AdminCardsPage() {
 
         {/* 卡册奖励管理 */}
         {activeTab === 'albums' && (
-          <div className="bg-white/95 rounded-3xl shadow-sm overflow-hidden border border-stone-200/60">
+          <>
+            <div className="bg-white/95 rounded-3xl shadow-sm overflow-hidden border border-stone-200/60">
             <div className="px-8 py-4 bg-stone-50/80 border-b border-stone-200/60">
               <h2 className="text-sm font-bold text-stone-500 uppercase tracking-wider">卡册奖励设置</h2>
               <p className="text-xs text-stone-400 mt-1">修改各卡册集齐全套后的奖励积分</p>
@@ -553,6 +575,80 @@ export default function AdminCardsPage() {
               ))}
             </div>
           </div>
+
+          {/* 稀有度奖励设置 */}
+          <div className="bg-white/95 rounded-3xl shadow-sm overflow-hidden border border-stone-200/60 mt-6">
+            <div className="px-8 py-4 bg-purple-50/80 border-b border-purple-200/60">
+              <h2 className="text-sm font-bold text-purple-500 uppercase tracking-wider">稀有度奖励设置</h2>
+              <p className="text-xs text-purple-400 mt-1">修改集齐各稀有度卡牌后的奖励积分（全局生效）</p>
+            </div>
+            <div className="divide-y divide-stone-100">
+              {tiers.map((tier) => (
+                <div key={tier.id} className="px-8 py-4 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center border ${
+                      tier.id === 'legendary_rare' ? 'bg-pink-50 border-pink-200' :
+                      tier.id === 'legendary' ? 'bg-amber-50 border-amber-200' :
+                      tier.id === 'epic' ? 'bg-purple-50 border-purple-200' :
+                      tier.id === 'rare' ? 'bg-blue-50 border-blue-200' :
+                      'bg-stone-50 border-stone-200'
+                    }`}>
+                      <Star className={`w-5 h-5 ${
+                        tier.id === 'legendary_rare' ? 'text-pink-500' :
+                        tier.id === 'legendary' ? 'text-amber-500' :
+                        tier.id === 'epic' ? 'text-purple-500' :
+                        tier.id === 'rare' ? 'text-blue-500' :
+                        'text-stone-400'
+                      }`} />
+                    </div>
+                    <span className="font-bold text-stone-700">{tier.name}</span>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    {editingTier === tier.id ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          value={editReward}
+                          onChange={(e) => setEditReward(Number(e.target.value))}
+                          className="w-24 px-3 py-2 border border-stone-200 rounded-lg text-right font-bold text-stone-700 focus:border-purple-500 focus:ring-2 focus:ring-purple-100 outline-none"
+                          min={0}
+                        />
+                        <button
+                          onClick={() => handleSaveReward(undefined, tier.id)}
+                          disabled={savingReward}
+                          className="p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50"
+                        >
+                          <Save className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setEditingTier(null)}
+                          className="p-2 bg-stone-100 text-stone-500 rounded-lg hover:bg-stone-200"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <p className="text-lg font-bold text-purple-600">{tier.currentReward.toLocaleString()} 积分</p>
+                          {tier.currentReward !== tier.defaultReward && (
+                            <p className="text-xs text-stone-400">默认: {tier.defaultReward.toLocaleString()}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => startEditTierReward(tier)}
+                          className="p-2 bg-stone-100 text-stone-500 rounded-lg hover:bg-purple-50 hover:text-purple-500 transition-colors"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          </>
         )}
       </main>
 

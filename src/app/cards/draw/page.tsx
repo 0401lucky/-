@@ -299,7 +299,6 @@ export default function DrawPage() {
       </div>
 
       {/* Navbar */}
-      {/* Navbar */}
       <nav className="sticky top-0 z-40 border-b border-pink-100 bg-white/60 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="flex justify-between items-center h-[72px]">
@@ -309,14 +308,35 @@ export default function DrawPage() {
               </div>
               <span className="font-bold text-sm tracking-wide rounded-full">EXIT</span>
             </Link>
-            <div className="flex items-center gap-3 px-4 py-2 bg-white rounded-full border border-pink-200 shadow-sm">
-              <Sparkles className="w-4 h-4 text-pink-400" />
-              <span className="text-sm font-bold text-slate-600">
-                CREDITS: <span className="text-pink-500">{cardData?.drawsAvailable || 0}</span>
-              </span>
-              <Link href="/store" className="ml-2 p-1 hover:bg-pink-50 rounded-full transition-colors">
-                <Zap className="w-4 h-4 text-yellow-500 fill-yellow-500" />
-              </Link>
+            <div className="flex items-center gap-2 sm:gap-4">
+              {/* Pity Counter */}
+              {cardData && (() => {
+                const pity = cardData.pityCounter;
+                const thresholds = [
+                  { val: 10, label: '稀有', color: 'text-cyan-500' },
+                  { val: 50, label: '史诗', color: 'text-purple-500' },
+                  { val: 100, label: '传说', color: 'text-yellow-500' },
+                  { val: 200, label: '传稀', color: 'text-pink-500' },
+                ];
+                const next = thresholds.find(t => pity < t.val) || thresholds[3];
+                const remaining = next.val - pity;
+                return (
+                  <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-50 to-pink-50 rounded-full border border-purple-200/50 text-xs">
+                    <Crown className="w-3.5 h-3.5 text-purple-400" />
+                    <span className="text-slate-500">{next.label}保底:</span>
+                    <span className={`font-bold ${next.color}`}>{remaining}抽</span>
+                  </div>
+                );
+              })()}
+              <div className="flex items-center gap-3 px-4 py-2 bg-white rounded-full border border-pink-200 shadow-sm">
+                <Sparkles className="w-4 h-4 text-pink-400" />
+                <span className="text-sm font-bold text-slate-600">
+                  CREDITS: <span className="text-pink-500">{cardData?.drawsAvailable || 0}</span>
+                </span>
+                <Link href="/store" className="ml-2 p-1 hover:bg-pink-50 rounded-full transition-colors">
+                  <Zap className="w-4 h-4 text-yellow-500 fill-yellow-500" />
+                </Link>
+              </div>
             </div>
           </div>
         </div>

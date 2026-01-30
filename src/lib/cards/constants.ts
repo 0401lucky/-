@@ -27,9 +27,9 @@ export const PITY_THRESHOLDS = {
 } as const;
 
 export const FRAGMENT_VALUES: Record<Rarity, number> = {
-  common: 3,
-  rare: 8,
-  epic: 20,
+  common: 9,
+  rare: 14,
+  epic: 26,
   legendary: 50,
   legendary_rare: 100,
 };

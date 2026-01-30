@@ -367,75 +367,34 @@ export default function AdminStorePage() {
                 </div>
 
                 <div className="col-span-2">
-                   <label className="block text-slate-700 text-sm font-semibold mb-3">商品类型</label>
-                   <div className="grid grid-cols-2 gap-4">
-                     <label className={`cursor-pointer border-2 rounded-xl p-4 flex flex-col gap-3 transition-all ${
-                       formData.type === 'quota_direct' 
-                         ? 'bg-blue-50 border-blue-500/50 text-blue-900' 
-                         : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                   <label className="block text-slate-700 text-sm font-semibold mb-2">商品类型</label>
+                   <div className="grid grid-cols-3 gap-2">
+                     <label className={`cursor-pointer border-2 rounded-lg px-3 py-2 flex items-center gap-2 transition-all ${
+                       formData.type === 'quota_direct'
+                         ? 'bg-blue-50 border-blue-400 text-blue-900'
+                         : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
                      }`}>
-                       <input 
-                         type="radio" 
-                         name="type" 
-                         value="quota_direct"
-                         checked={formData.type === 'quota_direct'}
-                         onChange={() => setFormData({...formData, type: 'quota_direct'})}
-                         className="hidden" 
-                       />
-                       <div className="flex items-center justify-between">
-                          <span className="text-2xl">💰</span>
-                          {formData.type === 'quota_direct' && <span className="w-2 h-2 rounded-full bg-blue-500"></span>}
-                       </div>
-                       <div>
-                         <span className="font-bold text-sm block mb-0.5">直充额度</span>
-                         <span className="text-xs opacity-70 block">直接增加余额</span>
-                       </div>
+                       <input type="radio" name="type" value="quota_direct" checked={formData.type === 'quota_direct'} onChange={() => setFormData({...formData, type: 'quota_direct'})} className="hidden" />
+                       <span>💰</span>
+                       <span className="font-medium text-sm">直充额度</span>
                      </label>
-
-                     <label className={`cursor-pointer border-2 rounded-xl p-4 flex flex-col gap-3 transition-all ${
-                       formData.type === 'lottery_spin' 
-                         ? 'bg-purple-50 border-purple-500/50 text-purple-900' 
-                         : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                     <label className={`cursor-pointer border-2 rounded-lg px-3 py-2 flex items-center gap-2 transition-all ${
+                       formData.type === 'lottery_spin'
+                         ? 'bg-purple-50 border-purple-400 text-purple-900'
+                         : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
                      }`}>
-                       <input 
-                         type="radio" 
-                         name="type" 
-                         value="lottery_spin"
-                         checked={formData.type === 'lottery_spin'}
-                         onChange={() => setFormData({...formData, type: 'lottery_spin'})}
-                         className="hidden" 
-                       />
-                       <div className="flex items-center justify-between">
-                          <span className="text-2xl">🎟️</span>
-                          {formData.type === 'lottery_spin' && <span className="w-2 h-2 rounded-full bg-purple-500"></span>}
-                       </div>
-                       <div>
-                         <span className="font-bold text-sm block mb-0.5">抽奖次数</span>
-                         <span className="text-xs opacity-70 block">增加游戏机会</span>
-                       </div>
+                       <input type="radio" name="type" value="lottery_spin" checked={formData.type === 'lottery_spin'} onChange={() => setFormData({...formData, type: 'lottery_spin'})} className="hidden" />
+                       <span>🎟️</span>
+                       <span className="font-medium text-sm">抽奖次数</span>
                      </label>
-
-                     <label className={`cursor-pointer border-2 rounded-xl p-4 flex flex-col gap-3 transition-all ${
-                       formData.type === 'card_draw' 
-                         ? 'bg-amber-50 border-amber-500/50 text-amber-900' 
-                         : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                     <label className={`cursor-pointer border-2 rounded-lg px-3 py-2 flex items-center gap-2 transition-all ${
+                       formData.type === 'card_draw'
+                         ? 'bg-amber-50 border-amber-400 text-amber-900'
+                         : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
                      }`}>
-                       <input 
-                         type="radio" 
-                         name="type" 
-                         value="card_draw"
-                         checked={formData.type === 'card_draw'}
-                         onChange={() => setFormData({...formData, type: 'card_draw'})}
-                         className="hidden" 
-                       />
-                       <div className="flex items-center justify-between">
-                          <span className="text-2xl">🃏</span>
-                          {formData.type === 'card_draw' && <span className="w-2 h-2 rounded-full bg-amber-500"></span>}
-                       </div>
-                       <div>
-                         <span className="font-bold text-sm block mb-0.5">卡牌抽奖</span>
-                         <span className="text-xs opacity-70 block">动物卡抽卡次数</span>
-                       </div>
+                       <input type="radio" name="type" value="card_draw" checked={formData.type === 'card_draw'} onChange={() => setFormData({...formData, type: 'card_draw'})} className="hidden" />
+                       <span>🃏</span>
+                       <span className="font-medium text-sm">卡牌抽奖</span>
                      </label>
                    </div>
                 </div>
