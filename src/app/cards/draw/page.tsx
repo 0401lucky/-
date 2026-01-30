@@ -4,16 +4,24 @@ import { useState, useEffect } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Loader2, Sparkles, CreditCard, RotateCcw, Star, Zap, Crown, Hexagon } from 'lucide-react';
+import { ArrowLeft, Loader2, Sparkles, CreditCard, RotateCcw, Star, Zap, Crown } from 'lucide-react';
 import { UserCards } from '@/lib/cards/draw';
 import { CardConfig } from '@/lib/cards/types';
 import confetti from 'canvas-confetti';
+
+interface SingleDrawResult {
+  card: CardConfig;
+  isDuplicate: boolean;
+  fragmentsAdded?: number;
+}
 
 interface DrawResponse {
   success: boolean;
   data: {
     success: boolean;
     card?: CardConfig;
+    cards?: SingleDrawResult[];
+    count?: number;
     message?: string;
     isDuplicate?: boolean;
     fragmentsAdded?: number;
@@ -25,9 +33,12 @@ export default function DrawPage() {
   const [loading, setLoading] = useState(true);
   const [drawing, setDrawing] = useState(false);
   const [cardData, setCardData] = useState<UserCards | null>(null);
-  const [result, setResult] = useState<DrawResponse['data'] | null>(null);
+  const [result, setResult] = useState<SingleDrawResult | null>(null);
+  const [multiResults, setMultiResults] = useState<SingleDrawResult[]>([]);
   const [showResult, setShowResult] = useState(false);
   const [isFlipped, setIsFlipped] = useState(false);
+  const [isMultiDraw, setIsMultiDraw] = useState(false);
+  const [revealedCards, setRevealedCards] = useState<number[]>([]);
 
   // Load inventory
   const fetchInventory = async () => {
@@ -61,39 +72,63 @@ export default function DrawPage() {
   }, [router]);
 
   // Handle Draw Logic
-  const handleDraw = async () => {
-    if (drawing || !cardData || cardData.drawsAvailable <= 0) return;
+  const handleDraw = async (count: number = 1) => {
+    if (drawing || !cardData || cardData.drawsAvailable < count) return;
 
     setDrawing(true);
     setShowResult(false);
     setIsFlipped(false);
     setResult(null);
+    setMultiResults([]);
+    setIsMultiDraw(count > 1);
+    setRevealedCards([]);
 
     try {
-      // 1. Animation Phase: Shake and Glow
-      await new Promise(resolve => setTimeout(resolve, 1500)); // Longer suspense
+      // 1. Animation Phase
+      await new Promise(resolve => setTimeout(resolve, count > 1 ? 800 : 1500));
 
       // 2. API Call
-      const res = await fetch('/api/cards/draw', { method: 'POST' });
+      const res = await fetch('/api/cards/draw', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count })
+      });
       const data: DrawResponse = await res.json();
 
       if (data.success && data.data.success) {
-        setResult(data.data);
-        setShowResult(true);
+        if (count === 1 && data.data.card) {
+          // 单抽
+          setResult({
+            card: data.data.card,
+            isDuplicate: data.data.isDuplicate || false,
+            fragmentsAdded: data.data.fragmentsAdded
+          });
+          setShowResult(true);
+          setTimeout(() => setIsFlipped(true), 100);
 
-        // 3. Flip Reveal
-        setTimeout(() => setIsFlipped(true), 100);
-
-        // 4. Update Inventory
-        await fetchInventory();
-
-        // 5. Special Effects for High Rarity
-        if (data.data.card) {
-          const rarity = data.data.card.rarity;
-          if (['legendary', 'legendary_rare', 'epic'].includes(rarity || '')) {
-            triggerConfetti(rarity);
+          // Special Effects
+          if (['legendary', 'legendary_rare', 'epic'].includes(data.data.card.rarity)) {
+            triggerConfetti(data.data.card.rarity);
           }
+        } else if (data.data.cards) {
+          // 多连抽
+          setMultiResults(data.data.cards);
+          setShowResult(true);
+
+          // 依次翻开卡牌
+          data.data.cards.forEach((cardResult, index) => {
+            setTimeout(() => {
+              setRevealedCards(prev => [...prev, index]);
+              // 高稀有度特效
+              if (['legendary', 'legendary_rare', 'epic'].includes(cardResult.card.rarity)) {
+                triggerConfetti(cardResult.card.rarity);
+              }
+            }, 300 + index * 400);
+          });
         }
+
+        // Update Inventory
+        await fetchInventory();
       } else {
         alert(data.data?.message || (data as any).message || '抽卡失败，请重试');
       }
@@ -287,17 +322,66 @@ export default function DrawPage() {
         </div>
       </nav>
 
-      <main className="relative z-10 max-w-md mx-auto px-4 py-8 flex flex-col items-center justify-center min-h-[80vh] gap-12">
+      <main className="relative z-10 max-w-4xl mx-auto px-4 py-8 flex flex-col items-center justify-center min-h-[80vh] gap-8">
 
-        {/* Main Card Stage */}
+        {/* Multi-Draw Results Grid */}
+        {showResult && isMultiDraw && multiResults.length > 0 && (
+          <div className="w-full">
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 sm:gap-4">
+              {multiResults.map((cardResult, index) => {
+                const cardStyles = getRarityStyles(cardResult.card.rarity);
+                const isRevealed = revealedCards.includes(index);
+                return (
+                  <div key={index} className="perspective-1000">
+                    <div className={`aspect-[2/3] relative transition-all duration-500 transform-style-3d ${isRevealed ? 'rotate-y-180' : ''}`}>
+                      {/* Card Back */}
+                      <div className="absolute inset-0 backface-hidden rounded-xl overflow-hidden border-2 border-white shadow-lg bg-gradient-to-br from-pink-200 via-purple-100 to-blue-200">
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <Star className="w-8 h-8 text-pink-400 fill-pink-400 animate-pulse" />
+                        </div>
+                      </div>
+                      {/* Card Front */}
+                      <div className={`absolute inset-0 backface-hidden rotate-y-180 rounded-xl overflow-hidden border-2 ${cardStyles.border} ${cardStyles.shadow} bg-white flex flex-col`}>
+                        <div className="relative flex-1 m-1 rounded-lg overflow-hidden bg-slate-50">
+                          <Image
+                            src={cardResult.card.image}
+                            alt={cardResult.card.name}
+                            fill
+                            className="object-cover"
+                            sizes="(max-width: 640px) 30vw, 18vw"
+                            priority={index < 3}
+                          />
+                          {cardResult.isDuplicate && (
+                            <div className="absolute top-1 right-1 px-1.5 py-0.5 bg-white/90 text-slate-500 text-[8px] rounded-full font-bold">
+                              重复
+                            </div>
+                          )}
+                        </div>
+                        <div className={`p-2 text-center ${cardStyles.bg}`}>
+                          <p className="text-xs font-bold text-slate-700 truncate">{cardResult.card.name}</p>
+                          <p className={`text-[10px] ${cardStyles.text}`}>
+                            {cardResult.isDuplicate ? `+${cardResult.fragmentsAdded}碎片` : 'NEW!'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Single Draw Card Stage */}
+        {(!showResult || !isMultiDraw) && (
         <div className="relative w-full aspect-[2/3] max-w-[320px] perspective-1000">
           <div
-            className={`w-full h-full relative transition-all duration-700 transform-style-3d 
-              ${(showResult && isFlipped) ? 'rotate-y-180' : ''} 
+            className={`w-full h-full relative transition-all duration-700 transform-style-3d
+              ${(showResult && isFlipped) ? 'rotate-y-180' : ''}
               ${drawing ? 'animate-shake' : (showResult ? '' : 'animate-bounce-slow')}
               cursor-pointer group
             `}
-            onClick={!drawing && !showResult ? handleDraw : undefined}
+            onClick={!drawing && !showResult ? () => handleDraw(1) : undefined}
           >
             {/* FRONT (Card Back Design) */}
             <div className="absolute inset-0 w-full h-full backface-hidden rounded-[2.5rem] overflow-hidden border-4 border-white shadow-[0_20px_40px_-12px_rgba(244,114,182,0.3)] bg-pink-100">
@@ -338,6 +422,8 @@ export default function DrawPage() {
                     alt={result.card.name}
                     fill
                     className="object-cover"
+                    priority
+                    sizes="320px"
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-slate-400 bg-slate-50">
@@ -390,39 +476,66 @@ export default function DrawPage() {
           {/* Shadow/Reflection beneath card */}
           <div className="absolute -bottom-10 left-10 right-10 h-4 bg-black/40 blur-xl rounded-full"></div>
         </div>
+        )}
+
 
         {/* Action Buttons */}
         <div className="w-full flex flex-col items-center gap-4">
           {showResult && (
             <button
-              onClick={() => setShowResult(false)}
+              onClick={() => { setShowResult(false); setIsMultiDraw(false); setMultiResults([]); }}
               className="group relative px-8 py-3 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-full font-bold shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition-all overflow-hidden"
             >
               <span className="relative z-10 flex items-center gap-2">
                 <RotateCcw className="w-4 h-4" />
-                Play Again
+                继续抽卡
               </span>
               <div className="absolute inset-0 bg-white/20 -translate-x-full group-hover:translate-x-0 transition-transform duration-300"></div>
             </button>
           )}
 
+          {/* Draw Buttons */}
+          {!showResult && cardData && cardData.drawsAvailable > 0 && (
+            <div className="flex flex-col items-center gap-4">
+              <div className="flex gap-3">
+                <button
+                  onClick={() => handleDraw(1)}
+                  disabled={drawing || cardData.drawsAvailable < 1}
+                  className="group relative px-6 py-3 bg-gradient-to-r from-pink-400 to-pink-500 text-white rounded-full font-bold shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <span className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4" />
+                    单抽
+                  </span>
+                </button>
+                <button
+                  onClick={() => handleDraw(5)}
+                  disabled={drawing || cardData.drawsAvailable < 5}
+                  className="group relative px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded-full font-bold shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <span className="flex items-center gap-2">
+                    <Zap className="w-4 h-4" />
+                    五连抽
+                  </span>
+                </button>
+              </div>
+              <p className="text-slate-500 text-xs tracking-widest uppercase">
+                {cardData.drawsAvailable} 次抽卡机会
+              </p>
+            </div>
+          )}
+
           {cardData && cardData.drawsAvailable <= 0 && !showResult && (
             <div className="text-center animate-pulse">
-              <p className="text-red-400 text-sm font-medium mb-2">Insufficient Credits</p>
+              <p className="text-red-400 text-sm font-medium mb-2">抽卡次数不足</p>
               <Link
                 href="/store"
                 className="inline-flex items-center gap-2 px-6 py-2 bg-pink-500 hover:bg-pink-400 text-white rounded-full transition-colors text-sm font-bold shadow-md shadow-pink-200"
               >
                 <CreditCard className="w-4 h-4" />
-                Recharge (900/draw)
+                去商店兑换
               </Link>
             </div>
-          )}
-
-          {!showResult && cardData && cardData.drawsAvailable > 0 && (
-            <p className="text-slate-500 text-xs tracking-widest uppercase">
-              {cardData.drawsAvailable} Invocations Remaining
-            </p>
           )}
         </div>
 

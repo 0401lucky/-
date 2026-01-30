@@ -6,6 +6,16 @@ import { getAuthUser } from '@/lib/auth';
 import { checkinToNewApi } from '@/lib/new-api';
 import { cookies } from 'next/headers';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { NextRequest } from 'next/server';
+
+// Helper to create mock NextRequest
+function createMockRequest(body: object = {}): NextRequest {
+  return new NextRequest('http://localhost/api/cards/draw', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
 
 vi.mock('@vercel/kv', () => ({
   kv: {
@@ -99,7 +109,7 @@ describe('Checkin and Card Draw Integration', () => {
         .mockResolvedValueOnce([1, 1, 'ok']) // Reserve: success, pityCounter=1
         .mockResolvedValueOnce([1, 'ok', 0]); // Finalize: success, not duplicate
 
-      const response = await drawPOST();
+      const response = await drawPOST(createMockRequest({ count: 1 }));
       const data = await response.json();
 
       expect(data.success).toBe(true);
@@ -110,7 +120,7 @@ describe('Checkin and Card Draw Integration', () => {
       // Phase 1 returns failure (no draws)
       (kv.eval as any).mockResolvedValueOnce([0, 0, 'no_draws']);
 
-      const response = await drawPOST();
+      const response = await drawPOST(createMockRequest({ count: 1 }));
       const data = await response.json();
 
       expect(data.success).toBe(false);
@@ -120,7 +130,7 @@ describe('Checkin and Card Draw Integration', () => {
     it('should require authentication', async () => {
       (getAuthUser as any).mockResolvedValue(null);
 
-      const response = await drawPOST();
+      const response = await drawPOST(createMockRequest({ count: 1 }));
       const data = await response.json();
 
       expect(response.status).toBe(401);
