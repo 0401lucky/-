@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Trophy, Check, Gift, Loader2 } from 'lucide-react';
-import { getCardsByAlbum } from '@/lib/cards/config';
+import { getCardsByAlbum, getAlbumById } from '@/lib/cards/config';
 import { COLLECTION_REWARDS } from '@/lib/cards/constants';
 import type { Rarity } from '@/lib/cards/types';
 
@@ -32,6 +32,7 @@ const RARITY_COLORS: Record<string, string> = {
 export function RewardsSection({ albumId, inventory, claimedRewards, onClaim }: RewardsSectionProps) {
   const [claiming, setClaiming] = useState<string | null>(null);
 
+  const album = getAlbumById(albumId);
   const albumCards = getCardsByAlbum(albumId);
 
   const getProgress = (type: string) => {
@@ -81,7 +82,9 @@ export function RewardsSection({ albumId, inventory, claimedRewards, onClaim }: 
           const { owned, total, percent } = getProgress(type);
           const isClaimed = claimedRewards.includes(getRewardKey(type));
           const canClaim = percent === 100 && !isClaimed;
-          const points = COLLECTION_REWARDS[type as Rarity | 'full_set'];
+          const points = type === 'full_set'
+            ? (album?.reward ?? COLLECTION_REWARDS.full_set)
+            : (album?.tierRewards?.[type as Rarity] ?? COLLECTION_REWARDS[type as Rarity]);
           const styles = RARITY_COLORS[type] || RARITY_COLORS.common;
 
           return (
