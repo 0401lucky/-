@@ -331,10 +331,11 @@ export default function DrawPage() {
             <div className="flex items-center gap-2 sm:gap-4">
               {/* Pity Counter - 保底计数器 */}
               <PityCounter pityCounter={cardData?.pityCounter ?? 0} />
-              <div className="flex items-center gap-3 px-4 py-2 bg-white rounded-full border border-pink-200 shadow-sm">
+              <div className="flex items-center gap-2 px-2 sm:px-4 py-1.5 sm:py-2 bg-white rounded-full border border-pink-200 shadow-sm">
                 <Sparkles className="w-4 h-4 text-pink-400" />
                 <span className="text-sm font-bold text-slate-600">
-                  CREDITS: <span className="text-pink-500">{cardData?.drawsAvailable || 0}</span>
+                  <span className="hidden sm:inline">CREDITS: </span>
+                  <span className="text-pink-500">{cardData?.drawsAvailable || 0}</span>
                 </span>
                 <Link href="/store" className="ml-2 p-1 hover:bg-pink-50 rounded-full transition-colors">
                   <Zap className="w-4 h-4 text-yellow-500 fill-yellow-500" />
