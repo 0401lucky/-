@@ -32,6 +32,9 @@ interface ClaimRecord {
   username: string;
   code: string;
   claimedAt: number;
+  directCredit?: boolean;
+  creditedDollars?: number;
+  creditStatus?: 'pending' | 'success' | 'uncertain';
 }
 
 interface LotteryRecord {
