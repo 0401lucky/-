@@ -10,6 +10,8 @@ export interface CardConfig {
   albumId: string;     // Which album this card belongs to
 }
 
+export type TierRewards = Record<Rarity, number>;
+
 export interface CardAlbum {
   id: string;
   name: string;
@@ -17,6 +19,7 @@ export interface CardAlbum {
   coverImage: string;
   reward: number;       // Points reward for completing this album
   season?: string;      // Optional season label
+  tierRewards?: TierRewards; // Optional per-album tier rewards
 }
 
 export interface UserCardData {

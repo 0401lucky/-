@@ -82,9 +82,10 @@ export function isRewardClaimed(userData: UserCards, type: RewardType, albumId?:
 export async function getAlbumRewardStatuses(userData: UserCards, albumId: string): Promise<RewardStatus[]> {
   const rarities: Rarity[] = ['common', 'rare', 'epic', 'legendary', 'legendary_rare'];
   const statuses: RewardStatus[] = [];
+  const album = getAlbumById(albumId);
   const albumCards = getCardsByAlbum(albumId);
 
-  // Tier rewards
+  // Tier rewards - use album-specific rewards if available, otherwise fall back to global
   for (const rarity of rarities) {
     const rarityCards = albumCards.filter(c => c.rarity === rarity);
     if (rarityCards.length === 0) continue; // Skip if no cards of this rarity in album
@@ -94,9 +95,12 @@ export async function getAlbumRewardStatuses(userData: UserCards, albumId: strin
     const eligible = isTierComplete(userData.inventory, rarity, albumId);
     const claimed = isRewardClaimed(userData, rarity, albumId);
 
+    // Use album-specific tier rewards if available
+    const points = album?.tierRewards?.[rarity] ?? COLLECTION_REWARDS[rarity];
+
     statuses.push({
       type: rarity,
-      points: COLLECTION_REWARDS[rarity],
+      points,
       claimed,
       eligible,
       ownedCount,
@@ -144,12 +148,13 @@ export async function claimCollectionReward(
   const rewardKey = getRewardKey(rewardType, albumId);
   const userKey = `cards:user:${userId}`;
 
-  // Get dynamic reward points: tier rewards use constants, full_set uses album reward
+  // Get dynamic reward points: tier rewards use album-specific or constants, full_set uses album reward
   let points: number;
   if (rewardType === 'full_set') {
     points = await getAlbumReward(albumId);
   } else {
-    points = COLLECTION_REWARDS[rewardType];
+    const album = getAlbumById(albumId);
+    points = album?.tierRewards?.[rewardType] ?? COLLECTION_REWARDS[rewardType];
   }
 
   // Lua script for atomic claim operation
