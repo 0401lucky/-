@@ -207,8 +207,13 @@ async function logExchange(log: ExchangeLog): Promise<void> {
  */
 export async function exchangeItem(
   userId: number,
-  itemId: string
+  itemId: string,
+  quantity: number = 1
 ): Promise<{ success: boolean; message: string; log?: ExchangeLog }> {
+  if (!Number.isSafeInteger(quantity) || quantity < 1) {
+    return { success: false, message: '数量参数错误' };
+  }
+
   // 1. 获取商品信息
   const item = await getStoreItem(itemId);
   if (!item) {
@@ -222,11 +227,33 @@ export async function exchangeItem(
     console.error(`Invalid pointsCost for item ${itemId}: ${item.pointsCost}`);
     return { success: false, message: '商品配置异常，请联系管理员' };
   }
+  // 防御式校验：确保 value 是有效正整数
+  if (!Number.isSafeInteger(item.value) || item.value < 1) {
+    console.error(`Invalid value for item ${itemId}: ${item.value}`);
+    return { success: false, message: '商品配置异常，请联系管理员' };
+  }
+
+  const hasDailyLimit = Number.isSafeInteger(item.dailyLimit) && (item.dailyLimit ?? 0) > 0;
+  if (hasDailyLimit && quantity !== 1) {
+    return { success: false, message: '该商品为限购商品，不支持选择数量' };
+  }
+
+  const totalPointsCost = item.pointsCost * quantity;
+  if (!Number.isSafeInteger(totalPointsCost) || totalPointsCost < 1) {
+    console.error(`Invalid totalPointsCost for item ${itemId} (pointsCost=${item.pointsCost}, quantity=${quantity})`);
+    return { success: false, message: '兑换数量过大，请减少数量后重试' };
+  }
+
+  const totalValue = item.value * quantity;
+  if (!Number.isSafeInteger(totalValue) || totalValue < 1) {
+    console.error(`Invalid totalValue for item ${itemId} (value=${item.value}, quantity=${quantity})`);
+    return { success: false, message: '兑换数量过大，请减少数量后重试' };
+  }
 
   // 2. 检查每日限购（原子操作：先 INCR 占位，超限则 DECR 回滚）
   const today = getTodayDateString();
   let dailyLimitKey: string | null = null;
-  if (item.dailyLimit) {
+  if (hasDailyLimit) {
     dailyLimitKey = `exchange:daily:${userId}:${today}:${itemId}`;
     const newCount = await kv.incr(dailyLimitKey);
     // 设置过期时间（首次递增时）
@@ -234,18 +261,19 @@ export async function exchangeItem(
       await kv.expire(dailyLimitKey, 48 * 60 * 60);
     }
     // 超限则回滚
-    if (newCount > item.dailyLimit) {
+    if (newCount > (item.dailyLimit as number)) {
       await kv.decr(dailyLimitKey);
       return { success: false, message: `今日已达限购上限（${item.dailyLimit}次）` };
     }
   }
 
   // 3. 扣除积分（原子操作）
+  const descriptionSuffix = quantity > 1 ? ` ×${quantity}` : '';
   const deductResult = await deductPoints(
     userId,
-    item.pointsCost,
+    totalPointsCost,
     'exchange',
-    `兑换 ${item.name}`
+    `兑换 ${item.name}${descriptionSuffix}`
   );
   if (!deductResult.success) {
     // 扣积分失败，回滚限购占位
@@ -266,19 +294,19 @@ export async function exchangeItem(
   try {
     if (item.type === 'lottery_spin') {
       // 增加抽奖次数
-      await addExtraSpinCount(userId, item.value);
+      await addExtraSpinCount(userId, totalValue);
       rewardSuccess = true;
-      rewardMessage = `获得 ${item.value} 次抽奖机会`;
+      rewardMessage = `获得 ${totalValue} 次抽奖机会`;
     } else if (item.type === 'card_draw') {
       // 增加卡牌抽奖次数
-      const result = await addCardDraws(userId, item.value);
+      const result = await addCardDraws(userId, totalValue);
       rewardSuccess = result.success;
       rewardMessage = result.success 
-        ? `获得 ${item.value} 次卡牌抽奖机会` 
+        ? `获得 ${totalValue} 次卡牌抽奖机会` 
         : '卡牌抽奖次数增加失败';
     } else if (item.type === 'quota_direct') {
       // 直充额度
-      const creditResult = await creditQuotaToUser(userId, item.value);
+      const creditResult = await creditQuotaToUser(userId, totalValue);
       rewardSuccess = creditResult.success;
       rewardMessage = creditResult.message;
     }
@@ -302,9 +330,9 @@ export async function exchangeItem(
       const { addPoints } = await import('./points');
       await addPoints(
         userId,
-        item.pointsCost,
+        totalPointsCost,
         'admin_adjust',
-        `兑换失败回滚: ${item.name}`
+        `兑换失败回滚: ${item.name}${descriptionSuffix}`
       );
     } catch (rollbackError) {
       console.error('Rollback failed:', rollbackError);
@@ -318,9 +346,9 @@ export async function exchangeItem(
     id: nanoid(),
     userId,
     itemId,
-    itemName: item.name,
-    pointsCost: item.pointsCost,
-    value: item.value,
+    itemName: quantity > 1 ? `${item.name} ×${quantity}` : item.name,
+    pointsCost: totalPointsCost,
+    value: totalValue,
     type: item.type,
     createdAt: Date.now(),
   };
@@ -334,7 +362,7 @@ export async function exchangeItem(
 
   // 7. 统计商品被兑换次数（best-effort，失败不影响成功响应）
   try {
-    await kv.hincrby(STORE_ITEM_PURCHASE_COUNTS_KEY, itemId, 1);
+    await kv.hincrby(STORE_ITEM_PURCHASE_COUNTS_KEY, itemId, quantity);
   } catch (countError) {
     console.error('Store item purchase count increment failed (non-critical):', countError);
   }

@@ -90,7 +90,7 @@ export async function GET(request: NextRequest) {
     }
 
     const userData = await getUserCardData(user.id.toString());
-    const statuses = getAlbumRewardStatuses(userData, albumId);
+    const statuses = await getAlbumRewardStatuses(userData, albumId);
 
     return NextResponse.json({
       success: true,

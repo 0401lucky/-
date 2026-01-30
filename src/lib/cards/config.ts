@@ -16,7 +16,7 @@ export const ALBUMS: CardAlbum[] = [
     name: "动物伙伴图鉴 II",
     description: "更多可爱动物等你收集，全新冒险开启",
     coverImage: "/images/动物2/传说稀有/哈士奇.png",
-    reward: 10000,
+    reward: 20000,
     season: "第二季",
   },
 ];

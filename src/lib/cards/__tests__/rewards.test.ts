@@ -154,46 +154,47 @@ describe("Rewards System", () => {
   });
 
   describe("getAlbumRewardStatuses", () => {
-    it("should return all 6 reward statuses for album", () => {
+    it("should return all 6 reward statuses for album", async () => {
       const userData = createMockUserData();
-      const statuses = getAlbumRewardStatuses(userData, testAlbumId);
+      const statuses = await getAlbumRewardStatuses(userData, testAlbumId);
       expect(statuses.length).toBe(6);
     });
 
-    it("should show correct points for each tier", () => {
+    it("should show correct points for each tier", async () => {
       const userData = createMockUserData();
-      const statuses = getAlbumRewardStatuses(userData, testAlbumId);
+      const statuses = await getAlbumRewardStatuses(userData, testAlbumId);
 
       const commonStatus = statuses.find((s: { type: string }) => s.type === "common");
       expect(commonStatus?.points).toBe(COLLECTION_REWARDS.common);
 
       const fullSetStatus = statuses.find((s: { type: string }) => s.type === "full_set");
-      expect(fullSetStatus?.points).toBe(COLLECTION_REWARDS.full_set);
+      // full_set uses dynamic reward from config (default 10000 for animal-s1)
+      expect(fullSetStatus?.points).toBe(10000);
     });
 
-    it("should show eligible when tier is complete", () => {
+    it("should show eligible when tier is complete", async () => {
       const commonCards = getCardsByRarity("common", testAlbumId);
       const userData = createMockUserData(commonCards);
-      const statuses = getAlbumRewardStatuses(userData, testAlbumId);
+      const statuses = await getAlbumRewardStatuses(userData, testAlbumId);
 
       const commonStatus = statuses.find((s: { type: string }) => s.type === "common");
       expect(commonStatus?.eligible).toBe(true);
       expect(commonStatus?.claimed).toBe(false);
     });
 
-    it("should show claimed when reward was claimed", () => {
+    it("should show claimed when reward was claimed", async () => {
       const commonCards = getCardsByRarity("common", testAlbumId);
       const userData = createMockUserData(commonCards, [`album:${testAlbumId}:common`]);
-      const statuses = getAlbumRewardStatuses(userData, testAlbumId);
+      const statuses = await getAlbumRewardStatuses(userData, testAlbumId);
 
       const commonStatus = statuses.find((s: { type: string }) => s.type === "common");
       expect(commonStatus?.claimed).toBe(true);
     });
 
-    it("should track owned/total counts correctly", () => {
+    it("should track owned/total counts correctly", async () => {
       const inventory = ["animal-s1-common-仓鼠", "animal-s1-common-河豚"];
       const userData = createMockUserData(inventory);
-      const statuses = getAlbumRewardStatuses(userData, testAlbumId);
+      const statuses = await getAlbumRewardStatuses(userData, testAlbumId);
 
       const commonStatus = statuses.find((s: { type: string }) => s.type === "common");
       expect(commonStatus?.ownedCount).toBe(2);

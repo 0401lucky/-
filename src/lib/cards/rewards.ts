@@ -1,9 +1,10 @@
 import { kv } from "@vercel/kv";
-import { CARDS, getCardsByAlbum } from "./config";
+import { CARDS, getCardsByAlbum, getAlbumById } from "./config";
 import { COLLECTION_REWARDS } from "./constants";
 import { Rarity } from "./types";
 import { UserCards } from "./draw";
 import { addPoints } from "../points";
+import { getAlbumReward } from "./albumRewards";
 
 export type RewardType = Rarity | 'full_set';
 
@@ -78,7 +79,7 @@ export function isRewardClaimed(userData: UserCards, type: RewardType, albumId?:
 /**
  * Get status of all collection rewards for a user within an album
  */
-export function getAlbumRewardStatuses(userData: UserCards, albumId: string): RewardStatus[] {
+export async function getAlbumRewardStatuses(userData: UserCards, albumId: string): Promise<RewardStatus[]> {
   const rarities: Rarity[] = ['common', 'rare', 'epic', 'legendary', 'legendary_rare'];
   const statuses: RewardStatus[] = [];
   const albumCards = getCardsByAlbum(albumId);
@@ -103,13 +104,14 @@ export function getAlbumRewardStatuses(userData: UserCards, albumId: string): Re
     });
   }
 
-  // Full album reward
+  // Full album reward - use dynamic reward from Redis
   const fullSetEligible = isAlbumComplete(userData.inventory, albumId);
   const ownedInAlbum = albumCards.filter(c => userData.inventory.includes(c.id)).length;
+  const fullSetReward = await getAlbumReward(albumId);
 
   statuses.push({
     type: 'full_set',
-    points: COLLECTION_REWARDS.full_set,
+    points: fullSetReward,
     claimed: isRewardClaimed(userData, 'full_set', albumId),
     eligible: fullSetEligible,
     ownedCount: ownedInAlbum,
@@ -141,7 +143,14 @@ export async function claimCollectionReward(
 
   const rewardKey = getRewardKey(rewardType, albumId);
   const userKey = `cards:user:${userId}`;
-  const points = COLLECTION_REWARDS[rewardType];
+
+  // Get dynamic reward points: tier rewards use constants, full_set uses album reward
+  let points: number;
+  if (rewardType === 'full_set') {
+    points = await getAlbumReward(albumId);
+  } else {
+    points = COLLECTION_REWARDS[rewardType];
+  }
 
   // Lua script for atomic claim operation
   const luaScript = `

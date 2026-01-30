@@ -31,6 +31,8 @@ function StoreContent() {
   const [loading, setLoading] = useState(true);
   const [exchanging, setExchanging] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [quantityItem, setQuantityItem] = useState<StoreItem | null>(null);
+  const [quantity, setQuantity] = useState(1);
 
   const fetchData = useCallback(async () => {
     try {
@@ -52,11 +54,15 @@ function StoreContent() {
     fetchData();
   }, [fetchData]);
 
-  const handleExchange = async (itemId: string) => {
+  const handleExchange = async (itemId: string, qty: number = 1) => {
     const item = items.find(i => i.id === itemId);
     if (!item) return;
 
-    if (balance < item.pointsCost) {
+    const quantitySafe = Number.isSafeInteger(qty) ? qty : Math.floor(Number(qty));
+    const quantityValue = Number.isFinite(quantitySafe) ? Math.max(1, quantitySafe) : 1;
+    const totalCost = item.pointsCost * quantityValue;
+
+    if (balance < totalCost) {
       setMessage({ type: 'error', text: '积分不足' });
       return;
     }
@@ -68,13 +74,15 @@ function StoreContent() {
       const res = await fetch('/api/store/exchange', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemId }),
+        body: JSON.stringify({ itemId, quantity: quantityValue }),
       });
       const data = await res.json();
 
       if (data.success) {
         setMessage({ type: 'success', text: data.message || '兑换成功！' });
         setBalance(data.data?.newBalance ?? balance);
+        setQuantityItem(null);
+        setQuantity(1);
         // 刷新数据
         fetchData();
       } else {
@@ -86,6 +94,20 @@ function StoreContent() {
       setExchanging(null);
     }
   };
+
+  const isUnlimitedItem = (item: StoreItem) => (item.dailyLimit ?? 0) <= 0;
+
+  const openQuantitySelector = (item: StoreItem) => {
+    if (balance < item.pointsCost) return;
+    setQuantityItem(item);
+    setQuantity(1);
+  };
+
+  useEffect(() => {
+    if (!quantityItem) return;
+    const maxAffordable = Math.max(1, Math.floor(balance / quantityItem.pointsCost));
+    setQuantity((q) => Math.min(Math.max(1, q), maxAffordable));
+  }, [balance, quantityItem]);
 
   const getItemIcon = (type: string) => {
     if (type === 'card_draw') return <Album className="w-8 h-8 text-blue-500" />;
@@ -114,6 +136,16 @@ function StoreContent() {
         };
     }
   };
+
+  const maxAffordableQuantity = quantityItem
+    ? Math.max(1, Math.floor(balance / quantityItem.pointsCost))
+    : 1;
+  const clampedQuantity = quantityItem
+    ? Math.min(Math.max(1, quantity), maxAffordableQuantity)
+    : 1;
+  const totalCost = quantityItem ? quantityItem.pointsCost * clampedQuantity : 0;
+  const canAffordTotal = quantityItem ? balance >= totalCost : false;
+  const isExchangingQuantityItem = quantityItem ? exchanging === quantityItem.id : false;
 
   return (
     <div className="min-h-screen bg-slate-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -178,6 +210,7 @@ function StoreContent() {
               const canAfford = balance >= item.pointsCost;
               const isExchanging = exchanging === item.id;
               const styles = getItemStyles(item.type);
+              const unlimited = isUnlimitedItem(item);
 
               return (
                 <div
@@ -222,7 +255,7 @@ function StoreContent() {
                       </div>
 
                       <button
-                        onClick={() => handleExchange(item.id)}
+                        onClick={() => (unlimited ? openQuantitySelector(item) : handleExchange(item.id))}
                         disabled={!canAfford || isExchanging}
                         className={`px-6 py-2.5 rounded-lg font-semibold text-sm transition-all shadow-sm ${
                           canAfford && !isExchanging
@@ -235,13 +268,94 @@ function StoreContent() {
                                 <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
                                 兑换中
                             </span>
-                        ) : canAfford ? '立即兑换' : '积分不足'}
+                        ) : canAfford ? (unlimited ? '选择数量' : '立即兑换') : '积分不足'}
                       </button>
                     </div>
                   </div>
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* 不限购商品：选择数量弹窗 */}
+        {quantityItem && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+              onClick={() => (isExchangingQuantityItem ? null : setQuantityItem(null))}
+            />
+            <div className="relative w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
+              <div className="p-6">
+                <h3 className="text-lg font-bold text-slate-900">选择兑换数量</h3>
+                <p className="text-sm text-slate-500 mt-1">{quantityItem.name}</p>
+
+                <div className="mt-6 flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setQuantity(q => Math.max(1, q - 1))}
+                    disabled={isExchangingQuantityItem || clampedQuantity <= 1}
+                    className="w-10 h-10 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    −
+                  </button>
+
+                  <input
+                    type="number"
+                    min={1}
+                    max={maxAffordableQuantity}
+                    value={clampedQuantity}
+                    onChange={(e) => {
+                      const n = Math.floor(Number(e.target.value));
+                      if (!Number.isFinite(n)) return;
+                      setQuantity(Math.min(Math.max(1, n), maxAffordableQuantity));
+                    }}
+                    className="flex-1 h-10 rounded-lg border border-slate-200 px-3 text-center font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setQuantity(q => Math.min(maxAffordableQuantity, q + 1))}
+                    disabled={isExchangingQuantityItem || clampedQuantity >= maxAffordableQuantity}
+                    className="w-10 h-10 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    +
+                  </button>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between text-sm">
+                  <span className="text-slate-500">总价</span>
+                  <span className="font-bold text-slate-900">{totalCost} 积分</span>
+                </div>
+
+                <div className="mt-6 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setQuantityItem(null)}
+                    disabled={isExchangingQuantityItem}
+                    className="flex-1 px-4 py-2.5 rounded-lg font-semibold text-sm bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleExchange(quantityItem.id, clampedQuantity)}
+                    disabled={!canAffordTotal || isExchangingQuantityItem}
+                    className={`flex-1 px-4 py-2.5 rounded-lg font-semibold text-sm transition-all shadow-sm ${
+                      canAffordTotal && !isExchangingQuantityItem
+                        ? 'bg-slate-900 text-white hover:bg-slate-800 hover:shadow-md'
+                        : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                    }`}
+                  >
+                    {isExchangingQuantityItem ? '兑换中...' : '确认兑换'}
+                  </button>
+                </div>
+
+                <p className="mt-3 text-xs text-slate-400">
+                  最多可兑换 {maxAffordableQuantity} 份（以当前积分余额计算）
+                </p>
+              </div>
+            </div>
           </div>
         )}
 

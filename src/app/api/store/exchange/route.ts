@@ -10,13 +10,18 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { itemId } = await request.json();
+    const { itemId, quantity } = await request.json();
     
     if (!itemId || typeof itemId !== 'string') {
       return NextResponse.json({ error: '参数错误' }, { status: 400 });
     }
 
-    const result = await exchangeItem(user.id, itemId);
+    const qty = quantity === undefined ? 1 : Number(quantity);
+    if (!Number.isSafeInteger(qty) || qty < 1) {
+      return NextResponse.json({ error: '数量参数错误' }, { status: 400 });
+    }
+
+    const result = await exchangeItem(user.id, itemId, qty);
     
     if (!result.success) {
       return NextResponse.json({ 

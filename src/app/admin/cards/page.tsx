@@ -3,12 +3,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { 
-  ArrowLeft, Loader2, Search, Users, 
-  LogOut, User as UserIcon, X, 
-  ChevronRight, RefreshCw, Trash2, CreditCard, LayoutGrid, Layers
+import {
+  ArrowLeft, Loader2, Search, Users,
+  LogOut, User as UserIcon, X,
+  ChevronRight, RefreshCw, Trash2, CreditCard, LayoutGrid, Layers,
+  BookOpen, Save, Edit2
 } from 'lucide-react';
-import { CARDS } from '@/lib/cards/config';
+import { CARDS, ALBUMS } from '@/lib/cards/config';
 
 interface UserWithCardStats {
   id: number;
@@ -35,6 +36,15 @@ interface UserData {
   isAdmin: boolean;
 }
 
+interface AlbumData {
+  id: string;
+  name: string;
+  description: string;
+  season?: string;
+  defaultReward: number;
+  currentReward: number;
+}
+
 export default function AdminCardsPage() {
   const [users, setUsers] = useState<UserWithCardStats[]>([]);
   const [user, setUser] = useState<UserData | null>(null);
@@ -52,7 +62,14 @@ export default function AdminCardsPage() {
   const [detailData, setDetailData] = useState<UserCardData | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [resetting, setResetting] = useState(false);
-  
+
+  // 卡册管理
+  const [albums, setAlbums] = useState<AlbumData[]>([]);
+  const [editingAlbum, setEditingAlbum] = useState<string | null>(null);
+  const [editReward, setEditReward] = useState<number>(0);
+  const [savingReward, setSavingReward] = useState(false);
+  const [activeTab, setActiveTab] = useState<'users' | 'albums'>('users');
+
   const router = useRouter();
 
   const fetchData = useCallback(async (
@@ -95,9 +112,24 @@ export default function AdminCardsPage() {
     }
   }, [router]);
 
+  const fetchAlbums = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/cards/albums');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setAlbums(data.albums);
+        }
+      }
+    } catch (error) {
+      console.error('Fetch albums error:', error);
+    }
+  }, []);
+
   useEffect(() => {
     void fetchData({ resetPage: true, search: '' });
-  }, [fetchData]);
+    void fetchAlbums();
+  }, [fetchData, fetchAlbums]);
 
   const loadMoreUsers = async () => {
     if (loadingMore || !hasMore) return;
@@ -184,6 +216,35 @@ export default function AdminCardsPage() {
     router.push('/');
   };
 
+  const handleSaveReward = async (albumId: string) => {
+    setSavingReward(true);
+    try {
+      const res = await fetch('/api/admin/cards/albums', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ albumId, reward: editReward })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setEditingAlbum(null);
+        fetchAlbums();
+        alert('奖励更新成功');
+      } else {
+        alert(data.message || '更新失败');
+      }
+    } catch (error) {
+      console.error('Save reward error:', error);
+      alert('更新失败');
+    } finally {
+      setSavingReward(false);
+    }
+  };
+
+  const startEditReward = (album: AlbumData) => {
+    setEditingAlbum(album.id);
+    setEditReward(album.currentReward);
+  };
+
   // Helper to get card name from ID
   const getCardName = (id: string) => {
     const card = CARDS.find(c => c.id === id);
@@ -249,6 +310,34 @@ export default function AdminCardsPage() {
 
       {/* 主内容 */}
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 pb-20">
+        {/* 标签页切换 */}
+        <div className="flex gap-2 mb-6">
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+              activeTab === 'users'
+                ? 'bg-indigo-500 text-white'
+                : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-50'
+            }`}
+          >
+            <Users className="w-4 h-4 inline mr-2" />
+            用户管理
+          </button>
+          <button
+            onClick={() => setActiveTab('albums')}
+            className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+              activeTab === 'albums'
+                ? 'bg-indigo-500 text-white'
+                : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-50'
+            }`}
+          >
+            <BookOpen className="w-4 h-4 inline mr-2" />
+            卡册奖励
+          </button>
+        </div>
+
+        {activeTab === 'users' && (
+          <>
         {/* 搜索 */}
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
           <div className="relative flex-1">
@@ -395,6 +484,76 @@ export default function AdminCardsPage() {
             </div>
           )}
         </div>
+          </>
+        )}
+
+        {/* 卡册奖励管理 */}
+        {activeTab === 'albums' && (
+          <div className="bg-white/95 rounded-3xl shadow-sm overflow-hidden border border-stone-200/60">
+            <div className="px-8 py-4 bg-stone-50/80 border-b border-stone-200/60">
+              <h2 className="text-sm font-bold text-stone-500 uppercase tracking-wider">卡册奖励设置</h2>
+              <p className="text-xs text-stone-400 mt-1">修改各卡册集齐全套后的奖励积分</p>
+            </div>
+            <div className="divide-y divide-stone-100">
+              {albums.map((album) => (
+                <div key={album.id} className="px-8 py-5 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center border border-indigo-100">
+                      <BookOpen className="w-6 h-6 text-indigo-500" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-stone-700">{album.name}</h3>
+                      <p className="text-xs text-stone-400">{album.season} · {album.description}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    {editingAlbum === album.id ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          value={editReward}
+                          onChange={(e) => setEditReward(Number(e.target.value))}
+                          className="w-28 px-3 py-2 border border-stone-200 rounded-lg text-right font-bold text-stone-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none"
+                          min={0}
+                        />
+                        <button
+                          onClick={() => handleSaveReward(album.id)}
+                          disabled={savingReward}
+                          className="p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50"
+                        >
+                          <Save className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setEditingAlbum(null)}
+                          className="p-2 bg-stone-100 text-stone-500 rounded-lg hover:bg-stone-200"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <p className="text-xs text-stone-400">全套奖励</p>
+                          <p className="text-lg font-bold text-amber-600">{album.currentReward.toLocaleString()} 积分</p>
+                          {album.currentReward !== album.defaultReward && (
+                            <p className="text-xs text-stone-400">默认: {album.defaultReward.toLocaleString()}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => startEditReward(album)}
+                          className="p-2 bg-stone-100 text-stone-500 rounded-lg hover:bg-indigo-50 hover:text-indigo-500 transition-colors"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </main>
 
       {/* 详情模态框 */}
