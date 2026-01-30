@@ -321,8 +321,8 @@ export default function DrawPage() {
                 const next = thresholds.find(t => pity < t.val) || thresholds[3];
                 const remaining = next.val - pity;
                 return (
-                  <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-50 to-pink-50 rounded-full border border-purple-200/50 text-xs">
-                    <Crown className="w-3.5 h-3.5 text-purple-400" />
+                  <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 bg-gradient-to-r from-purple-50 to-pink-50 rounded-full border border-purple-200/50 text-[10px] sm:text-xs">
+                    <Crown className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-purple-400" />
                     <span className="text-slate-500">{next.label}保底:</span>
                     <span className={`font-bold ${next.color}`}>{remaining}抽</span>
                   </div>
