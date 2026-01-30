@@ -25,6 +25,9 @@ export async function POST(request: NextRequest) {
     // 速率限制检查
     const rateLimitResult = await checkRateLimit(user.id.toString(), {
       prefix: "ratelimit:cards:draw",
+      // 抽卡是高频操作，默认 10/min 太容易触发；这里提高到约 1 req/s
+      windowSeconds: 30,
+      maxRequests: 30,
     });
     if (!rateLimitResult.success) {
       return rateLimitResponse(rateLimitResult);
