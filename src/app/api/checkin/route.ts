@@ -6,7 +6,8 @@ import { cookies } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
-const CHECKIN_SUCCESS_MESSAGE = "签到成功！获得1次额外抽奖机会和1次卡牌抽卡机会";
+const CARD_DRAWS_PER_CHECKIN = 5;
+const CHECKIN_SUCCESS_MESSAGE = `签到成功！获得1次额外抽奖机会和${CARD_DRAWS_PER_CHECKIN}次卡牌抽卡机会`;
 
 export async function GET() {
   try {
@@ -68,7 +69,7 @@ export async function POST() {
       // 福利站本地没签过，仍然给额外抽奖次数
       const msg = result.message || "";
       if (msg.includes("已经签到") || msg.includes("已签到") || msg.includes("Duplicate entry")) {
-        const localRewards = await grantCheckinLocalRewards(user.id);
+        const localRewards = await grantCheckinLocalRewards(user.id, { cardDraws: CARD_DRAWS_PER_CHECKIN });
         if (!localRewards.granted && !localRewards.alreadyCheckedIn) {
           return NextResponse.json(
             { success: false, message: "本地签到奖励发放失败，请稍后重试" },
@@ -91,7 +92,7 @@ export async function POST() {
     }
 
     // 3. 签到成功处理
-    const localRewards = await grantCheckinLocalRewards(user.id);
+    const localRewards = await grantCheckinLocalRewards(user.id, { cardDraws: CARD_DRAWS_PER_CHECKIN });
     if (!localRewards.granted && !localRewards.alreadyCheckedIn) {
       return NextResponse.json(
         { success: false, message: "本地签到奖励发放失败，请稍后重试" },

@@ -54,7 +54,7 @@ describe('Checkin and Card Draw Integration', () => {
         return null;
       });
       (checkinToNewApi as any).mockResolvedValue({ success: true, quotaAwarded: 500000 });
-      (kv.eval as any).mockResolvedValue([1, 1, 11, 'ok']);
+      (kv.eval as any).mockResolvedValue([1, 1, 6, 'ok']);
 
       const response = await checkinPOST();
       const data = await response.json();
@@ -67,6 +67,9 @@ describe('Checkin and Card Draw Integration', () => {
       expect(evalKeys[0]).toMatch(new RegExp(`^user:checkin:${userId}:`));
       expect(evalKeys[1]).toBe(`user:extra_spins:${userId}`);
       expect(evalKeys[2]).toBe(`cards:user:${userId}`);
+
+      const evalArgs = (kv.eval as any).mock.calls[0][2];
+      expect(evalArgs[2]).toBe(5);
     });
 
     it('should not award extra draws if already checked in', async () => {
