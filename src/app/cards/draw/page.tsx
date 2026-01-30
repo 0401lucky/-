@@ -28,6 +28,26 @@ interface DrawResponse {
   };
 }
 
+// 保底计数器组件
+function PityCounter({ pityCounter }: { pityCounter: number }) {
+  const thresholds = [
+    { val: 10, label: '稀有', color: 'text-cyan-500' },
+    { val: 50, label: '史诗', color: 'text-purple-500' },
+    { val: 100, label: '传说', color: 'text-yellow-500' },
+    { val: 200, label: '传稀', color: 'text-pink-500' },
+  ];
+  const next = thresholds.find(t => pityCounter < t.val) || thresholds[3];
+  const remaining = next.val - pityCounter;
+
+  return (
+    <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 bg-gradient-to-r from-purple-50 to-pink-50 rounded-full border border-purple-200/50 text-[10px] sm:text-xs">
+      <Crown className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-purple-400" />
+      <span className="text-slate-500">{next.label}保底:</span>
+      <span className={`font-bold ${next.color}`}>{remaining}抽</span>
+    </div>
+  );
+}
+
 export default function DrawPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -309,25 +329,8 @@ export default function DrawPage() {
               <span className="font-bold text-sm tracking-wide rounded-full">EXIT</span>
             </Link>
             <div className="flex items-center gap-2 sm:gap-4">
-              {/* Pity Counter */}
-              {cardData && (() => {
-                const pity = cardData.pityCounter;
-                const thresholds = [
-                  { val: 10, label: '稀有', color: 'text-cyan-500' },
-                  { val: 50, label: '史诗', color: 'text-purple-500' },
-                  { val: 100, label: '传说', color: 'text-yellow-500' },
-                  { val: 200, label: '传稀', color: 'text-pink-500' },
-                ];
-                const next = thresholds.find(t => pity < t.val) || thresholds[3];
-                const remaining = next.val - pity;
-                return (
-                  <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 bg-gradient-to-r from-purple-50 to-pink-50 rounded-full border border-purple-200/50 text-[10px] sm:text-xs">
-                    <Crown className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-purple-400" />
-                    <span className="text-slate-500">{next.label}保底:</span>
-                    <span className={`font-bold ${next.color}`}>{remaining}抽</span>
-                  </div>
-                );
-              })()}
+              {/* Pity Counter - 保底计数器 */}
+              <PityCounter pityCounter={cardData?.pityCounter ?? 0} />
               <div className="flex items-center gap-3 px-4 py-2 bg-white rounded-full border border-pink-200 shadow-sm">
                 <Sparkles className="w-4 h-4 text-pink-400" />
                 <span className="text-sm font-bold text-slate-600">
