@@ -26,16 +26,18 @@ export function getGuaranteedRarity(pityCounter: number): Rarity | null {
 
 /**
  * Determine if the pity counter should be reset.
- * Resets if pity was triggered or if a high rarity card was drawn naturally.
+ * Resets only when the TOP rarity is obtained (naturally or via pity),
+ * so the counter can progress through all milestones (10/50/100/200)
+ * and the UI can display higher-tier pity statuses.
  */
 export function shouldResetPity(pityCounter: number, drawnRarity: Rarity): boolean {
-  // If pity triggered, reset
-  if (checkPityTrigger(pityCounter)) {
+  // Reset on top rarity
+  if (drawnRarity === "legendary_rare") {
     return true;
   }
 
-  // Naturally drawing legendary or above also resets pity
-  if (drawnRarity === "legendary" || drawnRarity === "legendary_rare") {
+  // Defensive: if counter reaches/overflows the hard pity threshold, reset
+  if (pityCounter >= PITY_THRESHOLDS.legendary_rare) {
     return true;
   }
 

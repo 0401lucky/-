@@ -51,18 +51,13 @@ describe("Pity System", () => {
   });
 
   describe("shouldResetPity", () => {
-    it("should reset if pity triggered and drawn rarity is higher than or equal to guarantee", () => {
-      // 10th draw guarantees rare+
-      expect(shouldResetPity(10, "rare")).toBe(true);
-      expect(shouldResetPity(10, "epic")).toBe(true);
-    });
-
     it("should reset if rarity drawn is legendary_rare regardless of counter", () => {
       expect(shouldResetPity(5, "legendary_rare")).toBe(true);
     });
 
-    it("should reset if rarity drawn is legendary regardless of counter", () => {
-      expect(shouldResetPity(5, "legendary")).toBe(true);
+    it("should NOT reset if pity triggered at 10 draws (rare guarantee)", () => {
+      expect(shouldResetPity(10, "rare")).toBe(false);
+      expect(shouldResetPity(10, "epic")).toBe(false);
     });
 
     it("should NOT reset if common is drawn on 1st draw", () => {
@@ -71,6 +66,11 @@ describe("Pity System", () => {
     
     it("should NOT reset if rare is drawn on 5th draw (as it's not a trigger and not legendary+)", () => {
       expect(shouldResetPity(5, "rare")).toBe(false);
+    });
+
+    it("should NOT reset if legendary is drawn (counter keeps progressing toward legendary_rare)", () => {
+      expect(shouldResetPity(5, "legendary")).toBe(false);
+      expect(shouldResetPity(100, "legendary")).toBe(false);
     });
   });
 });
