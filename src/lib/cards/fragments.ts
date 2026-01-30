@@ -44,7 +44,7 @@ export async function handleDuplicateCard(userId: string, cardId: string): Promi
             inventory = {}, 
             fragments = 0, 
             pityCounter = 0, 
-            drawsAvailable = 10, 
+            drawsAvailable = 1, 
             collectionRewards = {} 
         }
     end
@@ -109,7 +109,7 @@ export async function exchangeFragmentsForCard(userId: string, cardId: string): 
             inventory = {}, 
             fragments = 0, 
             pityCounter = 0, 
-            drawsAvailable = 10, 
+            drawsAvailable = 1, 
             collectionRewards = {} 
         }
     end

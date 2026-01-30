@@ -100,7 +100,7 @@ describe('Checkin and Card Draw Integration', () => {
       const data = await response.json();
 
       expect(data.success).toBe(true);
-      expect(data.card).toBeDefined();
+      expect(data.data?.card).toBeDefined();
     });
 
     it('should return error if no draws available', async () => {

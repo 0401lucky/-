@@ -54,7 +54,7 @@ export async function POST() {
         inventory = {},
         fragments = 0,
         pityCounter = 0,
-        drawsAvailable = 10, -- Default initial draws
+        drawsAvailable = 1, -- Default initial draws
         collectionRewards = {}
       }
     end

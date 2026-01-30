@@ -71,8 +71,25 @@ const DEFAULT_STORE_ITEMS: Omit<StoreItem, 'id' | 'createdAt' | 'updatedAt'>[] =
  */
 export async function initDefaultStoreItems(): Promise<void> {
   const existing = await kv.hgetall<Record<string, StoreItem>>(STORE_ITEMS_KEY);
-  if (existing && Object.keys(existing).length > 0) {
-    return; // 已有商品，跳过初始化
+  const existingItems = existing ? Object.values(existing) : [];
+  if (existingItems.length > 0) {
+    // 兼容历史数据：已初始化过商店但缺少后续新增的默认商品（如 card_draw）
+    const hasCardDrawItem = existingItems.some(item => item.type === 'card_draw');
+    if (!hasCardDrawItem) {
+      const now = Date.now();
+      const cardDrawItem = DEFAULT_STORE_ITEMS.find(item => item.type === 'card_draw');
+      if (cardDrawItem) {
+        const id = nanoid();
+        const storeItem: StoreItem = {
+          ...cardDrawItem,
+          id,
+          createdAt: now,
+          updatedAt: now,
+        };
+        await kv.hset(STORE_ITEMS_KEY, { [id]: storeItem });
+      }
+    }
+    return;
   }
 
   const now = Date.now();

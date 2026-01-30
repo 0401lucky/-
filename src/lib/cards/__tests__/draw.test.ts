@@ -17,7 +17,7 @@ describe('Card Draw System', () => {
     inventory: [],
     fragments: 0,
     pityCounter: 0,
-    drawsAvailable: 10,
+    drawsAvailable: 1,
     collectionRewards: [],
   });
 

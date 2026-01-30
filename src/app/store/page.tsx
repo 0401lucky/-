@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Album } from 'lucide-react';
-import { CARD_DRAW_PRICE } from '@/lib/cards/constants';
 
 interface StoreItem {
   id: string;
@@ -36,15 +35,7 @@ export default function StorePage() {
       const res = await fetch('/api/store');
       const data = await res.json();
       if (data.success) {
-        const cardDrawItem: StoreItem = {
-          id: 'card_draw_purchase',
-          name: '卡牌抽卡次数',
-          description: '购买1次卡牌抽卡机会，用于卡牌系统抽奖',
-          type: 'card_draw',
-          pointsCost: CARD_DRAW_PRICE,
-          value: 1,
-        };
-        setItems([...data.data.items, cardDrawItem]);
+        setItems(data.data.items || []);
         setBalance(data.data.balance);
         setRecentExchanges(data.data.recentExchanges);
       }
@@ -71,29 +62,6 @@ export default function StorePage() {
     setExchanging(itemId);
     setMessage(null);
 
-    if (item.type === 'card_draw') {
-      try {
-        const res = await fetch('/api/cards/purchase', {
-          method: 'POST',
-        });
-        const data = await res.json();
-
-        if (data.success) {
-          setMessage({ type: 'success', text: data.message || '购买成功！' });
-          setBalance(data.newBalance); // Note: API returns newBalance directly in root
-          // 刷新数据
-          fetchData();
-        } else {
-          setMessage({ type: 'error', text: data.message || '购买失败' });
-        }
-      } catch {
-        setMessage({ type: 'error', text: '网络错误' });
-      } finally {
-        setExchanging(null);
-      }
-      return;
-    }
-
     try {
       const res = await fetch('/api/store/exchange', {
         method: 'POST',
@@ -104,11 +72,11 @@ export default function StorePage() {
 
       if (data.success) {
         setMessage({ type: 'success', text: data.message || '兑换成功！' });
-        setBalance(data.data.newBalance);
+        setBalance(data.data?.newBalance ?? balance);
         // 刷新数据
         fetchData();
       } else {
-        setMessage({ type: 'error', text: data.message || '兑换失败' });
+        setMessage({ type: 'error', text: data.message || data.error || '兑换失败' });
       }
     } catch {
       setMessage({ type: 'error', text: '网络错误' });

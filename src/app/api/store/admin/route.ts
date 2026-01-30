@@ -49,7 +49,7 @@ async function checkAdmin() {
 
 // 验证商品类型
 function isValidItemType(type: unknown): type is StoreItemType {
-  return type === 'lottery_spin' || type === 'quota_direct';
+  return type === 'lottery_spin' || type === 'quota_direct' || type === 'card_draw';
 }
 
 /**
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
       return jsonResponse({ success: false, message: '商品描述不能为空' }, 400);
     }
     if (!isValidItemType(type)) {
-      return jsonResponse({ success: false, message: '商品类型无效，必须是 lottery_spin 或 quota_direct' }, 400);
+      return jsonResponse({ success: false, message: '商品类型无效，必须是 lottery_spin / quota_direct / card_draw' }, 400);
     }
     if (typeof pointsCost !== 'number' || !Number.isSafeInteger(pointsCost) || pointsCost < 1) {
       return jsonResponse({ success: false, message: '积分价格必须是正整数（≥1）' }, 400);

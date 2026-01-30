@@ -625,7 +625,7 @@ export async function grantCheckinLocalRewards(
     local ok = redis.call('SET', checkinKey, '1', 'NX', 'EX', ttl)
     if not ok then
       local currentSpins = tonumber(redis.call('GET', extraSpinsKey) or '0')
-      local drawsAvailable = 10
+      local drawsAvailable = 1
       local cardDataJson = redis.call('GET', cardsKey)
       if cardDataJson then
         local okDecode, cardData = pcall(cjson.decode, cardDataJson)
@@ -652,7 +652,7 @@ export async function grantCheckinLocalRewards(
         inventory = {},
         fragments = 0,
         pityCounter = 0,
-        drawsAvailable = 10,
+        drawsAvailable = 1,
         collectionRewards = {}
       }
     end
@@ -719,7 +719,7 @@ export async function addCardDraws(
         inventory = {},
         fragments = 0,
         pityCounter = 0,
-        drawsAvailable = 0,
+        drawsAvailable = 1,
         collectionRewards = {}
       }
     end
