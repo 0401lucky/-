@@ -31,7 +31,7 @@ describe('Card Fragment System', () => {
 
   describe('handleDuplicateCard', () => {
     it('should add card to inventory if it is new', async () => {
-      const cardId = 'common-仓鼠';
+      const cardId = 'animal-s1-common-仓鼠';
       // Lua script returns [isDuplicate, fragmentAmount]
       (kv.eval as any).mockResolvedValue([0, 0]);
 
@@ -43,7 +43,7 @@ describe('Card Fragment System', () => {
     });
 
     it('should convert to fragments if card is duplicate', async () => {
-      const cardId = 'common-仓鼠';
+      const cardId = 'animal-s1-common-仓鼠';
       const fragmentValue = FRAGMENT_VALUES.common;
       (kv.eval as any).mockResolvedValue([1, fragmentValue]);
 
@@ -56,7 +56,7 @@ describe('Card Fragment System', () => {
 
   describe('exchangeFragmentsForCard', () => {
     it('should exchange fragments for a card successfully', async () => {
-      const cardId = 'rare-柴犬';
+      const cardId = 'animal-s1-rare-柴犬';
       const exchangePrice = EXCHANGE_PRICES.rare;
       // Lua script returns [success, newFragmentCount]
       (kv.eval as any).mockResolvedValue([1, 100 - exchangePrice]);
@@ -74,7 +74,7 @@ describe('Card Fragment System', () => {
     });
 
     it('should fail if fragments are insufficient', async () => {
-      const cardId = 'legendary-小熊猫';
+      const cardId = 'animal-s1-legendary-小熊猫';
       // Lua script returns [0, currentFragments, 'insufficient_fragments']
       (kv.eval as any).mockResolvedValue([0, 50, 'insufficient_fragments']);
 

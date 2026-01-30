@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { CARDS } from "../config";
+import { CARDS, ALBUMS, getCardsByAlbum } from "../config";
 import { RARITY_PROBABILITIES, FRAGMENT_VALUES, EXCHANGE_PRICES, PITY_THRESHOLDS, RARITY_CARD_BACKS } from "../constants";
 import type { Rarity } from "../types";
 
-const EXPECTED_RARITY_COUNTS: Record<Rarity, number> = {
+// Expected counts per album
+const ALBUM_S1_COUNTS: Record<Rarity, number> = {
   common: 5,
   rare: 5,
   epic: 5,
@@ -11,26 +12,35 @@ const EXPECTED_RARITY_COUNTS: Record<Rarity, number> = {
   legendary_rare: 2,
 };
 
+const ALBUM_S2_COUNTS: Record<Rarity, number> = {
+  common: 16,
+  rare: 12,
+  epic: 5,
+  legendary: 3,
+  legendary_rare: 3,
+};
+
 describe("card configuration", () => {
-  it("defines exactly 20 cards", () => {
-    expect(CARDS.length).toBe(20);
+  it("defines cards for all albums", () => {
+    expect(ALBUMS.length).toBe(2);
+    expect(CARDS.length).toBe(59); // 20 (S1) + 39 (S2)
   });
 
-  it("assigns the expected number of cards per rarity", () => {
-    const counts: Record<Rarity, number> = {
-      common: 0,
-      rare: 0,
-      epic: 0,
-      legendary: 0,
-      legendary_rare: 0,
-    };
+  it("assigns the expected number of cards per rarity for each album", () => {
+    // Check Album S1
+    const s1Cards = getCardsByAlbum("animal-s1");
+    const s1Counts: Record<Rarity, number> = { common: 0, rare: 0, epic: 0, legendary: 0, legendary_rare: 0 };
+    s1Cards.forEach(card => { s1Counts[card.rarity]++; });
+    for (const rarity of Object.keys(ALBUM_S1_COUNTS) as Rarity[]) {
+      expect(s1Counts[rarity]).toBe(ALBUM_S1_COUNTS[rarity]);
+    }
 
-    CARDS.forEach(card => {
-      counts[card.rarity]++;
-    });
-
-    for (const rarity of Object.keys(EXPECTED_RARITY_COUNTS) as Rarity[]) {
-      expect(counts[rarity]).toBe(EXPECTED_RARITY_COUNTS[rarity]);
+    // Check Album S2
+    const s2Cards = getCardsByAlbum("animal-s2");
+    const s2Counts: Record<Rarity, number> = { common: 0, rare: 0, epic: 0, legendary: 0, legendary_rare: 0 };
+    s2Cards.forEach(card => { s2Counts[card.rarity]++; });
+    for (const rarity of Object.keys(ALBUM_S2_COUNTS) as Rarity[]) {
+      expect(s2Counts[rarity]).toBe(ALBUM_S2_COUNTS[rarity]);
     }
   });
 

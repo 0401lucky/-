@@ -28,40 +28,39 @@ const testAlbumId = ALBUMS[0].id;
 
 describe("Rewards System", () => {
   describe("getCardsByRarity", () => {
-    it("should return all common cards", () => {
-      const commonCards = getCardsByRarity("common");
-      expect(commonCards.length).toBe(5);
-      expect(commonCards.every(id => id.startsWith("common-"))).toBe(true);
-    });
-
-    it("should return all rare cards", () => {
-      const rareCards = getCardsByRarity("rare");
-      expect(rareCards.length).toBe(5);
-      expect(rareCards.every(id => id.startsWith("rare-"))).toBe(true);
-    });
-
-    it("should return all epic cards", () => {
-      const epicCards = getCardsByRarity("epic");
-      expect(epicCards.length).toBe(5);
-      expect(epicCards.every(id => id.startsWith("epic-"))).toBe(true);
-    });
-
-    it("should return all legendary cards", () => {
-      const legendaryCards = getCardsByRarity("legendary");
-      expect(legendaryCards.length).toBe(3);
-      expect(legendaryCards.every(id => id.startsWith("legendary-"))).toBe(true);
-    });
-
-    it("should return all legendary_rare cards", () => {
-      const legendaryRareCards = getCardsByRarity("legendary_rare");
-      expect(legendaryRareCards.length).toBe(2);
-      expect(legendaryRareCards.every(id => id.startsWith("legendary_rare-"))).toBe(true);
-    });
-
-    it("should filter by album when albumId is provided", () => {
+    it("should return all common cards for album S1", () => {
       const commonCards = getCardsByRarity("common", testAlbumId);
       expect(commonCards.length).toBe(5);
-      expect(commonCards.every(id => id.startsWith("common-"))).toBe(true);
+      expect(commonCards.every(id => id.includes("-common-"))).toBe(true);
+    });
+
+    it("should return all rare cards for album S1", () => {
+      const rareCards = getCardsByRarity("rare", testAlbumId);
+      expect(rareCards.length).toBe(5);
+      expect(rareCards.every(id => id.includes("-rare-"))).toBe(true);
+    });
+
+    it("should return all epic cards for album S1", () => {
+      const epicCards = getCardsByRarity("epic", testAlbumId);
+      expect(epicCards.length).toBe(5);
+      expect(epicCards.every(id => id.includes("-epic-"))).toBe(true);
+    });
+
+    it("should return all legendary cards for album S1", () => {
+      const legendaryCards = getCardsByRarity("legendary", testAlbumId);
+      expect(legendaryCards.length).toBe(3);
+      expect(legendaryCards.every(id => id.includes("-legendary-"))).toBe(true);
+    });
+
+    it("should return all legendary_rare cards for album S1", () => {
+      const legendaryRareCards = getCardsByRarity("legendary_rare", testAlbumId);
+      expect(legendaryRareCards.length).toBe(2);
+      expect(legendaryRareCards.every(id => id.includes("-legendary_rare-"))).toBe(true);
+    });
+
+    it("should return cards from all albums when no albumId provided", () => {
+      const commonCards = getCardsByRarity("common");
+      expect(commonCards.length).toBe(21); // 5 (S1) + 16 (S2)
     });
   });
 
@@ -71,14 +70,14 @@ describe("Rewards System", () => {
     });
 
     it("should count owned cards correctly", () => {
-      const inventory = ["common-仓鼠", "common-河豚", "rare-柴犬"];
+      const inventory = ["animal-s1-common-仓鼠", "animal-s1-common-河豚", "animal-s1-rare-柴犬"];
       expect(countOwnedByRarity(inventory, "common")).toBe(2);
       expect(countOwnedByRarity(inventory, "rare")).toBe(1);
       expect(countOwnedByRarity(inventory, "epic")).toBe(0);
     });
 
     it("should not double count duplicates", () => {
-      const inventory = ["common-仓鼠", "common-仓鼠", "common-仓鼠"];
+      const inventory = ["animal-s1-common-仓鼠", "animal-s1-common-仓鼠", "animal-s1-common-仓鼠"];
       expect(countOwnedByRarity(inventory, "common")).toBe(1);
     });
   });
@@ -89,7 +88,7 @@ describe("Rewards System", () => {
     });
 
     it("should return false for incomplete tier", () => {
-      const inventory = ["common-仓鼠", "common-河豚"];
+      const inventory = ["animal-s1-common-仓鼠", "animal-s1-common-河豚"];
       expect(isTierComplete(inventory, "common")).toBe(false);
     });
 
@@ -192,7 +191,7 @@ describe("Rewards System", () => {
     });
 
     it("should track owned/total counts correctly", () => {
-      const inventory = ["common-仓鼠", "common-河豚"];
+      const inventory = ["animal-s1-common-仓鼠", "animal-s1-common-河豚"];
       const userData = createMockUserData(inventory);
       const statuses = getAlbumRewardStatuses(userData, testAlbumId);
 

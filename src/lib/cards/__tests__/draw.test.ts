@@ -43,7 +43,7 @@ describe('Card Draw System', () => {
 
   describe('updateUserCardData', () => {
     it('should store data in KV with correct key', async () => {
-      const newData = { ...getFreshMockData(), inventory: ['common-仓鼠'] };
+      const newData = { ...getFreshMockData(), inventory: ['animal-s1-common-仓鼠'] };
       await updateUserCardData(userId, newData);
       expect(kv.set).toHaveBeenCalledWith(`cards:user:${userId}`, newData);
     });
