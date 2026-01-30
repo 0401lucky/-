@@ -1,27 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kv } from '@vercel/kv';
-import { cookies } from 'next/headers';
+import { getAuthUser, isAdmin } from '@/lib/auth';
 import { ALBUMS } from '@/lib/cards/config';
+
+export const dynamic = 'force-dynamic';
 
 const ALBUM_REWARDS_KEY = 'cards:album_rewards';
 
-interface User {
-  id: number;
-  username: string;
-  isAdmin: boolean;
-}
-
-async function getUser(): Promise<User | null> {
-  const cookieStore = await cookies();
-  const sessionId = cookieStore.get('session_id')?.value;
-  if (!sessionId) return null;
-  return kv.get<User>(`session:${sessionId}`);
-}
-
 // GET: 获取所有卡册及其奖励
 export async function GET() {
-  const user = await getUser();
-  if (!user?.isAdmin) {
+  const user = await getAuthUser();
+  if (!isAdmin(user)) {
     return NextResponse.json({ success: false, message: '无权限' }, { status: 403 });
   }
 
@@ -48,8 +37,8 @@ export async function GET() {
 
 // POST: 更新卡册奖励
 export async function POST(request: NextRequest) {
-  const user = await getUser();
-  if (!user?.isAdmin) {
+  const user = await getAuthUser();
+  if (!isAdmin(user)) {
     return NextResponse.json({ success: false, message: '无权限' }, { status: 403 });
   }
 
