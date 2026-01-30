@@ -1,5 +1,5 @@
 import { kv } from "@vercel/kv";
-import { CARDS } from "./config";
+import { CARDS, getCardsByAlbum } from "./config";
 import { COLLECTION_REWARDS } from "./constants";
 import { Rarity } from "./types";
 import { UserCards } from "./draw";
@@ -24,65 +24,74 @@ export interface ClaimResult {
 }
 
 /**
- * Get all cards of a specific rarity
+ * Get all cards of a specific rarity (optionally filtered by album)
  */
-export function getCardsByRarity(rarity: Rarity): string[] {
-  return CARDS.filter(c => c.rarity === rarity).map(c => c.id);
+export function getCardsByRarity(rarity: Rarity, albumId?: string): string[] {
+  const cards = albumId ? getCardsByAlbum(albumId) : CARDS;
+  return cards.filter(c => c.rarity === rarity).map(c => c.id);
 }
 
 /**
- * Count how many unique cards of a rarity the user owns
+ * Count how many unique cards of a rarity the user owns (optionally filtered by album)
  */
-export function countOwnedByRarity(inventory: string[], rarity: Rarity): number {
-  const rarityCards = getCardsByRarity(rarity);
+export function countOwnedByRarity(inventory: string[], rarity: Rarity, albumId?: string): number {
+  const rarityCards = getCardsByRarity(rarity, albumId);
   const ownedSet = new Set(inventory);
   return rarityCards.filter(cardId => ownedSet.has(cardId)).length;
 }
 
 /**
- * Check if user has completed a tier collection
+ * Check if user has completed a tier collection (optionally filtered by album)
  */
-export function isTierComplete(inventory: string[], rarity: Rarity): boolean {
-  const rarityCards = getCardsByRarity(rarity);
+export function isTierComplete(inventory: string[], rarity: Rarity, albumId?: string): boolean {
+  const rarityCards = getCardsByRarity(rarity, albumId);
   const ownedSet = new Set(inventory);
   return rarityCards.every(cardId => ownedSet.has(cardId));
 }
 
 /**
- * Check if user has completed the full collection
+ * Check if user has completed the full collection of an album
  */
-export function isFullCollectionComplete(inventory: string[]): boolean {
+export function isAlbumComplete(inventory: string[], albumId: string): boolean {
+  const albumCards = getCardsByAlbum(albumId);
   const ownedSet = new Set(inventory);
-  return CARDS.every(card => ownedSet.has(card.id));
+  return albumCards.every(card => ownedSet.has(card.id));
 }
 
 /**
  * Get reward key for tracking claimed rewards
  */
-export function getRewardKey(type: RewardType): string {
+export function getRewardKey(type: RewardType, albumId?: string): string {
+  if (albumId) {
+    return `album:${albumId}:${type}`;
+  }
   return `collection:${type}`;
 }
 
 /**
  * Check if a reward has been claimed
  */
-export function isRewardClaimed(userData: UserCards, type: RewardType): boolean {
-  return userData.collectionRewards.includes(getRewardKey(type));
+export function isRewardClaimed(userData: UserCards, type: RewardType, albumId?: string): boolean {
+  return userData.collectionRewards.includes(getRewardKey(type, albumId));
 }
 
 /**
- * Get status of all collection rewards for a user
+ * Get status of all collection rewards for a user within an album
  */
-export function getRewardStatuses(userData: UserCards): RewardStatus[] {
+export function getAlbumRewardStatuses(userData: UserCards, albumId: string): RewardStatus[] {
   const rarities: Rarity[] = ['common', 'rare', 'epic', 'legendary', 'legendary_rare'];
   const statuses: RewardStatus[] = [];
+  const albumCards = getCardsByAlbum(albumId);
 
   // Tier rewards
   for (const rarity of rarities) {
-    const totalCount = getCardsByRarity(rarity).length;
-    const ownedCount = countOwnedByRarity(userData.inventory, rarity);
-    const eligible = isTierComplete(userData.inventory, rarity);
-    const claimed = isRewardClaimed(userData, rarity);
+    const rarityCards = albumCards.filter(c => c.rarity === rarity);
+    if (rarityCards.length === 0) continue; // Skip if no cards of this rarity in album
+
+    const ownedCount = countOwnedByRarity(userData.inventory, rarity, albumId);
+    const totalCount = rarityCards.length;
+    const eligible = isTierComplete(userData.inventory, rarity, albumId);
+    const claimed = isRewardClaimed(userData, rarity, albumId);
 
     statuses.push({
       type: rarity,
@@ -94,34 +103,43 @@ export function getRewardStatuses(userData: UserCards): RewardStatus[] {
     });
   }
 
-  // Full set reward
-  const fullSetEligible = isFullCollectionComplete(userData.inventory);
+  // Full album reward
+  const fullSetEligible = isAlbumComplete(userData.inventory, albumId);
+  const ownedInAlbum = albumCards.filter(c => userData.inventory.includes(c.id)).length;
+
   statuses.push({
     type: 'full_set',
     points: COLLECTION_REWARDS.full_set,
-    claimed: isRewardClaimed(userData, 'full_set'),
+    claimed: isRewardClaimed(userData, 'full_set', albumId),
     eligible: fullSetEligible,
-    ownedCount: new Set(userData.inventory).size,
-    totalCount: CARDS.length,
+    ownedCount: ownedInAlbum,
+    totalCount: albumCards.length,
   });
 
   return statuses;
 }
 
 /**
- * Claim a collection reward
+ * Claim a collection reward for an album
  * Uses Lua script for atomic check-and-claim to prevent race conditions
  */
 export async function claimCollectionReward(
   userId: string,
-  rewardType: RewardType
+  rewardType: RewardType,
+  albumId: string
 ): Promise<ClaimResult> {
+  const albumCards = getCardsByAlbum(albumId);
+
   // Get required card IDs for this reward type
   const requiredCardIds = rewardType === 'full_set'
-    ? CARDS.map(c => c.id)
-    : getCardsByRarity(rewardType);
+    ? albumCards.map(c => c.id)
+    : albumCards.filter(c => c.rarity === rewardType).map(c => c.id);
 
-  const rewardKey = getRewardKey(rewardType);
+  if (requiredCardIds.length === 0) {
+    return { success: false, message: "该卡册没有此稀有度的卡牌" };
+  }
+
+  const rewardKey = getRewardKey(rewardType, albumId);
   const userKey = `cards:user:${userId}`;
   const points = COLLECTION_REWARDS[rewardType];
 
@@ -194,7 +212,7 @@ export async function claimCollectionReward(
     return { success: false, message: "尚未集齐该系列卡牌" };
   }
 
-  // Award points (outside Lua script - independent system)
+  // Award points
   const rarityNames: Record<RewardType, string> = {
     common: '普通',
     rare: '稀有',

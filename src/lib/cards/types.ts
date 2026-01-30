@@ -7,6 +7,16 @@ export interface CardConfig {
   image: string;       // Path to front image
   backImage: string;   // Path to back image (rarity based)
   probability: number; // Probability weight (0-100)
+  albumId: string;     // Which album this card belongs to
+}
+
+export interface CardAlbum {
+  id: string;
+  name: string;
+  description: string;
+  coverImage: string;
+  reward: number;       // Points reward for completing this album
+  season?: string;      // Optional season label
 }
 
 export interface UserCardData {

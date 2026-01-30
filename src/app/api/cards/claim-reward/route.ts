@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { claimCollectionReward, getRewardStatuses, RewardType } from "@/lib/cards/rewards";
+import { claimCollectionReward, getAlbumRewardStatuses, RewardType } from "@/lib/cards/rewards";
 import { getUserCardData } from "@/lib/cards/draw";
+import { getAlbumById } from "@/lib/cards/config";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { rewardType } = body as { rewardType?: RewardType };
+    const { rewardType, albumId } = body as { rewardType?: RewardType; albumId?: string };
 
     if (!rewardType || !VALID_REWARD_TYPES.includes(rewardType)) {
       return NextResponse.json(
@@ -38,7 +39,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await claimCollectionReward(user.id.toString(), rewardType);
+    if (!albumId || !getAlbumById(albumId)) {
+      return NextResponse.json(
+        { success: false, message: "无效的卡册ID" },
+        { status: 400 }
+      );
+    }
+
+    const result = await claimCollectionReward(user.id.toString(), rewardType, albumId);
 
     if (!result.success) {
       return NextResponse.json(
@@ -61,7 +69,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const user = await getAuthUser();
     if (!user) {
@@ -71,8 +79,18 @@ export async function GET() {
       );
     }
 
+    const { searchParams } = new URL(request.url);
+    const albumId = searchParams.get('albumId');
+
+    if (!albumId || !getAlbumById(albumId)) {
+      return NextResponse.json(
+        { success: false, message: "无效的卡册ID" },
+        { status: 400 }
+      );
+    }
+
     const userData = await getUserCardData(user.id.toString());
-    const statuses = getRewardStatuses(userData);
+    const statuses = getAlbumRewardStatuses(userData, albumId);
 
     return NextResponse.json({
       success: true,

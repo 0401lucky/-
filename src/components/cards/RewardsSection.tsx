@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { Trophy, Check, Gift, Loader2 } from 'lucide-react';
-import { CARDS } from '@/lib/cards/config';
+import { getCardsByAlbum } from '@/lib/cards/config';
 import { COLLECTION_REWARDS } from '@/lib/cards/constants';
 import type { Rarity } from '@/lib/cards/types';
 
 interface RewardsSectionProps {
+  albumId: string;
   inventory: string[];
   claimedRewards: string[];
-  onClaim: (type: string) => Promise<void>;
+  onClaim: (type: string, albumId: string) => Promise<void>;
 }
 
 const RARITY_LABELS: Record<string, string> = {
@@ -28,27 +29,31 @@ const RARITY_COLORS: Record<string, string> = {
   full_set: 'text-orange-600 bg-orange-50 border-orange-200',
 };
 
-export function RewardsSection({ inventory, claimedRewards, onClaim }: RewardsSectionProps) {
+export function RewardsSection({ albumId, inventory, claimedRewards, onClaim }: RewardsSectionProps) {
   const [claiming, setClaiming] = useState<string | null>(null);
+
+  const albumCards = getCardsByAlbum(albumId);
 
   const getProgress = (type: string) => {
     if (type === 'full_set') {
-      const owned = new Set(inventory).size;
-      const total = CARDS.length;
+      const owned = albumCards.filter(c => inventory.includes(c.id)).length;
+      const total = albumCards.length;
       return { owned, total, percent: Math.min(100, Math.round((owned / total) * 100)) };
     }
-    
-    const rarityCards = CARDS.filter(c => c.rarity === type);
+
+    const rarityCards = albumCards.filter(c => c.rarity === type);
     const owned = rarityCards.filter(c => inventory.includes(c.id)).length;
     const total = rarityCards.length;
-    return { owned, total, percent: Math.min(100, Math.round((owned / total) * 100)) };
+    return { owned, total, percent: total > 0 ? Math.min(100, Math.round((owned / total) * 100)) : 0 };
   };
+
+  const getRewardKey = (type: string) => `album:${albumId}:${type}`;
 
   const handleClaim = async (type: string) => {
     if (claiming) return;
     setClaiming(type);
     try {
-      await onClaim(type);
+      await onClaim(type, albumId);
     } catch (error) {
       console.error('Failed to claim reward', error);
     } finally {
@@ -56,7 +61,11 @@ export function RewardsSection({ inventory, claimedRewards, onClaim }: RewardsSe
     }
   };
 
-  const rewardTypes = ['common', 'rare', 'epic', 'legendary', 'legendary_rare', 'full_set'];
+  // Only show reward types that have cards in this album
+  const rewardTypes = ['common', 'rare', 'epic', 'legendary', 'legendary_rare', 'full_set'].filter(type => {
+    if (type === 'full_set') return true;
+    return albumCards.some(c => c.rarity === type);
+  });
 
   return (
     <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-100 space-y-6">
@@ -70,13 +79,13 @@ export function RewardsSection({ inventory, claimedRewards, onClaim }: RewardsSe
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {rewardTypes.map((type) => {
           const { owned, total, percent } = getProgress(type);
-          const isClaimed = claimedRewards.includes(type);
+          const isClaimed = claimedRewards.includes(getRewardKey(type));
           const canClaim = percent === 100 && !isClaimed;
           const points = COLLECTION_REWARDS[type as Rarity | 'full_set'];
           const styles = RARITY_COLORS[type] || RARITY_COLORS.common;
 
           return (
-            <div 
+            <div
               key={type}
               className={`
                 relative p-4 rounded-2xl border transition-all duration-300
@@ -104,8 +113,8 @@ export function RewardsSection({ inventory, claimedRewards, onClaim }: RewardsSe
                     disabled={!canClaim || !!claiming}
                     className={`
                       flex items-center gap-1 px-3 py-1.5 rounded-xl text-sm font-bold transition-all
-                      ${canClaim 
-                        ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg shadow-orange-500/30 hover:shadow-orange-500/40 hover:-translate-y-0.5 active:scale-95' 
+                      ${canClaim
+                        ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg shadow-orange-500/30 hover:shadow-orange-500/40 hover:-translate-y-0.5 active:scale-95'
                         : 'bg-slate-200 text-slate-400 cursor-not-allowed'}
                     `}
                   >
@@ -128,7 +137,7 @@ export function RewardsSection({ inventory, claimedRewards, onClaim }: RewardsSe
                   <span>{owned} / {total}</span>
                 </div>
                 <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                  <div 
+                  <div
                     className={`h-full rounded-full transition-all duration-1000 ${percent === 100 ? 'bg-green-500' : 'bg-orange-400'}`}
                     style={{ width: `${percent}%` }}
                   ></div>

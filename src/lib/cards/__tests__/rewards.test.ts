@@ -3,12 +3,12 @@ import {
   getCardsByRarity,
   countOwnedByRarity,
   isTierComplete,
-  isFullCollectionComplete,
+  isAlbumComplete,
   getRewardKey,
   isRewardClaimed,
-  getRewardStatuses,
+  getAlbumRewardStatuses,
 } from "../rewards";
-import { CARDS } from "../config";
+import { CARDS, ALBUMS, getCardsByAlbum } from "../config";
 import { COLLECTION_REWARDS } from "../constants";
 import type { UserCards } from "../draw";
 
@@ -22,6 +22,9 @@ function createMockUserData(inventory: string[] = [], claimedRewards: string[] =
     collectionRewards: claimedRewards,
   };
 }
+
+// Use the first album for testing
+const testAlbumId = ALBUMS[0].id;
 
 describe("Rewards System", () => {
   describe("getCardsByRarity", () => {
@@ -53,6 +56,12 @@ describe("Rewards System", () => {
       const legendaryRareCards = getCardsByRarity("legendary_rare");
       expect(legendaryRareCards.length).toBe(2);
       expect(legendaryRareCards.every(id => id.startsWith("legendary_rare-"))).toBe(true);
+    });
+
+    it("should filter by album when albumId is provided", () => {
+      const commonCards = getCardsByRarity("common", testAlbumId);
+      expect(commonCards.length).toBe(5);
+      expect(commonCards.every(id => id.startsWith("common-"))).toBe(true);
     });
   });
 
@@ -95,93 +104,99 @@ describe("Rewards System", () => {
     });
   });
 
-  describe("isFullCollectionComplete", () => {
+  describe("isAlbumComplete", () => {
     it("should return false for empty inventory", () => {
-      expect(isFullCollectionComplete([])).toBe(false);
+      expect(isAlbumComplete([], testAlbumId)).toBe(false);
     });
 
     it("should return false for partial collection", () => {
       const inventory = getCardsByRarity("common");
-      expect(isFullCollectionComplete(inventory)).toBe(false);
+      expect(isAlbumComplete(inventory, testAlbumId)).toBe(false);
     });
 
     it("should return true for full collection", () => {
-      const allCards = CARDS.map(c => c.id);
-      expect(isFullCollectionComplete(allCards)).toBe(true);
+      const allCards = getCardsByAlbum(testAlbumId).map(c => c.id);
+      expect(isAlbumComplete(allCards, testAlbumId)).toBe(true);
     });
   });
 
   describe("getRewardKey", () => {
-    it("should generate correct key for tier rewards", () => {
+    it("should generate correct key for tier rewards without album", () => {
       expect(getRewardKey("common")).toBe("collection:common");
       expect(getRewardKey("legendary_rare")).toBe("collection:legendary_rare");
     });
 
+    it("should generate correct key for tier rewards with album", () => {
+      expect(getRewardKey("common", testAlbumId)).toBe(`album:${testAlbumId}:common`);
+      expect(getRewardKey("legendary_rare", testAlbumId)).toBe(`album:${testAlbumId}:legendary_rare`);
+    });
+
     it("should generate correct key for full set", () => {
       expect(getRewardKey("full_set")).toBe("collection:full_set");
+      expect(getRewardKey("full_set", testAlbumId)).toBe(`album:${testAlbumId}:full_set`);
     });
   });
 
   describe("isRewardClaimed", () => {
     it("should return false when no rewards claimed", () => {
       const userData = createMockUserData();
-      expect(isRewardClaimed(userData, "common")).toBe(false);
+      expect(isRewardClaimed(userData, "common", testAlbumId)).toBe(false);
     });
 
     it("should return true when reward is claimed", () => {
-      const userData = createMockUserData([], ["collection:common"]);
-      expect(isRewardClaimed(userData, "common")).toBe(true);
+      const userData = createMockUserData([], [`album:${testAlbumId}:common`]);
+      expect(isRewardClaimed(userData, "common", testAlbumId)).toBe(true);
     });
 
     it("should return false for unclaimed reward when others are claimed", () => {
-      const userData = createMockUserData([], ["collection:common", "collection:rare"]);
-      expect(isRewardClaimed(userData, "epic")).toBe(false);
+      const userData = createMockUserData([], [`album:${testAlbumId}:common`, `album:${testAlbumId}:rare`]);
+      expect(isRewardClaimed(userData, "epic", testAlbumId)).toBe(false);
     });
   });
 
-  describe("getRewardStatuses", () => {
-    it("should return all 6 reward statuses", () => {
+  describe("getAlbumRewardStatuses", () => {
+    it("should return all 6 reward statuses for album", () => {
       const userData = createMockUserData();
-      const statuses = getRewardStatuses(userData);
+      const statuses = getAlbumRewardStatuses(userData, testAlbumId);
       expect(statuses.length).toBe(6);
     });
 
     it("should show correct points for each tier", () => {
       const userData = createMockUserData();
-      const statuses = getRewardStatuses(userData);
-      
-      const commonStatus = statuses.find(s => s.type === "common");
+      const statuses = getAlbumRewardStatuses(userData, testAlbumId);
+
+      const commonStatus = statuses.find((s: { type: string }) => s.type === "common");
       expect(commonStatus?.points).toBe(COLLECTION_REWARDS.common);
-      
-      const fullSetStatus = statuses.find(s => s.type === "full_set");
+
+      const fullSetStatus = statuses.find((s: { type: string }) => s.type === "full_set");
       expect(fullSetStatus?.points).toBe(COLLECTION_REWARDS.full_set);
     });
 
     it("should show eligible when tier is complete", () => {
-      const commonCards = getCardsByRarity("common");
+      const commonCards = getCardsByRarity("common", testAlbumId);
       const userData = createMockUserData(commonCards);
-      const statuses = getRewardStatuses(userData);
-      
-      const commonStatus = statuses.find(s => s.type === "common");
+      const statuses = getAlbumRewardStatuses(userData, testAlbumId);
+
+      const commonStatus = statuses.find((s: { type: string }) => s.type === "common");
       expect(commonStatus?.eligible).toBe(true);
       expect(commonStatus?.claimed).toBe(false);
     });
 
     it("should show claimed when reward was claimed", () => {
-      const commonCards = getCardsByRarity("common");
-      const userData = createMockUserData(commonCards, ["collection:common"]);
-      const statuses = getRewardStatuses(userData);
-      
-      const commonStatus = statuses.find(s => s.type === "common");
+      const commonCards = getCardsByRarity("common", testAlbumId);
+      const userData = createMockUserData(commonCards, [`album:${testAlbumId}:common`]);
+      const statuses = getAlbumRewardStatuses(userData, testAlbumId);
+
+      const commonStatus = statuses.find((s: { type: string }) => s.type === "common");
       expect(commonStatus?.claimed).toBe(true);
     });
 
     it("should track owned/total counts correctly", () => {
       const inventory = ["common-仓鼠", "common-河豚"];
       const userData = createMockUserData(inventory);
-      const statuses = getRewardStatuses(userData);
-      
-      const commonStatus = statuses.find(s => s.type === "common");
+      const statuses = getAlbumRewardStatuses(userData, testAlbumId);
+
+      const commonStatus = statuses.find((s: { type: string }) => s.type === "common");
       expect(commonStatus?.ownedCount).toBe(2);
       expect(commonStatus?.totalCount).toBe(5);
     });
