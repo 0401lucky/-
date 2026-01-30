@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Loader2, BookOpen, Gift, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Loader2, BookOpen, Gift, ChevronRight, Store } from 'lucide-react';
 import { ALBUMS, getCardsByAlbum } from '@/lib/cards/config';
 import { UserCards } from '@/lib/cards/draw';
 
@@ -91,6 +91,13 @@ export default function CardsAlbumsPage() {
             </div>
 
             <div className="flex items-center gap-3">
+              <Link
+                href="/store?from=cards"
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-full text-sm font-bold shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all active:scale-95"
+              >
+                <Store className="w-4 h-4" />
+                <span className="hidden sm:inline">积分商店</span>
+              </Link>
               <Link
                 href="/cards/draw"
                 className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-full text-sm font-bold shadow-lg shadow-orange-500/30 hover:shadow-orange-500/40 hover:-translate-y-0.5 transition-all active:scale-95"

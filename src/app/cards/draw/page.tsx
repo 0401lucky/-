@@ -76,11 +76,11 @@ export default function DrawPage() {
       // 2. API Call
       const res = await fetch('/api/cards/draw', { method: 'POST' });
       const data: DrawResponse = await res.json();
-      
+
       if (data.success && data.data.success) {
         setResult(data.data);
         setShowResult(true);
-        
+
         // 3. Flip Reveal
         setTimeout(() => setIsFlipped(true), 100);
 
@@ -91,7 +91,7 @@ export default function DrawPage() {
         if (data.data.card) {
           const rarity = data.data.card.rarity;
           if (['legendary', 'legendary_rare', 'epic'].includes(rarity || '')) {
-             triggerConfetti(rarity);
+            triggerConfetti(rarity);
           }
         }
       } else {
@@ -108,12 +108,12 @@ export default function DrawPage() {
   const triggerConfetti = (rarity?: string) => {
     const isMythic = rarity === 'legendary_rare';
     const isLegendary = rarity === 'legendary';
-    
-    const colors = isMythic 
-      ? ['#ff0000', '#ffa500', '#ffff00', '#00ff00', '#0000ff', '#4b0082', '#ee82ee'] 
-      : isLegendary 
-        ? ['#FFD700', '#FFA500', '#FFFFFF'] 
-        : ['#A855F7', '#E879F9', '#FFFFFF'];
+
+    const colors = isMythic
+      ? ['#ff9a9e', '#fad0c4', '#ffecd2', '#a18cd1', '#fbc2eb', '#8fd3f4']
+      : isLegendary
+        ? ['#fbbf24', '#fcd34d', '#ffffff']
+        : ['#c084fc', '#e879f9', '#ffffff'];
 
     const duration = isMythic ? 3000 : 2000;
     const end = Date.now() + duration;
@@ -142,49 +142,49 @@ export default function DrawPage() {
 
   const getRarityStyles = (rarity?: string) => {
     switch (rarity) {
-      case 'legendary_rare': // Mythic (Rainbow/Red)
+      case 'legendary_rare': // Mythic (Rainbow/Pink)
         return {
-          border: 'border-red-500',
-          shadow: 'shadow-[0_0_50px_rgba(239,68,68,0.6)]',
-          text: 'text-red-400',
-          bg: 'bg-gradient-to-br from-red-950 via-black to-red-900',
-          badge: 'bg-red-500/20 text-red-200 border-red-500/50',
+          border: 'border-pink-400',
+          shadow: 'shadow-[0_0_50px_rgba(244,114,182,0.6)]',
+          text: 'text-pink-500',
+          bg: 'bg-gradient-to-br from-pink-100 via-white to-rose-100',
+          badge: 'bg-pink-500 text-white border-pink-200',
           animation: 'animate-pulse-fast'
         };
       case 'legendary': // Legendary (Gold)
         return {
           border: 'border-yellow-400',
-          shadow: 'shadow-[0_0_40px_rgba(250,204,21,0.5)]',
-          text: 'text-yellow-400',
-          bg: 'bg-gradient-to-br from-yellow-950 via-black to-yellow-900',
-          badge: 'bg-yellow-500/20 text-yellow-200 border-yellow-500/50',
+          shadow: 'shadow-[0_0_40px_rgba(250,204,21,0.4)]',
+          text: 'text-yellow-600',
+          bg: 'bg-gradient-to-br from-amber-50 via-white to-yellow-50',
+          badge: 'bg-yellow-400 text-white border-yellow-200',
           animation: 'animate-pulse'
         };
       case 'epic': // Epic (Purple)
         return {
-          border: 'border-purple-500',
-          shadow: 'shadow-[0_0_30px_rgba(168,85,247,0.4)]',
-          text: 'text-purple-400',
-          bg: 'bg-gradient-to-br from-purple-950 via-black to-purple-900',
-          badge: 'bg-purple-500/20 text-purple-200 border-purple-500/50',
+          border: 'border-purple-300',
+          shadow: 'shadow-[0_0_30px_rgba(192,132,252,0.3)]',
+          text: 'text-purple-500',
+          bg: 'bg-gradient-to-br from-purple-50 via-white to-fuchsia-50',
+          badge: 'bg-purple-400 text-white border-purple-200',
           animation: ''
         };
       case 'rare': // Rare (Blue)
         return {
-          border: 'border-cyan-400',
+          border: 'border-cyan-300',
           shadow: 'shadow-[0_0_20px_rgba(34,211,238,0.3)]',
-          text: 'text-cyan-400',
-          bg: 'bg-gradient-to-br from-cyan-950 via-black to-cyan-900',
-          badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/50',
+          text: 'text-cyan-600',
+          bg: 'bg-gradient-to-br from-cyan-50 via-white to-sky-50',
+          badge: 'bg-cyan-400 text-white border-cyan-200',
           animation: ''
         };
       default: // Common (Gray)
         return {
-          border: 'border-slate-500',
-          shadow: 'shadow-[0_0_10px_rgba(100,116,139,0.2)]',
-          text: 'text-slate-400',
-          bg: 'bg-slate-900',
-          badge: 'bg-slate-500/20 text-slate-300 border-slate-500/50',
+          border: 'border-slate-200',
+          shadow: 'shadow-[0_0_10px_rgba(148,163,184,0.1)]',
+          text: 'text-slate-500',
+          bg: 'bg-white',
+          badge: 'bg-slate-200 text-slate-500 border-slate-100',
           animation: ''
         };
     }
@@ -202,9 +202,9 @@ export default function DrawPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-white">
-        <Loader2 className="w-12 h-12 animate-spin text-indigo-500" />
-        <p className="mt-4 text-indigo-300 font-light tracking-widest">LOADING STARMAP...</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-pink-50 text-slate-600">
+        <Loader2 className="w-12 h-12 animate-spin text-pink-400" />
+        <p className="mt-4 text-pink-300 font-medium tracking-widest">LOADING MAGIC...</p>
       </div>
     );
   }
@@ -212,8 +212,16 @@ export default function DrawPage() {
   const styles = getRarityStyles(result?.card?.rarity);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white overflow-hidden relative selection:bg-indigo-500/30">
+    <div className="min-h-screen bg-pink-50 text-slate-600 overflow-hidden relative selection:bg-pink-200">
       <style jsx global>{`
+        @keyframes bounce {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-20px); }
+        }
+        @keyframes wiggle {
+          0%, 100% { transform: rotate(-3deg); }
+          50% { transform: rotate(3deg); }
+        }
         @keyframes float {
           0%, 100% { transform: translateY(0); }
           50% { transform: translateY(-10px); }
@@ -240,36 +248,39 @@ export default function DrawPage() {
         .backface-hidden { backface-visibility: hidden; }
         .rotate-y-180 { transform: rotateY(180deg); }
         .animate-float { animation: float 6s ease-in-out infinite; }
+        .animate-bounce-slow { animation: bounce 3s ease-in-out infinite; }
+        .animate-wiggle { animation: wiggle 2s ease-in-out infinite; }
         .animate-shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both infinite; }
         .animate-pulse-fast { animation: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
       `}</style>
 
       {/* Background Ambience */}
       <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-indigo-600/20 rounded-full blur-[120px]" />
-        <div className="absolute bottom-[-10%] right-[-5%] w-[500px] h-[500px] bg-purple-600/20 rounded-full blur-[100px]" />
-        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 mix-blend-overlay"></div>
-        {/* Stars */}
-        <div className="absolute inset-0" style={{ backgroundImage: 'radial-gradient(white 1px, transparent 0)', backgroundSize: '40px 40px', opacity: 0.1 }}></div>
+        <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-pink-200/40 rounded-full blur-[100px]" />
+        <div className="absolute bottom-[-10%] right-[-5%] w-[500px] h-[500px] bg-blue-200/40 rounded-full blur-[80px]" />
+        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 mix-blend-overlay"></div>
+        {/* Cute Pattern */}
+        <div className="absolute inset-0" style={{ backgroundImage: 'radial-gradient(#f472b6 2px, transparent 0)', backgroundSize: '30px 30px', opacity: 0.1 }}></div>
       </div>
 
       {/* Navbar */}
-      <nav className="sticky top-0 z-40 border-b border-white/5 bg-slate-950/50 backdrop-blur-xl">
+      {/* Navbar */}
+      <nav className="sticky top-0 z-40 border-b border-pink-100 bg-white/60 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="flex justify-between items-center h-[72px]">
-            <Link href="/cards" className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors group">
-              <div className="p-2 rounded-full bg-white/5 group-hover:bg-white/10 transition-colors">
+            <Link href="/cards" className="flex items-center gap-2 text-slate-500 hover:text-pink-500 transition-colors group">
+              <div className="p-2 rounded-full bg-pink-100 group-hover:bg-pink-200 transition-colors">
                 <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
               </div>
-              <span className="font-medium text-sm tracking-wide">EXIT SYSTEM</span>
+              <span className="font-bold text-sm tracking-wide rounded-full">EXIT</span>
             </Link>
-            <div className="flex items-center gap-3 px-4 py-2 bg-indigo-500/10 rounded-full border border-indigo-500/20 shadow-[0_0_15px_rgba(99,102,241,0.2)]">
-              <Sparkles className="w-4 h-4 text-indigo-400" />
-              <span className="text-sm font-bold text-indigo-200">
-                CREDITS: <span className="text-white">{cardData?.drawsAvailable || 0}</span>
+            <div className="flex items-center gap-3 px-4 py-2 bg-white rounded-full border border-pink-200 shadow-sm">
+              <Sparkles className="w-4 h-4 text-pink-400" />
+              <span className="text-sm font-bold text-slate-600">
+                CREDITS: <span className="text-pink-500">{cardData?.drawsAvailable || 0}</span>
               </span>
-              <Link href="/store" className="ml-2 p-1 hover:bg-white/10 rounded-full transition-colors">
-                 <Zap className="w-3 h-3 text-yellow-400" />
+              <Link href="/store" className="ml-2 p-1 hover:bg-pink-50 rounded-full transition-colors">
+                <Zap className="w-4 h-4 text-yellow-500 fill-yellow-500" />
               </Link>
             </div>
           </div>
@@ -277,75 +288,75 @@ export default function DrawPage() {
       </nav>
 
       <main className="relative z-10 max-w-md mx-auto px-4 py-8 flex flex-col items-center justify-center min-h-[80vh] gap-12">
-        
+
         {/* Main Card Stage */}
         <div className="relative w-full aspect-[2/3] max-w-[320px] perspective-1000">
-          <div 
+          <div
             className={`w-full h-full relative transition-all duration-700 transform-style-3d 
               ${(showResult && isFlipped) ? 'rotate-y-180' : ''} 
-              ${drawing ? 'animate-shake' : (showResult ? '' : 'animate-float')}
+              ${drawing ? 'animate-shake' : (showResult ? '' : 'animate-bounce-slow')}
               cursor-pointer group
             `}
             onClick={!drawing && !showResult ? handleDraw : undefined}
           >
             {/* FRONT (Card Back Design) */}
-            <div className="absolute inset-0 w-full h-full backface-hidden rounded-[2rem] overflow-hidden border border-white/10 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] bg-slate-900">
+            <div className="absolute inset-0 w-full h-full backface-hidden rounded-[2.5rem] overflow-hidden border-4 border-white shadow-[0_20px_40px_-12px_rgba(244,114,182,0.3)] bg-pink-100">
               {/* Card Back Art */}
-              <div className="absolute inset-0 bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950">
-                <div className="absolute inset-0 opacity-30" 
-                  style={{ 
-                    backgroundImage: `linear-gradient(45deg, #6366f1 1px, transparent 1px), linear-gradient(-45deg, #6366f1 1px, transparent 1px)`, 
-                    backgroundSize: '30px 30px' 
-                  }} 
+              <div className="absolute inset-0 bg-gradient-to-br from-pink-200 via-purple-100 to-blue-200">
+                <div className="absolute inset-0 opacity-50"
+                  style={{
+                    backgroundImage: `radial-gradient(#ffffff 4px, transparent 0)`,
+                    backgroundSize: '24px 24px'
+                  }}
                 />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <div className={`w-32 h-32 rounded-full border-2 border-indigo-400/30 flex items-center justify-center ${drawing ? 'animate-spin' : ''}`}>
-                    <div className="w-24 h-24 rounded-full border border-indigo-400/50 flex items-center justify-center">
-                      <Hexagon className="w-12 h-12 text-indigo-400 animate-pulse" />
+                  <div className={`w-32 h-32 rounded-full border-4 border-white/50 flex items-center justify-center bg-white/20 backdrop-blur-sm ${drawing ? 'animate-spin' : 'animate-wiggle'}`}>
+                    <div className="w-24 h-24 rounded-full border-4 border-white flex items-center justify-center bg-white">
+                      <Star className="w-12 h-12 text-pink-400 fill-pink-400 animate-pulse" />
                     </div>
                   </div>
                 </div>
                 {/* Glow Effect */}
-                <div className="absolute inset-0 bg-gradient-to-t from-indigo-500/20 to-transparent opacity-50"></div>
+                <div className="absolute inset-0 bg-gradient-to-t from-white/40 to-transparent"></div>
               </div>
-              
+
               {/* Call to Action */}
-              <div className="absolute bottom-10 inset-x-0 text-center">
-                <p className="text-indigo-200 font-bold tracking-[0.2em] text-sm uppercase">
-                  {drawing ? 'Materializing...' : 'Tap to Invoke'}
+              <div className="absolute bottom-12 inset-x-0 text-center">
+                <p className="text-pink-500 font-black tracking-widest text-lg uppercase drop-shadow-sm">
+                  {drawing ? 'Magic...' : 'Tap to Open'}
                 </p>
               </div>
             </div>
 
             {/* BACK (Result Reveal) */}
-            <div className={`absolute inset-0 w-full h-full backface-hidden rotate-y-180 rounded-[2rem] overflow-hidden bg-slate-900 border-4 shadow-2xl flex flex-col ${styles.border} ${styles.shadow}`}>
+            <div className={`absolute inset-0 w-full h-full backface-hidden rotate-y-180 rounded-[2.5rem] overflow-hidden bg-white border-4 shadow-xl flex flex-col ${styles.border} ${styles.shadow}`}>
               {/* Image Container */}
-              <div className="relative flex-1 m-1.5 rounded-[1.5rem] overflow-hidden bg-black/50">
+              <div className="relative flex-1 m-2 rounded-[2rem] overflow-hidden bg-white border-2 border-slate-100">
                 {result?.card?.image ? (
-                   <Image 
-                     src={result.card.image} 
-                     alt={result.card.name}
-                     fill
-                     className="object-cover"
-                   />
+                  <Image
+                    src={result.card.image}
+                    alt={result.card.name}
+                    fill
+                    className="object-cover"
+                  />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-slate-600 bg-slate-800">
+                  <div className="w-full h-full flex items-center justify-center text-slate-400 bg-slate-50">
                     No Image
                   </div>
                 )}
-                
+
                 {/* Shine Effect Overlay */}
-                <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent opacity-0 animate-shine" style={{ backgroundSize: '200% 100%' }}></div>
-                
+                <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/40 to-transparent opacity-0 animate-shine" style={{ backgroundSize: '200% 100%' }}></div>
+
                 {/* Rarity Icon Top Left */}
                 <div className="absolute top-3 left-3">
-                   {result?.card?.rarity === 'legendary_rare' && <Crown className="w-6 h-6 text-red-500 drop-shadow-lg" />}
-                   {result?.card?.rarity === 'legendary' && <Star className="w-6 h-6 text-yellow-400 fill-yellow-400 drop-shadow-lg" />}
+                  {result?.card?.rarity === 'legendary_rare' && <Crown className="w-6 h-6 text-pink-500 drop-shadow-md" />}
+                  {result?.card?.rarity === 'legendary' && <Star className="w-6 h-6 text-yellow-500 fill-yellow-500 drop-shadow-md" />}
                 </div>
 
                 {/* Duplicate Badge */}
                 {result?.isDuplicate && (
-                  <div className="absolute top-3 right-3 px-2 py-1 bg-black/80 backdrop-blur-sm text-white/90 text-[10px] rounded border border-white/20 font-bold tracking-wider">
+                  <div className="absolute top-3 right-3 px-2 py-1 bg-white/90 backdrop-blur-sm text-slate-600 text-[10px] rounded-full border border-slate-200 font-bold tracking-wider shadow-sm">
                     DUPLICATE
                   </div>
                 )}
@@ -356,63 +367,63 @@ export default function DrawPage() {
                 <div className={`text-[10px] font-black uppercase tracking-[0.2em] mb-2 ${styles.text}`}>
                   {rarityLabel(result?.card?.rarity)}
                 </div>
-                
-                <h3 className="text-xl font-bold text-white mb-3 line-clamp-1">
+
+                <h3 className="text-xl font-bold text-slate-800 mb-3 line-clamp-1">
                   {result?.card?.name}
                 </h3>
-                
+
                 {result?.isDuplicate ? (
-                  <div className="inline-flex items-center gap-1.5 text-xs text-slate-400 bg-white/5 py-1.5 px-3 rounded-lg border border-white/5">
+                  <div className="inline-flex items-center gap-1.5 text-xs text-slate-500 bg-white/50 py-1.5 px-3 rounded-full border border-slate-200/50">
                     <RotateCcw className="w-3 h-3" />
                     <span>Converted: +{result.fragmentsAdded} Fragments</span>
                   </div>
                 ) : (
-                  <div className={`inline-flex items-center gap-1.5 text-xs font-bold py-1.5 px-3 rounded-lg border backdrop-blur-md ${styles.badge} ${styles.animation}`}>
+                  <div className={`inline-flex items-center gap-1.5 text-xs font-bold py-1.5 px-3 rounded-full border backdrop-blur-md shadow-sm ${styles.badge} ${styles.animation}`}>
                     <Sparkles className="w-3 h-3" />
-                    <span>NEW ACQUISITION</span>
+                    <span>NEW!</span>
                   </div>
                 )}
               </div>
             </div>
           </div>
-          
+
           {/* Shadow/Reflection beneath card */}
           <div className="absolute -bottom-10 left-10 right-10 h-4 bg-black/40 blur-xl rounded-full"></div>
         </div>
 
         {/* Action Buttons */}
         <div className="w-full flex flex-col items-center gap-4">
-           {showResult && (
-             <button 
-               onClick={() => setShowResult(false)}
-               className="group relative px-8 py-3 bg-white text-slate-900 rounded-full font-bold shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:shadow-[0_0_30px_rgba(255,255,255,0.5)] hover:scale-105 active:scale-95 transition-all overflow-hidden"
-             >
-               <span className="relative z-10 flex items-center gap-2">
-                 <RotateCcw className="w-4 h-4" />
-                 DRAW AGAIN
-               </span>
-               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700"></div>
-             </button>
-           )}
+          {showResult && (
+            <button
+              onClick={() => setShowResult(false)}
+              className="group relative px-8 py-3 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-full font-bold shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition-all overflow-hidden"
+            >
+              <span className="relative z-10 flex items-center gap-2">
+                <RotateCcw className="w-4 h-4" />
+                Play Again
+              </span>
+              <div className="absolute inset-0 bg-white/20 -translate-x-full group-hover:translate-x-0 transition-transform duration-300"></div>
+            </button>
+          )}
 
-           {cardData && cardData.drawsAvailable <= 0 && !showResult && (
-             <div className="text-center animate-pulse">
-                <p className="text-red-400 text-sm font-medium mb-2">Insufficient Credits</p>
-                <Link 
-                  href="/store"
-                  className="inline-flex items-center gap-2 px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors text-sm font-bold shadow-lg shadow-indigo-900/50"
-                >
-                  <CreditCard className="w-4 h-4" />
-                  RECHARGE (900/draw)
-                </Link>
-             </div>
-           )}
-           
-           {!showResult && cardData && cardData.drawsAvailable > 0 && (
-              <p className="text-slate-500 text-xs tracking-widest uppercase">
-                {cardData.drawsAvailable} Invocations Remaining
-              </p>
-           )}
+          {cardData && cardData.drawsAvailable <= 0 && !showResult && (
+            <div className="text-center animate-pulse">
+              <p className="text-red-400 text-sm font-medium mb-2">Insufficient Credits</p>
+              <Link
+                href="/store"
+                className="inline-flex items-center gap-2 px-6 py-2 bg-pink-500 hover:bg-pink-400 text-white rounded-full transition-colors text-sm font-bold shadow-md shadow-pink-200"
+              >
+                <CreditCard className="w-4 h-4" />
+                Recharge (900/draw)
+              </Link>
+            </div>
+          )}
+
+          {!showResult && cardData && cardData.drawsAvailable > 0 && (
+            <p className="text-slate-500 text-xs tracking-widest uppercase">
+              {cardData.drawsAvailable} Invocations Remaining
+            </p>
+          )}
         </div>
 
       </main>

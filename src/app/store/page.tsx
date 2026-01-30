@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState, useCallback, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Album } from 'lucide-react';
 
 interface StoreItem {
@@ -21,8 +21,10 @@ interface ExchangeLog {
   createdAt: number;
 }
 
-export default function StorePage() {
+function StoreContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromCards = searchParams.get('from') === 'cards';
   const [items, setItems] = useState<StoreItem[]>([]);
   const [balance, setBalance] = useState(0);
   const [recentExchanges, setRecentExchanges] = useState<ExchangeLog[]>([]);
@@ -119,11 +121,11 @@ export default function StorePage() {
         {/* 标题栏 */}
         <div className="flex items-center justify-between mb-12">
           <button
-            onClick={() => router.push('/games')}
+            onClick={() => router.push(fromCards ? '/cards' : '/games')}
             className="group flex items-center text-slate-500 hover:text-slate-800 transition-colors font-medium"
           >
             <span className="mr-2 group-hover:-translate-x-1 transition-transform">←</span>
-            游戏中心
+            {fromCards ? '返回集卡' : '游戏中心'}
           </button>
           
           <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-200">
@@ -274,5 +276,17 @@ export default function StorePage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function StorePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="inline-block w-8 h-8 border-4 border-slate-200 border-t-indigo-500 rounded-full animate-spin"></div>
+      </div>
+    }>
+      <StoreContent />
+    </Suspense>
   );
 }
