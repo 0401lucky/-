@@ -1,5 +1,6 @@
 import { kv } from "@vercel/kv";
 import { tryUseExtraSpin, tryClaimDailyFree, releaseDailyFree, rollbackExtraSpin } from "./kv";
+import { getTodayDateString, getSecondsUntilMidnight } from "./time";
 
 // 抽奖档位
 export interface LotteryTier {
@@ -61,28 +62,50 @@ const LOTTERY_USED_CODES_PREFIX = "lottery:used:";    // 已使用的码（Set�
 const LOTTERY_RECORDS_KEY = "lottery:records";
 const LOTTERY_USER_RECORDS_PREFIX = "lottery:user:records:";
 
-// 获取抽奖配置（自动合并默认值，兼容旧配置）
+// 配置缓存（减少频繁的 KV 查询）
+let configCache: { data: LotteryConfig; expireAt: number } | null = null;
+const CONFIG_CACHE_TTL = 30 * 1000; // 30秒缓存
+
+// 获取抽奖配置（自动合并默认值，兼容旧配置，带内存缓存）
 export async function getLotteryConfig(): Promise<LotteryConfig> {
+  // 检查缓存是否有效
+  if (configCache && Date.now() < configCache.expireAt) {
+    return configCache.data;
+  }
+
   const config = await kv.get<Partial<LotteryConfig>>(LOTTERY_CONFIG_KEY);
   if (!config) {
     await kv.set(LOTTERY_CONFIG_KEY, DEFAULT_CONFIG);
+    configCache = { data: DEFAULT_CONFIG, expireAt: Date.now() + CONFIG_CACHE_TTL };
     return DEFAULT_CONFIG;
   }
+
   // 合并默认值，确保新增字段有定义
-  return {
+  const result: LotteryConfig = {
     enabled: config.enabled ?? DEFAULT_CONFIG.enabled,
     mode: config.mode ?? DEFAULT_CONFIG.mode,
-    dailyDirectLimit: typeof config.dailyDirectLimit === 'number' 
-      ? config.dailyDirectLimit 
+    dailyDirectLimit: typeof config.dailyDirectLimit === 'number'
+      ? config.dailyDirectLimit
       : DEFAULT_CONFIG.dailyDirectLimit,
     tiers: config.tiers ?? DEFAULT_CONFIG.tiers,
   };
+
+  // 更新缓存
+  configCache = { data: result, expireAt: Date.now() + CONFIG_CACHE_TTL };
+  return result;
+}
+
+// 清除配置缓存（供内部使用）
+function invalidateConfigCache(): void {
+  configCache = null;
 }
 
 // 更新抽奖配置
 export async function updateLotteryConfig(config: Partial<LotteryConfig>): Promise<void> {
   const current = await getLotteryConfig();
   await kv.set(LOTTERY_CONFIG_KEY, { ...current, ...config });
+  // 更新后清除缓存，确保下次读取获取最新值
+  invalidateConfigCache();
 }
 
 // 更新档位概率配置
@@ -100,17 +123,20 @@ export async function updateTiersProbability(
   await updateLotteryConfig({ tiers: updatedTiers });
 }
 
-// 添加兑换码到档位（使用 Set 存储）
+// 添加兑换码到档位（使用 Set 存储，批量操作优化）
 export async function addCodesToTier(tierId: string, codes: string[]): Promise<number> {
   if (codes.length === 0) return 0;
 
-  // 使用 sadd 添加到 Set（自动去重）
-  // Vercel KV 的 sadd 接受多个参数
+  const key = `${LOTTERY_CODES_PREFIX}${tierId}`;
   let added = 0;
+
   try {
-    // 尝试批量添加
-    for (const code of codes) {
-      const result = await kv.sadd(`${LOTTERY_CODES_PREFIX}${tierId}`, code);
+    // 分批批量添加，每批最多 1000 个（避免超出 Redis 命令大小限制）
+    const BATCH_SIZE = 1000;
+    for (let i = 0; i < codes.length; i += BATCH_SIZE) {
+      const batch = codes.slice(i, i + BATCH_SIZE);
+      // 使用展开运算符一次性添加整批
+      const result = await kv.sadd(key, ...batch as [string, ...string[]]);
       added += result;
     }
   } catch (error) {
@@ -118,11 +144,13 @@ export async function addCodesToTier(tierId: string, codes: string[]): Promise<n
     throw error;
   }
 
-  // 更新档位库存计数
-  const config = await getLotteryConfig();
-  const totalInSet = await kv.scard(`${LOTTERY_CODES_PREFIX}${tierId}`);
-  const usedCount = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${tierId}`);
-  
+  // 并行获取库存计数
+  const [totalInSet, usedCount, config] = await Promise.all([
+    kv.scard(key),
+    kv.scard(`${LOTTERY_USED_CODES_PREFIX}${tierId}`),
+    getLotteryConfig(),
+  ]);
+
   const updatedTiers = config.tiers.map((tier) => {
     if (tier.id === tierId) {
       return { ...tier, codesCount: totalInSet, usedCount };
@@ -330,37 +358,36 @@ export async function recalculateStats(): Promise<{
   return { processed, corrected, notFound, details };
 }
 
-// [M6修复] 检查是否有可抽奖的档位（概率>0的档位必须有库存）
+// [M6修复] 检查是否有可抽奖的档位（概率>0的档位必须有库存）- 并行查询优化
 export async function checkAllTiersHaveCodes(): Promise<boolean> {
   const config = await getLotteryConfig();
-  for (const tier of config.tiers) {
-    // 只检查概率>0的档位，概率为0的档位不影响抽奖
-    if (tier.probability > 0) {
-      const count = await getTierAvailableCodesCount(tier.id);
-      // [P2-1修复] 使用 <= 0 防止异常负数被误判为有库存
-      if (count <= 0) {
-        return false;
-      }
-    }
-  }
-  return true;
+  const activeTiers = config.tiers.filter(t => t.probability > 0);
+
+  if (activeTiers.length === 0) return false;
+
+  // 并行查询所有活跃档位的库存
+  const counts = await Promise.all(
+    activeTiers.map(tier => getTierAvailableCodesCount(tier.id))
+  );
+
+  // 检查是否所有档位都有库存
+  return counts.every(count => count > 0);
 }
 
-// [M6修复] 获取可抽奖的档位（概率>0且有库存）
+// [M6修复] 获取可抽奖的档位（概率>0且有库存）- 并行查询优化
 export async function getAvailableTiers(): Promise<LotteryTier[]> {
   const config = await getLotteryConfig();
-  const available: LotteryTier[] = [];
-  
-  for (const tier of config.tiers) {
-    if (tier.probability > 0) {
-      const count = await getTierAvailableCodesCount(tier.id);
-      if (count > 0) {
-        available.push(tier);
-      }
-    }
-  }
-  
-  return available;
+  const activeTiers = config.tiers.filter(t => t.probability > 0);
+
+  if (activeTiers.length === 0) return [];
+
+  // 并行查询所有活跃档位的库存
+  const counts = await Promise.all(
+    activeTiers.map(tier => getTierAvailableCodesCount(tier.id))
+  );
+
+  // 过滤出有库存的档位
+  return activeTiers.filter((_, index) => counts[index] > 0);
 }
 
 // 获取各档位库存统计
@@ -635,7 +662,7 @@ const LOTTERY_DAILY_DIRECT_KEY = "lottery:daily_direct:"; // 每日直充发放�
  * 获取今日已发放的直充金额（美元）
  */
 export async function getTodayDirectTotal(): Promise<number> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getTodayDateString();
   const total = await kv.get<number>(`${LOTTERY_DAILY_DIRECT_KEY}${today}`);
   return total || 0;
 }
@@ -652,33 +679,49 @@ export async function checkDailyDirectLimit(dollars: number): Promise<boolean> {
 }
 
 /**
- * 原子性预占今日直充额度（INCRBY + 超限回滚）
+ * 原子性预占今日直充额度（使用 Lua 脚本保证原子性）
  * @param dollars 要预占的金额
- * @returns { success: boolean, newTotal: number } 
+ * @returns { success: boolean, newTotal: number }
  */
 export async function reserveDailyDirectQuota(dollars: number): Promise<{ success: boolean; newTotal: number }> {
   const config = await getLotteryConfig();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getTodayDateString();
   const key = `${LOTTERY_DAILY_DIRECT_KEY}${today}`;
-  
-  // 原子性增加
-  const newTotal = await kv.incrby(key, dollars);
-  
-  // 首次创建时设置过期时间（48小时）
-  // 注意：incrby 不会重置 TTL，需要在首次创建时设置
-  const ttl = await kv.ttl(key);
-  if (ttl === -1) { // -1 表示没有过期时间
-    await kv.expire(key, 48 * 60 * 60);
-  }
-  
-  // 检查是否超限
-  if (newTotal > config.dailyDirectLimit) {
-    // 超限，回滚
-    await kv.decrby(key, dollars);
-    return { success: false, newTotal: newTotal - dollars };
-  }
-  
-  return { success: true, newTotal };
+  const ttl = getSecondsUntilMidnight() + 3600; // 额外1小时缓冲
+
+  // Lua 脚本：原子性预占额度
+  const luaScript = `
+    local key = KEYS[1]
+    local dollars = tonumber(ARGV[1])
+    local limit = tonumber(ARGV[2])
+    local ttl = tonumber(ARGV[3])
+
+    -- 原子性增加
+    local newTotal = redis.call('INCRBY', key, dollars)
+
+    -- 设置 TTL（仅当 key 没有过期时间时）
+    if redis.call('TTL', key) == -1 then
+      redis.call('EXPIRE', key, ttl)
+    end
+
+    -- 检查是否超限
+    if newTotal > limit then
+      -- 超限，回滚
+      redis.call('DECRBY', key, dollars)
+      return {0, newTotal - dollars}
+    end
+
+    return {1, newTotal}
+  `;
+
+  const result = await kv.eval(
+    luaScript,
+    [key],
+    [dollars, config.dailyDirectLimit, ttl]
+  ) as [number, number];
+
+  const [success, newTotal] = result;
+  return { success: success === 1, newTotal };
 }
 
 /**
@@ -686,7 +729,7 @@ export async function reserveDailyDirectQuota(dollars: number): Promise<{ succes
  * @param dollars 要回滚的金额
  */
 export async function rollbackDailyDirectQuota(dollars: number): Promise<void> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getTodayDateString();
   const key = `${LOTTERY_DAILY_DIRECT_KEY}${today}`;
   await kv.decrby(key, dollars);
 }

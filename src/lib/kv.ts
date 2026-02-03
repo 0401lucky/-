@@ -1,4 +1,5 @@
 import { kv } from "@vercel/kv";
+import { getTodayDateString, getSecondsUntilMidnight } from "./time";
 
 // 项目接口
 export interface Project {
@@ -495,30 +496,6 @@ export async function getUserLotteryCount(userId: number): Promise<number> {
 }
 
 const LOTTERY_DAILY_PREFIX = "lottery:daily:";
-
-// 获取今天日期字符串 (YYYY-MM-DD) - 使用中国时区
-function getTodayDateString(): string {
-  const now = new Date();
-  // 转换为中国时区 (UTC+8)
-  const chinaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  const year = chinaTime.getUTCFullYear();
-  const month = String(chinaTime.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(chinaTime.getUTCDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-// 获取距离中国时区次日0点的秒数
-function getSecondsUntilMidnight(): number {
-  const now = new Date();
-  // 计算中国时区的午夜
-  const chinaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  const tomorrow = new Date(chinaTime);
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-  tomorrow.setUTCHours(0, 0, 0, 0);
-  // 转回 UTC 计算差值
-  const tomorrowUTC = new Date(tomorrow.getTime() - 8 * 60 * 60 * 1000);
-  return Math.ceil((tomorrowUTC.getTime() - now.getTime()) / 1000);
-}
 
 // [C3修复] 原子性占用每日免费次数 - 使用 SET NX 防止并发
 // 返回 true 表示成功占用（之前没用过），false 表示已被占用

@@ -20,6 +20,38 @@ const DEFAULT_WINDOW = 60; // 1 分钟
 const DEFAULT_MAX_REQUESTS = 10;
 
 /**
+ * 预定义的速率限制规则
+ */
+export const RATE_LIMITS = {
+  // 抽奖相关
+  'lottery:spin': { windowSeconds: 60, maxRequests: 10, prefix: 'ratelimit:lottery:spin' },
+  'lottery:records': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:lottery:records' },
+
+  // 卡牌相关
+  'cards:purchase': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:cards:purchase' },
+  'cards:exchange': { windowSeconds: 60, maxRequests: 20, prefix: 'ratelimit:cards:exchange' },
+
+  // 游戏相关
+  'game:start': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:game:start' },
+  'game:submit': { windowSeconds: 60, maxRequests: 60, prefix: 'ratelimit:game:submit' },
+  'slot:spin': { windowSeconds: 60, maxRequests: 120, prefix: 'ratelimit:slot:spin' },
+
+  // 兑换码相关
+  'project:claim': { windowSeconds: 60, maxRequests: 10, prefix: 'ratelimit:project:claim' },
+
+  // 商店相关
+  'store:exchange': { windowSeconds: 60, maxRequests: 20, prefix: 'ratelimit:store:exchange' },
+
+  // 签到
+  'checkin': { windowSeconds: 60, maxRequests: 5, prefix: 'ratelimit:checkin' },
+
+  // 通用 API
+  'api:default': { windowSeconds: 60, maxRequests: 100, prefix: 'ratelimit:api' },
+} as const;
+
+export type RateLimitAction = keyof typeof RATE_LIMITS;
+
+/**
  * 检查速率限制（原子操作）
  * 使用滑动窗口计数器算法
  */
@@ -130,4 +162,32 @@ export function rateLimitResponse(result: RateLimitResult): NextResponse {
       },
     }
   );
+}
+
+/**
+ * 使用预定义规则检查速率限制
+ * @param action 预定义的操作类型
+ * @param userId 用户标识
+ */
+export async function checkRateLimitByAction(
+  action: RateLimitAction,
+  userId: string | number
+): Promise<RateLimitResult> {
+  const config = RATE_LIMITS[action];
+  return checkRateLimit(String(userId), config);
+}
+
+/**
+ * 速率限制中间件辅助函数
+ * 返回 null 表示通过，返回 NextResponse 表示被限制
+ */
+export async function withRateLimit(
+  action: RateLimitAction,
+  userId: string | number
+): Promise<NextResponse | null> {
+  const result = await checkRateLimitByAction(action, userId);
+  if (!result.success) {
+    return rateLimitResponse(result);
+  }
+  return null;
 }

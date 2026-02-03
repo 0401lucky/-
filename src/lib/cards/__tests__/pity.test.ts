@@ -4,11 +4,12 @@ import { getGuaranteedRarity, normalizePityCounters } from "../pity";
 describe("Pity System", () => {
   describe("normalizePityCounters", () => {
     it("should coerce to non-negative integers", () => {
+      // 使用类型断言测试运行时非法输入的处理
       expect(
         normalizePityCounters({
           rare: -1,
           epic: 1.9,
-          legendary: "2",
+          legendary: "2" as unknown as number,
           legendary_rare: Number.NaN,
         })
       ).toEqual({ rare: 0, epic: 1, legendary: 2, legendary_rare: 0 });
