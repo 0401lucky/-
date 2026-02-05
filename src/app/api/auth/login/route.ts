@@ -59,6 +59,15 @@ export async function POST(request: NextRequest) {
       path: "/",
     });
 
+    // 兼容：多人抽奖模块使用的 session cookie（与 app_session 同值）
+    response.cookies.set("session", sessionToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 60 * 60 * 24 * 7, // 7 天
+      path: "/",
+    });
+
     // 保存 new-api 的原始 session cookie（用于签到等需要调用 new-api 的功能）
     // 注意：若本次登录未拿到 new-api 的 session，则清理旧 cookie，避免残留导致“错号签到”
     const sessionMatch = result.cookies?.match(/(?:^|;\s*)session=([^;]+)/);

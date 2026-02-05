@@ -14,6 +14,14 @@ export async function POST() {
     path: "/",
   });
 
+  response.cookies.set("session", "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 0,
+    path: "/",
+  });
+
   response.cookies.set("new_api_session", "", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",

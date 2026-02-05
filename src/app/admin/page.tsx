@@ -238,6 +238,13 @@ export default function AdminPage() {
                   <span className="hidden sm:inline">抽奖管理</span>
                 </Link>
                 <Link 
+                  href="/admin/raffle" 
+                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-pink-200"
+                >
+                  <Gift className="w-4 h-4" />
+                  <span className="hidden sm:inline">多人抽奖</span>
+                </Link>
+                <Link 
                   href="/admin/users" 
                   className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-blue-200"
                 >
@@ -296,6 +303,13 @@ export default function AdminPage() {
               >
                 <Sparkles className="w-4 h-4" />
                 <span>抽奖</span>
+              </Link>
+              <Link 
+                href="/admin/raffle" 
+                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-full text-sm font-medium shadow-sm"
+              >
+                <Gift className="w-4 h-4" />
+                <span>多人抽奖</span>
               </Link>
               <Link 
                 href="/admin/users" 

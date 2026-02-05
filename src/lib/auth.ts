@@ -144,3 +144,42 @@ export async function getAuthUser(): Promise<AuthUser | null> {
 export function isAdmin(user: AuthUser | null): boolean {
   return user?.isAdmin || false;
 }
+
+// 同步验证 session cookie（不使用 await cookies()）
+export interface SessionPayload {
+  userId: number;
+  username: string;
+  displayName: string;
+}
+
+export function verifySession(sessionCookie: string): SessionPayload | null {
+  if (!sessionCookie) {
+    return null;
+  }
+
+  try {
+    const sessionData = parseSessionToken(sessionCookie);
+
+    if (!sessionData) {
+      return null;
+    }
+
+    // 检查是否过期
+    if (sessionData.exp < Date.now()) {
+      return null;
+    }
+
+    return {
+      userId: sessionData.id,
+      username: sessionData.username,
+      displayName: sessionData.displayName,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// 检查用户名是否为管理员
+export function isAdminUsername(username: string): boolean {
+  return ADMIN_USERNAMES.includes(username);
+}
