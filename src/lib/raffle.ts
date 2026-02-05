@@ -451,7 +451,8 @@ function shuffleArray<T>(array: T[]): T[] {
  */
 async function acquireDrawLock(raffleId: string): Promise<boolean> {
   const lockKey = `${RAFFLE_DRAW_LOCK_PREFIX}${raffleId}`;
-  const result = await kv.set(lockKey, "1", { nx: true, ex: 60 });
+  // 奖励发放可能包含多次对 new-api 的网络请求，60 秒锁可能不够用，容易导致锁过期后重复发放
+  const result = await kv.set(lockKey, "1", { nx: true, ex: 600 });
   return result === "OK";
 }
 
@@ -578,16 +579,25 @@ async function deliverRewards(
   const raffle = await getRaffle(raffleId);
   if (!raffle) return results;
 
-  const updatedWinners = [...winners];
+  // 以活动当前 winners 为准，避免重试时只传入 failed 子集导致覆盖丢失
+  const currentWinners = raffle.winners ?? winners;
+  const winnerIndexByEntryId = new Map<string, number>();
+  currentWinners.forEach((w, idx) => winnerIndexByEntryId.set(w.entryId, idx));
+  const updatedWinners = [...currentWinners];
 
-  for (let i = 0; i < updatedWinners.length; i++) {
-    const winner = updatedWinners[i];
+  for (const winnerToProcess of winners) {
+    const winnerIndex = winnerIndexByEntryId.get(winnerToProcess.entryId);
+    if (winnerIndex === undefined) continue;
+
+    const winner = updatedWinners[winnerIndex];
+    if (winner.rewardStatus === "delivered") continue;
 
     try {
-      const creditResult = await creditQuotaToUser(winner.userId, winner.dollars);
+      const creditResult = await creditQuotaToUser(winner.userId, winner.dollars) as
+        { success: boolean; message: string; newQuota?: number; uncertain?: boolean };
 
       if (creditResult.success) {
-        updatedWinners[i] = {
+        updatedWinners[winnerIndex] = {
           ...winner,
           rewardStatus: "delivered",
           rewardMessage: creditResult.message,
@@ -605,10 +615,24 @@ async function deliverRewards(
         await kv.lpush(`${USER_RAFFLE_WINS_PREFIX}${winner.userId}`, {
           raffleId,
           raffleTitle: raffle.title,
-          ...updatedWinners[i],
+          ...updatedWinners[winnerIndex],
+        });
+      } else if (creditResult.uncertain) {
+        // 结果不确定：不要标记失败（避免重复发放），保持 pending 便于后续人工核对
+        updatedWinners[winnerIndex] = {
+          ...winner,
+          rewardStatus: "pending",
+          rewardMessage: creditResult.message,
+        };
+        results.push({
+          userId: winner.userId,
+          username: winner.username,
+          prizeName: winner.prizeName,
+          success: false,
+          message: creditResult.message,
         });
       } else {
-        updatedWinners[i] = {
+        updatedWinners[winnerIndex] = {
           ...winner,
           rewardStatus: "failed",
           rewardMessage: creditResult.message,
@@ -623,7 +647,7 @@ async function deliverRewards(
       }
     } catch (error) {
       console.error(`发放奖励失败 - 用户 ${winner.userId}:`, error);
-      updatedWinners[i] = {
+      updatedWinners[winnerIndex] = {
         ...winner,
         rewardStatus: "failed",
         rewardMessage: error instanceof Error ? error.message : "发放异常",
@@ -655,30 +679,40 @@ async function deliverRewards(
 export async function retryFailedRewards(
   raffleId: string
 ): Promise<DrawRaffleResult> {
+  // 使用同一把锁，避免多次并发重试导致重复发放
+  const hasLock = await acquireDrawLock(raffleId);
+  if (!hasLock) {
+    return { success: false, message: "正在处理奖励发放，请稍后" };
+  }
+
   const raffle = await getRaffle(raffleId);
-  if (!raffle) {
-    return { success: false, message: "活动不存在" };
+  try {
+    if (!raffle) {
+      return { success: false, message: "活动不存在" };
+    }
+
+    if (raffle.status !== "ended" || !raffle.winners) {
+      return { success: false, message: "活动未开奖或无中奖者" };
+    }
+
+    const failedWinners = raffle.winners.filter(
+      (w) => w.rewardStatus === "failed"
+    );
+
+    if (failedWinners.length === 0) {
+      return { success: true, message: "没有需要重试的奖励" };
+    }
+
+    const deliveryResults = await deliverRewards(raffleId, failedWinners);
+
+    return {
+      success: true,
+      message: `重试完成，${deliveryResults.filter((r) => r.success).length}/${failedWinners.length} 成功`,
+      deliveryResults,
+    };
+  } finally {
+    await releaseDrawLock(raffleId);
   }
-
-  if (raffle.status !== "ended" || !raffle.winners) {
-    return { success: false, message: "活动未开奖或无中奖者" };
-  }
-
-  const failedWinners = raffle.winners.filter(
-    (w) => w.rewardStatus === "failed"
-  );
-
-  if (failedWinners.length === 0) {
-    return { success: true, message: "没有需要重试的奖励" };
-  }
-
-  const deliveryResults = await deliverRewards(raffleId, failedWinners);
-
-  return {
-    success: true,
-    message: `重试完成，${deliveryResults.filter((r) => r.success).length}/${failedWinners.length} 成功`,
-    deliveryResults,
-  };
 }
 
 /**

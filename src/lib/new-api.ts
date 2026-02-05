@@ -222,6 +222,7 @@ export async function creditQuotaToUser(
   }
   
   const { cookies: adminCookies, adminUserId } = loginResult;
+  let expectedQuota: number | undefined;
 
   try {
     // 先获取用户完整信息（必须，因为 PUT 会覆盖所有字段）
@@ -244,6 +245,7 @@ export async function creditQuotaToUser(
     // 1 USD = 500000 quota units
     const quotaToAdd = Math.floor(dollars * 500000);
     const newQuota = currentQuota + quotaToAdd;
+    expectedQuota = newQuota;
 
     // 更新用户额度（必须传递完整用户对象，否则其他字段会被清空）
     const updateResponse = await fetch(`${baseUrl}/api/user/`, {
@@ -283,6 +285,12 @@ export async function creditQuotaToUser(
         newQuota 
       };
     } else {
+      // 部分 new-api 场景会出现“实际已更新，但返回 success=false / 响应异常”的情况
+      // 再次 GET 校验，避免误判为失败导致重复发放
+      const verifyResult = await verifyQuotaUpdate(userId, newQuota, adminCookies, adminUserId);
+      if (verifyResult.success || verifyResult.uncertain) {
+        return verifyResult;
+      }
       return { 
         success: false, 
         message: updateData.message || '额度更新失败' 
@@ -298,8 +306,7 @@ export async function creditQuotaToUser(
       if (loginResult) {
         const verifyResult = await verifyQuotaUpdate(
           userId, 
-          /* 期望的 newQuota - 但我们不知道具体值，所以返回 uncertain */
-          undefined,
+          expectedQuota,
           loginResult.cookies, 
           loginResult.adminUserId
         );
@@ -372,7 +379,14 @@ async function verifyQuotaUpdate(
 /**
  * 获取管理员会话（包含管理员用户ID，用于 New-Api-User header）
  */
+let adminSessionWithUserCache: { cookies: string; adminUserId: number; expiresAt: number } | null = null;
+
 async function getAdminSessionWithUser(): Promise<{ cookies: string; adminUserId: number } | null> {
+  // 检查缓存是否有效（提前5分钟过期以保证安全）
+  if (adminSessionWithUserCache && adminSessionWithUserCache.expiresAt > Date.now() + 5 * 60 * 1000) {
+    return { cookies: adminSessionWithUserCache.cookies, adminUserId: adminSessionWithUserCache.adminUserId };
+  }
+
   const username = process.env.NEW_API_ADMIN_USERNAME;
   const password = process.env.NEW_API_ADMIN_PASSWORD;
 
@@ -392,6 +406,13 @@ async function getAdminSessionWithUser(): Promise<{ cookies: string; adminUserId
     console.error('Admin login succeeded but no cookies or user ID returned');
     return null;
   }
+
+  // 缓存会话，假设有效期24小时
+  adminSessionWithUserCache = {
+    cookies: result.cookies,
+    adminUserId: result.user.id,
+    expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+  };
   
   return {
     cookies: result.cookies,

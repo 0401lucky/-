@@ -72,6 +72,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
   const [publishing, setPublishing] = useState(false);
   const [drawing, setDrawing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   // 编辑模式
   const [isEditing, setIsEditing] = useState(false);
@@ -197,6 +198,29 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
       setError('取消失败');
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const handleRetryFailedRewards = async () => {
+    if (!confirm('确定要重试发放失败的奖励吗？')) return;
+
+    setRetrying(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`/api/admin/raffle/${id}/retry`, { method: 'POST' });
+      const data = await res.json();
+
+      if (data.success) {
+        await fetchData();
+        alert(data.message || '重试完成');
+      } else {
+        setError(data.message || '重试失败');
+      }
+    } catch {
+      setError('重试失败');
+    } finally {
+      setRetrying(false);
     }
   };
 
@@ -758,10 +782,15 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
                     {failedRewards.length} 笔发放失败
                   </span>
                   <button
-                    onClick={() => {/* TODO: 实现重试 */}}
-                    className="flex items-center gap-1 px-3 py-1 bg-red-100 text-red-600 rounded-lg text-sm font-medium hover:bg-red-200 transition-colors"
+                    onClick={handleRetryFailedRewards}
+                    disabled={retrying}
+                    className="flex items-center gap-1 px-3 py-1 bg-red-100 text-red-600 rounded-lg text-sm font-medium hover:bg-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <RefreshCw className="w-4 h-4" />
+                    {retrying ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4" />
+                    )}
                     重试
                   </button>
                 </div>
