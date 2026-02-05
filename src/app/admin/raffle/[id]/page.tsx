@@ -2,10 +2,10 @@
 
 import { useEffect, useState, use } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft, Gift, Loader2, Users, Trophy, Play, XCircle, Crown, Check,
-  AlertTriangle, RefreshCw, Eye
+  AlertTriangle, RefreshCw, Eye, Pencil, Plus, Trash2, DollarSign, Save, X
 } from 'lucide-react';
 
 interface RafflePrize {
@@ -54,9 +54,16 @@ interface Raffle {
   updatedAt: number;
 }
 
+interface PrizeInput {
+  name: string;
+  dollars: number;
+  quantity: number;
+}
+
 export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [raffle, setRaffle] = useState<Raffle | null>(null);
   const [entries, setEntries] = useState<RaffleEntry[]>([]);
@@ -66,6 +73,18 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
   const [drawing, setDrawing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
+  // 编辑模式
+  const [isEditing, setIsEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // 编辑表单状态
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editCoverImage, setEditCoverImage] = useState('');
+  const [editTriggerType, setEditTriggerType] = useState<'threshold' | 'manual'>('threshold');
+  const [editThreshold, setEditThreshold] = useState(100);
+  const [editPrizes, setEditPrizes] = useState<PrizeInput[]>([]);
+
   const fetchData = async () => {
     try {
       const res = await fetch(`/api/admin/raffle/${id}`);
@@ -74,6 +93,8 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
         if (data.success) {
           setRaffle(data.raffle);
           setEntries(data.entries || []);
+          // 初始化编辑表单
+          initEditForm(data.raffle);
         } else {
           setError(data.message || '活动不存在');
         }
@@ -88,9 +109,29 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
     }
   };
 
+  const initEditForm = (r: Raffle) => {
+    setEditTitle(r.title);
+    setEditDescription(r.description);
+    setEditCoverImage(r.coverImage || '');
+    setEditTriggerType(r.triggerType);
+    setEditThreshold(r.threshold);
+    setEditPrizes(r.prizes.map(p => ({
+      name: p.name,
+      dollars: p.dollars,
+      quantity: p.quantity,
+    })));
+  };
+
   useEffect(() => {
     void fetchData();
   }, [id]);
+
+  // 检查 URL 参数是否有 edit=true
+  useEffect(() => {
+    if (searchParams.get('edit') === 'true' && raffle?.status === 'draft') {
+      setIsEditing(true);
+    }
+  }, [searchParams, raffle?.status]);
 
   const handlePublish = async () => {
     if (!confirm('确定要发布活动吗？发布后将无法修改。')) return;
@@ -159,6 +200,111 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
     }
   };
 
+  // 编辑相关函数
+  const addPrize = () => {
+    setEditPrizes([...editPrizes, { name: '', dollars: 1, quantity: 1 }]);
+  };
+
+  const removePrize = (index: number) => {
+    if (editPrizes.length <= 1) return;
+    setEditPrizes(editPrizes.filter((_, i) => i !== index));
+  };
+
+  const updatePrize = (index: number, field: keyof PrizeInput, value: string | number) => {
+    const updated = [...editPrizes];
+    if (field === 'name') {
+      updated[index].name = value as string;
+    } else if (field === 'dollars') {
+      updated[index].dollars = Number(value) || 0;
+    } else if (field === 'quantity') {
+      updated[index].quantity = Number(value) || 0;
+    }
+    setEditPrizes(updated);
+  };
+
+  const getEditTotalPrizeValue = () => {
+    return editPrizes.reduce((sum, p) => sum + p.dollars * p.quantity, 0);
+  };
+
+  const getEditTotalPrizeCount = () => {
+    return editPrizes.reduce((sum, p) => sum + p.quantity, 0);
+  };
+
+  const handleCancelEdit = () => {
+    if (raffle) {
+      initEditForm(raffle);
+    }
+    setIsEditing(false);
+    setError(null);
+    // 移除 URL 参数
+    router.replace(`/admin/raffle/${id}`);
+  };
+
+  const handleSaveEdit = async () => {
+    setError(null);
+
+    // 验证
+    if (!editTitle.trim()) {
+      setError('请填写活动标题');
+      return;
+    }
+    if (!editDescription.trim()) {
+      setError('请填写活动描述');
+      return;
+    }
+    if (editPrizes.some(p => !p.name.trim())) {
+      setError('请填写所有奖品名称');
+      return;
+    }
+    if (editPrizes.some(p => p.dollars <= 0)) {
+      setError('奖品金额必须大于0');
+      return;
+    }
+    if (editPrizes.some(p => p.quantity <= 0)) {
+      setError('奖品数量必须大于0');
+      return;
+    }
+    if (editTriggerType === 'threshold' && editThreshold <= 0) {
+      setError('人数阈值必须大于0');
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const res = await fetch(`/api/admin/raffle/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: editTitle.trim(),
+          description: editDescription.trim(),
+          coverImage: editCoverImage.trim() || undefined,
+          triggerType: editTriggerType,
+          threshold: editThreshold,
+          prizes: editPrizes.map(p => ({
+            name: p.name.trim(),
+            dollars: p.dollars,
+            quantity: p.quantity,
+          })),
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        setRaffle(data.raffle);
+        setIsEditing(false);
+        router.replace(`/admin/raffle/${id}`);
+      } else {
+        setError(data.message || '保存失败');
+      }
+    } catch {
+      setError('保存失败，请稍后重试');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'draft':
@@ -202,6 +348,253 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
 
   const failedRewards = raffle.winners?.filter(w => w.rewardStatus === 'failed') || [];
 
+  // 编辑模式渲染
+  if (isEditing && raffle.status === 'draft') {
+    return (
+      <div className="min-h-screen bg-stone-50 pb-20">
+        {/* 顶部栏 */}
+        <div className="sticky top-0 z-40 bg-white border-b border-stone-200 shadow-sm">
+          <div className="max-w-3xl mx-auto px-4 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={handleCancelEdit}
+                  className="p-2 hover:bg-stone-100 rounded-lg transition-colors"
+                >
+                  <ArrowLeft className="w-5 h-5 text-stone-600" />
+                </button>
+                <div>
+                  <h1 className="text-xl font-bold text-stone-800">编辑活动</h1>
+                  <p className="text-sm text-stone-500">修改活动信息和奖品配置</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCancelEdit}
+                  className="flex items-center gap-2 px-4 py-2 text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-xl font-medium transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                  取消
+                </button>
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-xl font-bold shadow-lg hover:shadow-xl transition-all disabled:opacity-50"
+                >
+                  {saving ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Save className="w-4 h-4" />
+                  )}
+                  保存
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="max-w-3xl mx-auto px-4 py-6">
+          {/* 错误提示 */}
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl text-red-600 text-sm flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5" />
+              {error}
+            </div>
+          )}
+
+          {/* 基本信息 */}
+          <div className="bg-white rounded-2xl border border-stone-200 p-6 mb-6">
+            <h2 className="text-lg font-bold text-stone-800 mb-4 flex items-center gap-2">
+              <Gift className="w-5 h-5 text-pink-500" />
+              基本信息
+            </h2>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">
+                  活动标题 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  placeholder="例如：新年福利大抽奖"
+                  className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 outline-none transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">
+                  活动描述 <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  placeholder="描述活动规则和奖品信息..."
+                  rows={3}
+                  className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 outline-none transition-all resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">
+                  封面图片（可选）
+                </label>
+                <input
+                  type="url"
+                  value={editCoverImage}
+                  onChange={(e) => setEditCoverImage(e.target.value)}
+                  placeholder="https://..."
+                  className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 outline-none transition-all"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 开奖条件 */}
+          <div className="bg-white rounded-2xl border border-stone-200 p-6 mb-6">
+            <h2 className="text-lg font-bold text-stone-800 mb-4 flex items-center gap-2">
+              <Users className="w-5 h-5 text-purple-500" />
+              开奖条件
+            </h2>
+
+            <div className="space-y-4">
+              <div className="flex gap-4">
+                <label className={`flex-1 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                  editTriggerType === 'threshold'
+                    ? 'border-pink-500 bg-pink-50'
+                    : 'border-stone-200 hover:border-stone-300'
+                }`}>
+                  <input
+                    type="radio"
+                    name="triggerType"
+                    value="threshold"
+                    checked={editTriggerType === 'threshold'}
+                    onChange={() => setEditTriggerType('threshold')}
+                    className="sr-only"
+                  />
+                  <div className="font-bold text-stone-800 mb-1">人数阈值</div>
+                  <div className="text-sm text-stone-500">满足指定人数后自动开奖</div>
+                </label>
+
+                <label className={`flex-1 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                  editTriggerType === 'manual'
+                    ? 'border-pink-500 bg-pink-50'
+                    : 'border-stone-200 hover:border-stone-300'
+                }`}>
+                  <input
+                    type="radio"
+                    name="triggerType"
+                    value="manual"
+                    checked={editTriggerType === 'manual'}
+                    onChange={() => setEditTriggerType('manual')}
+                    className="sr-only"
+                  />
+                  <div className="font-bold text-stone-800 mb-1">手动开奖</div>
+                  <div className="text-sm text-stone-500">由管理员手动触发开奖</div>
+                </label>
+              </div>
+
+              {editTriggerType === 'threshold' && (
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-1">
+                    开奖人数 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={editThreshold}
+                    onChange={(e) => setEditThreshold(Number(e.target.value))}
+                    min={1}
+                    className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 outline-none transition-all"
+                  />
+                  <p className="text-xs text-stone-400 mt-1">满足此人数后自动开奖</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 奖品配置 */}
+          <div className="bg-white rounded-2xl border border-stone-200 p-6 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-stone-800 flex items-center gap-2">
+                <DollarSign className="w-5 h-5 text-green-500" />
+                奖品配置
+              </h2>
+              <div className="text-sm text-stone-500">
+                总价值: <span className="font-bold text-pink-600">${getEditTotalPrizeValue()}</span>
+                {' · '}
+                共 <span className="font-bold">{getEditTotalPrizeCount()}</span> 份
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {editPrizes.map((prize, index) => (
+                <div key={index} className="flex items-start gap-3 p-4 bg-stone-50 rounded-xl">
+                  <div className="w-8 h-8 rounded-full bg-pink-100 text-pink-600 flex items-center justify-center font-bold text-sm shrink-0">
+                    {index + 1}
+                  </div>
+
+                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs text-stone-500 mb-1">奖品名称</label>
+                      <input
+                        type="text"
+                        value={prize.name}
+                        onChange={(e) => updatePrize(index, 'name', e.target.value)}
+                        placeholder="例如：一等奖"
+                        className="w-full px-3 py-2 rounded-lg border border-stone-200 focus:border-pink-500 outline-none text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-stone-500 mb-1">金额（美元）</label>
+                      <input
+                        type="number"
+                        value={prize.dollars}
+                        onChange={(e) => updatePrize(index, 'dollars', e.target.value)}
+                        min={0.01}
+                        step={0.01}
+                        className="w-full px-3 py-2 rounded-lg border border-stone-200 focus:border-pink-500 outline-none text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-stone-500 mb-1">数量</label>
+                      <input
+                        type="number"
+                        value={prize.quantity}
+                        onChange={(e) => updatePrize(index, 'quantity', e.target.value)}
+                        min={1}
+                        className="w-full px-3 py-2 rounded-lg border border-stone-200 focus:border-pink-500 outline-none text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => removePrize(index)}
+                    disabled={editPrizes.length <= 1}
+                    className="p-2 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={addPrize}
+              className="mt-4 w-full py-3 border-2 border-dashed border-stone-200 rounded-xl text-stone-500 hover:border-pink-500 hover:text-pink-500 transition-colors flex items-center justify-center gap-2"
+            >
+              <Plus className="w-5 h-5" />
+              添加奖品
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 查看模式渲染
   return (
     <div className="min-h-screen bg-stone-50 pb-20">
       {/* 顶部栏 */}
@@ -220,7 +613,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
                 <p className="text-sm text-stone-500">
                   创建于 {new Date(raffle.createdAt).toLocaleDateString()}
                 </p>
-              </div>
+            </div>
             </div>
 
             {/* 操作按钮 */}
@@ -235,18 +628,27 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
               </Link>
 
               {raffle.status === 'draft' && (
-                <button
-                  onClick={handlePublish}
-                  disabled={publishing}
-                  className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-xl font-bold hover:bg-green-600 transition-colors disabled:opacity-50"
-                >
-                  {publishing ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Play className="w-4 h-4" />
-                  )}
-                  发布活动
-                </button>
+                <>
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="flex items-center gap-2 px-4 py-2 text-blue-600 bg-blue-100 hover:bg-blue-200 rounded-xl font-medium transition-colors"
+                  >
+                    <Pencil className="w-4 h-4" />
+                    编辑
+                  </button>
+                  <button
+                    onClick={handlePublish}
+                    disabled={publishing}
+                    className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-xl font-bold hover:bg-green-600 transition-colors disabled:opacity-50"
+                  >
+                    {publishing ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Play className="w-4 h-4" />
+                    )}
+                    发布活动
+                  </button>
+                </>
               )}
 
               {raffle.status === 'active' && (
