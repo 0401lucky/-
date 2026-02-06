@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, use } from 'react';
+import { useCallback, useEffect, useState, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -75,7 +75,7 @@ export default function RaffleDetailPage({ params }: { params: Promise<{ id: str
   const [error, setError] = useState<string | null>(null);
   const [showConfetti, setShowConfetti] = useState(false);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       // 获取用户信息
       const userRes = await fetch('/api/auth/me');
@@ -111,11 +111,11 @@ export default function RaffleDetailPage({ params }: { params: Promise<{ id: str
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
 
   useEffect(() => {
     void fetchData();
-  }, [id]);
+  }, [fetchData]);
 
   // 加载庆祝动画
   useEffect(() => {

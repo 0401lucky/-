@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { handleDuplicateCard, exchangeFragmentsForCard, getFragmentValue, getExchangePrice } from '../fragments';
 import { kv } from '@vercel/kv';
-import { CARDS } from '../config';
 import { FRAGMENT_VALUES, EXCHANGE_PRICES } from '../constants';
 
 vi.mock('@vercel/kv', () => ({
@@ -12,6 +11,7 @@ vi.mock('@vercel/kv', () => ({
 
 describe('Card Fragment System', () => {
   const userId = 'user_123';
+  const mockKvEval = vi.mocked(kv.eval);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -33,7 +33,7 @@ describe('Card Fragment System', () => {
     it('should add card to inventory if it is new', async () => {
       const cardId = 'animal-s1-common-仓鼠';
       // Lua script returns [isDuplicate, fragmentAmount]
-      (kv.eval as any).mockResolvedValue([0, 0]);
+      mockKvEval.mockResolvedValue([0, 0]);
 
       const result = await handleDuplicateCard(userId, cardId);
 
@@ -45,7 +45,7 @@ describe('Card Fragment System', () => {
     it('should convert to fragments if card is duplicate', async () => {
       const cardId = 'animal-s1-common-仓鼠';
       const fragmentValue = FRAGMENT_VALUES.common;
-      (kv.eval as any).mockResolvedValue([1, fragmentValue]);
+      mockKvEval.mockResolvedValue([1, fragmentValue]);
 
       const result = await handleDuplicateCard(userId, cardId);
 
@@ -59,7 +59,7 @@ describe('Card Fragment System', () => {
       const cardId = 'animal-s1-rare-柴犬';
       const exchangePrice = EXCHANGE_PRICES.rare;
       // Lua script returns [success, newFragmentCount]
-      (kv.eval as any).mockResolvedValue([1, 100 - exchangePrice]);
+      mockKvEval.mockResolvedValue([1, 100 - exchangePrice]);
 
       const result = await exchangeFragmentsForCard(userId, cardId);
 
@@ -76,7 +76,7 @@ describe('Card Fragment System', () => {
     it('should fail if fragments are insufficient', async () => {
       const cardId = 'animal-s1-legendary-小熊猫';
       // Lua script returns [0, currentFragments, 'insufficient_fragments']
-      (kv.eval as any).mockResolvedValue([0, 50, 'insufficient_fragments']);
+      mockKvEval.mockResolvedValue([0, 50, 'insufficient_fragments']);
 
       const result = await exchangeFragmentsForCard(userId, cardId);
 

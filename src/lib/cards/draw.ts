@@ -267,6 +267,54 @@ const FINALIZE_DRAW_SCRIPT = `
 `;
 
 /**
+ * Lua script for rollback when Phase 2 fails.
+ * Restores one draw and reverts pity increments from Phase 1.
+ */
+const ROLLBACK_RESERVE_DRAW_SCRIPT = `
+  local userKey = KEYS[1]
+  local data = redis.call('GET', userKey)
+  if not data then
+    return {0, 'missing_user_data'}
+  end
+
+  local ok, userData = pcall(cjson.decode, data)
+  if not ok or not userData then
+    return {0, 'invalid_user_data'}
+  end
+
+  local drawsAvailable = tonumber(userData.drawsAvailable) or 0
+  userData.drawsAvailable = drawsAvailable + 1
+
+  local pityRare = (tonumber(userData.pityRare) or 0) - 1
+  if pityRare < 0 then pityRare = 0 end
+
+  local pityEpic = (tonumber(userData.pityEpic) or 0) - 1
+  if pityEpic < 0 then pityEpic = 0 end
+
+  local pityLegendary = (tonumber(userData.pityLegendary) or 0) - 1
+  if pityLegendary < 0 then pityLegendary = 0 end
+
+  local pityLegendaryRare = (tonumber(userData.pityLegendaryRare) or tonumber(userData.pityCounter) or 0) - 1
+  if pityLegendaryRare < 0 then pityLegendaryRare = 0 end
+
+  userData.pityRare = pityRare
+  userData.pityEpic = pityEpic
+  userData.pityLegendary = pityLegendary
+  userData.pityLegendaryRare = pityLegendaryRare
+  userData.pityCounter = pityLegendaryRare
+
+  redis.call('SET', userKey, cjson.encode(userData))
+  return {1, 'ok'}
+`;
+
+async function rollbackReservedDraw(userKey: string): Promise<void> {
+  const rollbackResult = await kv.eval(ROLLBACK_RESERVE_DRAW_SCRIPT, [userKey], []);
+  if (!Array.isArray(rollbackResult) || Number(rollbackResult[0]) !== 1) {
+    throw new Error("Rollback reserve draw failed");
+  }
+}
+
+/**
  * Main draw function.
  * Uses two-phase Lua scripts for atomic operations to prevent race conditions.
  * Phase 1: Reserve draw (check & decrement drawsAvailable, increment pityCounter)
@@ -309,11 +357,28 @@ export async function drawCard(userId: string): Promise<{
   const fragmentValue = FRAGMENT_VALUES[card.rarity];
 
   // Phase 2: Finalize the draw
-  const finalizeResult = (await kv.eval(FINALIZE_DRAW_SCRIPT, [userKey], [
-    card.id,
-    card.rarity,
-    fragmentValue,
-  ])) as [number, string, number];
+  let finalizeResult: [number, string, number];
+  try {
+    const finalizeResultRaw = await kv.eval(FINALIZE_DRAW_SCRIPT, [userKey], [
+      card.id,
+      card.rarity,
+      fragmentValue,
+    ]);
+
+    if (!Array.isArray(finalizeResultRaw) || finalizeResultRaw.length < 3) {
+      throw new Error("Invalid finalize draw response");
+    }
+
+    finalizeResult = finalizeResultRaw as [number, string, number];
+  } catch (error) {
+    try {
+      await rollbackReservedDraw(userKey);
+    } catch (rollbackError) {
+      console.error("Rollback draw failed:", rollbackError);
+    }
+    console.error("Finalize draw failed:", error);
+    return { success: false, message: "抽卡异常，请重试" };
+  }
 
   const [, status, fragmentsAdded] = finalizeResult;
 

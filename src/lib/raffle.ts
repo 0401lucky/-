@@ -287,6 +287,7 @@ export async function joinRaffle(
   const participantsKey = `${RAFFLE_PARTICIPANTS_PREFIX}${raffleId}`;
   const entryCountKey = `${RAFFLE_ENTRY_COUNT_PREFIX}${raffleId}`;
   const userRafflesKey = `${USER_RAFFLES_PREFIX}${userId}`;
+  const drawLockKey = `${RAFFLE_DRAW_LOCK_PREFIX}${raffleId}`;
 
   const now = Date.now();
   const entryId = `entry_${now}_${nanoid(8)}`;
@@ -297,6 +298,7 @@ export async function joinRaffle(
     local participantsKey = KEYS[3]
     local entryCountKey = KEYS[4]
     local userRafflesKey = KEYS[5]
+    local drawLockKey = KEYS[6]
 
     local now = tonumber(ARGV[1])
     local entryId = ARGV[2]
@@ -315,7 +317,12 @@ export async function joinRaffle(
       return {0, '', '活动数据异常'}
     end
 
-    -- 2. 检查活动状态
+    -- 2. 检查开奖锁（开奖期间禁止新参与，避免漏抽/数据覆盖）
+    if redis.call('EXISTS', drawLockKey) == 1 then
+      return {0, '', '活动正在开奖，请稍后再试'}
+    end
+
+    -- 3. 检查活动状态
     if raffle.status ~= 'active' then
       if raffle.status == 'draft' then
         return {0, '', '活动尚未开始'}
@@ -327,16 +334,16 @@ export async function joinRaffle(
       return {0, '', '活动状态异常'}
     end
 
-    -- 3. 检查是否已参与
+    -- 4. 检查是否已参与
     local alreadyJoined = redis.call('SISMEMBER', participantsKey, userId)
     if alreadyJoined == 1 then
       return {0, '', '您已经参与过了'}
     end
 
-    -- 4. 分配抽奖号码
+    -- 5. 分配抽奖号码
     local entryNumber = redis.call('INCR', entryCountKey)
 
-    -- 5. 创建参与记录
+    -- 6. 创建参与记录
     local entry = {
       id = entryId,
       raffleId = raffleId,
@@ -347,17 +354,17 @@ export async function joinRaffle(
     }
     local entryJson = cjson.encode(entry)
 
-    -- 6. 原子写入
+    -- 7. 原子写入
     redis.call('LPUSH', entriesKey, entryJson)
     redis.call('SADD', participantsKey, userId)
     redis.call('SADD', userRafflesKey, raffleId)
 
-    -- 7. 更新活动参与人数
+    -- 8. 更新活动参与人数
     raffle.participantsCount = (raffle.participantsCount or 0) + 1
     raffle.updatedAt = now
     redis.call('SET', raffleKey, cjson.encode(raffle))
 
-    -- 8. 检查是否触发自动开奖
+    -- 9. 检查是否触发自动开奖
     local shouldDraw = 0
     if raffle.triggerType == 'threshold' and raffle.participantsCount >= raffle.threshold then
       shouldDraw = 1
@@ -368,7 +375,7 @@ export async function joinRaffle(
 
   const result = (await kv.eval(
     luaScript,
-    [raffleKey, entriesKey, participantsKey, entryCountKey, userRafflesKey],
+    [raffleKey, entriesKey, participantsKey, entryCountKey, userRafflesKey, drawLockKey],
     [now, entryId, raffleId, userId, username]
   )) as [number, string, string, number?];
 
@@ -449,30 +456,40 @@ function shuffleArray<T>(array: T[]): T[] {
 /**
  * 获取开奖分布式锁
  */
-async function acquireDrawLock(raffleId: string): Promise<boolean> {
+async function acquireDrawLock(raffleId: string): Promise<string | null> {
   const lockKey = `${RAFFLE_DRAW_LOCK_PREFIX}${raffleId}`;
+  const lockToken = nanoid(16);
   // 奖励发放可能包含多次对 new-api 的网络请求，60 秒锁可能不够用，容易导致锁过期后重复发放
-  const result = await kv.set(lockKey, "1", { nx: true, ex: 600 });
-  return result === "OK";
+  const result = await kv.set(lockKey, lockToken, { nx: true, ex: 600 });
+  return result === "OK" ? lockToken : null;
 }
 
 /**
  * 释放开奖分布式锁
  */
-async function releaseDrawLock(raffleId: string): Promise<void> {
+async function releaseDrawLock(raffleId: string, lockToken: string): Promise<void> {
   const lockKey = `${RAFFLE_DRAW_LOCK_PREFIX}${raffleId}`;
-  await kv.del(lockKey);
+  const releaseScript = `
+    if redis.call('GET', KEYS[1]) == ARGV[1] then
+      return redis.call('DEL', KEYS[1])
+    end
+    return 0
+  `;
+  await kv.eval(releaseScript, [lockKey], [lockToken]);
 }
 
 /**
  * 执行开奖
  */
 export async function executeRaffleDraw(
-  raffleId: string
+  raffleId: string,
+  options?: { waitForDelivery?: boolean }
 ): Promise<DrawRaffleResult> {
+  const waitForDelivery = options?.waitForDelivery ?? true;
+
   // 1. 获取分布式锁
-  const hasLock = await acquireDrawLock(raffleId);
-  if (!hasLock) {
+  const lockToken = await acquireDrawLock(raffleId);
+  if (!lockToken) {
     return { success: false, message: "正在开奖中，请稍后" };
   }
 
@@ -544,7 +561,20 @@ export async function executeRaffleDraw(
     await kv.set(`${RAFFLE_PREFIX}${raffleId}`, updated);
     await kv.srem(RAFFLE_ACTIVE_KEY, raffleId);
 
-    // 7. 异步发放奖励
+    if (!waitForDelivery) {
+      // 自动开奖路径：先确保开奖结果落库，再异步发放奖励，避免 join 请求长时间阻塞
+      void deliverRewards(raffleId, winners).catch((error) => {
+        console.error(`自动开奖奖励发放失败 - 活动 ${raffleId}:`, error);
+      });
+
+      return {
+        success: true,
+        message: `开奖成功，共 ${winners.length} 人中奖`,
+        winners,
+      };
+    }
+
+    // 手动开奖路径：等待奖励发放结果
     const deliveryResults = await deliverRewards(raffleId, winners);
 
     return {
@@ -555,7 +585,7 @@ export async function executeRaffleDraw(
     };
   } finally {
     // 释放锁
-    await releaseDrawLock(raffleId);
+    await releaseDrawLock(raffleId, lockToken);
   }
 }
 
@@ -597,12 +627,13 @@ async function deliverRewards(
         { success: boolean; message: string; newQuota?: number; uncertain?: boolean };
 
       if (creditResult.success) {
-        updatedWinners[winnerIndex] = {
+        const deliveredWinner: RaffleWinner = {
           ...winner,
           rewardStatus: "delivered",
           rewardMessage: creditResult.message,
           deliveredAt: Date.now(),
         };
+        updatedWinners[winnerIndex] = deliveredWinner;
         results.push({
           userId: winner.userId,
           username: winner.username,
@@ -611,12 +642,16 @@ async function deliverRewards(
           message: creditResult.message,
         });
 
-        // 记录到用户中奖列表
-        await kv.lpush(`${USER_RAFFLE_WINS_PREFIX}${winner.userId}`, {
-          raffleId,
-          raffleTitle: raffle.title,
-          ...updatedWinners[winnerIndex],
-        });
+        try {
+          // 记录到用户中奖列表（非关键链路，失败仅记录日志，避免误判为发放失败）
+          await kv.lpush(`${USER_RAFFLE_WINS_PREFIX}${winner.userId}`, {
+            raffleId,
+            raffleTitle: raffle.title,
+            ...deliveredWinner,
+          });
+        } catch (logError) {
+          console.error(`记录中奖记录失败 - 用户 ${winner.userId}:`, logError);
+        }
       } else if (creditResult.uncertain) {
         // 结果不确定：不要标记失败（避免重复发放），保持 pending 便于后续人工核对
         updatedWinners[winnerIndex] = {
@@ -680,13 +715,14 @@ export async function retryFailedRewards(
   raffleId: string
 ): Promise<DrawRaffleResult> {
   // 使用同一把锁，避免多次并发重试导致重复发放
-  const hasLock = await acquireDrawLock(raffleId);
-  if (!hasLock) {
+  const lockToken = await acquireDrawLock(raffleId);
+  if (!lockToken) {
     return { success: false, message: "正在处理奖励发放，请稍后" };
   }
 
-  const raffle = await getRaffle(raffleId);
   try {
+    const raffle = await getRaffle(raffleId);
+
     if (!raffle) {
       return { success: false, message: "活动不存在" };
     }
@@ -711,7 +747,7 @@ export async function retryFailedRewards(
       deliveryResults,
     };
   } finally {
-    await releaseDrawLock(raffleId);
+    await releaseDrawLock(raffleId, lockToken);
   }
 }
 

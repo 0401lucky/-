@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import type { LinkGameDifficultyConfig, LinkGamePosition } from '@/lib/types/game';
 import { cn } from '@/lib/utils';
 
@@ -31,17 +31,37 @@ export function GameBoard({
   const [pathPointsList, setPathPointsList] = useState<string[]>([]);
   const gridRef = useRef<HTMLDivElement>(null);
 
+  const resetPathPoints = useCallback(() => {
+    setPathPointsList([]);
+  }, []);
+
+  const syncMatchingTiles = useCallback((indices: number[]) => {
+    if (indices.length > 0) {
+      setMatchingTiles(prev => [...new Set([...prev, ...indices])]);
+      return;
+    }
+    setMatchingTiles(indices);
+  }, []);
+
+  const syncShakingTiles = useCallback((indices: number[]) => {
+    setShakingTiles(indices);
+  }, []);
+
   // Calculate path points for the connecting line
   useEffect(() => {
     if (!matchPaths || matchPaths.length === 0 || !gridRef.current) {
-      setPathPointsList([]);
-      return;
+      const frame = requestAnimationFrame(() => {
+        resetPathPoints();
+      });
+      return () => cancelAnimationFrame(frame);
     }
 
     const validPaths = matchPaths.filter((p) => Array.isArray(p) && p.length >= 2);
     if (validPaths.length === 0) {
-      setPathPointsList([]);
-      return;
+      const frame = requestAnimationFrame(() => {
+        resetPathPoints();
+      });
+      return () => cancelAnimationFrame(frame);
     }
 
     const updatePath = () => {
@@ -86,31 +106,31 @@ export function GameBoard({
     resizeObserver.observe(gridRef.current);
     
     return () => resizeObserver.disconnect();
-  }, [matchPaths, config.rows, config.cols]);
+  }, [matchPaths, config, resetPathPoints]);
 
   // Sync props to local state for animation control
   useEffect(() => {
-    if (matchingIndices.length > 0) {
-      setMatchingTiles(prev => [...new Set([...prev, ...matchingIndices])]);
-    } else {
-      // Only clear matching tiles if they are no longer in the layout (null)
-      // This prevents the animation from being cut off if the prop clears early
-      // But for simplicity, we'll just sync for now, or maybe keep them until animation end?
-      // Let's stick to syncing with props but using local state for the class application
-      setMatchingTiles(matchingIndices);
-    }
-  }, [matchingIndices]);
+    const frame = requestAnimationFrame(() => {
+      syncMatchingTiles(matchingIndices);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [matchingIndices, syncMatchingTiles]);
 
   useEffect(() => {
     if (shakingIndices.length > 0) {
-      setShakingTiles(shakingIndices);
+      const frame = requestAnimationFrame(() => {
+        syncShakingTiles(shakingIndices);
+      });
       // Auto clear shaking state after animation duration to allow re-trigger
       const timer = setTimeout(() => {
-        setShakingTiles([]);
+        syncShakingTiles([]);
       }, 400); // Duration of tile-shake
-      return () => clearTimeout(timer);
+      return () => {
+        cancelAnimationFrame(frame);
+        clearTimeout(timer);
+      };
     }
-  }, [shakingIndices]);
+  }, [shakingIndices, syncShakingTiles]);
 
   useEffect(() => {
     // Mark entrance as complete after max possible delay + animation duration

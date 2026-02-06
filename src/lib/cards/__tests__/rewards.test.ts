@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getCardsByRarity,
   countOwnedByRarity,
@@ -8,7 +8,7 @@ import {
   isRewardClaimed,
   getAlbumRewardStatuses,
 } from "../rewards";
-import { CARDS, ALBUMS, getCardsByAlbum } from "../config";
+import { ALBUMS, getCardsByAlbum } from "../config";
 import { COLLECTION_REWARDS } from "../constants";
 import type { UserCards } from "../draw";
 
@@ -27,6 +27,14 @@ function createMockUserData(inventory: string[] = [], claimedRewards: string[] =
 const testAlbumId = ALBUMS[0].id;
 
 describe("Rewards System", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   describe("getCardsByRarity", () => {
     it("should return all common cards for album S1", () => {
       const commonCards = getCardsByRarity("common", testAlbumId);
@@ -60,7 +68,7 @@ describe("Rewards System", () => {
 
     it("should return cards from all albums when no albumId provided", () => {
       const commonCards = getCardsByRarity("common");
-      expect(commonCards.length).toBe(21); // 5 (S1) + 16 (S2)
+      expect(commonCards.length).toBe(47); // 5 (S1) + 16 (S2) + 26 (Tarot)
     });
   });
 

@@ -17,7 +17,8 @@ interface SingleDrawResult {
 
 interface DrawResponse {
   success: boolean;
-  data: {
+  message?: string;
+  data?: {
     success: boolean;
     card?: CardConfig;
     cards?: SingleDrawResult[];
@@ -141,7 +142,7 @@ export default function DrawPage() {
       });
       const data: DrawResponse = await res.json();
 
-      if (data.success && data.data.success) {
+      if (data.success && data.data?.success) {
         if (count === 1 && data.data.card) {
           // 单抽
           setResult({
@@ -176,7 +177,7 @@ export default function DrawPage() {
         // Update Inventory
         await fetchInventory();
       } else {
-        alert(data.data?.message || (data as any).message || '抽卡失败，请重试');
+        alert(data.data?.message || data.message || '抽卡失败，请重试');
       }
     } catch (err) {
       console.error('Draw failed', err);

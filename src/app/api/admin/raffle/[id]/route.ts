@@ -12,7 +12,7 @@ import type { UpdateRaffleInput } from "@/lib/types/raffle";
 
 async function checkAdmin() {
   const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get("session")?.value;
+  const sessionCookie = cookieStore.get("app_session")?.value ?? cookieStore.get("session")?.value;
 
   if (!sessionCookie) {
     return { error: "请先登录", status: 401 };

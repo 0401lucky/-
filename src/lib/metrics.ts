@@ -64,6 +64,7 @@ export async function incrementCounter(
   value: number = 1,
   tags?: MetricTags
 ): Promise<void> {
+  void tags;
   const today = getTodayDateString();
   const key = `${DAILY_STATS_PREFIX}${today}:${name}`;
 

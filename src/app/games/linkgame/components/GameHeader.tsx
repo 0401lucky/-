@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useMemo } from 'react';
 
 interface GameHeaderProps {
   timeRemaining: number;
@@ -29,12 +29,9 @@ export function GameHeader({
   tripleModeDisabled = false,
   tripleModeDisabledReason,
 }: GameHeaderProps) {
-  const [scorePopping, setScorePopping] = useState(false);
-
-  useEffect(() => {
-    setScorePopping(true);
-    const timer = setTimeout(() => setScorePopping(false), 300);
-    return () => clearTimeout(timer);
+  const scoreClassName = useMemo(() => {
+    if (score <= 0) return 'text-2xl font-black text-slate-800 tabular-nums leading-none';
+    return 'text-2xl font-black text-slate-800 tabular-nums leading-none animate-score-pop text-orange-500';
   }, [score]);
 
   const formatTime = (seconds: number) => {
@@ -54,7 +51,8 @@ export function GameHeader({
             <div className="text-center">
               <div className="text-[10px] text-orange-400 font-black uppercase tracking-widest mb-0.5">SCORE</div>
               <div 
-                className={`text-2xl font-black text-slate-800 tabular-nums leading-none ${scorePopping ? 'animate-score-pop text-orange-500' : ''}`}
+                key={score}
+                className={scoreClassName}
               >
                 {score}
               </div>

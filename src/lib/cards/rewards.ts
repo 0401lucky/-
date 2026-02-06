@@ -3,8 +3,9 @@ import { CARDS, getCardsByAlbum, getAlbumById } from "./config";
 import { COLLECTION_REWARDS } from "./constants";
 import { Rarity } from "./types";
 import { UserCards } from "./draw";
-import { addPoints } from "../points";
+import { nanoid } from "nanoid";
 import { getAlbumReward } from "./albumRewards";
+import type { PointsLog } from "../types/store";
 
 export type RewardType = Rarity | 'full_set';
 
@@ -23,6 +24,8 @@ export interface ClaimResult {
   pointsAwarded?: number;
   newBalance?: number;
 }
+
+const USER_POINTS_LOG_MAX = 100;
 
 /**
  * Get all cards of a specific rarity (optionally filtered by album)
@@ -147,6 +150,8 @@ export async function claimCollectionReward(
 
   const rewardKey = getRewardKey(rewardType, albumId);
   const userKey = `cards:user:${userId}`;
+  const pointsKey = `points:${userId}`;
+  const pointsLogKey = `points_log:${userId}`;
 
   // Get dynamic reward points: tier rewards use album-specific or constants, full_set uses album reward
   let points: number;
@@ -157,11 +162,18 @@ export async function claimCollectionReward(
     points = album?.tierRewards?.[rewardType] ?? COLLECTION_REWARDS[rewardType];
   }
 
+  const pointsToAward = Math.max(0, Math.floor(points));
+  if (pointsToAward <= 0) {
+    return { success: false, message: "奖励积分配置异常" };
+  }
+
   // Lua script for atomic claim operation
   const luaScript = `
     local userKey = KEYS[1]
+    local pointsKey = KEYS[2]
     local rewardKey = ARGV[1]
     local requiredCardsJson = ARGV[2]
+    local points = tonumber(ARGV[3])
 
     local data = redis.call('GET', userKey)
     local userData
@@ -204,20 +216,21 @@ export async function claimCollectionReward(
       end
     end
 
-    -- Atomically mark as claimed
+    -- Atomically mark as claimed and award points
     table.insert(userData.collectionRewards, rewardKey)
+    local newBalance = redis.call('INCRBY', pointsKey, points)
     redis.call('SET', userKey, cjson.encode(userData))
 
-    return {1, 'ok'}
+    return {1, 'ok', newBalance}
   `;
 
   const result = await kv.eval(
     luaScript,
-    [userKey],
-    [rewardKey, JSON.stringify(requiredCardIds)]
-  ) as [number, string];
+    [userKey, pointsKey],
+    [rewardKey, JSON.stringify(requiredCardIds), pointsToAward]
+  ) as [number, string, number?];
 
-  const [success, status] = result;
+  const [success, status, newBalanceRaw] = result;
 
   if (success !== 1) {
     if (status === 'already_claimed') {
@@ -226,7 +239,11 @@ export async function claimCollectionReward(
     return { success: false, message: "尚未集齐该系列卡牌" };
   }
 
-  // Award points
+  const newBalance = Number(newBalanceRaw);
+  if (!Number.isFinite(newBalance)) {
+    return { success: false, message: "奖励发放异常，请稍后重试" };
+  }
+
   const rarityNames: Record<RewardType, string> = {
     common: '普通',
     rare: '稀有',
@@ -237,11 +254,26 @@ export async function claimCollectionReward(
   };
 
   const description = `集齐${rarityNames[rewardType]}卡牌奖励`;
-  const pointsResult = await addPoints(Number(userId), points, 'card_collection', description);
+
+  const log: PointsLog = {
+    id: nanoid(),
+    amount: pointsToAward,
+    source: 'card_collection',
+    description,
+    balance: Math.floor(newBalance),
+    createdAt: Date.now(),
+  };
+
+  try {
+    await kv.lpush(pointsLogKey, log);
+    await kv.ltrim(pointsLogKey, 0, USER_POINTS_LOG_MAX - 1);
+  } catch (error) {
+    console.error("Claim reward log write failed:", error);
+  }
 
   return {
     success: true,
-    pointsAwarded: points,
-    newBalance: pointsResult.balance,
+    pointsAwarded: pointsToAward,
+    newBalance: Math.floor(newBalance),
   };
 }

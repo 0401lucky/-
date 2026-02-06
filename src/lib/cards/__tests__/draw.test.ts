@@ -17,9 +17,16 @@ describe('Card Draw System', () => {
     inventory: [],
     fragments: 0,
     pityCounter: 0,
+    pityRare: 0,
+    pityEpic: 0,
+    pityLegendary: 0,
+    pityLegendaryRare: 0,
     drawsAvailable: 1,
     collectionRewards: [],
   });
+
+  const mockKvGet = vi.mocked(kv.get);
+  const mockKvEval = vi.mocked(kv.eval);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -27,7 +34,7 @@ describe('Card Draw System', () => {
 
   describe('getUserCardData', () => {
     it('should return default data if user has no record', async () => {
-      (kv.get as any).mockResolvedValue(null);
+      mockKvGet.mockResolvedValue(null);
       const data = await getUserCardData(userId);
       expect(data).toEqual(getFreshMockData());
       expect(kv.get).toHaveBeenCalledWith(`cards:user:${userId}`);
@@ -35,7 +42,7 @@ describe('Card Draw System', () => {
 
     it('should return stored data if user has record', async () => {
       const storedData = { ...getFreshMockData(), drawsAvailable: 5 };
-      (kv.get as any).mockResolvedValue(storedData);
+      mockKvGet.mockResolvedValue(storedData);
       const data = await getUserCardData(userId);
       expect(data).toEqual(storedData);
     });
@@ -93,7 +100,7 @@ describe('Card Draw System', () => {
   describe('drawCard', () => {
     it('should return null and message if user has no draws available', async () => {
       // Phase 1 returns failure (no draws)
-      (kv.eval as any).mockResolvedValueOnce([0, 0, 'no_draws']);
+      mockKvEval.mockResolvedValueOnce([0, 0, 0, 0, 0, 'no_draws']);
       
       const result = await drawCard(userId);
       expect(result).toEqual({ success: false, message: '抽卡次数不足' });
@@ -101,9 +108,9 @@ describe('Card Draw System', () => {
 
     it('should return a card and update user data on success', async () => {
       // Phase 1: Reserve draw success, returns pityCounter = 1
-      (kv.eval as any).mockResolvedValueOnce([1, 1, 'ok']);
+      mockKvEval.mockResolvedValueOnce([1, 1, 1, 1, 1, 'ok']);
       // Phase 2: Finalize draw success, new card
-      (kv.eval as any).mockResolvedValueOnce([1, 'ok', 0]);
+      mockKvEval.mockResolvedValueOnce([1, 'ok', 0]);
 
       const result = await drawCard(userId);
 
@@ -118,9 +125,9 @@ describe('Card Draw System', () => {
 
     it('should handle duplicate cards and return fragments', async () => {
       // Phase 1: Reserve draw success
-      (kv.eval as any).mockResolvedValueOnce([1, 1, 'ok']);
+      mockKvEval.mockResolvedValueOnce([1, 1, 1, 1, 1, 'ok']);
       // Phase 2: Finalize draw - duplicate card, returns fragments
-      (kv.eval as any).mockResolvedValueOnce([1, 'duplicate', 5]);
+      mockKvEval.mockResolvedValueOnce([1, 'duplicate', 5]);
 
       const result = await drawCard(userId);
 

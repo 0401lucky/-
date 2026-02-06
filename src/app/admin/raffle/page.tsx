@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import {
-  ArrowLeft, Gift, Loader2, Plus, Users, Trophy, Clock, Play, XCircle, Eye,
-  Trash2, Edit, MoreVertical
+  ArrowLeft, Gift, Loader2, Plus, Users, Trophy, Clock, Eye,
+  Trash2, Edit
 } from 'lucide-react';
 
 interface RafflePrize {
@@ -31,13 +31,12 @@ interface RaffleItem {
 }
 
 export default function AdminRaffleListPage() {
-  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [raffles, setRaffles] = useState<RaffleItem[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  const fetchRaffles = async () => {
+  const fetchRaffles = useCallback(async () => {
     try {
       const url = statusFilter === 'all'
         ? '/api/admin/raffle'
@@ -54,11 +53,11 @@ export default function AdminRaffleListPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [statusFilter]);
 
   useEffect(() => {
     void fetchRaffles();
-  }, [statusFilter]);
+  }, [fetchRaffles]);
 
   const handleDelete = async (id: string) => {
     if (!confirm('确定要删除这个活动吗？')) return;
@@ -177,8 +176,8 @@ export default function AdminRaffleListPage() {
                 <div className="flex items-start gap-4">
                   {/* 封面 */}
                   {raffle.coverImage && (
-                    <div className="w-24 h-24 rounded-xl overflow-hidden bg-stone-100 shrink-0">
-                      <img src={raffle.coverImage} alt="" className="w-full h-full object-cover" />
+                    <div className="relative w-24 h-24 rounded-xl overflow-hidden bg-stone-100 shrink-0">
+                      <Image src={raffle.coverImage} alt={raffle.title} fill className="object-cover" unoptimized />
                     </div>
                   )}
 

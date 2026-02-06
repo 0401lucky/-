@@ -1,17 +1,17 @@
 'use client';
 
-import { memo, useMemo, useRef, useEffect } from 'react';
+import { memo, useMemo, useState, useEffect } from 'react';
 import type { Match3Config } from '@/lib/match3-engine';
 import { Diamond, Droplet, Flame, Gem, Leaf, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // Helper hook to track previous value
 function usePrevious<T>(value: T): T | undefined {
-  const ref = useRef<T>(value);
+  const [previous, setPrevious] = useState<T>();
   useEffect(() => {
-    ref.current = value;
+    setPrevious(value);
   }, [value]);
-  return ref.current;
+  return previous;
 }
 
 // Calculate where each tile came from (how many rows above)
@@ -27,85 +27,6 @@ function calculateFallingOffsets(
 
   const rows = currentBoard.length / cols;
 
-  for (let c = 0; c < cols; c++) {
-    let newTileCount = 0;
-    
-    // Iterate from bottom to top
-    for (let r = rows - 1; r >= 0; r--) {
-      const currentIdx = r * cols + c;
-      const currentTile = currentBoard[currentIdx];
-      
-      // Look for this tile in the previous column, starting from current row upwards
-      let foundInPrev = false;
-      
-      // We search from r down to 0 (which is physically scanning UP the board)
-      // But we also need to account that tiles only fall DOWN. 
-      // So the previous position must be <= current position (row index <= current row index)
-      // Actually, we should search from the "last matched previous row" - 1
-      // But simple scan is: look at prevBoard at same column.
-      
-      // Optimized greedy match from bottom:
-      // A tile at row R in current board likely came from row R, R-1, R-2... in prev board
-      // We greedily match the lowest possible instance in prev board that hasn't been used?
-      // Actually, simpler:
-      // Just check the offset logic we derived.
-      
-      // Let's find the matching tile in prevBoard
-      // We limit search to "likely" range to avoid false positives with duplicate colors
-      // A better way is to iterate prev column and current column from bottom and align them.
-      
-      // Let's implement the alignment logic:
-      // We can't easily align two arrays with gaps.
-      // Revert to: Search upwards in prev board
-      
-      let prevRowMatch = -1;
-      
-      // Limit lookback to prevent matching a tile that is "too high" to be reasonable? 
-      // No, in match-3, a tile can fall from row 0 to row 10.
-      
-      // We need to keep track of used prev tiles to preserve order
-      // But since we iterate bottom-up, we naturally consume bottom-most matches first.
-      
-      for (let pr = r; pr >= 0; pr--) {
-        // Check if this prev tile type matches and (crucially) hasn't been "skipped" over
-        // The issue with simple search is duplicate colors.
-        // If current col is [Red, Red] and prev is [Red, Blue, Red] (Blue popped)
-        // Bottom Red matches Bottom Red.
-        // Top Red matches Top Red.
-        // This is fine.
-        
-        // What if prev: [Red, Red], Next: [Red, Red] (Moved down?)
-        // If everything moved down, say Prev: [Red, Red, Gap], Next: [New, Red, Red]
-        // Bottom Red matches Prev Middle Red.
-        // Middle Red matches Prev Top Red.
-        // Top New is New.
-        
-        // So we need to search from the "highest available prev row" downwards?
-        // No, bottom-up.
-        
-        // To do this robustly: 
-        // We really need a separate pass or to simulate the column.
-        
-        // Let's try the relative counting method used in my thought process.
-        // But for code simplicity and performance in render loop:
-        // Let's just do a search with a "consumed" limit? 
-        // We can't modify state.
-        
-        // Alternative:
-        // Scan bottom-up. Keep a pointer to `prevRow`.
-        // Start `prevRow` at `r`.
-        // If `prev[prevRow]` == `current[r]`, match!
-        // Else `prevRow--`. Repeat until match or `prevRow < 0`.
-        // If match, `offset = r - prevRow`. Set `prevRow` for next iteration to `match - 1`.
-        
-        // Example: Prev [A, B, C], Next [D, A, B]
-        // r=2 (B): prevRow starts 2(C)!=B. 1(B)==B. Match at 1. Offset=1. New prevRow limit=0.
-        // r=1 (A): prevRow starts 0(A)==A. Match at 0. Offset=1. New prevRow limit=-1.
-        // r=0 (D): prevRow starts -1. Stop. New tile.
-      }
-    }
-  }
-  
   // Let's implement the pointer approach correctly
   for (let c = 0; c < cols; c++) {
     let prevPtr = rows - 1;
@@ -351,4 +272,3 @@ export const Board = memo(function Board({
     </>
   );
 });
-

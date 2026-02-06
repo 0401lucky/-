@@ -36,7 +36,7 @@ export async function GET(
     // 检查当前用户的参与状态
     let userStatus = null;
     const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get("session")?.value;
+    const sessionCookie = cookieStore.get("app_session")?.value ?? cookieStore.get("session")?.value;
 
     if (sessionCookie) {
       const session = verifySession(sessionCookie);

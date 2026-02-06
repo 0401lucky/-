@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import Image from 'next/image';
 import { Search, Filter, ArrowUpDown, LayoutGrid, Award } from 'lucide-react';
 import { CardConfig, Rarity } from '@/lib/cards/types';

@@ -83,7 +83,7 @@ export async function POST() {
     const log: PointsLog = {
       id: nanoid(),
       amount: -amount,
-      source: 'exchange' as any,
+      source: 'exchange',
       description: `购买动物卡抽卡次数 x${drawAward}`,
       balance,
       createdAt: Date.now(),

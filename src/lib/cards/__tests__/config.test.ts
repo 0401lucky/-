@@ -22,8 +22,8 @@ const ALBUM_S2_COUNTS: Record<Rarity, number> = {
 
 describe("card configuration", () => {
   it("defines cards for all albums", () => {
-    expect(ALBUMS.length).toBe(2);
-    expect(CARDS.length).toBe(59); // 20 (S1) + 39 (S2)
+    expect(ALBUMS.length).toBe(3);
+    expect(CARDS.length).toBe(137); // 20 (S1) + 39 (S2) + 78 (Tarot)
   });
 
   it("assigns the expected number of cards per rarity for each album", () => {

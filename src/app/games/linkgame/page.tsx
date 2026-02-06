@@ -60,9 +60,9 @@ export default function LinkGamePage() {
   const [combo, setCombo] = useState(0);
   const [hintsUsed, setHintsUsed] = useState(0);
   const [shufflesUsed, setShufflesUsed] = useState(0);
-  const [matchedPairs, setMatchedPairs] = useState(0);
+  const [, setMatchedPairs] = useState(0);
   const [timeRemaining, setTimeRemaining] = useState(0);
-  const [moves, setMoves] = useState<LinkGameMove[]>([]);
+  const [, setMoves] = useState<LinkGameMove[]>([]);
   const [shakingIndices, setShakingIndices] = useState<number[]>([]);
   const [matchingIndices, setMatchingIndices] = useState<number[]>([]);
   const [matchPaths, setMatchPaths] = useState<LinkGamePosition[][] | null>(null);
@@ -98,20 +98,35 @@ export default function LinkGamePage() {
     fetchStatus().then(() => setPhase('select'));
   }, [fetchStatus]);
 
+  const applyRestoredSession = useCallback((activeSession: NonNullable<typeof session>) => {
+    setBoard(activeSession.tileLayout);
+    setSelectedDifficulty(activeSession.difficulty);
+    setTimeRemaining((prev) => {
+      const next = prev > 0 ? prev : activeSession.config.timeLimit;
+      timeRemainingRef.current = next;
+      return next;
+    });
+    setPhase('playing');
+  }, []);
+
+  const applyFreshSession = useCallback((activeSession: NonNullable<typeof session>) => {
+    setBoard(activeSession.tileLayout);
+    setTimeRemaining(activeSession.config.timeLimit);
+    timeRemainingRef.current = activeSession.config.timeLimit;
+    setPhase('playing');
+    setSelectedDifficulty(activeSession.difficulty);
+  }, []);
+
   useEffect(() => {
     if (session && phase !== 'result') {
       if (isRestored) {
-        setBoard(session.tileLayout);
-        setSelectedDifficulty(session.difficulty);
-        setTimeRemaining((prev) => {
-          const next = prev > 0 ? prev : session.config.timeLimit;
-          timeRemainingRef.current = next;
-          return next;
+        const frame = requestAnimationFrame(() => {
+          applyRestoredSession(session);
         });
-        setPhase('playing');
+        return () => cancelAnimationFrame(frame);
       }
     }
-  }, [session, isRestored, phase]);
+  }, [session, isRestored, phase, applyRestoredSession]);
 
   const handleGameOver = useCallback(async (completed: boolean) => {
     if (timerRef.current) {
@@ -213,13 +228,12 @@ export default function LinkGamePage() {
 
   useEffect(() => {
     if (session && phase === 'select' && !isRestored) {
-       setBoard(session.tileLayout);
-       setTimeRemaining(session.config.timeLimit);
-       timeRemainingRef.current = session.config.timeLimit;
-       setPhase('playing');
-       setSelectedDifficulty(session.difficulty);
+       const frame = requestAnimationFrame(() => {
+         applyFreshSession(session);
+       });
+       return () => cancelAnimationFrame(frame);
     }
-  }, [session, phase, isRestored]);
+  }, [session, phase, isRestored, applyFreshSession]);
 
 
   const handleTileClick = (index: number) => {

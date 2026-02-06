@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, use } from 'react';
+import { useCallback, useEffect, useState, use } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -86,7 +86,20 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
   const [editThreshold, setEditThreshold] = useState(100);
   const [editPrizes, setEditPrizes] = useState<PrizeInput[]>([]);
 
-  const fetchData = async () => {
+  const initEditForm = useCallback((r: Raffle) => {
+    setEditTitle(r.title);
+    setEditDescription(r.description);
+    setEditCoverImage(r.coverImage || '');
+    setEditTriggerType(r.triggerType);
+    setEditThreshold(r.threshold);
+    setEditPrizes(r.prizes.map(p => ({
+      name: p.name,
+      dollars: p.dollars,
+      quantity: p.quantity,
+    })));
+  }, []);
+
+  const fetchData = useCallback(async () => {
     try {
       const res = await fetch(`/api/admin/raffle/${id}`);
       if (res.ok) {
@@ -108,24 +121,11 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
     } finally {
       setLoading(false);
     }
-  };
-
-  const initEditForm = (r: Raffle) => {
-    setEditTitle(r.title);
-    setEditDescription(r.description);
-    setEditCoverImage(r.coverImage || '');
-    setEditTriggerType(r.triggerType);
-    setEditThreshold(r.threshold);
-    setEditPrizes(r.prizes.map(p => ({
-      name: p.name,
-      dollars: p.dollars,
-      quantity: p.quantity,
-    })));
-  };
+  }, [id, initEditForm]);
 
   useEffect(() => {
     void fetchData();
-  }, [id]);
+  }, [fetchData]);
 
   // 检查 URL 参数是否有 edit=true
   useEffect(() => {

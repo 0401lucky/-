@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft, Gift, Loader2, Users, Trophy, Clock, ChevronRight,
-  User as UserIcon, LogOut, Sparkles, Calendar, Target
+  User as UserIcon, LogOut, Sparkles, Calendar
 } from 'lucide-react';
 
 interface RafflePrize {
@@ -178,8 +179,8 @@ export default function RaffleListPage() {
 
                   {/* 封面 */}
                   {raffle.coverImage && (
-                    <div className="w-full h-32 rounded-2xl mb-4 overflow-hidden bg-stone-100">
-                      <img src={raffle.coverImage} alt={raffle.title} className="w-full h-full object-cover" />
+                    <div className="relative w-full h-32 rounded-2xl mb-4 overflow-hidden bg-stone-100">
+                      <Image src={raffle.coverImage} alt={raffle.title} fill className="object-cover" unoptimized />
                     </div>
                   )}
 

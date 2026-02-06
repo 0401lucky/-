@@ -16,7 +16,7 @@ export async function POST(
 
     // 验证登录状态
     const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get("session")?.value;
+    const sessionCookie = cookieStore.get("app_session")?.value ?? cookieStore.get("session")?.value;
 
     if (!sessionCookie) {
       return NextResponse.json(
@@ -61,10 +61,15 @@ export async function POST(
 
     // 检查是否需要自动开奖
     if (result.shouldDraw) {
-      // 异步触发开奖，不阻塞响应
-      executeRaffleDraw(id).catch((err) => {
+      // 同步完成“开奖结果落库”，奖励发放走后台，避免 Serverless fire-and-forget 丢执行
+      try {
+        const drawResult = await executeRaffleDraw(id, { waitForDelivery: false });
+        if (!drawResult.success && drawResult.message !== "正在开奖中，请稍后") {
+          console.error(`自动开奖未完成: ${drawResult.message}`);
+        }
+      } catch (err) {
         console.error("自动开奖失败:", err);
-      });
+      }
     }
 
     return NextResponse.json({

@@ -6,10 +6,10 @@ import { useRouter } from 'next/navigation';
 import {
   ArrowLeft, Loader2, Search, Users,
   LogOut, User as UserIcon, X,
-  ChevronRight, RefreshCw, Trash2, CreditCard, LayoutGrid, Layers,
+  ChevronRight, RefreshCw, CreditCard, LayoutGrid, Layers,
   BookOpen, Save, Edit2, Star
 } from 'lucide-react';
-import { CARDS, ALBUMS } from '@/lib/cards/config';
+import { CARDS } from '@/lib/cards/config';
 
 interface UserWithCardStats {
   id: number;
