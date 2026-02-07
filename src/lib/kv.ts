@@ -368,10 +368,14 @@ export async function rollbackDirectClaim(
 ): Promise<{ success: boolean; message: string }> {
   const projectKey = `projects:${projectId}`;
   const claimKey = `claimed:${projectId}:${userId}`;
+  const userClaimedKey = `claimed:user:${userId}`;
 
   const luaScript = `
     local projectKey = KEYS[1]
     local claimKey = KEYS[2]
+    local userClaimedKey = KEYS[3]
+
+    local projectId = ARGV[1]
 
     local existingJson = redis.call('GET', claimKey)
     if not existingJson then
@@ -384,6 +388,7 @@ export async function rollbackDirectClaim(
     end
 
     redis.call('DEL', claimKey)
+    redis.call('SREM', userClaimedKey, projectId)
 
     local projectJson = redis.call('GET', projectKey)
     if not projectJson then
@@ -418,8 +423,8 @@ export async function rollbackDirectClaim(
 
   const result = await kv.eval(
     luaScript,
-    [projectKey, claimKey],
-    []
+    [projectKey, claimKey, userClaimedKey],
+    [projectId]
   ) as [number, string];
 
   const [ok, message] = result;
@@ -434,11 +439,29 @@ export async function getProjectRecords(projectId: string, start = 0, end = 49):
   return await kv.lrange<ClaimRecord>(`records:${projectId}`, start, end);
 }
 
-// [Perf] 检查用户是否领取过任何福利（包括兑换码和抽奖）- 优化为 O(1) 查询
+// 检查用户是否领取过任何福利（包括兑换码和抽奖）
+// [Fix] 对 claimed:user 索引做自愈，避免历史脏索引导致误判
 export async function hasUserClaimedAny(userId: number): Promise<boolean> {
-  // 检查用户领取索引集合（O(1) 操作）
-  const claimCount = await kv.scard(`claimed:user:${userId}`);
-  if (claimCount > 0) return true;
+  const userClaimedKey = `claimed:user:${userId}`;
+
+  // 快速检查索引集合是否为空
+  const claimCount = await kv.scard(userClaimedKey);
+  if (claimCount > 0) {
+    // 二次校验索引对应的领取记录，规避历史脏数据
+    const claimedProjectIds = await kv.smembers(userClaimedKey) as string[];
+    if (claimedProjectIds.length > 0) {
+      const claimKeys = claimedProjectIds.map((projectId) => `claimed:${projectId}:${userId}`);
+      const records = await kv.mget<(ClaimRecord | null)[]>(...claimKeys);
+
+      const staleProjectIds = claimedProjectIds.filter((_, index) => records?.[index] == null);
+      if (staleProjectIds.length > 0) {
+        await kv.srem(userClaimedKey, ...staleProjectIds as [string, ...string[]]);
+      }
+
+      const hasValidClaim = (records ?? []).some((record) => record !== null);
+      if (hasValidClaim) return true;
+    }
+  }
 
   // 检查抽奖记录
   const lotteryRecords = await kv.lrange(`lottery:user:records:${userId}`, 0, 0);
