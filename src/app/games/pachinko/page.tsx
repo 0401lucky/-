@@ -24,6 +24,16 @@ export default function PachinkoPage() {
     fetchStatus();
   }, [fetchStatus]);
 
+  useEffect(() => {
+    if (!status?.inCooldown) return;
+
+    const timer = window.setInterval(() => {
+      void fetchStatus();
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [status?.inCooldown, fetchStatus]);
+
   // 游戏结束时自动提交
   useEffect(() => {
     // 必须满足：游戏结束、有会话、未在提交中、未提交过

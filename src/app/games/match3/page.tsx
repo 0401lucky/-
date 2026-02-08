@@ -149,6 +149,16 @@ export default function Match3Page() {
     fetchStatus().finally(() => setPhase('ready'));
   }, [fetchStatus]);
 
+  useEffect(() => {
+    if (phase !== 'ready' || !status?.inCooldown) return;
+
+    const timer = window.setInterval(() => {
+      void fetchStatus();
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [phase, status?.inCooldown, fetchStatus]);
+
   // Score feedback effect
   useEffect(() => {
     if (score > prevScoreRef.current) {
@@ -380,8 +390,8 @@ export default function Match3Page() {
     setBoard([]);
     setScore(0);
     resetSubmitFlag();
-    await fetchStatus();
     setPhase('ready');
+    void fetchStatus();
   }, [fetchStatus, resetSubmitFlag]);
 
   const handleBackToGames = useCallback(() => {

@@ -47,6 +47,16 @@ export default function MemoryGamePage() {
     fetchStatus().then(() => setPhase('select'));
   }, [fetchStatus]);
 
+  useEffect(() => {
+    if (phase !== 'select' || !status?.inCooldown) return;
+
+    const timer = window.setInterval(() => {
+      void fetchStatus();
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [phase, status?.inCooldown, fetchStatus]);
+
   // 同步 session 状态
   useEffect(() => {
     if (session && phase === 'select') {

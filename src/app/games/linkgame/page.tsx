@@ -98,6 +98,16 @@ export default function LinkGamePage() {
     fetchStatus().then(() => setPhase('select'));
   }, [fetchStatus]);
 
+  useEffect(() => {
+    if (phase !== 'select' || !status?.inCooldown) return;
+
+    const timer = window.setInterval(() => {
+      void fetchStatus();
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [phase, status?.inCooldown, fetchStatus]);
+
   const applyRestoredSession = useCallback((activeSession: NonNullable<typeof session>) => {
     setBoard(activeSession.tileLayout);
     setSelectedDifficulty(activeSession.difficulty);
