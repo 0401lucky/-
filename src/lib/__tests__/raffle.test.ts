@@ -12,6 +12,8 @@ vi.mock('@vercel/kv', () => ({
     srem: vi.fn(),
     eval: vi.fn(),
     lpush: vi.fn(),
+    rpop: vi.fn(),
+    del: vi.fn(),
   },
 }));
 
@@ -168,29 +170,8 @@ describe('raffle robustness', () => {
       updatedAt: 1,
     };
 
-    const endedRaffleForDelivery = {
-      ...raffleBeforeDraw,
-      status: 'ended' as const,
-      winnersCount: 1,
-      winners: [
-        {
-          entryId: 'entry-1',
-          userId: 1001,
-          username: 'alice',
-          prizeId: 'prize-1',
-          prizeName: '一等奖',
-          dollars: 10,
-          rewardStatus: 'pending' as const,
-        },
-      ],
-    };
-
-    mockKvSet
-      .mockResolvedValueOnce('OK')
-      .mockResolvedValueOnce('OK');
-    mockKvGet
-      .mockResolvedValueOnce(raffleBeforeDraw)
-      .mockResolvedValueOnce(endedRaffleForDelivery);
+    mockKvSet.mockResolvedValue('OK');
+    mockKvGet.mockResolvedValueOnce(raffleBeforeDraw);
     mockKvLrange.mockResolvedValue([
       {
         id: 'entry-1',
@@ -202,12 +183,9 @@ describe('raffle robustness', () => {
       },
     ]);
     mockKvSrem.mockResolvedValue(1);
+    mockKvLpush.mockResolvedValue(1);
     mockKvEval.mockResolvedValue(1);
-    mockCreditQuotaToUser.mockImplementation(
-      () => new Promise(() => {
-        // keep pending to verify executeRaffleDraw doesn't await delivery in auto mode
-      })
-    );
+    mockCreditQuotaToUser.mockResolvedValue({ success: true, message: '充值成功' });
 
     const drawPromise = executeRaffleDraw('raffle-4', { waitForDelivery: false });
     const timedResult = await Promise.race([
@@ -218,6 +196,65 @@ describe('raffle robustness', () => {
     ]);
 
     expect(timedResult).toMatchObject({ success: true });
+    expect(mockCreditQuotaToUser).toHaveBeenCalledTimes(0);
+    expect(mockKvLpush).toHaveBeenCalledWith(
+      'raffle:delivery:queue',
+      expect.stringContaining('"raffleId":"raffle-4"')
+    );
+  });
+
+  it('retries stale pending rewards in retry flow', async () => {
+    const raffleWithStalePending = {
+      id: 'raffle-5',
+      title: '待确认重试活动',
+      description: 'desc',
+      prizes: [
+        { id: 'prize-1', name: '一等奖', dollars: 10, quantity: 1 },
+      ],
+      triggerType: 'manual' as const,
+      threshold: 1,
+      status: 'ended' as const,
+      participantsCount: 1,
+      winnersCount: 1,
+      winners: [
+        {
+          entryId: 'entry-1',
+          userId: 1001,
+          username: 'alice',
+          prizeId: 'prize-1',
+          prizeName: '一等奖',
+          dollars: 10,
+          rewardStatus: 'pending' as const,
+          rewardAttempts: 1,
+          rewardAttemptedAt: Date.now() - 11 * 60 * 1000,
+        },
+      ],
+      createdBy: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      drawnAt: Date.now() - 11 * 60 * 1000,
+    };
+
+    mockKvSet.mockResolvedValue('OK');
+    mockKvGet
+      .mockResolvedValueOnce(raffleWithStalePending)
+      .mockResolvedValueOnce(raffleWithStalePending);
+    mockKvEval.mockResolvedValue(1);
+    mockKvLpush.mockResolvedValue(1);
+    mockCreditQuotaToUser.mockResolvedValue({
+      success: true,
+      message: '充值成功',
+    });
+
+    const result = await retryFailedRewards('raffle-5');
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('超时待确认 1 笔');
     expect(mockCreditQuotaToUser).toHaveBeenCalledTimes(1);
+
+    const finalRaffle = mockKvSet.mock.calls[1][1] as {
+      winners?: Array<{ rewardStatus: string }>;
+    };
+    expect(finalRaffle.winners?.[0]?.rewardStatus).toBe('delivered');
   });
 });

@@ -54,6 +54,7 @@ git push -u origin main
 | `SESSION_SECRET` | `random-long-secret` | Session 签名密钥（生产环境必填，建议 ≥32 位随机字符串） |
 | `NEW_API_ADMIN_USERNAME` | `admin` | new-api 管理员账号（用于商店直充/同步用户等管理员能力） |
 | `NEW_API_ADMIN_PASSWORD` | `password` | new-api 管理员密码 |
+| `CRON_SECRET` | `random-long-secret` | 发奖队列内部任务鉴权（Vercel Cron Bearer Token） |
 
 > KV 相关的环境变量 (`KV_REST_API_URL`, `KV_REST_API_TOKEN`) 会在连接 KV 数据库后自动配置。
 
@@ -81,6 +82,9 @@ SESSION_SECRET=change-me-to-a-long-random-string
 # 可选：用于商店直充/用户同步等管理员能力
 NEW_API_ADMIN_USERNAME=your-admin-username
 NEW_API_ADMIN_PASSWORD=your-admin-password
+
+# 可选：用于多人抽奖发奖队列定时任务鉴权
+CRON_SECRET=your-cron-secret
 
 # 本地开发需要 Vercel KV 配置
 # 可以从 Vercel 项目设置中复制
@@ -129,6 +133,12 @@ npm run lint
 ## 项目结构
 
 ```
+
+## 多人抽奖发奖队列
+
+- 多人抽奖开奖后会先落库中奖名单，再将“直充发奖”写入 KV 队列。
+- 队列由 `vercel.json` 中的 Cron 每日触发一次（路径：`/api/internal/raffle/delivery`，默认 UTC 03:00）。
+- 发奖处理策略：单任务最多处理 20 位中奖者，发奖并发上限 5；失败和超时 pending 可重试。
 src/
 ├── app/
 │   ├── page.tsx              # 首页 - 项目列表

@@ -24,7 +24,20 @@ interface RaffleWinner {
   dollars: number;
   rewardStatus: 'pending' | 'delivered' | 'failed';
   rewardMessage?: string;
+  rewardAttemptedAt?: number;
+  rewardAttempts?: number;
   deliveredAt?: number;
+}
+
+const PENDING_RETRY_AFTER_MS = 10 * 60 * 1000;
+
+function isStalePendingReward(winner: RaffleWinner, drawnAt?: number, now = Date.now()): boolean {
+  if (winner.rewardStatus !== 'pending') return false;
+  const attempts = winner.rewardAttempts ?? 0;
+  if (attempts === 0) return false;
+  const lastAttemptAt = winner.rewardAttemptedAt ?? drawnAt;
+  if (!lastAttemptAt) return false;
+  return now - lastAttemptAt >= PENDING_RETRY_AFTER_MS;
 }
 
 interface RaffleEntry {
@@ -168,7 +181,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
 
       if (data.success) {
         await fetchData();
-        alert(`开奖成功！共 ${data.winners?.length || 0} 人中奖`);
+        alert(data.message || `开奖成功！共 ${data.winners?.length || 0} 人中奖`);
       } else {
         setError(data.message || '开奖失败');
       }
@@ -202,7 +215,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
   };
 
   const handleRetryFailedRewards = async () => {
-    if (!confirm('确定要重试发放失败的奖励吗？')) return;
+    if (!confirm('确定要重试发放失败或超时未确认的奖励吗？')) return;
 
     setRetrying(true);
     setError(null);
@@ -370,7 +383,12 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
 
   if (!raffle) return null;
 
+  const now = Date.now();
   const failedRewards = raffle.winners?.filter(w => w.rewardStatus === 'failed') || [];
+  const stalePendingRewards = raffle.winners?.filter((winner) =>
+    isStalePendingReward(winner, raffle.drawnAt, now)
+  ) || [];
+  const retryableRewardsCount = failedRewards.length + stalePendingRewards.length;
 
   // 编辑模式渲染
   if (isEditing && raffle.status === 'draft') {
@@ -776,10 +794,10 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
                 中奖名单
               </h2>
 
-              {failedRewards.length > 0 && (
+              {retryableRewardsCount > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-red-600">
-                    {failedRewards.length} 笔发放失败
+                    {failedRewards.length} 笔失败，{stalePendingRewards.length} 笔超时待确认
                   </span>
                   <button
                     onClick={handleRetryFailedRewards}
@@ -824,10 +842,17 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
                           </span>
                         )}
                         {winner.rewardStatus === 'pending' && (
-                          <span className="flex items-center gap-1 text-yellow-600">
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            发放中
-                          </span>
+                          isStalePendingReward(winner, raffle.drawnAt, now) ? (
+                            <span className="flex items-center gap-1 text-orange-600" title={winner.rewardMessage}>
+                              <AlertTriangle className="w-4 h-4" />
+                              待重试
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1 text-yellow-600">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              发放中
+                            </span>
+                          )
                         )}
                         {winner.rewardStatus === 'failed' && (
                           <span className="flex items-center gap-1 text-red-600" title={winner.rewardMessage}>

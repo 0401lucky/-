@@ -5,7 +5,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { verifySession, isAdminUsername } from "@/lib/auth";
-import { executeRaffleDraw, getRaffle } from "@/lib/raffle";
+import { executeRaffleDraw, getRaffle, processQueuedRaffleDeliveries } from "@/lib/raffle";
 
 async function checkAdmin() {
   const cookieStore = await cookies();
@@ -58,7 +58,8 @@ export async function POST(
       );
     }
 
-    const result = await executeRaffleDraw(id);
+    // 管理端也走入队发奖，避免大量中奖用户时请求超时
+    const result = await executeRaffleDraw(id, { waitForDelivery: false });
 
     if (!result.success) {
       return NextResponse.json(
@@ -67,11 +68,15 @@ export async function POST(
       );
     }
 
+    // 管理端触发开奖后，顺带处理一个队列任务，提升“已开奖后立即到账”体验
+    const queueResult = await processQueuedRaffleDeliveries(1);
+
     return NextResponse.json({
       success: true,
       message: result.message,
       winners: result.winners,
       deliveryResults: result.deliveryResults,
+      queueResult,
     });
   } catch (error) {
     console.error("开奖失败:", error);

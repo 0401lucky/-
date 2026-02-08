@@ -39,6 +39,8 @@ export interface RaffleWinner {
   dollars: number;                // 中奖金额
   rewardStatus: RewardStatus;     // 奖励发放状态
   rewardMessage?: string;         // 发放结果描述
+  rewardAttemptedAt?: number;     // 最近一次发放尝试时间
+  rewardAttempts?: number;        // 发放尝试次数
   deliveredAt?: number;           // 发放时间
 }
 

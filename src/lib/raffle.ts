@@ -29,6 +29,12 @@ const RAFFLE_ENTRY_COUNT_PREFIX = "raffle:entry_count:";  // 参与计数
 const USER_RAFFLES_PREFIX = "user:raffles:";              // 用户参与的活动
 const USER_RAFFLE_WINS_PREFIX = "user:raffle_wins:";      // 用户中奖记录
 const RAFFLE_DRAW_LOCK_PREFIX = "raffle:draw_lock:";      // 开奖分布式锁
+const RAFFLE_DELIVERY_QUEUE_KEY = "raffle:delivery:queue"; // 发奖任务队列
+const RAFFLE_DELIVERY_ENQUEUED_PREFIX = "raffle:delivery:enqueued:"; // 发奖任务去重标记
+
+const DELIVERY_CONCURRENCY = 5; // P1: 发奖并发上限
+const DELIVERY_BATCH_SIZE = 20; // 单次队列处理的最大中奖人数
+const PENDING_RETRY_AFTER_MS = 10 * 60 * 1000; // pending 超过 10 分钟可重试
 
 // ============ 活动 CRUD ============
 
@@ -453,6 +459,93 @@ function shuffleArray<T>(array: T[]): T[] {
   return shuffled;
 }
 
+type RewardDeliveryResult = {
+  userId: number;
+  username: string;
+  prizeName: string;
+  success: boolean;
+  message: string;
+};
+
+type DeliveryQueueJobReason = "draw" | "retry";
+
+interface DeliveryQueueJob {
+  raffleId: string;
+  reason: DeliveryQueueJobReason;
+  enqueuedAt: number;
+  attempts: number;
+}
+
+function getDeliveryQueueFlagKey(raffleId: string): string {
+  return `${RAFFLE_DELIVERY_ENQUEUED_PREFIX}${raffleId}`;
+}
+
+function isPendingRetryable(
+  winner: RaffleWinner,
+  raffleDrawnAt?: number,
+  now = Date.now()
+): boolean {
+  if (winner.rewardStatus !== "pending") return false;
+
+  const attempts = winner.rewardAttempts ?? 0;
+  if (attempts === 0) {
+    return true;
+  }
+
+  const lastAttemptAt = winner.rewardAttemptedAt ?? raffleDrawnAt;
+  if (!lastAttemptAt) {
+    return true;
+  }
+
+  return now - lastAttemptAt >= PENDING_RETRY_AFTER_MS;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return [];
+
+  const results = new Array<R>(items.length);
+  const maxWorkers = Math.max(1, Math.min(concurrency, items.length));
+  let nextIndex = 0;
+
+  const workers = Array.from({ length: maxWorkers }, async () => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= items.length) {
+        return;
+      }
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
+
+export async function enqueueRaffleDelivery(
+  raffleId: string,
+  reason: DeliveryQueueJobReason = "draw"
+): Promise<boolean> {
+  const flagKey = getDeliveryQueueFlagKey(raffleId);
+  const flagSet = await kv.set(flagKey, Date.now(), { nx: true, ex: 60 * 60 });
+  if (flagSet !== "OK") {
+    return false;
+  }
+
+  const job: DeliveryQueueJob = {
+    raffleId,
+    reason,
+    enqueuedAt: Date.now(),
+    attempts: 0,
+  };
+  await kv.lpush(RAFFLE_DELIVERY_QUEUE_KEY, JSON.stringify(job));
+  return true;
+}
+
 /**
  * 获取开奖分布式锁
  */
@@ -483,9 +576,10 @@ async function releaseDrawLock(raffleId: string, lockToken: string): Promise<voi
  */
 export async function executeRaffleDraw(
   raffleId: string,
-  options?: { waitForDelivery?: boolean }
+  options?: { waitForDelivery?: boolean; queueOnAsync?: boolean }
 ): Promise<DrawRaffleResult> {
   const waitForDelivery = options?.waitForDelivery ?? true;
+  const queueOnAsync = options?.queueOnAsync ?? true;
 
   // 1. 获取分布式锁
   const lockToken = await acquireDrawLock(raffleId);
@@ -562,14 +656,24 @@ export async function executeRaffleDraw(
     await kv.srem(RAFFLE_ACTIVE_KEY, raffleId);
 
     if (!waitForDelivery) {
-      // 自动开奖路径：先确保开奖结果落库，再异步发放奖励，避免 join 请求长时间阻塞
-      void deliverRewards(raffleId, winners).catch((error) => {
-        console.error(`自动开奖奖励发放失败 - 活动 ${raffleId}:`, error);
-      });
+      // 自动开奖路径：先确保开奖结果落库，再入队处理，避免 Serverless fire-and-forget 丢失
+      let enqueueFailed = false;
+      if (queueOnAsync) {
+        try {
+          await enqueueRaffleDelivery(raffleId, "draw");
+        } catch (error) {
+          enqueueFailed = true;
+          console.error(`自动开奖奖励发放入队失败 - 活动 ${raffleId}:`, error);
+        }
+      }
 
       return {
         success: true,
-        message: `开奖成功，共 ${winners.length} 人中奖`,
+        message: enqueueFailed
+          ? `开奖成功，共 ${winners.length} 人中奖，但发奖入队失败，请管理员重试`
+          : queueOnAsync
+            ? `开奖成功，共 ${winners.length} 人中奖，奖励发放排队处理中`
+            : `开奖成功，共 ${winners.length} 人中奖`,
         winners,
       };
     }
@@ -595,16 +699,8 @@ export async function executeRaffleDraw(
 async function deliverRewards(
   raffleId: string,
   winners: RaffleWinner[]
-): Promise<
-  { userId: number; username: string; prizeName: string; success: boolean; message: string }[]
-> {
-  const results: {
-    userId: number;
-    username: string;
-    prizeName: string;
-    success: boolean;
-    message: string;
-  }[] = [];
+): Promise<RewardDeliveryResult[]> {
+  const results: RewardDeliveryResult[] = [];
 
   const raffle = await getRaffle(raffleId);
   if (!raffle) return results;
@@ -615,86 +711,126 @@ async function deliverRewards(
   currentWinners.forEach((w, idx) => winnerIndexByEntryId.set(w.entryId, idx));
   const updatedWinners = [...currentWinners];
 
-  for (const winnerToProcess of winners) {
-    const winnerIndex = winnerIndexByEntryId.get(winnerToProcess.entryId);
-    if (winnerIndex === undefined) continue;
+  const updates = await mapWithConcurrency(
+    winners,
+    DELIVERY_CONCURRENCY,
+    async (winnerToProcess): Promise<{
+      winnerIndex: number;
+      winner: RaffleWinner;
+      result: RewardDeliveryResult;
+    } | null> => {
+      const winnerIndex = winnerIndexByEntryId.get(winnerToProcess.entryId);
+      if (winnerIndex === undefined) return null;
 
-    const winner = updatedWinners[winnerIndex];
-    if (winner.rewardStatus === "delivered") continue;
+      const winner = updatedWinners[winnerIndex];
+      if (winner.rewardStatus === "delivered") return null;
 
-    try {
-      const creditResult = await creditQuotaToUser(winner.userId, winner.dollars) as
-        { success: boolean; message: string; newQuota?: number; uncertain?: boolean };
+      const attemptedAt = Date.now();
+      const rewardAttempts = (winner.rewardAttempts ?? 0) + 1;
 
-      if (creditResult.success) {
-        const deliveredWinner: RaffleWinner = {
-          ...winner,
-          rewardStatus: "delivered",
-          rewardMessage: creditResult.message,
-          deliveredAt: Date.now(),
-        };
-        updatedWinners[winnerIndex] = deliveredWinner;
-        results.push({
-          userId: winner.userId,
-          username: winner.username,
-          prizeName: winner.prizeName,
-          success: true,
-          message: creditResult.message,
-        });
+      try {
+        const creditResult = await creditQuotaToUser(winner.userId, winner.dollars) as
+          { success: boolean; message: string; newQuota?: number; uncertain?: boolean };
 
-        try {
-          // 记录到用户中奖列表（非关键链路，失败仅记录日志，避免误判为发放失败）
-          await kv.lpush(`${USER_RAFFLE_WINS_PREFIX}${winner.userId}`, {
-            raffleId,
-            raffleTitle: raffle.title,
-            ...deliveredWinner,
-          });
-        } catch (logError) {
-          console.error(`记录中奖记录失败 - 用户 ${winner.userId}:`, logError);
+        if (creditResult.success) {
+          const deliveredWinner: RaffleWinner = {
+            ...winner,
+            rewardStatus: "delivered",
+            rewardMessage: creditResult.message,
+            rewardAttemptedAt: attemptedAt,
+            rewardAttempts,
+            deliveredAt: Date.now(),
+          };
+
+          try {
+            // 记录到用户中奖列表（非关键链路，失败仅记录日志，避免误判为发放失败）
+            await kv.lpush(`${USER_RAFFLE_WINS_PREFIX}${winner.userId}`, {
+              raffleId,
+              raffleTitle: raffle.title,
+              ...deliveredWinner,
+            });
+          } catch (logError) {
+            console.error(`记录中奖记录失败 - 用户 ${winner.userId}:`, logError);
+          }
+
+          return {
+            winnerIndex,
+            winner: deliveredWinner,
+            result: {
+              userId: winner.userId,
+              username: winner.username,
+              prizeName: winner.prizeName,
+              success: true,
+              message: creditResult.message,
+            },
+          };
         }
-      } else if (creditResult.uncertain) {
-        // 结果不确定：不要标记失败（避免重复发放），保持 pending 便于后续人工核对
-        updatedWinners[winnerIndex] = {
-          ...winner,
-          rewardStatus: "pending",
-          rewardMessage: creditResult.message,
+
+        if (creditResult.uncertain) {
+          // 结果不确定：不要标记失败（避免重复发放），保持 pending 便于后续人工核对
+          return {
+            winnerIndex,
+            winner: {
+              ...winner,
+              rewardStatus: "pending",
+              rewardMessage: creditResult.message,
+              rewardAttemptedAt: attemptedAt,
+              rewardAttempts,
+            },
+            result: {
+              userId: winner.userId,
+              username: winner.username,
+              prizeName: winner.prizeName,
+              success: false,
+              message: creditResult.message,
+            },
+          };
+        }
+
+        return {
+          winnerIndex,
+          winner: {
+            ...winner,
+            rewardStatus: "failed",
+            rewardMessage: creditResult.message,
+            rewardAttemptedAt: attemptedAt,
+            rewardAttempts,
+          },
+          result: {
+            userId: winner.userId,
+            username: winner.username,
+            prizeName: winner.prizeName,
+            success: false,
+            message: creditResult.message,
+          },
         };
-        results.push({
-          userId: winner.userId,
-          username: winner.username,
-          prizeName: winner.prizeName,
-          success: false,
-          message: creditResult.message,
-        });
-      } else {
-        updatedWinners[winnerIndex] = {
-          ...winner,
-          rewardStatus: "failed",
-          rewardMessage: creditResult.message,
+      } catch (error) {
+        console.error(`发放奖励失败 - 用户 ${winner.userId}:`, error);
+        return {
+          winnerIndex,
+          winner: {
+            ...winner,
+            rewardStatus: "failed",
+            rewardMessage: error instanceof Error ? error.message : "发放异常",
+            rewardAttemptedAt: attemptedAt,
+            rewardAttempts,
+          },
+          result: {
+            userId: winner.userId,
+            username: winner.username,
+            prizeName: winner.prizeName,
+            success: false,
+            message: "发放异常",
+          },
         };
-        results.push({
-          userId: winner.userId,
-          username: winner.username,
-          prizeName: winner.prizeName,
-          success: false,
-          message: creditResult.message,
-        });
       }
-    } catch (error) {
-      console.error(`发放奖励失败 - 用户 ${winner.userId}:`, error);
-      updatedWinners[winnerIndex] = {
-        ...winner,
-        rewardStatus: "failed",
-        rewardMessage: error instanceof Error ? error.message : "发放异常",
-      };
-      results.push({
-        userId: winner.userId,
-        username: winner.username,
-        prizeName: winner.prizeName,
-        success: false,
-        message: "发放异常",
-      });
     }
+  );
+
+  for (const update of updates) {
+    if (!update) continue;
+    updatedWinners[update.winnerIndex] = update.winner;
+    results.push(update.result);
   }
 
   // 更新活动中的中奖者信息
@@ -708,8 +844,199 @@ async function deliverRewards(
   return results;
 }
 
+function getRetryableWinners(
+  raffle: Pick<Raffle, "winners" | "drawnAt">,
+  now = Date.now()
+): RaffleWinner[] {
+  const winners = raffle.winners ?? [];
+  return winners.filter((winner) => {
+    if (winner.rewardStatus === "failed") return true;
+    return isPendingRetryable(winner, raffle.drawnAt, now);
+  });
+}
+
+function getWaitingPendingCount(
+  raffle: Pick<Raffle, "winners" | "drawnAt">,
+  now = Date.now()
+): number {
+  const winners = raffle.winners ?? [];
+  return winners.filter((winner) => {
+    if (winner.rewardStatus !== "pending") return false;
+    return !isPendingRetryable(winner, raffle.drawnAt, now);
+  }).length;
+}
+
+interface ProcessDeliveryJobResult {
+  status: "processed" | "locked" | "skipped";
+  deliveryResults: RewardDeliveryResult[];
+  retryableRemaining: number;
+  waitingPending: number;
+}
+
+async function processRaffleDeliveryJob(raffleId: string): Promise<ProcessDeliveryJobResult> {
+  const lockToken = await acquireDrawLock(raffleId);
+  if (!lockToken) {
+    return {
+      status: "locked",
+      deliveryResults: [],
+      retryableRemaining: 0,
+      waitingPending: 0,
+    };
+  }
+
+  try {
+    const raffle = await getRaffle(raffleId);
+    if (!raffle || raffle.status !== "ended" || !raffle.winners) {
+      return {
+        status: "skipped",
+        deliveryResults: [],
+        retryableRemaining: 0,
+        waitingPending: 0,
+      };
+    }
+
+    const now = Date.now();
+    const retryable = getRetryableWinners(raffle, now);
+    if (retryable.length === 0) {
+      return {
+        status: "skipped",
+        deliveryResults: [],
+        retryableRemaining: 0,
+        waitingPending: getWaitingPendingCount(raffle, now),
+      };
+    }
+
+    const currentBatch = retryable.slice(0, DELIVERY_BATCH_SIZE);
+    const deliveryResults = await deliverRewards(raffleId, currentBatch);
+
+    const latestRaffle = await getRaffle(raffleId);
+    if (!latestRaffle) {
+      return {
+        status: "processed",
+        deliveryResults,
+        retryableRemaining: 0,
+        waitingPending: 0,
+      };
+    }
+
+    const latestNow = Date.now();
+    return {
+      status: "processed",
+      deliveryResults,
+      retryableRemaining: getRetryableWinners(latestRaffle, latestNow).length,
+      waitingPending: getWaitingPendingCount(latestRaffle, latestNow),
+    };
+  } finally {
+    await releaseDrawLock(raffleId, lockToken);
+  }
+}
+
 /**
- * 重试发放失败的奖励
+ * 处理发奖队列（供定时任务/内部接口调用）
+ */
+export async function processQueuedRaffleDeliveries(
+  maxJobs = 1
+): Promise<{
+  success: boolean;
+  message: string;
+  processedJobs: number;
+  delivered: number;
+  failed: number;
+  pending: number;
+  skippedJobs: number;
+  lockedJobs: number;
+}> {
+  const jobsLimit = Math.max(1, Math.min(maxJobs, 20));
+
+  let processedJobs = 0;
+  let delivered = 0;
+  let failed = 0;
+  let pending = 0;
+  let skippedJobs = 0;
+  let lockedJobs = 0;
+
+  for (let i = 0; i < jobsLimit; i++) {
+    const rawJob = await kv.rpop<string>(RAFFLE_DELIVERY_QUEUE_KEY);
+    if (!rawJob) {
+      break;
+    }
+
+    let job: DeliveryQueueJob | null = null;
+    try {
+      job = JSON.parse(rawJob) as DeliveryQueueJob;
+    } catch {
+      continue;
+    }
+
+    if (!job?.raffleId) {
+      continue;
+    }
+
+    const flagKey = getDeliveryQueueFlagKey(job.raffleId);
+    const result = await processRaffleDeliveryJob(job.raffleId);
+
+    if (result.status === "locked") {
+      lockedJobs += 1;
+      await kv.lpush(
+        RAFFLE_DELIVERY_QUEUE_KEY,
+        JSON.stringify({ ...job, attempts: (job.attempts ?? 0) + 1, enqueuedAt: Date.now() })
+      );
+      continue;
+    }
+
+    if (result.status === "skipped") {
+      skippedJobs += 1;
+      if (result.waitingPending > 0) {
+        await kv.lpush(
+          RAFFLE_DELIVERY_QUEUE_KEY,
+          JSON.stringify({ ...job, reason: "retry", attempts: (job.attempts ?? 0) + 1, enqueuedAt: Date.now() })
+        );
+      } else {
+        await kv.del(flagKey);
+      }
+      // 避免本次循环中对同一活动无意义地反复出入队
+      if (result.waitingPending > 0) {
+        break;
+      }
+      continue;
+    }
+
+    processedJobs += 1;
+
+    for (const item of result.deliveryResults) {
+      if (item.success) {
+        delivered += 1;
+      } else {
+        failed += 1;
+      }
+    }
+
+    pending += result.waitingPending;
+
+    if (result.retryableRemaining > 0 || result.waitingPending > 0) {
+      await kv.lpush(
+        RAFFLE_DELIVERY_QUEUE_KEY,
+        JSON.stringify({ ...job, reason: "retry", attempts: (job.attempts ?? 0) + 1, enqueuedAt: Date.now() })
+      );
+    } else {
+      await kv.del(flagKey);
+    }
+  }
+
+  return {
+    success: true,
+    message: `队列处理完成：处理 ${processedJobs} 个任务，成功 ${delivered} 笔，失败 ${failed} 笔，待确认 ${pending} 笔`,
+    processedJobs,
+    delivered,
+    failed,
+    pending,
+    skippedJobs,
+    lockedJobs,
+  };
+}
+
+/**
+ * 重试发放失败/超时 pending 的奖励
  */
 export async function retryFailedRewards(
   raffleId: string
@@ -731,19 +1058,21 @@ export async function retryFailedRewards(
       return { success: false, message: "活动未开奖或无中奖者" };
     }
 
-    const failedWinners = raffle.winners.filter(
-      (w) => w.rewardStatus === "failed"
-    );
+    const now = Date.now();
+    const retryCandidates = getRetryableWinners(raffle, now);
 
-    if (failedWinners.length === 0) {
+    const failedCount = retryCandidates.filter((winner) => winner.rewardStatus === "failed").length;
+    const pendingCount = retryCandidates.length - failedCount;
+
+    if (retryCandidates.length === 0) {
       return { success: true, message: "没有需要重试的奖励" };
     }
 
-    const deliveryResults = await deliverRewards(raffleId, failedWinners);
+    const deliveryResults = await deliverRewards(raffleId, retryCandidates);
 
     return {
       success: true,
-      message: `重试完成，${deliveryResults.filter((r) => r.success).length}/${failedWinners.length} 成功`,
+      message: `重试完成（失败 ${failedCount} 笔 + 超时待确认 ${pendingCount} 笔），${deliveryResults.filter((r) => r.success).length}/${retryCandidates.length} 成功`,
       deliveryResults,
     };
   } finally {
