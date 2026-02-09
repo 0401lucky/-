@@ -1,9 +1,18 @@
 let _newApiUrl: string | null = null;
 
+function sanitizeEnvValue(value: string | undefined): string {
+  if (!value) return '';
+
+  return value
+    .replace(/\\r\\n|\\n|\\r/g, '')
+    .replace(/[\r\n]/g, '')
+    .trim();
+}
+
 export function getNewApiUrl(): string {
   if (_newApiUrl) return _newApiUrl;
 
-  const rawUrl = process.env.NEW_API_URL;
+  const rawUrl = sanitizeEnvValue(process.env.NEW_API_URL);
   if (!rawUrl) {
     throw new Error(
       "NEW_API_URL is not set. Please configure it (e.g. in .env.local / Vercel env vars)."
@@ -34,14 +43,16 @@ export interface LoginResponse {
 export async function loginToNewApi(username: string, password: string): Promise<{ success: boolean; message: string; cookies?: string; user?: NewApiUser }> {
   try {
     const baseUrl = getNewApiUrl();
-    console.log(`Attempting login to ${baseUrl}/api/user/login with username: ${username}`);
+    const safeUsername = sanitizeEnvValue(username);
+    const safePassword = sanitizeEnvValue(password);
+    console.log(`Attempting login to ${baseUrl}/api/user/login with username: ${safeUsername}`);
     
     const response = await fetch(`${baseUrl}/api/user/login`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username: safeUsername, password: safePassword }),
     });
 
     // 尝试多种方式获取 cookie
@@ -174,8 +185,8 @@ export async function getAdminSession(): Promise<string | null> {
     return adminSessionCache.cookies;
   }
 
-  const username = process.env.NEW_API_ADMIN_USERNAME;
-  const password = process.env.NEW_API_ADMIN_PASSWORD;
+  const username = sanitizeEnvValue(process.env.NEW_API_ADMIN_USERNAME);
+  const password = sanitizeEnvValue(process.env.NEW_API_ADMIN_PASSWORD);
 
   if (!username || !password) {
     console.error('Admin credentials not configured. Please set NEW_API_ADMIN_USERNAME and NEW_API_ADMIN_PASSWORD.');
@@ -387,8 +398,8 @@ async function getAdminSessionWithUser(): Promise<{ cookies: string; adminUserId
     return { cookies: adminSessionWithUserCache.cookies, adminUserId: adminSessionWithUserCache.adminUserId };
   }
 
-  const username = process.env.NEW_API_ADMIN_USERNAME;
-  const password = process.env.NEW_API_ADMIN_PASSWORD;
+  const username = sanitizeEnvValue(process.env.NEW_API_ADMIN_USERNAME);
+  const password = sanitizeEnvValue(process.env.NEW_API_ADMIN_PASSWORD);
 
   if (!username || !password) {
     console.error('Admin credentials not configured');

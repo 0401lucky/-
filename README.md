@@ -55,6 +55,7 @@ git push -u origin main
 | `NEW_API_ADMIN_USERNAME` | `admin` | new-api 管理员账号（用于商店直充/同步用户等管理员能力） |
 | `NEW_API_ADMIN_PASSWORD` | `password` | new-api 管理员密码 |
 | `CRON_SECRET` | `random-long-secret` | 发奖队列内部任务鉴权（Vercel Cron Bearer Token） |
+| `BLOB_READ_WRITE_TOKEN` | `vercel_blob_rw_xxx` | 反馈图片外链上传到 Vercel Blob（需在 Storage 中创建并连接 Blob） |
 
 > KV 相关的环境变量 (`KV_REST_API_URL`, `KV_REST_API_TOKEN`) 会在连接 KV 数据库后自动配置。
 
@@ -86,6 +87,9 @@ NEW_API_ADMIN_PASSWORD=your-admin-password
 # 可选：用于多人抽奖发奖队列定时任务鉴权
 CRON_SECRET=your-cron-secret
 
+# 可选：用于反馈图片外链上传
+BLOB_READ_WRITE_TOKEN=your-blob-read-write-token
+
 # 本地开发需要 Vercel KV 配置
 # 可以从 Vercel 项目设置中复制
 KV_REST_API_URL=your-kv-url
@@ -109,6 +113,28 @@ npm run lint
 > Next.js 16 已移除 `next lint` 子命令，本项目使用 ESLint CLI（`eslint .`）进行检查。
 
 ## 使用说明
+
+### 反馈图片外链化迁移（一次性）
+
+1. 先执行 dry-run（只统计不写入）：
+
+```bash
+npm run migrate:feedback-images
+```
+
+2. 确认统计结果后执行正式迁移：
+
+```bash
+npm run migrate:feedback-images:execute
+```
+
+3. 如需详细日志：
+
+```bash
+node scripts/migrate-feedback-images-to-blob.mjs --execute --verbose
+```
+
+> 建议在低峰期执行，避免迁移期间反馈留言高并发写入。
 
 ### 管理员操作
 

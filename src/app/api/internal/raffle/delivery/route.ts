@@ -8,6 +8,17 @@ import { processQueuedRaffleDeliveries } from "@/lib/raffle";
 
 export const dynamic = "force-dynamic";
 
+function sanitizeSecretValue(value: string | null | undefined): string {
+  if (!value) {
+    return "";
+  }
+
+  return value
+    .replace(/\\r\\n|\\n|\\r/g, "")
+    .replace(/[\r\n]/g, "")
+    .trim();
+}
+
 function parseMaxJobs(value: string | null | undefined): number {
   if (value == null || value === "") {
     return 3;
@@ -22,10 +33,11 @@ function parseMaxJobs(value: string | null | undefined): number {
 function getAccessToken(request: NextRequest): string | null {
   const authHeader = request.headers.get("authorization");
   if (authHeader && authHeader.toLowerCase().startsWith("bearer ")) {
-    return authHeader.slice(7).trim();
+    const token = sanitizeSecretValue(authHeader.slice(7));
+    return token || null;
   }
 
-  const customHeader = request.headers.get("x-raffle-delivery-secret")?.trim();
+  const customHeader = sanitizeSecretValue(request.headers.get("x-raffle-delivery-secret"));
   if (customHeader) {
     return customHeader;
   }
@@ -34,7 +46,9 @@ function getAccessToken(request: NextRequest): string | null {
 }
 
 function isAuthorized(request: NextRequest): boolean {
-  const secret = process.env.RAFFLE_DELIVERY_CRON_SECRET ?? process.env.CRON_SECRET;
+  const secret = sanitizeSecretValue(
+    process.env.RAFFLE_DELIVERY_CRON_SECRET ?? process.env.CRON_SECRET
+  );
   if (!secret) {
     return false;
   }

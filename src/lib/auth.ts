@@ -1,17 +1,29 @@
 import { cookies } from "next/headers";
 import { createHmac } from "crypto";
 
+function sanitizeEnvValue(value: string | undefined): string {
+  if (!value) return "";
+
+  return value
+    .replace(/\\r\\n|\\n|\\r/g, "")
+    .replace(/[\r\n]/g, "")
+    .trim();
+}
+
 // [P0-1补充] ADMIN_USERNAMES 移除危险默认值
 // 生产环境必须配置，否则默认为空（无管理员）
 function getAdminUsernames(): string[] {
-  const adminEnv = process.env.ADMIN_USERNAMES;
+  const adminEnv = sanitizeEnvValue(process.env.ADMIN_USERNAMES);
   if (!adminEnv) {
     if (process.env.NODE_ENV === "production") {
       console.warn("⚠️ ADMIN_USERNAMES not set in production, no admin users configured!");
     }
     return [];
   }
-  return adminEnv.split(",").map(s => s.trim()).filter(s => s.length > 0);
+  return adminEnv
+    .split(",")
+    .map((name) => sanitizeEnvValue(name))
+    .filter((name) => name.length > 0);
 }
 
 const ADMIN_USERNAMES = getAdminUsernames();

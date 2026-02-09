@@ -1,6 +1,7 @@
 import { kv } from '@vercel/kv';
 import { nanoid } from 'nanoid';
 import { type FeedbackImage } from '@/lib/feedback-image';
+import { externalizeFeedbackImages } from '@/lib/feedback-image-storage';
 
 export type FeedbackStatus = 'open' | 'processing' | 'resolved' | 'closed';
 export type FeedbackRole = 'user' | 'admin';
@@ -212,6 +213,14 @@ export async function createFeedback(
   const now = Date.now();
   const feedbackId = nanoid(12);
   const messageId = nanoid(12);
+  const uploadedImages =
+    images.length > 0
+      ? await externalizeFeedbackImages(images, {
+          feedbackId,
+          messageId,
+          role: 'user',
+        })
+      : [];
 
   const feedback: FeedbackItem = {
     id: feedbackId,
@@ -228,7 +237,7 @@ export async function createFeedback(
     feedbackId,
     role: 'user',
     content,
-    images: images.length > 0 ? images : undefined,
+    images: uploadedImages.length > 0 ? uploadedImages : undefined,
     createdAt: now,
     createdBy: username,
   };
@@ -275,12 +284,22 @@ export async function addFeedbackMessage(
   }
 
   const now = Date.now();
+  const messageId = nanoid(12);
+  const uploadedImages =
+    images.length > 0
+      ? await externalizeFeedbackImages(images, {
+          feedbackId,
+          messageId,
+          role,
+        })
+      : [];
+
   const message: FeedbackMessage = {
-    id: nanoid(12),
+    id: messageId,
     feedbackId,
     role,
     content,
-    images: images.length > 0 ? images : undefined,
+    images: uploadedImages.length > 0 ? uploadedImages : undefined,
     createdAt: now,
     createdBy,
   };

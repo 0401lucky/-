@@ -7,6 +7,15 @@ import { kv } from "@vercel/kv";
 
 export const dynamic = "force-dynamic";
 
+function sanitizeEnvValue(value: string | undefined): string {
+  if (!value) return "";
+
+  return value
+    .replace(/\\r\\n|\\n|\\r/g, "")
+    .replace(/[\r\n]/g, "")
+    .trim();
+}
+
 /**
  * 从现有领取记录中同步用户数据
  * 遍历所有项目的领取记录和抽奖记录，将用户添加到用户列表
@@ -70,15 +79,21 @@ export async function POST() {
     let newApiRemoved = 0;
     let newApiFailed = 0;
     let newApiNote: string | null = null;
-    const baseUrl = process.env.NEW_API_URL ?? null;
-    const adminUsername = process.env.NEW_API_ADMIN_USERNAME;
-    const adminPassword = process.env.NEW_API_ADMIN_PASSWORD;
-    if (adminUsername && adminPassword) {
+    let baseUrl: string | null = null;
+    try {
+      baseUrl = getNewApiUrl();
+    } catch {
+      baseUrl = null;
+    }
+
+    const adminUsername = sanitizeEnvValue(process.env.NEW_API_ADMIN_USERNAME);
+    const adminPassword = sanitizeEnvValue(process.env.NEW_API_ADMIN_PASSWORD);
+    if (baseUrl && adminUsername && adminPassword) {
       const adminLogin = await loginToNewApi(adminUsername, adminPassword);
       if (adminLogin.success && adminLogin.cookies && adminLogin.user?.id) {
         const adminCookies = adminLogin.cookies;
         const adminUserId = adminLogin.user.id;
-        const strictBaseUrl = getNewApiUrl();
+        const strictBaseUrl = baseUrl;
 
         const userIdsRaw = (await kv.smembers('users:all')) as Array<string | number>;
         const userIds = userIdsRaw
@@ -139,6 +154,9 @@ export async function POST() {
         newApiNote = `new-api 管理员登录失败：${adminLogin.message || 'unknown error'}`;
         console.error('new-api admin login failed:', adminLogin.message);
       }
+    } else if (!baseUrl) {
+      newApiNote = '未配置 NEW_API_URL，已跳过 new-api 同步';
+      console.warn('NEW_API_URL not set, skip new-api sync');
     } else {
       newApiNote = '未配置 new-api 管理员账号，已跳过 new-api 同步';
       console.warn('NEW_API_ADMIN_USERNAME/NEW_API_ADMIN_PASSWORD not set, skip new-api sync');
