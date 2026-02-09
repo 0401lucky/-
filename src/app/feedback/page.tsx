@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import {
+  FEEDBACK_IMAGE_ACCEPT,
+  FEEDBACK_IMAGE_MIME_TYPES,
+  MAX_FEEDBACK_IMAGE_BYTES,
+  MAX_FEEDBACK_IMAGES,
+  type FeedbackImage,
+} from '@/lib/feedback-image';
 import {
   ArrowLeft,
   Loader2,
@@ -40,8 +48,13 @@ interface FeedbackMessage {
   feedbackId: string;
   role: FeedbackRole;
   content: string;
+  images?: FeedbackImage[];
   createdAt: number;
   createdBy: string;
+}
+
+interface DraftImage extends FeedbackImage {
+  id: string;
 }
 
 interface FeedbackDetailResponse {
@@ -84,6 +97,15 @@ function parseReadMap(raw: string | null): Record<string, number> {
   }
 }
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(new Error('读取图片失败'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function FeedbackPage() {
   const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -93,6 +115,9 @@ export default function FeedbackPage() {
   const [replying, setReplying] = useState(false);
 
   const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>([]);
+  const [listPage, setListPage] = useState(1);
+  const [listHasMore, setListHasMore] = useState(false);
+  const [listLoadingMore, setListLoadingMore] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedDetail, setSelectedDetail] =
     useState<FeedbackDetailResponse | null>(null);
@@ -102,11 +127,68 @@ export default function FeedbackPage() {
   const [content, setContent] = useState('');
   const [contact, setContact] = useState('');
   const [replyContent, setReplyContent] = useState('');
+  const [draftImages, setDraftImages] = useState<DraftImage[]>([]);
+  const [replyImages, setReplyImages] = useState<DraftImage[]>([]);
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   const router = useRouter();
+
+  const appendImages = useCallback(
+    async (
+      files: File[],
+      mode: 'draft' | 'reply'
+    ) => {
+      if (files.length === 0) {
+        return;
+      }
+
+      const currentImages = mode === 'draft' ? draftImages : replyImages;
+      const setImages = mode === 'draft' ? setDraftImages : setReplyImages;
+
+      if (currentImages.length >= MAX_FEEDBACK_IMAGES) {
+        setError(`最多上传 ${MAX_FEEDBACK_IMAGES} 张图片`);
+        return;
+      }
+
+      const available = MAX_FEEDBACK_IMAGES - currentImages.length;
+      const nextFiles = files.slice(0, available);
+
+      const newImages: DraftImage[] = [];
+      for (const file of nextFiles) {
+        const mimeType = file.type.toLowerCase();
+        if (!FEEDBACK_IMAGE_MIME_TYPES.includes(mimeType as (typeof FEEDBACK_IMAGE_MIME_TYPES)[number])) {
+          setError('仅支持 PNG/JPG/WEBP/GIF 格式图片');
+          continue;
+        }
+
+        if (file.size > MAX_FEEDBACK_IMAGE_BYTES) {
+          setError(`单张图片不能超过 ${MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB`);
+          continue;
+        }
+
+        try {
+          const dataUrl = await fileToDataUrl(file);
+          newImages.push({
+            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            dataUrl,
+            mimeType,
+            size: file.size,
+            name: file.name,
+          });
+        } catch (error) {
+          console.error('Read image failed:', error);
+          setError('读取图片失败，请重试');
+        }
+      }
+
+      if (newImages.length > 0) {
+        setImages((prev) => [...prev, ...newImages]);
+      }
+    },
+    [draftImages, replyImages]
+  );
 
   const markFeedbackRead = useCallback(
     (feedbackId: string, readAt: number) => {
@@ -137,41 +219,138 @@ export default function FeedbackPage() {
     [user]
   );
 
-  const loadFeedbackList = useCallback(async () => {
-    setListLoading(true);
-    setError(null);
-
-    try {
-      const statusQuery =
-        filterStatus === 'all' ? '' : `&status=${encodeURIComponent(filterStatus)}`;
-      const response = await fetch(`/api/feedback?page=1&limit=30${statusQuery}`);
-
-      if (response.status === 401) {
-        router.push('/login?redirect=/feedback');
-        return;
-      }
-
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        setError(data.message || '获取反馈列表失败');
-        return;
-      }
-
-      const items = (data.items as FeedbackItem[]) ?? [];
-      setFeedbackList(items);
-      setSelectedId((prev) => {
-        if (prev && items.some((item) => item.id === prev)) {
-          return prev;
-        }
-        return items[0]?.id ?? null;
-      });
-    } catch (fetchError) {
-      console.error('Load feedback list failed:', fetchError);
-      setError('获取反馈列表失败，请稍后重试');
-    } finally {
-      setListLoading(false);
+  const handleDraftFileChange = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length > 0) {
+      await appendImages(files, 'draft');
     }
-  }, [filterStatus, router]);
+    event.target.value = '';
+  };
+
+  const handleReplyFileChange = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length > 0) {
+      await appendImages(files, 'reply');
+    }
+    event.target.value = '';
+  };
+
+  const handleDraftPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+
+    if (files.length > 0) {
+      event.preventDefault();
+      void appendImages(files, 'draft');
+    }
+  };
+
+  const handleReplyPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+
+    if (files.length > 0) {
+      event.preventDefault();
+      void appendImages(files, 'reply');
+    }
+  };
+
+  const removeDraftImage = (id: string) => {
+    setDraftImages((prev) => prev.filter((image) => image.id !== id));
+  };
+
+  const removeReplyImage = (id: string) => {
+    setReplyImages((prev) => prev.filter((image) => image.id !== id));
+  };
+
+  const loadFeedbackList = useCallback(
+    async (options: { page?: number; append?: boolean } = {}) => {
+      const page = options.page ?? 1;
+      const append = options.append ?? false;
+
+      if (append) {
+        setListLoadingMore(true);
+      } else {
+        setListLoading(true);
+      }
+      setError(null);
+
+      try {
+        const statusQuery =
+          filterStatus === 'all' ? '' : `&status=${encodeURIComponent(filterStatus)}`;
+        const response = await fetch(
+          `/api/feedback?page=${page}&limit=30${statusQuery}`
+        );
+
+        if (response.status === 401) {
+          router.push('/login?redirect=/feedback');
+          return;
+        }
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          setError(data.message || '获取反馈列表失败');
+          return;
+        }
+
+        const items = (data.items as FeedbackItem[]) ?? [];
+        const pagination = (data.pagination ?? {}) as {
+          page?: number;
+          hasMore?: boolean;
+        };
+
+        setListPage(
+          typeof pagination.page === 'number' ? pagination.page : page
+        );
+        setListHasMore(Boolean(pagination.hasMore));
+
+        if (append) {
+          setFeedbackList((prev) => {
+            const merged = new Map(prev.map((item) => [item.id, item]));
+            items.forEach((item) => {
+              merged.set(item.id, item);
+            });
+            return Array.from(merged.values());
+          });
+          setSelectedId((prev) => prev ?? items[0]?.id ?? null);
+          return;
+        }
+
+        setFeedbackList(items);
+        setSelectedId((prev) => {
+          if (prev && items.some((item) => item.id === prev)) {
+            return prev;
+          }
+          return items[0]?.id ?? null;
+        });
+      } catch (fetchError) {
+        console.error('Load feedback list failed:', fetchError);
+        setError('获取反馈列表失败，请稍后重试');
+      } finally {
+        if (append) {
+          setListLoadingMore(false);
+        } else {
+          setListLoading(false);
+        }
+      }
+    },
+    [filterStatus, router]
+  );
+
+  const handleLoadMore = useCallback(async () => {
+    if (listLoading || listLoadingMore || !listHasMore) {
+      return;
+    }
+    await loadFeedbackList({ page: listPage + 1, append: true });
+  }, [listHasMore, listLoading, listLoadingMore, listPage, loadFeedbackList]);
 
   const loadFeedbackDetail = useCallback(async (feedbackId: string) => {
     setDetailLoading(true);
@@ -262,8 +441,14 @@ export default function FeedbackPage() {
   }, [user]);
 
   useEffect(() => {
-    if (!user) return;
-    void loadFeedbackList();
+    if (!user) {
+      setFeedbackList([]);
+      setSelectedId(null);
+      setListPage(1);
+      setListHasMore(false);
+      return;
+    }
+    void loadFeedbackList({ page: 1, append: false });
   }, [user, filterStatus, loadFeedbackList]);
 
   useEffect(() => {
@@ -273,6 +458,11 @@ export default function FeedbackPage() {
     }
     void loadFeedbackDetail(selectedId);
   }, [selectedId, loadFeedbackDetail]);
+
+  useEffect(() => {
+    setReplyContent('');
+    setReplyImages([]);
+  }, [selectedId]);
 
   const handleLogout = async () => {
     try {
@@ -289,8 +479,8 @@ export default function FeedbackPage() {
     event.preventDefault();
 
     const trimmedContent = content.trim();
-    if (!trimmedContent) {
-      setError('请填写反馈内容');
+    if (!trimmedContent && draftImages.length === 0) {
+      setError('请填写反馈内容或上传图片');
       return;
     }
 
@@ -305,6 +495,12 @@ export default function FeedbackPage() {
         body: JSON.stringify({
           content: trimmedContent,
           contact: contact.trim() || undefined,
+          images: draftImages.map((image) => ({
+            dataUrl: image.dataUrl,
+            mimeType: image.mimeType,
+            size: image.size,
+            name: image.name,
+          })),
         }),
       });
 
@@ -317,6 +513,7 @@ export default function FeedbackPage() {
       setSuccess('反馈已提交，我们会尽快处理');
       setContent('');
       setContact('');
+      setDraftImages([]);
 
       if (data.feedback?.id && typeof data.feedback?.updatedAt === 'number') {
         markFeedbackRead(data.feedback.id as string, data.feedback.updatedAt as number);
@@ -343,8 +540,8 @@ export default function FeedbackPage() {
     }
 
     const trimmedContent = replyContent.trim();
-    if (!trimmedContent) {
-      setError('请填写留言内容');
+    if (!trimmedContent && replyImages.length === 0) {
+      setError('请填写留言内容或上传图片');
       return;
     }
 
@@ -356,7 +553,15 @@ export default function FeedbackPage() {
       const response = await fetch(`/api/feedback/${selectedId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: trimmedContent }),
+        body: JSON.stringify({
+          content: trimmedContent,
+          images: replyImages.map((image) => ({
+            dataUrl: image.dataUrl,
+            mimeType: image.mimeType,
+            size: image.size,
+            name: image.name,
+          })),
+        }),
       });
 
       const data = await response.json();
@@ -366,6 +571,7 @@ export default function FeedbackPage() {
       }
 
       setReplyContent('');
+      setReplyImages([]);
       setSuccess('留言成功');
 
       if (data.feedback?.id && typeof data.feedback?.updatedAt === 'number') {
@@ -518,14 +724,60 @@ export default function FeedbackPage() {
                   <textarea
                     value={content}
                     onChange={(event) => setContent(event.target.value)}
+                    onPaste={handleDraftPaste}
                     rows={5}
                     maxLength={1000}
                     placeholder="请描述你遇到的问题或建议"
                     className="w-full px-3 py-2.5 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none text-sm resize-y"
                   />
-                  <div className="mt-1 text-right text-xs text-stone-400">
-                    {content.length}/1000
+                  <div className="mt-1 flex items-center justify-between gap-3">
+                    <label
+                      htmlFor="feedback-create-images"
+                      className="px-3 py-1.5 rounded-lg border border-stone-200 bg-white text-xs text-stone-600 font-medium cursor-pointer hover:border-orange-300 hover:text-orange-600 transition-colors"
+                    >
+                      上传图片
+                    </label>
+                    <input
+                      id="feedback-create-images"
+                      type="file"
+                      accept={FEEDBACK_IMAGE_ACCEPT}
+                      multiple
+                      className="hidden"
+                      onChange={handleDraftFileChange}
+                    />
+                    <div className="text-right text-xs text-stone-400">
+                      {content.length}/1000 · {draftImages.length}/{MAX_FEEDBACK_IMAGES} 张
+                    </div>
                   </div>
+
+                  <div className="mt-1 text-xs text-stone-400">
+                    支持粘贴截图，格式：PNG/JPG/WEBP/GIF，单张 ≤ {MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB
+                  </div>
+
+                  {draftImages.length > 0 && (
+                    <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {draftImages.map((image) => (
+                        <div key={image.id} className="relative border border-stone-200 rounded-lg overflow-hidden bg-white">
+                          <Image
+                            src={image.dataUrl}
+                            alt={image.name || '反馈图片'}
+                            width={160}
+                            height={80}
+                            unoptimized
+                            className="w-full h-20 object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeDraftImage(image.id)}
+                            className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white text-xs leading-5"
+                            aria-label="移除图片"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <button
@@ -614,6 +866,24 @@ export default function FeedbackPage() {
                       </button>
                     );
                   })}
+
+                  <div className="pt-1">
+                    {listHasMore ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleLoadMore();
+                        }}
+                        disabled={listLoadingMore}
+                        className="w-full px-3 py-2 rounded-lg border border-stone-200 bg-white text-xs font-semibold text-stone-600 hover:border-orange-300 hover:text-orange-600 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {listLoadingMore && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        {listLoadingMore ? '加载中...' : '加载更多'}
+                      </button>
+                    ) : (
+                      <div className="text-center text-xs text-stone-400 py-1">暂无更多</div>
+                    )}
+                  </div>
                 </div>
               )}
             </section>
@@ -671,9 +941,33 @@ export default function FeedbackPage() {
                             <span>·</span>
                             <span>{new Date(message.createdAt).toLocaleString('zh-CN')}</span>
                           </div>
-                          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                            {message.content}
-                          </p>
+                          {message.content && (
+                            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                              {message.content}
+                            </p>
+                          )}
+                          {message.images && message.images.length > 0 && (
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                              {message.images.map((image, index) => (
+                                <a
+                                  key={`${message.id}-${index}`}
+                                  href={image.dataUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block"
+                                >
+                                  <Image
+                                    src={image.dataUrl}
+                                    alt={image.name || `反馈图片${index + 1}`}
+                                    width={400}
+                                    height={280}
+                                    unoptimized
+                                    className="w-full h-28 object-cover rounded-lg border border-stone-200"
+                                  />
+                                </a>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))
@@ -684,6 +978,7 @@ export default function FeedbackPage() {
                   <textarea
                     value={replyContent}
                     onChange={(event) => setReplyContent(event.target.value)}
+                    onPaste={handleReplyPaste}
                     rows={3}
                     maxLength={1000}
                     disabled={selectedDetail.feedback.status === 'closed'}
@@ -694,8 +989,63 @@ export default function FeedbackPage() {
                     }
                     className="w-full px-3 py-2.5 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none text-sm resize-y disabled:opacity-70"
                   />
+
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs text-stone-400">{replyContent.length}/1000</div>
+                    <label
+                      htmlFor="feedback-reply-images"
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                        selectedDetail.feedback.status === 'closed'
+                          ? 'border-stone-200 text-stone-300 cursor-not-allowed'
+                          : 'border-stone-200 bg-white text-stone-600 cursor-pointer hover:border-orange-300 hover:text-orange-600'
+                      }`}
+                    >
+                      上传图片
+                    </label>
+                    <input
+                      id="feedback-reply-images"
+                      type="file"
+                      accept={FEEDBACK_IMAGE_ACCEPT}
+                      multiple
+                      className="hidden"
+                      onChange={handleReplyFileChange}
+                      disabled={selectedDetail.feedback.status === 'closed'}
+                    />
+                    <div className="text-xs text-stone-400">
+                      {replyContent.length}/1000 · {replyImages.length}/{MAX_FEEDBACK_IMAGES} 张
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-stone-400">
+                    支持粘贴截图，格式：PNG/JPG/WEBP/GIF，单张 ≤ {MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB
+                  </div>
+
+                  {replyImages.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {replyImages.map((image) => (
+                        <div key={image.id} className="relative border border-stone-200 rounded-lg overflow-hidden bg-white">
+                          <Image
+                            src={image.dataUrl}
+                            alt={image.name || '留言图片'}
+                            width={160}
+                            height={80}
+                            unoptimized
+                            className="w-full h-20 object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeReplyImage(image.id)}
+                            className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white text-xs leading-5"
+                            aria-label="移除图片"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs text-stone-400">支持文字 + 图片混合发送</div>
                     <button
                       type="submit"
                       disabled={replying || selectedDetail.feedback.status === 'closed'}

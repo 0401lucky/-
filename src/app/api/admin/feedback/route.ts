@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser, isAdmin } from "@/lib/auth";
-import { listAllFeedback, type FeedbackStatus } from "@/lib/feedback";
+import {
+  archiveClosedFeedback,
+  listAllFeedback,
+  type FeedbackStatus,
+} from "@/lib/feedback";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +35,12 @@ function parseStatus(value: string | null): FeedbackStatus | null {
   return null;
 }
 
+function parseBoolean(value: string | null): boolean {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 export async function GET(request: NextRequest) {
   try {
     const user = await getAuthUser();
@@ -44,26 +54,50 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const page = parsePage(searchParams.get("page"));
     const limit = parseLimit(searchParams.get("limit"));
+    const includeArchived = parseBoolean(searchParams.get("includeArchived"));
 
     const statusRaw = searchParams.get("status");
     const status = parseStatus(statusRaw);
-    if (statusRaw && !status) {
+    if (!includeArchived && statusRaw && !status) {
       return NextResponse.json(
         { success: false, message: "无效的反馈状态" },
         { status: 400 }
       );
     }
 
+    let archiveResult:
+      | {
+          archivedCount: number;
+          scannedCount: number;
+          thresholdTime: number;
+          remainingCount: number;
+        }
+      | null = null;
+
+    if (!includeArchived) {
+      try {
+        archiveResult = await archiveClosedFeedback({
+          olderThanDays: 60,
+          limit: 200,
+        });
+      } catch (archiveError) {
+        console.error("Archive closed feedback error:", archiveError);
+      }
+    }
+
     const { items, pagination } = await listAllFeedback({
       page,
       limit,
-      status: status ?? undefined,
+      status: includeArchived ? undefined : status ?? undefined,
+      includeArchived,
     });
 
     return NextResponse.json({
       success: true,
       items,
       pagination,
+      includeArchived,
+      archive: archiveResult,
     });
   } catch (error) {
     console.error("List admin feedback error:", error);

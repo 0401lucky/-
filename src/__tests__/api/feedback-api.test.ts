@@ -197,7 +197,8 @@ describe('Feedback API Permission & Flow', () => {
       'fb-3',
       'admin',
       '我们已收到，会尽快处理',
-      'admin'
+      'admin',
+      []
     );
   });
 });

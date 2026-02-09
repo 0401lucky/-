@@ -6,6 +6,10 @@ import {
   listUserFeedback,
   type FeedbackStatus,
 } from "@/lib/feedback";
+import {
+  normalizeFeedbackImages,
+  type FeedbackImage,
+} from "@/lib/feedback-image";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -118,6 +122,7 @@ export async function POST(request: NextRequest) {
     const body = (await request.json().catch(() => null)) as {
       content?: unknown;
       contact?: unknown;
+      images?: unknown;
     } | null;
 
     const content =
@@ -125,9 +130,23 @@ export async function POST(request: NextRequest) {
     const contact =
       typeof body?.contact === "string" ? body.contact.trim() : "";
 
-    if (!content) {
+    let images: FeedbackImage[] = [];
+    try {
+      images = normalizeFeedbackImages(body?.images);
+    } catch (error) {
       return NextResponse.json(
-        { success: false, message: "反馈内容不能为空" },
+        {
+          success: false,
+          message:
+            error instanceof Error ? error.message : "图片参数错误，请重试",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (!content && images.length === 0) {
+      return NextResponse.json(
+        { success: false, message: "反馈内容或图片至少填写一项" },
         { status: 400 }
       );
     }
@@ -156,7 +175,8 @@ export async function POST(request: NextRequest) {
       user.id,
       user.username,
       content,
-      contact || undefined
+      contact || undefined,
+      images
     );
 
     return NextResponse.json(

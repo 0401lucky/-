@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import {
+  FEEDBACK_IMAGE_ACCEPT,
+  FEEDBACK_IMAGE_MIME_TYPES,
+  MAX_FEEDBACK_IMAGE_BYTES,
+  MAX_FEEDBACK_IMAGES,
+  type FeedbackImage,
+} from '@/lib/feedback-image';
 import {
   ArrowLeft,
   Loader2,
@@ -30,6 +38,7 @@ interface FeedbackItem {
   status: FeedbackStatus;
   createdAt: number;
   updatedAt: number;
+  archivedAt?: number;
 }
 
 interface FeedbackMessage {
@@ -37,8 +46,13 @@ interface FeedbackMessage {
   feedbackId: string;
   role: FeedbackRole;
   content: string;
+  images?: FeedbackImage[];
   createdAt: number;
   createdBy: string;
+}
+
+interface DraftImage extends FeedbackImage {
+  id: string;
 }
 
 interface FeedbackDetailResponse {
@@ -60,6 +74,15 @@ const STATUS_CLASS: Record<FeedbackStatus, string> = {
   closed: 'bg-stone-100 text-stone-500 border-stone-200',
 };
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(new Error('读取图片失败'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function AdminFeedbackPage() {
   const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -69,56 +92,183 @@ export default function AdminFeedbackPage() {
   const [replying, setReplying] = useState(false);
 
   const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>([]);
+  const [listPage, setListPage] = useState(1);
+  const [listHasMore, setListHasMore] = useState(false);
+  const [listLoadingMore, setListLoadingMore] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedDetail, setSelectedDetail] =
     useState<FeedbackDetailResponse | null>(null);
 
   const [filterStatus, setFilterStatus] = useState<'all' | FeedbackStatus>('all');
+  const [includeArchived, setIncludeArchived] = useState(false);
   const [nextStatus, setNextStatus] = useState<FeedbackStatus>('open');
   const [replyContent, setReplyContent] = useState('');
+  const [replyImages, setReplyImages] = useState<DraftImage[]>([]);
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   const router = useRouter();
 
-  const loadFeedbackList = useCallback(async () => {
-    setListLoading(true);
-    setError(null);
-
-    try {
-      const statusQuery =
-        filterStatus === 'all' ? '' : `&status=${encodeURIComponent(filterStatus)}`;
-      const response = await fetch(
-        `/api/admin/feedback?page=1&limit=80${statusQuery}`
-      );
-      const data = await response.json();
-
-      if (response.status === 403) {
-        router.push('/');
+  const appendReplyImages = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) {
         return;
       }
 
-      if (!response.ok || !data.success) {
-        setError(data.message || '获取反馈列表失败');
+      if (replyImages.length >= MAX_FEEDBACK_IMAGES) {
+        setError(`最多上传 ${MAX_FEEDBACK_IMAGES} 张图片`);
         return;
       }
 
-      const items = (data.items as FeedbackItem[]) ?? [];
-      setFeedbackList(items);
-      setSelectedId((prev) => {
-        if (prev && items.some((item) => item.id === prev)) {
-          return prev;
+      const available = MAX_FEEDBACK_IMAGES - replyImages.length;
+      const nextFiles = files.slice(0, available);
+
+      const newImages: DraftImage[] = [];
+      for (const file of nextFiles) {
+        const mimeType = file.type.toLowerCase();
+        if (!FEEDBACK_IMAGE_MIME_TYPES.includes(mimeType as (typeof FEEDBACK_IMAGE_MIME_TYPES)[number])) {
+          setError('仅支持 PNG/JPG/WEBP/GIF 格式图片');
+          continue;
         }
-        return items[0]?.id ?? null;
-      });
-    } catch (fetchError) {
-      console.error('Load admin feedback list failed:', fetchError);
-      setError('获取反馈列表失败，请稍后重试');
-    } finally {
-      setListLoading(false);
+
+        if (file.size > MAX_FEEDBACK_IMAGE_BYTES) {
+          setError(`单张图片不能超过 ${MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB`);
+          continue;
+        }
+
+        try {
+          const dataUrl = await fileToDataUrl(file);
+          newImages.push({
+            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            dataUrl,
+            mimeType,
+            size: file.size,
+            name: file.name,
+          });
+        } catch (error) {
+          console.error('Read image failed:', error);
+          setError('读取图片失败，请重试');
+        }
+      }
+
+      if (newImages.length > 0) {
+        setReplyImages((prev) => [...prev, ...newImages]);
+      }
+    },
+    [replyImages]
+  );
+
+  const handleReplyFileChange = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length > 0) {
+      await appendReplyImages(files);
     }
-  }, [filterStatus, router]);
+    event.target.value = '';
+  };
+
+  const handleReplyPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+
+    if (files.length > 0) {
+      event.preventDefault();
+      void appendReplyImages(files);
+    }
+  };
+
+  const removeReplyImage = (id: string) => {
+    setReplyImages((prev) => prev.filter((image) => image.id !== id));
+  };
+
+  const loadFeedbackList = useCallback(
+    async (options: { page?: number; append?: boolean } = {}) => {
+      const page = options.page ?? 1;
+      const append = options.append ?? false;
+
+      if (append) {
+        setListLoadingMore(true);
+      } else {
+        setListLoading(true);
+      }
+      setError(null);
+
+      try {
+        const statusQuery =
+          includeArchived || filterStatus === 'all'
+            ? ''
+            : `&status=${encodeURIComponent(filterStatus)}`;
+        const archivedQuery = includeArchived ? '&includeArchived=true' : '';
+
+        const response = await fetch(
+          `/api/admin/feedback?page=${page}&limit=80${statusQuery}${archivedQuery}`
+        );
+        const data = await response.json();
+
+        if (response.status === 403) {
+          router.push('/');
+          return;
+        }
+
+        if (!response.ok || !data.success) {
+          setError(data.message || '获取反馈列表失败');
+          return;
+        }
+
+        const items = (data.items as FeedbackItem[]) ?? [];
+        const pagination = (data.pagination ?? {}) as {
+          page?: number;
+          hasMore?: boolean;
+        };
+
+        setListPage(
+          typeof pagination.page === 'number' ? pagination.page : page
+        );
+        setListHasMore(Boolean(pagination.hasMore));
+
+        if (append) {
+          setFeedbackList((prev) => {
+            const merged = new Map(prev.map((item) => [item.id, item]));
+            items.forEach((item) => {
+              merged.set(item.id, item);
+            });
+            return Array.from(merged.values());
+          });
+          setSelectedId((prev) => prev ?? items[0]?.id ?? null);
+          return;
+        }
+
+        setFeedbackList(items);
+        setSelectedId((prev) => {
+          if (prev && items.some((item) => item.id === prev)) {
+            return prev;
+          }
+          return items[0]?.id ?? null;
+        });
+      } catch (fetchError) {
+        console.error('Load admin feedback list failed:', fetchError);
+        setError('获取反馈列表失败，请稍后重试');
+      } finally {
+        if (append) {
+          setListLoadingMore(false);
+        } else {
+          setListLoading(false);
+        }
+      }
+    },
+    [filterStatus, includeArchived, router]
+  );
+
+  const handleLoadMore = useCallback(async () => {
+    if (listLoading || listLoadingMore || !listHasMore) {
+      return;
+    }
+    await loadFeedbackList({ page: listPage + 1, append: true });
+  }, [listHasMore, listLoading, listLoadingMore, listPage, loadFeedbackList]);
 
   const loadFeedbackDetail = useCallback(async (feedbackId: string) => {
     setDetailLoading(true);
@@ -188,9 +338,21 @@ export default function AdminFeedbackPage() {
   }, [router]);
 
   useEffect(() => {
-    if (!user) return;
-    void loadFeedbackList();
-  }, [user, filterStatus, loadFeedbackList]);
+    if (includeArchived && filterStatus !== 'all') {
+      setFilterStatus('all');
+    }
+  }, [includeArchived, filterStatus]);
+
+  useEffect(() => {
+    if (!user) {
+      setFeedbackList([]);
+      setSelectedId(null);
+      setListPage(1);
+      setListHasMore(false);
+      return;
+    }
+    void loadFeedbackList({ page: 1, append: false });
+  }, [user, filterStatus, includeArchived, loadFeedbackList]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -199,6 +361,11 @@ export default function AdminFeedbackPage() {
     }
     void loadFeedbackDetail(selectedId);
   }, [selectedId, loadFeedbackDetail]);
+
+  useEffect(() => {
+    setReplyContent('');
+    setReplyImages([]);
+  }, [selectedId]);
 
   const handleLogout = async () => {
     try {
@@ -214,6 +381,11 @@ export default function AdminFeedbackPage() {
   const handleUpdateStatus = async () => {
     if (!selectedId) {
       setError('请先选择一条反馈');
+      return;
+    }
+
+    if (selectedDetail?.feedback.archivedAt) {
+      setError('该反馈已归档，无法再调整状态');
       return;
     }
 
@@ -255,9 +427,14 @@ export default function AdminFeedbackPage() {
       return;
     }
 
+    if (selectedDetail?.feedback.archivedAt) {
+      setError('该反馈已归档，不能继续回复');
+      return;
+    }
+
     const trimmed = replyContent.trim();
-    if (!trimmed) {
-      setError('请输入回复内容');
+    if (!trimmed && replyImages.length === 0) {
+      setError('请输入回复内容或上传图片');
       return;
     }
 
@@ -269,7 +446,15 @@ export default function AdminFeedbackPage() {
       const response = await fetch(`/api/admin/feedback/${selectedId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: trimmed }),
+        body: JSON.stringify({
+          content: trimmed,
+          images: replyImages.map((image) => ({
+            dataUrl: image.dataUrl,
+            mimeType: image.mimeType,
+            size: image.size,
+            name: image.name,
+          })),
+        }),
       });
 
       const data = await response.json();
@@ -279,6 +464,7 @@ export default function AdminFeedbackPage() {
       }
 
       setReplyContent('');
+      setReplyImages([]);
       setSuccess('回复已发送');
       await Promise.all([
         loadFeedbackList(),
@@ -299,6 +485,10 @@ export default function AdminFeedbackPage() {
       </div>
     );
   }
+
+  const isSelectedLocked = Boolean(
+    selectedDetail?.feedback.status === 'closed' || selectedDetail?.feedback.archivedAt
+  );
 
   return (
     <div className="min-h-screen bg-[#fafaf9] overflow-x-hidden">
@@ -355,14 +545,25 @@ export default function AdminFeedbackPage() {
               管理员可查看全部反馈、更新状态并回复用户。
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm text-stone-600">
+              <input
+                type="checkbox"
+                checked={includeArchived}
+                onChange={(event) => setIncludeArchived(event.target.checked)}
+                className="rounded border-stone-300 text-orange-500 focus:ring-orange-400"
+              />
+              查看已归档
+            </label>
+
             <span className="text-sm text-stone-500">状态筛选</span>
             <select
               value={filterStatus}
               onChange={(event) =>
                 setFilterStatus(event.target.value as 'all' | FeedbackStatus)
               }
-              className="px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm text-stone-700"
+              disabled={includeArchived}
+              className="px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm text-stone-700 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <option value="all">全部状态</option>
               <option value="open">待处理</option>
@@ -390,7 +591,9 @@ export default function AdminFeedbackPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
           <section className="glass rounded-2xl border border-white/70 p-5">
-            <h2 className="text-lg font-bold text-stone-800 mb-4">反馈列表</h2>
+            <h2 className="text-lg font-bold text-stone-800 mb-4">
+              {includeArchived ? '反馈列表（已归档）' : '反馈列表'}
+            </h2>
             {listLoading ? (
               <div className="py-10 flex items-center justify-center text-orange-500">
                 <Loader2 className="w-5 h-5 animate-spin" />
@@ -413,9 +616,16 @@ export default function AdminFeedbackPage() {
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="font-semibold text-sm text-stone-700 truncate">
-                        {item.username}（UID: {item.userId}）
-                      </span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-semibold text-sm text-stone-700 truncate">
+                          {item.username}（UID: {item.userId}）
+                        </span>
+                        {item.archivedAt && (
+                          <span className="text-[11px] px-2 py-0.5 rounded-full border border-stone-300 bg-stone-100 text-stone-500">
+                            已归档
+                          </span>
+                        )}
+                      </div>
                       <span
                         className={`text-xs px-2 py-1 rounded-full border ${STATUS_CLASS[item.status]}`}
                       >
@@ -426,8 +636,31 @@ export default function AdminFeedbackPage() {
                     <div className="text-xs text-stone-400 mt-1">
                       更新于 {new Date(item.updatedAt).toLocaleString('zh-CN')}
                     </div>
+                    {item.archivedAt && (
+                      <div className="text-xs text-stone-400 mt-1">
+                        归档于 {new Date(item.archivedAt).toLocaleString('zh-CN')}
+                      </div>
+                    )}
                   </button>
                 ))}
+
+                <div className="pt-1">
+                  {listHasMore ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleLoadMore();
+                      }}
+                      disabled={listLoadingMore}
+                      className="w-full px-3 py-2 rounded-lg border border-stone-200 bg-white text-xs font-semibold text-stone-600 hover:border-orange-300 hover:text-orange-600 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {listLoadingMore && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      {listLoadingMore ? '加载中...' : '加载更多'}
+                    </button>
+                  ) : (
+                    <div className="text-center text-xs text-stone-400 py-1">暂无更多</div>
+                  )}
+                </div>
               </div>
             )}
           </section>
@@ -465,6 +698,12 @@ export default function AdminFeedbackPage() {
                       更新时间：
                       {new Date(selectedDetail.feedback.updatedAt).toLocaleString('zh-CN')}
                     </div>
+                    {selectedDetail.feedback.archivedAt && (
+                      <div>
+                        归档时间：
+                        {new Date(selectedDetail.feedback.archivedAt).toLocaleString('zh-CN')}
+                      </div>
+                    )}
                     <div className="sm:col-span-2">
                       联系方式：{selectedDetail.feedback.contact || '未填写'}
                     </div>
@@ -476,7 +715,8 @@ export default function AdminFeedbackPage() {
                       onChange={(event) =>
                         setNextStatus(event.target.value as FeedbackStatus)
                       }
-                      className="px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm text-stone-700"
+                      disabled={isSelectedLocked}
+                      className="px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm text-stone-700 disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <option value="open">待处理</option>
                       <option value="processing">处理中</option>
@@ -486,11 +726,14 @@ export default function AdminFeedbackPage() {
                     <button
                       type="button"
                       onClick={handleUpdateStatus}
-                      disabled={statusSaving}
+                      disabled={statusSaving || isSelectedLocked}
                       className="px-4 py-2 rounded-lg bg-stone-900 text-white text-sm font-semibold hover:bg-stone-800 disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       {statusSaving ? '更新中...' : '更新状态'}
                     </button>
+                    {selectedDetail.feedback.archivedAt && (
+                      <span className="text-xs text-stone-400">已归档工单不可再修改状态</span>
+                    )}
                   </div>
                 </div>
 
@@ -519,9 +762,33 @@ export default function AdminFeedbackPage() {
                             <span>·</span>
                             <span>{new Date(message.createdAt).toLocaleString('zh-CN')}</span>
                           </div>
-                          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                            {message.content}
-                          </p>
+                          {message.content && (
+                            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                              {message.content}
+                            </p>
+                          )}
+                          {message.images && message.images.length > 0 && (
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                              {message.images.map((image, index) => (
+                                <a
+                                  key={`${message.id}-${index}`}
+                                  href={image.dataUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block"
+                                >
+                                  <Image
+                                    src={image.dataUrl}
+                                    alt={image.name || `反馈图片${index + 1}`}
+                                    width={400}
+                                    height={280}
+                                    unoptimized
+                                    className="w-full h-28 object-cover rounded-lg border border-stone-200"
+                                  />
+                                </a>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))
@@ -532,21 +799,79 @@ export default function AdminFeedbackPage() {
                   <textarea
                     value={replyContent}
                     onChange={(event) => setReplyContent(event.target.value)}
+                    onPaste={handleReplyPaste}
                     rows={3}
                     maxLength={1000}
-                    disabled={selectedDetail.feedback.status === 'closed'}
+                    disabled={isSelectedLocked}
                     placeholder={
-                      selectedDetail.feedback.status === 'closed'
-                        ? '当前反馈已关闭，无法回复'
+                      selectedDetail.feedback.archivedAt
+                        ? '当前反馈已归档，无法回复'
+                        : selectedDetail.feedback.status === 'closed'
+                          ? '当前反馈已关闭，无法回复'
                         : '输入回复内容...'
                     }
                     className="w-full px-3 py-2.5 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none text-sm resize-y disabled:opacity-70"
                   />
+
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs text-stone-400">{replyContent.length}/1000</div>
+                    <label
+                      htmlFor="admin-feedback-reply-images"
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                        isSelectedLocked
+                          ? 'border-stone-200 text-stone-300 cursor-not-allowed'
+                          : 'border-stone-200 bg-white text-stone-600 cursor-pointer hover:border-orange-300 hover:text-orange-600'
+                      }`}
+                    >
+                      上传图片
+                    </label>
+                    <input
+                      id="admin-feedback-reply-images"
+                      type="file"
+                      accept={FEEDBACK_IMAGE_ACCEPT}
+                      multiple
+                      className="hidden"
+                      onChange={handleReplyFileChange}
+                      disabled={isSelectedLocked}
+                    />
+                    <div className="text-xs text-stone-400">
+                      {replyContent.length}/1000 · {replyImages.length}/{MAX_FEEDBACK_IMAGES} 张
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-stone-400">
+                    支持粘贴截图，格式：PNG/JPG/WEBP/GIF，单张 ≤ {MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB
+                  </div>
+
+                  {replyImages.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {replyImages.map((image) => (
+                        <div key={image.id} className="relative border border-stone-200 rounded-lg overflow-hidden bg-white">
+                          <Image
+                            src={image.dataUrl}
+                            alt={image.name || '回复图片'}
+                            width={160}
+                            height={80}
+                            unoptimized
+                            className="w-full h-20 object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeReplyImage(image.id)}
+                            className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white text-xs leading-5"
+                            aria-label="移除图片"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs text-stone-400">支持文字 + 图片混合发送</div>
                     <button
                       type="submit"
-                      disabled={replying || selectedDetail.feedback.status === 'closed'}
+                      disabled={replying || isSelectedLocked}
                       className="px-4 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-semibold hover:bg-orange-600 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
                     >
                       {replying ? (

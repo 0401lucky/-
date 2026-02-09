@@ -4,6 +4,7 @@ import {
   addFeedbackMessage,
   getFeedbackById,
 } from "@/lib/feedback";
+import { normalizeFeedbackImages } from "@/lib/feedback-image";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 const MAX_MESSAGE_LENGTH = 1000;
@@ -48,13 +49,16 @@ export async function POST(
 
     const body = (await request.json().catch(() => null)) as {
       content?: unknown;
+      images?: unknown;
     } | null;
     const content =
       typeof body?.content === "string" ? body.content.trim() : "";
 
-    if (!content) {
+    const images = normalizeFeedbackImages(body?.images);
+
+    if (!content && images.length === 0) {
       return NextResponse.json(
-        { success: false, message: "留言内容不能为空" },
+        { success: false, message: "留言内容或图片至少填写一项" },
         { status: 400 }
       );
     }
@@ -73,7 +77,8 @@ export async function POST(
       id,
       "user",
       content,
-      user.username
+      user.username,
+      images
     );
 
     return NextResponse.json(
