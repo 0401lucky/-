@@ -787,7 +787,7 @@ export default function AdminPage() {
                     </div>
                     <div>
                       <p className="font-bold text-stone-800 text-sm">仅限新用户</p>
-                      <p className="text-xs text-stone-500">只有未领取过任何福利的用户才能领取</p>
+                      <p className="text-xs text-stone-500">独立新人资格：不受抽奖/活动参与影响，仅在领取新人专享福利后失效</p>
                     </div>
                   </div>
                   <button

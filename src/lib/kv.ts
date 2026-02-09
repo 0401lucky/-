@@ -20,7 +20,7 @@ export interface Project {
   rewardType?: "code" | "direct";
   /** rewardType=direct 时每人直充金额（美元） */
   directDollars?: number;
-  newUserOnly?: boolean;  // 仅限未领取过福利的用户
+  newUserOnly?: boolean;  // 仅限新人资格用户（独立资格，不受抽奖影响）
   pinned?: boolean; // 置顶项目
   pinnedAt?: number; // 置顶时间（用于排序）
 }
@@ -50,6 +50,56 @@ export interface ClaimRecord {
   creditMessage?: string;
   /** 直充确认时间（毫秒时间戳） */
   creditedAt?: number;
+}
+
+const NEW_USER_BENEFIT_KEY = (userId: number) => `user:newbie:benefit:${userId}`;
+const NEW_USER_PENDING_PREFIX = "pending:";
+const NEW_USER_CLAIMED_PREFIX = "claimed:";
+const NEW_USER_PENDING_TTL_SECONDS = 5 * 60;
+
+export interface NewUserEligibility {
+  eligible: boolean;
+  status: "eligible" | "pending" | "claimed";
+  projectId?: string;
+  claimedAt?: number;
+}
+
+interface NewUserReserveResult {
+  success: boolean;
+  status: "reserved" | "pending" | "claimed";
+  message: string;
+}
+
+function parseNewUserEligibilityMarker(raw: string | null | undefined): NewUserEligibility {
+  if (!raw) {
+    return { eligible: true, status: "eligible" };
+  }
+
+  if (raw.startsWith(NEW_USER_PENDING_PREFIX)) {
+    return {
+      eligible: false,
+      status: "pending",
+      projectId: raw.slice(NEW_USER_PENDING_PREFIX.length) || undefined,
+    };
+  }
+
+  if (raw.startsWith(NEW_USER_CLAIMED_PREFIX)) {
+    const payload = raw.slice(NEW_USER_CLAIMED_PREFIX.length);
+    const [projectId, claimedAtRaw] = payload.split(":");
+    const claimedAt = Number.parseInt(claimedAtRaw ?? "", 10);
+
+    return {
+      eligible: false,
+      status: "claimed",
+      projectId: projectId || undefined,
+      claimedAt: Number.isFinite(claimedAt) ? claimedAt : undefined,
+    };
+  }
+
+  return {
+    eligible: false,
+    status: "claimed",
+  };
 }
 
 // 项目操作
@@ -468,6 +518,270 @@ export async function hasUserClaimedAny(userId: number): Promise<boolean> {
   if (lotteryRecords && lotteryRecords.length > 0) return true;
 
   return false;
+}
+
+export async function getNewUserEligibility(userId: number): Promise<NewUserEligibility> {
+  const marker = await kv.get<string>(NEW_USER_BENEFIT_KEY(userId));
+  return parseNewUserEligibilityMarker(marker ?? null);
+}
+
+export async function getNewUserEligibilityMap(
+  userIds: number[]
+): Promise<Record<number, boolean>> {
+  if (userIds.length === 0) return {};
+
+  const keys = userIds.map((userId) => NEW_USER_BENEFIT_KEY(userId));
+  const markers = await kv.mget<(string | null)[]>(...keys);
+
+  const result: Record<number, boolean> = {};
+  userIds.forEach((userId, index) => {
+    const marker = markers?.[index] ?? null;
+    const eligibility = parseNewUserEligibilityMarker(marker);
+    result[userId] = eligibility.eligible;
+  });
+
+  return result;
+}
+
+export async function reserveNewUserBenefit(
+  userId: number,
+  projectId: string
+): Promise<NewUserReserveResult> {
+  const markerKey = NEW_USER_BENEFIT_KEY(userId);
+
+  const result = await kv.eval(
+    `
+      local markerKey = KEYS[1]
+      local projectId = ARGV[1]
+      local ttl = tonumber(ARGV[2])
+
+      local marker = redis.call('GET', markerKey)
+      if not marker then
+        redis.call('SET', markerKey, 'pending:' .. projectId, 'EX', ttl)
+        return {1, 'reserved'}
+      end
+
+      if string.sub(marker, 1, 8) == 'claimed:' then
+        return {0, 'claimed'}
+      end
+
+      if string.sub(marker, 1, 8) == 'pending:' then
+        return {0, 'pending'}
+      end
+
+      return {0, 'pending'}
+    `,
+    [markerKey],
+    [projectId, NEW_USER_PENDING_TTL_SECONDS]
+  ) as [number, string];
+
+  const [ok, statusRaw] = result;
+  const status =
+    statusRaw === "claimed" || statusRaw === "pending"
+      ? statusRaw
+      : "reserved";
+
+  if (ok === 1) {
+    return {
+      success: true,
+      status: "reserved",
+      message: "ok",
+    };
+  }
+
+  if (status === "pending") {
+    return {
+      success: false,
+      status,
+      message: "新人资格校验处理中，请稍后重试",
+    };
+  }
+
+  return {
+    success: false,
+    status: "claimed",
+    message: "该福利仅限新用户领取",
+  };
+}
+
+export async function confirmNewUserBenefit(
+  userId: number,
+  projectId: string
+): Promise<void> {
+  const markerKey = NEW_USER_BENEFIT_KEY(userId);
+  const now = Date.now();
+
+  await kv.eval(
+    `
+      local markerKey = KEYS[1]
+      local projectId = ARGV[1]
+      local claimedAt = ARGV[2]
+
+      local marker = redis.call('GET', markerKey)
+      if marker and string.sub(marker, 1, 8) == 'claimed:' then
+        return 2
+      end
+
+      redis.call('SET', markerKey, 'claimed:' .. projectId .. ':' .. claimedAt)
+      return 1
+    `,
+    [markerKey],
+    [projectId, now]
+  );
+}
+
+export async function rollbackNewUserBenefit(
+  userId: number,
+  projectId: string
+): Promise<void> {
+  const markerKey = NEW_USER_BENEFIT_KEY(userId);
+
+  await kv.eval(
+    `
+      local markerKey = KEYS[1]
+      local projectId = ARGV[1]
+
+      local marker = redis.call('GET', markerKey)
+      if not marker then
+        return 2
+      end
+
+      if string.sub(marker, 1, 8) == 'pending:' then
+        local pendingProject = string.sub(marker, 9)
+        if pendingProject == projectId then
+          redis.call('DEL', markerKey)
+          return 1
+        end
+      end
+
+      return 2
+    `,
+    [markerKey],
+    [projectId]
+  );
+}
+
+export interface NewUserEligibilityMigrationResult {
+  dryRun: boolean;
+  scopedProjects: number;
+  scannedRecords: number;
+  candidateUsers: number;
+  migratedUsers: number;
+  skippedClaimedUsers: number;
+  skippedPendingUsers: number;
+}
+
+export interface NewUserEligibilityMigrationOptions {
+  dryRun?: boolean;
+  chunkSize?: number;
+}
+
+export async function migrateNewUserEligibilityFromHistory(
+  options: NewUserEligibilityMigrationOptions = {}
+): Promise<NewUserEligibilityMigrationResult> {
+  const dryRun = options.dryRun ?? false;
+  const chunkSize = Math.max(100, Math.min(1000, Math.floor(options.chunkSize ?? 500)));
+
+  const projects = await getAllProjects();
+  const scopedProjects = projects.filter((project) => project.newUserOnly);
+
+  const userFirstClaim = new Map<number, { projectId: string; claimedAt: number }>();
+  let scannedRecords = 0;
+
+  for (const project of scopedProjects) {
+    for (let offset = 0; ; offset += chunkSize) {
+      const records = await getProjectRecords(project.id, offset, offset + chunkSize - 1);
+      if (!records || records.length === 0) {
+        break;
+      }
+
+      scannedRecords += records.length;
+
+      records.forEach((record) => {
+        const userId = Number(record.userId);
+        if (!Number.isFinite(userId) || userId <= 0) {
+          return;
+        }
+
+        const claimedAt = Number.isFinite(record.claimedAt)
+          ? record.claimedAt
+          : Date.now();
+
+        const existing = userFirstClaim.get(userId);
+        if (!existing || claimedAt < existing.claimedAt) {
+          userFirstClaim.set(userId, {
+            projectId: project.id,
+            claimedAt,
+          });
+        }
+      });
+
+      if (records.length < chunkSize) {
+        break;
+      }
+    }
+  }
+
+  const candidateUsers = Array.from(userFirstClaim.keys());
+  if (candidateUsers.length === 0) {
+    return {
+      dryRun,
+      scopedProjects: scopedProjects.length,
+      scannedRecords,
+      candidateUsers: 0,
+      migratedUsers: 0,
+      skippedClaimedUsers: 0,
+      skippedPendingUsers: 0,
+    };
+  }
+
+  const markerKeys = candidateUsers.map((userId) => NEW_USER_BENEFIT_KEY(userId));
+  const markers = await kv.mget<(string | null)[]>(...markerKeys);
+
+  let migratedUsers = 0;
+  let skippedClaimedUsers = 0;
+  let skippedPendingUsers = 0;
+
+  for (let index = 0; index < candidateUsers.length; index += 1) {
+    const userId = candidateUsers[index];
+    const marker = markers?.[index] ?? null;
+
+    if (typeof marker === "string" && marker.startsWith(NEW_USER_CLAIMED_PREFIX)) {
+      skippedClaimedUsers += 1;
+      continue;
+    }
+
+    if (typeof marker === "string" && marker.startsWith(NEW_USER_PENDING_PREFIX)) {
+      skippedPendingUsers += 1;
+      continue;
+    }
+
+    if (dryRun) {
+      migratedUsers += 1;
+      continue;
+    }
+
+    const firstClaim = userFirstClaim.get(userId);
+    if (!firstClaim) {
+      continue;
+    }
+
+    await kv.set(
+      NEW_USER_BENEFIT_KEY(userId),
+      `${NEW_USER_CLAIMED_PREFIX}${firstClaim.projectId}:${firstClaim.claimedAt}`
+    );
+    migratedUsers += 1;
+  }
+
+  return {
+    dryRun,
+    scopedProjects: scopedProjects.length,
+    scannedRecords,
+    candidateUsers: candidateUsers.length,
+    migratedUsers,
+    skippedClaimedUsers,
+    skippedPendingUsers,
+  };
 }
 
 // 记录用户（首次登录时调用）

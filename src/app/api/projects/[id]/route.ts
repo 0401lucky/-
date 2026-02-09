@@ -3,7 +3,9 @@ import {
   getProject,
   claimCode,
   getClaimRecord,
-  hasUserClaimedAny,
+  reserveNewUserBenefit,
+  confirmNewUserBenefit,
+  rollbackNewUserBenefit,
   recordUser,
   reserveDirectClaim,
   finalizeDirectClaim,
@@ -60,6 +62,10 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let reservedNewUserBenefit = false;
+  let reservedUserId: number | null = null;
+  let reservedProjectId: string | null = null;
+
   try {
     const { id } = await params;
     const user = await getAuthUser();
@@ -71,29 +77,60 @@ export async function POST(
       );
     }
 
-    // 获取项目检查是否仅限新用户
     const project = await getProject(id);
-    if (project?.newUserOnly) {
-      const hasClaimed = await hasUserClaimedAny(user.id);
-      if (hasClaimed) {
+    if (!project) {
+      return NextResponse.json(
+        { success: false, message: "项目不存在" },
+        { status: 404 }
+      );
+    }
+
+    if (
+      project.rewardType === "direct" &&
+      (!Number.isFinite(project.directDollars) || (project.directDollars as number) <= 0)
+    ) {
+      return NextResponse.json(
+        { success: false, message: "项目直充金额配置异常，请联系管理员" },
+        { status: 500 }
+      );
+    }
+
+    const rollbackReservedNewUserBenefit = async () => {
+      if (!reservedNewUserBenefit) return;
+      try {
+        await rollbackNewUserBenefit(user.id, id);
+      } catch (rollbackError) {
+        console.error("Rollback new user benefit failed:", rollbackError);
+      } finally {
+        reservedNewUserBenefit = false;
+      }
+    };
+
+    const confirmReservedNewUserBenefit = async () => {
+      if (!reservedNewUserBenefit) return;
+      await confirmNewUserBenefit(user.id, id);
+      reservedNewUserBenefit = false;
+    };
+
+    if (project.newUserOnly) {
+      const reserveResult = await reserveNewUserBenefit(user.id, id);
+      if (!reserveResult.success) {
         return NextResponse.json(
-          { success: false, message: "该福利仅限新用户领取" },
-          { status: 403 }
+          { success: false, message: reserveResult.message },
+          { status: reserveResult.status === "pending" ? 409 : 403 }
         );
       }
+      reservedNewUserBenefit = true;
+      reservedUserId = user.id;
+      reservedProjectId = id;
     }
 
     // 直充项目：先原子预占名额，再调用 new-api 直充，最后落库/回滚
-    if (project?.rewardType === "direct") {
-      if (!Number.isFinite(project.directDollars) || (project.directDollars as number) <= 0) {
-        return NextResponse.json(
-          { success: false, message: "项目直充金额配置异常，请联系管理员" },
-          { status: 500 }
-        );
-      }
+    if (project.rewardType === "direct") {
 
       const reserveResult = await reserveDirectClaim(id, user.id, user.username);
       if (!reserveResult.success) {
+        await rollbackReservedNewUserBenefit();
         return NextResponse.json(
           { success: false, message: reserveResult.message || "领取失败" },
           { status: 400 }
@@ -102,6 +139,7 @@ export async function POST(
 
       const existing = reserveResult.record;
       if (existing?.creditStatus === "success") {
+        await confirmReservedNewUserBenefit();
         await recordUser(user.id, user.username);
         return NextResponse.json({
           success: true,
@@ -112,6 +150,7 @@ export async function POST(
         });
       }
       if (existing?.creditStatus === "uncertain") {
+        await confirmReservedNewUserBenefit();
         await recordUser(user.id, user.username);
         return NextResponse.json({
           success: true,
@@ -141,6 +180,7 @@ export async function POST(
 
       if (creditResult.uncertain) {
         await finalizeDirectClaim(id, user.id, "uncertain", creditResult.message);
+        await confirmReservedNewUserBenefit();
         await recordUser(user.id, user.username);
         return NextResponse.json({
           success: true,
@@ -154,6 +194,7 @@ export async function POST(
 
       if (!creditResult.success) {
         await rollbackDirectClaim(id, user.id);
+        await rollbackReservedNewUserBenefit();
         return NextResponse.json(
           { success: false, message: creditResult.message || "充值失败，请稍后重试" },
           { status: 400 }
@@ -161,6 +202,7 @@ export async function POST(
       }
 
       await finalizeDirectClaim(id, user.id, "success", creditResult.message);
+      await confirmReservedNewUserBenefit();
       await recordUser(user.id, user.username);
       return NextResponse.json({
         success: true,
@@ -175,13 +217,24 @@ export async function POST(
 
     // 领取成功后记录用户
     if (result.success) {
+      await confirmReservedNewUserBenefit();
       await recordUser(user.id, user.username);
+    } else {
+      await rollbackReservedNewUserBenefit();
     }
 
     return NextResponse.json(result, {
       status: result.success ? 200 : 400,
     });
   } catch (error) {
+    if (reservedNewUserBenefit && reservedUserId !== null && reservedProjectId) {
+      try {
+        await rollbackNewUserBenefit(reservedUserId, reservedProjectId);
+      } catch (rollbackError) {
+        console.error("Rollback reserved new user benefit on exception failed:", rollbackError);
+      }
+    }
+
     console.error("Claim code error:", error);
     return NextResponse.json(
       { success: false, message: "领取失败" },

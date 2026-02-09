@@ -4,8 +4,7 @@ import {
   getAllUsers,
   getUserAllClaims,
   getUserLotteryCount,
-  getAllProjects,
-  getClaimRecord,
+  getNewUserEligibilityMap,
 } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
@@ -56,6 +55,9 @@ export async function GET(request: NextRequest) {
     const startIndex = (page - 1) * limit;
     const endIndex = startIndex + limit;
     const paginatedUsers = filteredUsers.slice(startIndex, endIndex);
+    const paginatedEligibilityMap = await getNewUserEligibilityMap(
+      paginatedUsers.map((u) => u.id)
+    );
     
     // 只获取当前页用户的统计信息（减少查询量）
     const usersWithStats: UserWithStats[] = await Promise.all(
@@ -69,7 +71,7 @@ export async function GET(request: NextRequest) {
           firstSeen: u.firstSeen,
           claimsCount: claims.length,
           lotteryCount,
-          isNewUser: claims.length === 0 && lotteryCount === 0,
+          isNewUser: paginatedEligibilityMap[u.id] ?? true,
         };
       })
     );
@@ -79,26 +81,12 @@ export async function GET(request: NextRequest) {
       | { total: number; newUserCount: number; claimedUserCount: number }
       | undefined;
     if (page === 1) {
-      const projects = await getAllProjects();
       const userIds = filteredUsers.map((u) => u.id);
+      const eligibilityMap = await getNewUserEligibilityMap(userIds);
+      const newUserCount = userIds.reduce((count, userId) => {
+        return count + (eligibilityMap[userId] ? 1 : 0);
+      }, 0);
 
-      let newUserCount = 0;
-      const CONCURRENCY = 10;
-      for (let i = 0; i < userIds.length; i += CONCURRENCY) {
-        const batch = userIds.slice(i, i + CONCURRENCY);
-        const batchResults = await Promise.all(
-          batch.map(async (userId) => {
-            const lotteryCount = await getUserLotteryCount(userId);
-            if (lotteryCount > 0) return false;
-            for (const project of projects) {
-              const record = await getClaimRecord(project.id, userId);
-              if (record) return false;
-            }
-            return true;
-          })
-        );
-        newUserCount += batchResults.filter(Boolean).length;
-      }
       stats = {
         total,
         newUserCount,
