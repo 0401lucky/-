@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LogOut, User, LayoutDashboard, Loader2, Gift, ChevronRight, ArrowLeft } from 'lucide-react';
+import { LogOut, User, LayoutDashboard, Loader2, Gift, ChevronRight, ArrowLeft, MessageSquareText } from 'lucide-react';
 
 interface Project {
   id: string;
@@ -98,6 +98,14 @@ export default function ProjectsPage() {
             <div className="flex items-center gap-2 sm:gap-4">
               {user ? (
                 <>
+                  <Link
+                    href="/feedback"
+                    className="flex items-center gap-2 px-2.5 py-2 sm:px-4 sm:py-2 bg-orange-50 text-orange-600 rounded-xl text-sm font-semibold hover:bg-orange-100 transition-all duration-300 border border-orange-200"
+                    title="反馈墙"
+                  >
+                    <MessageSquareText className="w-4 h-4" />
+                    <span className="hidden sm:inline">反馈墙</span>
+                  </Link>
                   {user.isAdmin && (
                     <Link
                       href="/admin"
@@ -123,12 +131,20 @@ export default function ProjectsPage() {
                   </div>
                 </>
               ) : (
-                <Link
-                  href="/login"
-                  className="px-6 py-2.5 gradient-warm text-white rounded-xl text-sm font-bold shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 hover:-translate-y-0.5 transition-all duration-300"
-                >
-                  登录
-                </Link>
+                <div className="flex items-center gap-2">
+                  <Link
+                    href="/feedback"
+                    className="px-4 py-2.5 bg-orange-50 text-orange-600 rounded-xl text-sm font-bold border border-orange-200 hover:bg-orange-100 transition-colors"
+                  >
+                    反馈墙
+                  </Link>
+                  <Link
+                    href="/login"
+                    className="px-6 py-2.5 gradient-warm text-white rounded-xl text-sm font-bold shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 hover:-translate-y-0.5 transition-all duration-300"
+                  >
+                    登录
+                  </Link>
+                </div>
               )}
             </div>
           </div>

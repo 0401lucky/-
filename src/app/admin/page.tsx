@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, Plus, Pause, Play, Trash2, Upload, 
   Loader2, AlertCircle, Users, Package, LayoutDashboard,
-  ChevronRight, LogOut, User as UserIcon, X, Check, Gift, Sparkles, ShoppingBag, Pin, Layers
+  ChevronRight, LogOut, User as UserIcon, X, Check, Gift, Sparkles, ShoppingBag, Pin, Layers, MessageSquareText
 } from 'lucide-react';
 
 interface Project {
@@ -252,6 +252,13 @@ export default function AdminPage() {
                   <span className="hidden sm:inline">用户管理</span>
                 </Link>
                 <Link 
+                  href="/admin/feedback" 
+                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-amber-200"
+                >
+                  <MessageSquareText className="w-4 h-4" />
+                  <span className="hidden sm:inline">反馈墙</span>
+                </Link>
+                <Link 
                   href="/admin/store" 
                   className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-purple-200"
                 >
@@ -317,6 +324,13 @@ export default function AdminPage() {
               >
                 <Users className="w-4 h-4" />
                 <span>用户</span>
+              </Link>
+              <Link 
+                href="/admin/feedback" 
+                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-full text-sm font-medium shadow-sm"
+              >
+                <MessageSquareText className="w-4 h-4" />
+                <span>反馈</span>
               </Link>
               <Link 
                 href="/admin/store" 
