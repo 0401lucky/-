@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Bell, CheckCircle2, Clock3, MailOpen, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Bell, CheckCircle2, Clock3, MailOpen, RefreshCw, X } from 'lucide-react';
 
 interface NotificationItem {
   id: string;
@@ -32,6 +32,7 @@ export default function NotificationsPage() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [page, setPage] = useState(1);
+  const [selectedItem, setSelectedItem] = useState<NotificationItem | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fetchNotifications = useCallback(
@@ -191,9 +192,18 @@ export default function NotificationsPage() {
             {items.map((item) => (
               <div
                 key={item.id}
-                className={`rounded-2xl border p-4 bg-white transition-colors ${
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelectedItem(item)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setSelectedItem(item);
+                  }
+                }}
+                className={`rounded-2xl border p-4 bg-white transition-colors cursor-pointer ${
                   item.isRead ? 'border-stone-200' : 'border-sky-200 bg-sky-50/30'
-                }`}
+                } hover:border-sky-300`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -208,12 +218,16 @@ export default function NotificationsPage() {
                       )}
                     </div>
                     <h3 className="mt-2 text-sm font-semibold text-stone-800">{item.title}</h3>
-                    <p className="mt-1 text-sm text-stone-600 break-words">{item.content}</p>
+                    <p className="mt-1 text-sm text-stone-600 whitespace-pre-wrap break-words">{item.content}</p>
+                    <p className="mt-2 text-xs text-sky-600">点击查看详情</p>
                     <p className="mt-2 text-xs text-stone-400">{formatTime(item.createdAt)}</p>
                   </div>
                   {!item.isRead && (
                     <button
-                      onClick={() => void markRead([item.id])}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void markRead([item.id]);
+                      }}
                       disabled={marking}
                       className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-sky-200 text-sky-700 text-xs font-medium hover:bg-sky-50 disabled:opacity-50"
                     >
@@ -246,6 +260,69 @@ export default function NotificationsPage() {
             >
               下一页
             </button>
+          </div>
+        )}
+
+        {selectedItem && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <button
+              type="button"
+              aria-label="关闭详情"
+              className="absolute inset-0 bg-black/40"
+              onClick={() => setSelectedItem(null)}
+            />
+            <div className="relative w-full max-w-2xl rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 border border-stone-200">
+                      {typeLabel[selectedItem.type]}
+                    </span>
+                    {!selectedItem.isRead && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 border border-sky-200 font-semibold">
+                        未读
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="mt-3 text-base font-semibold text-stone-800">{selectedItem.title}</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedItem(null)}
+                  className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-stone-200 text-stone-500 hover:text-stone-700 hover:bg-stone-50"
+                  aria-label="关闭"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <p className="mt-4 text-sm text-stone-600 whitespace-pre-wrap break-words">{selectedItem.content}</p>
+              <p className="mt-4 text-xs text-stone-400">发布时间：{formatTime(selectedItem.createdAt)}</p>
+
+              <div className="mt-5 flex items-center justify-end gap-2">
+                {!selectedItem.isRead && (
+                  <button
+                    type="button"
+                    disabled={marking}
+                    onClick={async () => {
+                      await markRead([selectedItem.id]);
+                      setSelectedItem(null);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-sky-200 text-sky-700 hover:bg-sky-50 disabled:opacity-50"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    标记已读
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSelectedItem(null)}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium border border-stone-200 text-stone-600 hover:bg-stone-50"
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </main>
