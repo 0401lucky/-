@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  ArrowLeft, Gift, Loader2, Plus, Trash2, DollarSign, Users, Save
+  Gift, Loader2, Plus, Trash2, DollarSign, Users, Save
 } from 'lucide-react';
 
 interface PrizeInput {
@@ -124,23 +124,13 @@ export default function CreateRafflePage() {
   };
 
   return (
-    <div className="min-h-screen bg-stone-50 pb-20">
-      {/* 顶部栏 */}
-      <div className="sticky top-0 z-40 bg-white border-b border-stone-200 shadow-sm">
-        <div className="max-w-3xl mx-auto px-4 py-4">
-          <div className="flex items-center gap-4">
-            <Link href="/admin/raffle" className="p-2 hover:bg-stone-100 rounded-lg transition-colors">
-              <ArrowLeft className="w-5 h-5 text-stone-600" />
-            </Link>
-            <div>
-              <h1 className="text-xl font-bold text-stone-800">创建抽奖活动</h1>
-              <p className="text-sm text-stone-500">设置活动信息和奖品</p>
-            </div>
-          </div>
-        </div>
+    <div className="pb-20">
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-stone-800">创建抽奖活动</h1>
+        <p className="text-stone-500 text-sm mt-1">设置活动信息和奖品</p>
       </div>
 
-      <form onSubmit={handleSubmit} className="max-w-3xl mx-auto px-4 py-6">
+      <form onSubmit={handleSubmit} className="max-w-3xl">
         {/* 错误提示 */}
         {error && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl text-red-600 text-sm">

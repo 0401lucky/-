@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, use, useCallback } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { ArrowLeft, Upload, Loader2, AlertCircle, Users, Package, Clock, User as UserIcon, Check, X, Gift, FileText, Copy } from 'lucide-react';
 
 interface Project {
@@ -42,21 +41,9 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const router = useRouter();
 
   const fetchData = useCallback(async () => {
     try {
-      const userRes = await fetch('/api/auth/me');
-      if (!userRes.ok) {
-        router.push('/login?redirect=/admin');
-        return;
-      }
-      const userData = await userRes.json();
-      if (!userData.success || !userData.user?.isAdmin) {
-        router.push('/');
-        return;
-      }
-
       const res = await fetch(`/api/admin/projects/${id}`);
       if (res.ok) {
         const data = await res.json();
@@ -74,7 +61,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
     } finally {
       setLoading(false);
     }
-  }, [id, router]);
+  }, [id]);
 
   useEffect(() => {
     void fetchData();
@@ -176,7 +163,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#fafaf9]">
+      <div className="flex items-center justify-center py-20">
         <div className="text-center text-orange-500">
           <Loader2 className="w-10 h-10 animate-spin mx-auto" />
           <p className="mt-4 font-medium text-stone-500">加载项目数据...</p>
@@ -187,7 +174,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
 
   if (!project) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#fafaf9] p-6">
+      <div className="flex items-center justify-center p-6 py-20">
         <div className="glass rounded-3xl p-10 text-center max-w-md w-full shadow-2xl">
           <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-5">
             <AlertCircle className="w-8 h-8 text-red-500" />
@@ -210,25 +197,14 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
   const isDirectProject = project.rewardType === 'direct';
 
   return (
-    <div className="min-h-screen bg-[#fafaf9]">
-      {/* 导航栏 */}
-      <nav className="sticky top-0 z-50 glass border-b border-white/50 transition-all duration-300">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col sm:flex-row justify-between items-center py-4 sm:h-20 sm:py-0 gap-4 sm:gap-0">
-            <div className="flex items-center gap-3">
-              <Link href="/admin" className="flex items-center gap-2 text-stone-500 hover:text-stone-800 transition-colors">
-                <ArrowLeft className="w-4 h-4" />
-                <span className="font-medium hidden sm:inline text-sm">返回</span>
-              </Link>
-              <span className="text-stone-300 hidden sm:inline">/</span>
-              <span className="font-bold text-stone-800 text-lg truncate max-w-[200px] sm:max-w-md">{project.name}</span>
-            </div>
-          </div>
-        </div>
-      </nav>
+    <div>
+      {/* 页面标题 */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-stone-800">{project.name}</h1>
+      </div>
 
       {/* 主内容 */}
-      <main className="max-w-7xl mx-auto p-4 md:p-6 lg:p-8 space-y-8">
+      <div className="space-y-8">
         {/* 提示消息 */}
         {success && (
           <div className="p-4 bg-emerald-50/80 backdrop-blur-sm rounded-2xl border border-emerald-100 shadow-sm flex justify-between items-center animate-fade-in">
@@ -442,7 +418,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
             </div>
           )}
         </div>
-      </main>
+      </div>
     </div>
   );
 }

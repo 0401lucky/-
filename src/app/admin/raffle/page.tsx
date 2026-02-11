@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import {
-  ArrowLeft, Gift, Loader2, Plus, Users, Trophy, Clock, Eye,
+  Gift, Loader2, Plus, Users, Trophy, Clock, Eye,
   Trash2, Edit
 } from 'lucide-react';
 
@@ -99,41 +99,31 @@ export default function AdminRaffleListPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-stone-50">
+      <div className="flex items-center justify-center py-20">
         <Loader2 className="w-8 h-8 animate-spin text-pink-500" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-stone-50 pb-20">
-      {/* 顶部栏 */}
-      <div className="sticky top-0 z-40 bg-white border-b border-stone-200 shadow-sm">
-        <div className="max-w-6xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Link href="/admin" className="p-2 hover:bg-stone-100 rounded-lg transition-colors">
-                <ArrowLeft className="w-5 h-5 text-stone-600" />
-              </Link>
-              <div>
-                <h1 className="text-xl font-bold text-stone-800">多人抽奖管理</h1>
-                <p className="text-sm text-stone-500">创建和管理抽奖活动</p>
-              </div>
-            </div>
-            <Link
-              href="/admin/raffle/create"
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-xl font-bold shadow-lg hover:shadow-xl transition-all"
-            >
-              <Plus className="w-5 h-5" />
-              创建活动
-            </Link>
-          </div>
+    <div className="pb-20">
+      {/* 页面标题 */}
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-bold text-stone-800">多人抽奖管理</h1>
+          <p className="text-stone-500 text-sm mt-1">创建和管理抽奖活动</p>
         </div>
+        <Link
+          href="/admin/raffle/create"
+          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-xl font-bold shadow-lg hover:shadow-xl transition-all"
+        >
+          <Plus className="w-5 h-5" />
+          创建活动
+        </Link>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 py-6">
-        {/* 筛选器 */}
-        <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-2">
+      {/* 筛选器 */}
+      <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-2">
           {[
             { value: 'all', label: '全部' },
             { value: 'draft', label: '草稿' },
@@ -268,7 +258,6 @@ export default function AdminRaffleListPage() {
             ))}
           </div>
         )}
-      </div>
     </div>
   );
 }

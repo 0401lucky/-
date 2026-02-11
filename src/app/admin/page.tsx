@@ -2,11 +2,10 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { 
-  ArrowLeft, Plus, Pause, Play, Trash2, Upload, 
-  Loader2, AlertCircle, Users, Package, LayoutDashboard,
-  ChevronRight, LogOut, User as UserIcon, X, Check, Gift, Sparkles, ShoppingBag, Pin, Layers, MessageSquareText, Megaphone, Activity
+import {
+  Plus, Pause, Play, Trash2, Upload,
+  Loader2, AlertCircle, Package,
+  ChevronRight, X, Check, Gift, Pin,
 } from 'lucide-react';
 
 interface Project {
@@ -26,23 +25,14 @@ interface Project {
   pinnedAt?: number;
 }
 
-interface UserData {
-  id: number;
-  username: string;
-  displayName: string;
-  isAdmin: boolean;
-}
-
 export default function AdminPage() {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const router = useRouter();
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -54,18 +44,6 @@ export default function AdminPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const userRes = await fetch('/api/auth/me');
-      if (!userRes.ok) {
-        router.push('/login?redirect=/admin');
-        return;
-      }
-      const userData = await userRes.json();
-      if (!userData.success || !userData.user?.isAdmin) {
-        router.push('/');
-        return;
-      }
-      setUser(userData.user);
-
       const projectsRes = await fetch('/api/admin/projects');
       if (projectsRes.ok) {
         const data = await projectsRes.json();
@@ -78,7 +56,7 @@ export default function AdminPage() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     void fetchData();
@@ -210,203 +188,16 @@ export default function AdminPage() {
     }
   };
 
-  const handleLogout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    router.push('/');
-  };
-
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#fafaf9]">
-        <div className="text-center text-orange-500">
-          <Loader2 className="w-10 h-10 animate-spin mx-auto" />
-          <p className="mt-4 text-sm font-medium text-stone-500">加载管理后台...</p>
-        </div>
+      <div className="flex items-center justify-center py-32">
+        <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen">
-      {/* 导航栏 */}
-      <nav className="sticky top-0 z-50 glass border-b border-white/50">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6">
-          <div className="flex justify-between items-center h-16 sm:h-[72px]">
-            <div className="flex items-center gap-3 sm:gap-6 min-w-0">
-              <Link href="/" className="flex items-center gap-2 text-stone-500 hover:text-stone-800 transition-colors">
-                <ArrowLeft className="w-4 h-4" />
-                <span className="font-medium hidden sm:inline text-sm">首页</span>
-              </Link>
-              <div className="w-px h-5 bg-stone-300 hidden sm:block" />
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center">
-                  <LayoutDashboard className="w-4 h-4 text-orange-600" />
-                </div>
-                <span className="text-lg font-bold text-stone-800 tracking-tight truncate">
-                  <span className="sm:hidden">后台</span>
-                  <span className="hidden sm:inline">管理后台</span>
-                </span>
-              </div>
-              {/* 桌面端：快捷入口放在同一行 */}
-              <div className="hidden sm:flex items-center gap-3">
-                <Link 
-                  href="/admin/lottery" 
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-orange-200"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  <span className="hidden sm:inline">抽奖管理</span>
-                </Link>
-                <Link 
-                  href="/admin/raffle" 
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-pink-200"
-                >
-                  <Gift className="w-4 h-4" />
-                  <span className="hidden sm:inline">多人抽奖</span>
-                </Link>
-                <Link 
-                  href="/admin/users" 
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-blue-200"
-                >
-                  <Users className="w-4 h-4" />
-                  <span className="hidden sm:inline">用户管理</span>
-                </Link>
-                <Link 
-                  href="/admin/feedback" 
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-amber-200"
-                >
-                  <MessageSquareText className="w-4 h-4" />
-                  <span className="hidden sm:inline">反馈墙</span>
-                </Link>
-                <Link 
-                  href="/admin/announcements" 
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-sky-500 hover:from-cyan-600 hover:to-sky-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-cyan-200"
-                >
-                  <Megaphone className="w-4 h-4" />
-                  <span className="hidden sm:inline">公告管理</span>
-                </Link>
-                <Link
-                  href="/admin/dashboard"
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-indigo-500 to-violet-500 hover:from-indigo-600 hover:to-violet-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-indigo-200"
-                >
-                  <Activity className="w-4 h-4" />
-                  <span className="hidden sm:inline">运营仪表盘</span>
-                </Link>
-                <Link 
-                  href="/admin/store" 
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-purple-200"
-                >
-                  <ShoppingBag className="w-4 h-4" />
-                  <span className="hidden sm:inline">商品管理</span>
-                </Link>
-                <Link 
-                  href="/admin/cards" 
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-emerald-200"
-                >
-                  <Layers className="w-4 h-4" />
-                  <span className="hidden sm:inline">卡牌管理</span>
-                </Link>
-                <Link 
-                  href="/admin/settings" 
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-slate-200"
-                >
-                  <span className="text-sm">⚙️</span>
-                  <span className="hidden sm:inline">设置</span>
-                </Link>
-              </div>
-            </div>
-            
-            {user && (
-              <div className="flex items-center gap-3 sm:gap-4">
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-stone-100 rounded-full border border-stone-200/50">
-                  <div className="w-6 h-6 rounded-full bg-stone-300 flex items-center justify-center">
-                    <UserIcon className="w-3 h-3 text-white" />
-                  </div>
-                  <span className="font-semibold text-stone-600 text-sm hidden sm:inline">{user.displayName}</span>
-                </div>
-                <button 
-                  onClick={handleLogout} 
-                  className="p-2 bg-stone-50 hover:bg-red-50 text-stone-400 hover:text-red-500 rounded-lg transition-colors"
-                  title="退出登录"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* 移动端：快捷入口单独一行，避免标题/按钮挤压 */}
-          <div className="sm:hidden pb-3">
-            <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide -mx-4 px-4">
-              <Link 
-                href="/admin/lottery" 
-                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-orange-500 to-red-500 text-white rounded-full text-sm font-medium shadow-sm"
-              >
-                <Sparkles className="w-4 h-4" />
-                <span>抽奖</span>
-              </Link>
-              <Link 
-                href="/admin/raffle" 
-                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-full text-sm font-medium shadow-sm"
-              >
-                <Gift className="w-4 h-4" />
-                <span>多人抽奖</span>
-              </Link>
-              <Link 
-                href="/admin/users" 
-                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-full text-sm font-medium shadow-sm"
-              >
-                <Users className="w-4 h-4" />
-                <span>用户</span>
-              </Link>
-              <Link 
-                href="/admin/feedback" 
-                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-full text-sm font-medium shadow-sm"
-              >
-                <MessageSquareText className="w-4 h-4" />
-                <span>反馈</span>
-              </Link>
-              <Link 
-                href="/admin/announcements" 
-                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-cyan-500 to-sky-500 text-white rounded-full text-sm font-medium shadow-sm"
-              >
-                <Megaphone className="w-4 h-4" />
-                <span>公告</span>
-              </Link>
-              <Link
-                href="/admin/dashboard"
-                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-indigo-500 to-violet-500 text-white rounded-full text-sm font-medium shadow-sm"
-              >
-                <Activity className="w-4 h-4" />
-                <span>仪表盘</span>
-              </Link>
-              <Link 
-                href="/admin/store" 
-                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-full text-sm font-medium shadow-sm"
-              >
-                <ShoppingBag className="w-4 h-4" />
-                <span>商品</span>
-              </Link>
-              <Link 
-                href="/admin/cards" 
-                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-full text-sm font-medium shadow-sm"
-              >
-                <Layers className="w-4 h-4" />
-                <span>卡牌</span>
-              </Link>
-              <Link 
-                href="/admin/settings" 
-                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-slate-600 to-slate-700 text-white rounded-full text-sm font-medium shadow-sm"
-              >
-                <span className="text-sm">⚙️</span>
-                <span>设置</span>
-              </Link>
-            </div>
-          </div>
-        </div>
-      </nav>
-
-      {/* 主内容 */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 pb-20">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 pb-20">
         {/* 成功提示 */}
         {success && (
           <div className="mb-6 p-4 bg-emerald-50/80 backdrop-blur-sm rounded-2xl border border-emerald-100 flex justify-between items-center animate-fade-in shadow-sm">
@@ -665,8 +456,6 @@ export default function AdminPage() {
             </div>
           )}
         </div>
-      </main>
-
       {/* 创建项目弹窗 */}
       {showCreateModal && (
         <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center p-4 sm:p-6 overflow-y-auto">
@@ -875,5 +664,3 @@ export default function AdminPage() {
     </div>
   );
 }
-
-

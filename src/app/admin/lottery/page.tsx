@@ -1,11 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { 
-  ArrowLeft, Upload, Loader2, Save, AlertCircle, 
-  Users, Package, Clock, User as UserIcon, Check, X, 
+import {
+  Upload, Loader2, Save, AlertCircle,
+  Users, Package, Clock, Check, X,
   Percent, LayoutDashboard, Gift, Trash2, RefreshCw, Eye
 } from 'lucide-react';
 
@@ -48,16 +46,7 @@ interface LotteryConfigState {
   probabilities: Record<string, number>;
 }
 
-interface UserData {
-  id: number;
-  username: string;
-  displayName: string;
-  isAdmin: boolean;
-}
-
 export default function AdminLotteryPage() {
-  const router = useRouter();
-  const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<TierStats[]>([]);
   const [records, setRecords] = useState<LotteryRecord[]>([]);
@@ -125,19 +114,6 @@ export default function AdminLotteryPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      // 验证权限
-      const userRes = await fetch('/api/auth/me');
-      if (!userRes.ok) {
-        router.push('/login?redirect=/admin/lottery');
-        return;
-      }
-      const userData = await userRes.json();
-      if (!userData.success || !userData.user?.isAdmin) {
-        router.push('/');
-        return;
-      }
-      setUser(userData.user);
-
       // 获取数据（重置分页）
         const dataRes = await fetch('/api/admin/lottery?page=1&limit=50');
         if (dataRes.ok) {
@@ -173,7 +149,7 @@ export default function AdminLotteryPage() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     void fetchData();
@@ -376,45 +352,15 @@ export default function AdminLotteryPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#fafaf9]">
+      <div className="flex items-center justify-center py-20">
         <Loader2 className="w-10 h-10 animate-spin text-orange-500" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#fafaf9]">
-      {/* 导航栏 */}
-      <nav className="sticky top-0 z-50 glass border-b border-white/50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="flex justify-between items-center h-[72px]">
-            <div className="flex items-center gap-4">
-              <Link href="/admin" className="flex items-center gap-2 text-stone-500 hover:text-stone-800 transition-colors">
-                <ArrowLeft className="w-4 h-4" />
-                <span className="font-medium text-sm hidden sm:inline">返回后台</span>
-              </Link>
-              <div className="w-px h-5 bg-stone-300 hidden sm:block" />
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center">
-                  <Gift className="w-4 h-4 text-orange-600" />
-                </div>
-                <span className="text-lg font-bold text-stone-800 tracking-tight">抽奖管理</span>
-              </div>
-            </div>
-            
-            {user && (
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-stone-100 rounded-full border border-stone-200/50">
-                  <UserIcon className="w-4 h-4 text-stone-500" />
-                  <span className="font-semibold text-stone-600 text-sm hidden sm:inline">{user.displayName}</span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </nav>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 pb-20 space-y-8">
+    <>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 pb-20 space-y-8">
         {/* 提示区 */}
         {error && (
           <div className="p-4 bg-red-50/80 backdrop-blur-sm rounded-2xl border border-red-100 flex items-center gap-3 text-red-600 animate-fade-in">
@@ -821,7 +767,7 @@ export default function AdminLotteryPage() {
             )}
           </div>
         </section>
-      </main>
+      </div>
 
       {/* 兑换码详情弹窗 */}
       {detailTier && (
@@ -907,7 +853,7 @@ export default function AdminLotteryPage() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import {
@@ -12,23 +11,12 @@ import {
   type FeedbackImage,
 } from '@/lib/feedback-image';
 import {
-  ArrowLeft,
   Loader2,
-  LogOut,
-  MessageSquareText,
   Send,
-  User,
 } from 'lucide-react';
 
 type FeedbackStatus = 'open' | 'processing' | 'resolved' | 'closed';
 type FeedbackRole = 'user' | 'admin';
-
-interface UserData {
-  id: number;
-  username: string;
-  displayName: string;
-  isAdmin: boolean;
-}
 
 interface FeedbackItem {
   id: string;
@@ -84,7 +72,6 @@ function fileToDataUrl(file: File): Promise<string> {
 }
 
 export default function AdminFeedbackPage() {
-  const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -299,60 +286,16 @@ export default function AdminFeedbackPage() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const bootstrap = async () => {
-      try {
-        const response = await fetch('/api/auth/me');
-        if (!response.ok) {
-          router.push('/login?redirect=/admin/feedback');
-          return;
-        }
-
-        const data = await response.json();
-        if (!data.success || !data.user?.isAdmin) {
-          router.push('/');
-          return;
-        }
-
-        if (!cancelled) {
-          setUser(data.user as UserData);
-        }
-      } catch (fetchError) {
-        console.error('Bootstrap admin feedback page failed:', fetchError);
-        if (!cancelled) {
-          setError('初始化页面失败，请刷新重试');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    };
-
-    void bootstrap();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
-
-  useEffect(() => {
     if (includeArchived && filterStatus !== 'all') {
       setFilterStatus('all');
     }
   }, [includeArchived, filterStatus]);
 
   useEffect(() => {
-    if (!user) {
-      setFeedbackList([]);
-      setSelectedId(null);
-      setListPage(1);
-      setListHasMore(false);
-      return;
-    }
-    void loadFeedbackList({ page: 1, append: false });
-  }, [user, filterStatus, includeArchived, loadFeedbackList]);
+    void loadFeedbackList({ page: 1, append: false }).then(() => {
+      setLoading(false);
+    });
+  }, [filterStatus, includeArchived, loadFeedbackList]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -366,17 +309,6 @@ export default function AdminFeedbackPage() {
     setReplyContent('');
     setReplyImages([]);
   }, [selectedId]);
-
-  const handleLogout = async () => {
-    try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-      setUser(null);
-      router.push('/');
-      router.refresh();
-    } catch (logoutError) {
-      console.error('Logout failed:', logoutError);
-    }
-  };
 
   const handleUpdateStatus = async () => {
     if (!selectedId) {
@@ -480,7 +412,7 @@ export default function AdminFeedbackPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#fafaf9] flex items-center justify-center">
+      <div className="flex items-center justify-center py-32">
         <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
       </div>
     );
@@ -491,407 +423,360 @@ export default function AdminFeedbackPage() {
   );
 
   return (
-    <div className="min-h-screen bg-[#fafaf9] overflow-x-hidden">
-      <nav className="sticky top-0 z-50 glass border-b border-white/50">
-        <div className="max-w-[1200px] mx-auto px-4 sm:px-6">
-          <div className="h-[72px] flex items-center justify-between">
-            <div className="flex items-center gap-4 min-w-0">
-              <Link
-                href="/admin"
-                className="flex items-center gap-2 text-stone-500 hover:text-stone-800 transition-colors"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                <span className="text-sm font-medium hidden sm:inline">返回后台</span>
-              </Link>
-              <div className="w-px h-5 bg-stone-300 hidden sm:block" />
-              <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-                <div className="w-9 h-9 bg-orange-100 rounded-xl flex items-center justify-center border border-orange-200">
-                  <MessageSquareText className="w-5 h-5 text-orange-600" />
-                </div>
-                <span className="text-lg sm:text-xl font-bold text-stone-800 truncate">
-                  反馈墙管理
-                </span>
-              </div>
+    <>
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-stone-800">用户反馈总览</h1>
+          <p className="text-stone-500 mt-2 text-sm sm:text-base">
+            管理员可查看全部反馈、更新状态并回复用户。
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm text-stone-600">
+            <input
+              type="checkbox"
+              checked={includeArchived}
+              onChange={(event) => setIncludeArchived(event.target.checked)}
+              className="rounded border-stone-300 text-orange-500 focus:ring-orange-400"
+            />
+            查看已归档
+          </label>
+
+          <span className="text-sm text-stone-500">状态筛选</span>
+          <select
+            value={filterStatus}
+            onChange={(event) =>
+              setFilterStatus(event.target.value as 'all' | FeedbackStatus)
+            }
+            disabled={includeArchived}
+            className="px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm text-stone-700 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <option value="all">全部状态</option>
+            <option value="open">待处理</option>
+            <option value="processing">处理中</option>
+            <option value="resolved">已解决</option>
+            <option value="closed">已关闭</option>
+          </select>
+        </div>
+      </div>
+
+      {(error || success) && (
+        <div className="mb-6 space-y-3">
+          {error && (
+            <div className="px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm font-medium">
+              {error}
             </div>
+          )}
+          {success && (
+            <div className="px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-600 text-sm font-medium">
+              {success}
+            </div>
+          )}
+        </div>
+      )}
 
-            {user && (
-              <div className="flex items-center gap-3 sm:gap-4">
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-stone-100 rounded-full border border-stone-200/60">
-                  <div className="w-6 h-6 rounded-full bg-stone-300 flex items-center justify-center">
-                    <User className="w-3 h-3 text-white" />
-                  </div>
-                  <span className="text-sm font-semibold text-stone-700 hidden sm:inline">
-                    {user.displayName || user.username}
-                  </span>
-                </div>
+      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
+        <section className="glass rounded-2xl border border-white/70 p-5">
+          <h2 className="text-lg font-bold text-stone-800 mb-4">
+            {includeArchived ? '反馈列表（已归档）' : '反馈列表'}
+          </h2>
+          {listLoading ? (
+            <div className="py-10 flex items-center justify-center text-orange-500">
+              <Loader2 className="w-5 h-5 animate-spin" />
+            </div>
+          ) : feedbackList.length === 0 ? (
+            <div className="py-8 text-center text-sm text-stone-400 border border-dashed border-stone-200 rounded-xl">
+              暂无反馈数据
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-[700px] overflow-y-auto pr-1">
+              {feedbackList.map((item) => (
                 <button
-                  onClick={handleLogout}
-                  className="p-2 bg-stone-50 hover:bg-red-50 text-stone-400 hover:text-red-500 rounded-lg transition-colors"
-                  title="退出登录"
+                  key={item.id}
+                  type="button"
+                  onClick={() => setSelectedId(item.id)}
+                  className={`w-full text-left p-3 rounded-xl border transition-colors ${
+                    selectedId === item.id
+                      ? 'bg-orange-50 border-orange-200'
+                      : 'bg-white border-stone-200 hover:border-orange-200 hover:bg-orange-50/40'
+                  }`}
                 >
-                  <LogOut className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </nav>
-
-      <main className="max-w-[1200px] mx-auto px-4 sm:px-6 py-8">
-        <div className="mb-6 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-stone-800">用户反馈总览</h1>
-            <p className="text-stone-500 mt-2 text-sm sm:text-base">
-              管理员可查看全部反馈、更新状态并回复用户。
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm text-stone-600">
-              <input
-                type="checkbox"
-                checked={includeArchived}
-                onChange={(event) => setIncludeArchived(event.target.checked)}
-                className="rounded border-stone-300 text-orange-500 focus:ring-orange-400"
-              />
-              查看已归档
-            </label>
-
-            <span className="text-sm text-stone-500">状态筛选</span>
-            <select
-              value={filterStatus}
-              onChange={(event) =>
-                setFilterStatus(event.target.value as 'all' | FeedbackStatus)
-              }
-              disabled={includeArchived}
-              className="px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm text-stone-700 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              <option value="all">全部状态</option>
-              <option value="open">待处理</option>
-              <option value="processing">处理中</option>
-              <option value="resolved">已解决</option>
-              <option value="closed">已关闭</option>
-            </select>
-          </div>
-        </div>
-
-        {(error || success) && (
-          <div className="mb-6 space-y-3">
-            {error && (
-              <div className="px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm font-medium">
-                {error}
-              </div>
-            )}
-            {success && (
-              <div className="px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-600 text-sm font-medium">
-                {success}
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
-          <section className="glass rounded-2xl border border-white/70 p-5">
-            <h2 className="text-lg font-bold text-stone-800 mb-4">
-              {includeArchived ? '反馈列表（已归档）' : '反馈列表'}
-            </h2>
-            {listLoading ? (
-              <div className="py-10 flex items-center justify-center text-orange-500">
-                <Loader2 className="w-5 h-5 animate-spin" />
-              </div>
-            ) : feedbackList.length === 0 ? (
-              <div className="py-8 text-center text-sm text-stone-400 border border-dashed border-stone-200 rounded-xl">
-                暂无反馈数据
-              </div>
-            ) : (
-              <div className="space-y-3 max-h-[700px] overflow-y-auto pr-1">
-                {feedbackList.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setSelectedId(item.id)}
-                    className={`w-full text-left p-3 rounded-xl border transition-colors ${
-                      selectedId === item.id
-                        ? 'bg-orange-50 border-orange-200'
-                        : 'bg-white border-stone-200 hover:border-orange-200 hover:bg-orange-50/40'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="font-semibold text-sm text-stone-700 truncate">
-                          {item.username}（UID: {item.userId}）
-                        </span>
-                        {item.archivedAt && (
-                          <span className="text-[11px] px-2 py-0.5 rounded-full border border-stone-300 bg-stone-100 text-stone-500">
-                            已归档
-                          </span>
-                        )}
-                      </div>
-                      <span
-                        className={`text-xs px-2 py-1 rounded-full border ${STATUS_CLASS[item.status]}`}
-                      >
-                        {STATUS_LABEL[item.status]}
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-semibold text-sm text-stone-700 truncate">
+                        {item.username}（UID: {item.userId}）
                       </span>
+                      {item.archivedAt && (
+                        <span className="text-[11px] px-2 py-0.5 rounded-full border border-stone-300 bg-stone-100 text-stone-500">
+                          已归档
+                        </span>
+                      )}
                     </div>
-                    <div className="text-xs text-stone-400">#{item.id}</div>
-                    <div className="text-xs text-stone-400 mt-1">
-                      更新于 {new Date(item.updatedAt).toLocaleString('zh-CN')}
-                    </div>
-                    {item.archivedAt && (
-                      <div className="text-xs text-stone-400 mt-1">
-                        归档于 {new Date(item.archivedAt).toLocaleString('zh-CN')}
-                      </div>
-                    )}
-                  </button>
-                ))}
-
-                <div className="pt-1">
-                  {listHasMore ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleLoadMore();
-                      }}
-                      disabled={listLoadingMore}
-                      className="w-full px-3 py-2 rounded-lg border border-stone-200 bg-white text-xs font-semibold text-stone-600 hover:border-orange-300 hover:text-orange-600 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                      {listLoadingMore && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                      {listLoadingMore ? '加载中...' : '加载更多'}
-                    </button>
-                  ) : (
-                    <div className="text-center text-xs text-stone-400 py-1">暂无更多</div>
-                  )}
-                </div>
-              </div>
-            )}
-          </section>
-
-          <section className="glass rounded-2xl border border-white/70 p-5 min-h-[720px] flex flex-col">
-            {!selectedId ? (
-              <div className="flex-1 flex items-center justify-center text-sm text-stone-400 border border-dashed border-stone-200 rounded-xl">
-                请选择一条反馈查看详情
-              </div>
-            ) : detailLoading && !selectedDetail ? (
-              <div className="flex-1 flex items-center justify-center text-orange-500">
-                <Loader2 className="w-6 h-6 animate-spin" />
-              </div>
-            ) : selectedDetail ? (
-              <>
-                <div className="pb-4 border-b border-stone-200 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h2 className="text-lg font-bold text-stone-800">
-                      反馈详情 #{selectedDetail.feedback.id}
-                    </h2>
                     <span
-                      className={`text-xs px-2 py-1 rounded-full border ${STATUS_CLASS[selectedDetail.feedback.status]}`}
+                      className={`text-xs px-2 py-1 rounded-full border ${STATUS_CLASS[item.status]}`}
                     >
-                      {STATUS_LABEL[selectedDetail.feedback.status]}
+                      {STATUS_LABEL[item.status]}
                     </span>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-stone-500">
-                    <div>用户：{selectedDetail.feedback.username}</div>
-                    <div>UID：{selectedDetail.feedback.userId}</div>
-                    <div>
-                      创建时间：
-                      {new Date(selectedDetail.feedback.createdAt).toLocaleString('zh-CN')}
-                    </div>
-                    <div>
-                      更新时间：
-                      {new Date(selectedDetail.feedback.updatedAt).toLocaleString('zh-CN')}
-                    </div>
-                    {selectedDetail.feedback.archivedAt && (
-                      <div>
-                        归档时间：
-                        {new Date(selectedDetail.feedback.archivedAt).toLocaleString('zh-CN')}
-                      </div>
-                    )}
-                    <div className="sm:col-span-2">
-                      联系方式：{selectedDetail.feedback.contact || '未填写'}
-                    </div>
+                  <div className="text-xs text-stone-400">#{item.id}</div>
+                  <div className="text-xs text-stone-400 mt-1">
+                    更新于 {new Date(item.updatedAt).toLocaleString('zh-CN')}
                   </div>
+                  {item.archivedAt && (
+                    <div className="text-xs text-stone-400 mt-1">
+                      归档于 {new Date(item.archivedAt).toLocaleString('zh-CN')}
+                    </div>
+                  )}
+                </button>
+              ))}
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select
-                      value={nextStatus}
-                      onChange={(event) =>
-                        setNextStatus(event.target.value as FeedbackStatus)
-                      }
-                      disabled={isSelectedLocked}
-                      className="px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm text-stone-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      <option value="open">待处理</option>
-                      <option value="processing">处理中</option>
-                      <option value="resolved">已解决</option>
-                      <option value="closed">已关闭</option>
-                    </select>
-                    <button
-                      type="button"
-                      onClick={handleUpdateStatus}
-                      disabled={statusSaving || isSelectedLocked}
-                      className="px-4 py-2 rounded-lg bg-stone-900 text-white text-sm font-semibold hover:bg-stone-800 disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      {statusSaving ? '更新中...' : '更新状态'}
-                    </button>
-                    {selectedDetail.feedback.archivedAt && (
-                      <span className="text-xs text-stone-400">已归档工单不可再修改状态</span>
-                    )}
+              <div className="pt-1">
+                {listHasMore ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleLoadMore();
+                    }}
+                    disabled={listLoadingMore}
+                    className="w-full px-3 py-2 rounded-lg border border-stone-200 bg-white text-xs font-semibold text-stone-600 hover:border-orange-300 hover:text-orange-600 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {listLoadingMore && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    {listLoadingMore ? '加载中...' : '加载更多'}
+                  </button>
+                ) : (
+                  <div className="text-center text-xs text-stone-400 py-1">暂无更多</div>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="glass rounded-2xl border border-white/70 p-5 min-h-[720px] flex flex-col">
+          {!selectedId ? (
+            <div className="flex-1 flex items-center justify-center text-sm text-stone-400 border border-dashed border-stone-200 rounded-xl">
+              请选择一条反馈查看详情
+            </div>
+          ) : detailLoading && !selectedDetail ? (
+            <div className="flex-1 flex items-center justify-center text-orange-500">
+              <Loader2 className="w-6 h-6 animate-spin" />
+            </div>
+          ) : selectedDetail ? (
+            <>
+              <div className="pb-4 border-b border-stone-200 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-lg font-bold text-stone-800">
+                    反馈详情 #{selectedDetail.feedback.id}
+                  </h2>
+                  <span
+                    className={`text-xs px-2 py-1 rounded-full border ${STATUS_CLASS[selectedDetail.feedback.status]}`}
+                  >
+                    {STATUS_LABEL[selectedDetail.feedback.status]}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-stone-500">
+                  <div>用户：{selectedDetail.feedback.username}</div>
+                  <div>UID：{selectedDetail.feedback.userId}</div>
+                  <div>
+                    创建时间：
+                    {new Date(selectedDetail.feedback.createdAt).toLocaleString('zh-CN')}
+                  </div>
+                  <div>
+                    更新时间：
+                    {new Date(selectedDetail.feedback.updatedAt).toLocaleString('zh-CN')}
+                  </div>
+                  {selectedDetail.feedback.archivedAt && (
+                    <div>
+                      归档时间：
+                      {new Date(selectedDetail.feedback.archivedAt).toLocaleString('zh-CN')}
+                    </div>
+                  )}
+                  <div className="sm:col-span-2">
+                    联系方式：{selectedDetail.feedback.contact || '未填写'}
                   </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto py-4 space-y-3">
-                  {selectedDetail.messages.length === 0 ? (
-                    <div className="text-sm text-stone-400 text-center py-8 border border-dashed border-stone-200 rounded-xl">
-                      暂无会话内容
-                    </div>
-                  ) : (
-                    selectedDetail.messages.map((message) => (
-                      <div
-                        key={message.id}
-                        className={`flex ${
-                          message.role === 'admin' ? 'justify-end' : 'justify-start'
-                        }`}
-                      >
-                        <div
-                          className={`max-w-[88%] rounded-2xl px-4 py-3 border ${
-                            message.role === 'admin'
-                              ? 'bg-orange-50 border-orange-200 text-stone-700'
-                              : 'bg-stone-50 border-stone-200 text-stone-700'
-                          }`}
-                        >
-                          <div className="text-xs text-stone-400 mb-1 flex items-center gap-2">
-                            <span>{message.role === 'admin' ? '管理员' : '用户'}</span>
-                            <span>·</span>
-                            <span>{new Date(message.createdAt).toLocaleString('zh-CN')}</span>
-                          </div>
-                          {message.content && (
-                            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                              {message.content}
-                            </p>
-                          )}
-                          {message.images && message.images.length > 0 && (
-                            <div className="mt-2 grid grid-cols-2 gap-2">
-                              {message.images.map((image, index) => (
-                                <a
-                                  key={`${message.id}-${index}`}
-                                  href={image.dataUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="block"
-                                >
-                                  <Image
-                                    src={image.dataUrl}
-                                    alt={image.name || `反馈图片${index + 1}`}
-                                    width={400}
-                                    height={280}
-                                    unoptimized
-                                    className="w-full h-28 object-cover rounded-lg border border-stone-200"
-                                  />
-                                </a>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={nextStatus}
+                    onChange={(event) =>
+                      setNextStatus(event.target.value as FeedbackStatus)
+                    }
+                    disabled={isSelectedLocked}
+                    className="px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm text-stone-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    <option value="open">待处理</option>
+                    <option value="processing">处理中</option>
+                    <option value="resolved">已解决</option>
+                    <option value="closed">已关闭</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleUpdateStatus}
+                    disabled={statusSaving || isSelectedLocked}
+                    className="px-4 py-2 rounded-lg bg-stone-900 text-white text-sm font-semibold hover:bg-stone-800 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {statusSaving ? '更新中...' : '更新状态'}
+                  </button>
+                  {selectedDetail.feedback.archivedAt && (
+                    <span className="text-xs text-stone-400">已归档工单不可再修改状态</span>
                   )}
                 </div>
+              </div>
 
-                <form onSubmit={handleReply} className="pt-4 border-t border-stone-200 space-y-3">
-                  <textarea
-                    value={replyContent}
-                    onChange={(event) => setReplyContent(event.target.value)}
-                    onPaste={handleReplyPaste}
-                    rows={3}
-                    maxLength={1000}
-                    disabled={isSelectedLocked}
-                    placeholder={
-                      selectedDetail.feedback.archivedAt
-                        ? '当前反馈已归档，无法回复'
-                        : selectedDetail.feedback.status === 'closed'
-                          ? '当前反馈已关闭，无法回复'
-                        : '输入回复内容...'
-                    }
-                    className="w-full px-3 py-2.5 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none text-sm resize-y disabled:opacity-70"
-                  />
-
-                  <div className="flex items-center justify-between gap-3">
-                    <label
-                      htmlFor="admin-feedback-reply-images"
-                      className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                        isSelectedLocked
-                          ? 'border-stone-200 text-stone-300 cursor-not-allowed'
-                          : 'border-stone-200 bg-white text-stone-600 cursor-pointer hover:border-orange-300 hover:text-orange-600'
+              <div className="flex-1 overflow-y-auto py-4 space-y-3">
+                {selectedDetail.messages.length === 0 ? (
+                  <div className="text-sm text-stone-400 text-center py-8 border border-dashed border-stone-200 rounded-xl">
+                    暂无会话内容
+                  </div>
+                ) : (
+                  selectedDetail.messages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`flex ${
+                        message.role === 'admin' ? 'justify-end' : 'justify-start'
                       }`}
                     >
-                      上传图片
-                    </label>
-                    <input
-                      id="admin-feedback-reply-images"
-                      type="file"
-                      accept={FEEDBACK_IMAGE_ACCEPT}
-                      multiple
-                      className="hidden"
-                      onChange={handleReplyFileChange}
-                      disabled={isSelectedLocked}
-                    />
-                    <div className="text-xs text-stone-400">
-                      {replyContent.length}/1000 · {replyImages.length}/{MAX_FEEDBACK_IMAGES} 张
-                    </div>
-                  </div>
-
-                  <div className="text-xs text-stone-400">
-                    支持粘贴截图，格式：PNG/JPG/WEBP/GIF，单张 ≤ {MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB
-                  </div>
-
-                  {replyImages.length > 0 && (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      {replyImages.map((image) => (
-                        <div key={image.id} className="relative border border-stone-200 rounded-lg overflow-hidden bg-white">
-                          <Image
-                            src={image.dataUrl}
-                            alt={image.name || '回复图片'}
-                            width={160}
-                            height={80}
-                            unoptimized
-                            className="w-full h-20 object-cover"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeReplyImage(image.id)}
-                            className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white text-xs leading-5"
-                            aria-label="移除图片"
-                          >
-                            ×
-                          </button>
+                      <div
+                        className={`max-w-[88%] rounded-2xl px-4 py-3 border ${
+                          message.role === 'admin'
+                            ? 'bg-orange-50 border-orange-200 text-stone-700'
+                            : 'bg-stone-50 border-stone-200 text-stone-700'
+                        }`}
+                      >
+                        <div className="text-xs text-stone-400 mb-1 flex items-center gap-2">
+                          <span>{message.role === 'admin' ? '管理员' : '用户'}</span>
+                          <span>·</span>
+                          <span>{new Date(message.createdAt).toLocaleString('zh-CN')}</span>
                         </div>
-                      ))}
+                        {message.content && (
+                          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                            {message.content}
+                          </p>
+                        )}
+                        {message.images && message.images.length > 0 && (
+                          <div className="mt-2 grid grid-cols-2 gap-2">
+                            {message.images.map((image, index) => (
+                              <a
+                                key={`${message.id}-${index}`}
+                                href={image.dataUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block"
+                              >
+                                <Image
+                                  src={image.dataUrl}
+                                  alt={image.name || `反馈图片${index + 1}`}
+                                  width={400}
+                                  height={280}
+                                  unoptimized
+                                  className="w-full h-28 object-cover rounded-lg border border-stone-200"
+                                />
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  )}
-
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs text-stone-400">支持文字 + 图片混合发送</div>
-                    <button
-                      type="submit"
-                      disabled={replying || isSelectedLocked}
-                      className="px-4 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-semibold hover:bg-orange-600 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
-                    >
-                      {replying ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Send className="w-4 h-4" />
-                      )}
-                      {replying ? '发送中...' : '发送回复'}
-                    </button>
-                  </div>
-                </form>
-              </>
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-sm text-stone-400 border border-dashed border-stone-200 rounded-xl">
-                反馈详情加载失败，请重新选择
+                  ))
+                )}
               </div>
-            )}
-          </section>
-        </div>
-      </main>
-    </div>
+
+              <form onSubmit={handleReply} className="pt-4 border-t border-stone-200 space-y-3">
+                <textarea
+                  value={replyContent}
+                  onChange={(event) => setReplyContent(event.target.value)}
+                  onPaste={handleReplyPaste}
+                  rows={3}
+                  maxLength={1000}
+                  disabled={isSelectedLocked}
+                  placeholder={
+                    selectedDetail.feedback.archivedAt
+                      ? '当前反馈已归档，无法回复'
+                      : selectedDetail.feedback.status === 'closed'
+                        ? '当前反馈已关闭，无法回复'
+                      : '输入回复内容...'
+                  }
+                  className="w-full px-3 py-2.5 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none text-sm resize-y disabled:opacity-70"
+                />
+
+                <div className="flex items-center justify-between gap-3">
+                  <label
+                    htmlFor="admin-feedback-reply-images"
+                    className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                      isSelectedLocked
+                        ? 'border-stone-200 text-stone-300 cursor-not-allowed'
+                        : 'border-stone-200 bg-white text-stone-600 cursor-pointer hover:border-orange-300 hover:text-orange-600'
+                    }`}
+                  >
+                    上传图片
+                  </label>
+                  <input
+                    id="admin-feedback-reply-images"
+                    type="file"
+                    accept={FEEDBACK_IMAGE_ACCEPT}
+                    multiple
+                    className="hidden"
+                    onChange={handleReplyFileChange}
+                    disabled={isSelectedLocked}
+                  />
+                  <div className="text-xs text-stone-400">
+                    {replyContent.length}/1000 · {replyImages.length}/{MAX_FEEDBACK_IMAGES} 张
+                  </div>
+                </div>
+
+                <div className="text-xs text-stone-400">
+                  支持粘贴截图，格式：PNG/JPG/WEBP/GIF，单张 ≤ {MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB
+                </div>
+
+                {replyImages.length > 0 && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {replyImages.map((image) => (
+                      <div key={image.id} className="relative border border-stone-200 rounded-lg overflow-hidden bg-white">
+                        <Image
+                          src={image.dataUrl}
+                          alt={image.name || '回复图片'}
+                          width={160}
+                          height={80}
+                          unoptimized
+                          className="w-full h-20 object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeReplyImage(image.id)}
+                          className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white text-xs leading-5"
+                          aria-label="移除图片"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs text-stone-400">支持文字 + 图片混合发送</div>
+                  <button
+                    type="submit"
+                    disabled={replying || isSelectedLocked}
+                    className="px-4 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-semibold hover:bg-orange-600 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {replying ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Send className="w-4 h-4" />
+                    )}
+                    {replying ? '发送中...' : '发送回复'}
+                  </button>
+                </div>
+              </form>
+            </>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-sm text-stone-400 border border-dashed border-stone-200 rounded-xl">
+              反馈详情加载失败，请重新选择
+            </div>
+          )}
+        </section>
+      </div>
+    </>
   );
 }

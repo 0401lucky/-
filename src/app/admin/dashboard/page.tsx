@@ -1,9 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { ArrowLeft, RefreshCw, BellRing, Activity, AlertTriangle } from 'lucide-react';
+import { RefreshCw, AlertTriangle, BellRing } from 'lucide-react';
 
 interface DashboardData {
   dashboard: {
@@ -71,7 +69,6 @@ function formatDateTime(timestamp: number): string {
 }
 
 export default function AdminDashboardPage() {
-  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,18 +83,6 @@ export default function AdminDashboardPage() {
     setError(null);
 
     try {
-      const meRes = await fetch('/api/auth/me', { cache: 'no-store' });
-      if (!meRes.ok) {
-        router.push('/login?redirect=/admin/dashboard');
-        return;
-      }
-
-      const meData = await meRes.json();
-      if (!meData.success || !meData.user?.isAdmin) {
-        router.push('/');
-        return;
-      }
-
       const url = detect ? '/api/admin/dashboard?detect=1' : '/api/admin/dashboard?detect=0';
       const res = await fetch(url, { cache: 'no-store' });
       const json = await res.json();
@@ -113,7 +98,7 @@ export default function AdminDashboardPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     void fetchDashboard(false, false);
@@ -141,44 +126,30 @@ export default function AdminDashboardPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#fafaf9]">
-      <nav className="sticky top-0 z-50 glass border-b border-white/50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/admin" className="flex items-center gap-2 text-stone-500 hover:text-stone-800 text-sm">
-              <ArrowLeft className="w-4 h-4" />
-              返回管理后台
-            </Link>
-            <div className="w-px h-5 bg-stone-300" />
-            <div className="flex items-center gap-2 font-semibold text-stone-800">
-              <Activity className="w-4 h-4 text-indigo-500" />
-              运营仪表盘
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => void fetchDashboard(true, true)}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 text-sm"
-              disabled={refreshing}
-            >
-              <AlertTriangle className="w-4 h-4" />
-              运行检测
-            </button>
-            <button
-              onClick={() => void fetchDashboard(false, true)}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-50 text-sm disabled:opacity-50"
-              disabled={refreshing}
-            >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-              刷新
-            </button>
-          </div>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-stone-800">运营仪表盘</h1>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => void fetchDashboard(true, true)}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 text-sm"
+            disabled={refreshing}
+          >
+            <AlertTriangle className="w-4 h-4" />
+            运行检测
+          </button>
+          <button
+            onClick={() => void fetchDashboard(false, true)}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-50 text-sm disabled:opacity-50"
+            disabled={refreshing}
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
         </div>
-      </nav>
+      </div>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-        {error && (
+      {error && (
           <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-600 text-sm">
             {error}
           </div>
@@ -258,7 +229,6 @@ export default function AdminDashboardPage() {
             </div>
           )}
         </section>
-      </main>
-    </div>
+      </div>
   );
 }

@@ -1,11 +1,9 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { 
-  ArrowLeft, Loader2, Search, Users, 
-  LogOut, User as UserIcon, X, 
+import {
+  Loader2, Search, Users,
+  User as UserIcon, X,
   ChevronRight, Gift, Sparkles, Clock, CheckCircle2, Star, RefreshCw, Coins
 } from 'lucide-react';
 
@@ -58,17 +56,9 @@ interface PointsLog {
   createdAt: number;
 }
 
-interface UserData {
-  id: number;
-  username: string;
-  displayName: string;
-  isAdmin: boolean;
-}
-
 export default function UsersPage() {
   const [users, setUsers] = useState<UserWithStats[]>([]);
   const [filteredUsers, setFilteredUsers] = useState<UserWithStats[]>([]);
-  const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'new' | 'claimed'>('all');
@@ -98,8 +88,6 @@ export default function UsersPage() {
   
   // 请求序号防抖，防止竞态
   const requestIdRef = useRef(0);
-  
-  const router = useRouter();
 
   useEffect(() => {
     let result = users;
@@ -118,24 +106,12 @@ export default function UsersPage() {
     { resetPage = true, search = '' }: { resetPage?: boolean; search?: string } = {}
   ) => {
     try {
-      const userRes = await fetch('/api/auth/me');
-      if (!userRes.ok) {
-        router.push('/login?redirect=/admin/users');
-        return;
-      }
-      const userData = await userRes.json();
-      if (!userData.success || !userData.user?.isAdmin) {
-        router.push('/');
-        return;
-      }
-      setUser(userData.user);
-
       // 重置分页
       if (resetPage) {
         setPage(1);
         setUsers([]);
       }
-      
+
       const trimmedSearch = search.trim();
       const searchParam = trimmedSearch ? `&search=${encodeURIComponent(trimmedSearch)}` : '';
       const usersRes = await fetch(`/api/admin/users?page=1&limit=50${searchParam}`);
@@ -154,7 +130,7 @@ export default function UsersPage() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     void fetchData({ resetPage: true, search: '' });
@@ -314,11 +290,6 @@ export default function UsersPage() {
     return labels[source] || source;
   };
 
-  const handleLogout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    router.push('/');
-  };
-
   const handleSyncUsers = async () => {
     if (syncing) return;
     setSyncing(true);
@@ -373,7 +344,7 @@ export default function UsersPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#fafaf9]">
+      <div className="flex items-center justify-center py-32">
         <div className="text-center text-orange-500">
           <Loader2 className="w-10 h-10 animate-spin mx-auto" />
           <p className="mt-4 text-sm font-medium text-stone-500">加载用户数据...</p>
@@ -386,48 +357,7 @@ export default function UsersPage() {
   const claimedUserCount = usersStats?.claimedUserCount ?? users.filter(u => !u.isNewUser).length;
 
   return (
-    <div className="min-h-screen">
-      {/* 导航栏 */}
-      <nav className="sticky top-0 z-50 glass border-b border-white/50">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6">
-          <div className="flex justify-between items-center h-16 sm:h-[72px]">
-            <div className="flex items-center gap-4 sm:gap-6">
-              <Link href="/admin" className="flex items-center gap-2 text-stone-500 hover:text-stone-800 transition-colors">
-                <ArrowLeft className="w-4 h-4" />
-                <span className="font-medium hidden sm:inline text-sm">管理后台</span>
-              </Link>
-              <div className="w-px h-5 bg-stone-300 hidden sm:block" />
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
-                  <Users className="w-4 h-4 text-blue-600" />
-                </div>
-                <span className="text-lg font-bold text-stone-800 tracking-tight">用户管理</span>
-              </div>
-            </div>
-            
-            {user && (
-              <div className="flex items-center gap-3 sm:gap-4">
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-stone-100 rounded-full border border-stone-200/50">
-                  <div className="w-6 h-6 rounded-full bg-stone-300 flex items-center justify-center">
-                    <UserIcon className="w-3 h-3 text-white" />
-                  </div>
-                  <span className="font-semibold text-stone-600 text-sm hidden sm:inline">{user.displayName}</span>
-                </div>
-                <button 
-                  onClick={handleLogout} 
-                  className="p-2 bg-stone-50 hover:bg-red-50 text-stone-400 hover:text-red-500 rounded-lg transition-colors"
-                  title="退出登录"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </nav>
-
-      {/* 主内容 */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 pb-20">
+    <>
         {/* 操作栏 */}
         <div className="flex justify-end mb-4">
           <div className="flex flex-wrap items-center gap-2">
@@ -678,7 +608,6 @@ export default function UsersPage() {
             </div>
           )}
         </div>
-      </main>
 
       {/* 用户详情模态框 */}
       {selectedUser && (
@@ -928,6 +857,6 @@ export default function UsersPage() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

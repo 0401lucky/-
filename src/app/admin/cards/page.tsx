@@ -1,11 +1,9 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import {
-  ArrowLeft, Loader2, Search, Users,
-  LogOut, User as UserIcon, X,
+  Loader2, Search, Users,
+  User as UserIcon, X,
   ChevronRight, RefreshCw, CreditCard, LayoutGrid, Layers,
   BookOpen, Save, Edit2, Star
 } from 'lucide-react';
@@ -29,13 +27,6 @@ interface UserCardData {
   collectionRewards: string[];
 }
 
-interface UserData {
-  id: number;
-  username: string;
-  displayName: string;
-  isAdmin: boolean;
-}
-
 interface AlbumData {
   id: string;
   name: string;
@@ -54,7 +45,6 @@ interface TierData {
 
 export default function AdminCardsPage() {
   const [users, setUsers] = useState<UserWithCardStats[]>([]);
-  const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -79,29 +69,15 @@ export default function AdminCardsPage() {
   const [savingReward, setSavingReward] = useState(false);
   const [activeTab, setActiveTab] = useState<'users' | 'albums'>('users');
 
-  const router = useRouter();
-
   const fetchData = useCallback(async (
     { resetPage = true, search = '' }: { resetPage?: boolean; search?: string } = {}
   ) => {
     try {
-      const userRes = await fetch('/api/auth/me');
-      if (!userRes.ok) {
-        router.push('/login?redirect=/admin/cards');
-        return;
-      }
-      const userData = await userRes.json();
-      if (!userData.success || !userData.user?.isAdmin) {
-        router.push('/');
-        return;
-      }
-      setUser(userData.user);
-
       if (resetPage) {
         setPage(1);
         setUsers([]);
       }
-      
+
       const trimmedSearch = search.trim();
       const searchParam = trimmedSearch ? `&search=${encodeURIComponent(trimmedSearch)}` : '';
       const usersRes = await fetch(`/api/admin/cards/users?page=1&limit=50${searchParam}`);
@@ -119,7 +95,7 @@ export default function AdminCardsPage() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, []);
 
   const fetchAlbums = useCallback(async () => {
     try {
@@ -221,11 +197,6 @@ export default function AdminCardsPage() {
     }
   };
 
-  const handleLogout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    router.push('/');
-  };
-
   const handleSaveReward = async (albumId?: string, tierId?: string) => {
     setSavingReward(true);
     try {
@@ -279,7 +250,7 @@ export default function AdminCardsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#fafaf9]">
+      <div className="flex items-center justify-center py-32">
         <div className="text-center text-orange-500">
           <Loader2 className="w-10 h-10 animate-spin mx-auto" />
           <p className="mt-4 text-sm font-medium text-stone-500">加载数据...</p>
@@ -289,48 +260,9 @@ export default function AdminCardsPage() {
   }
 
   return (
-    <div className="min-h-screen">
-      {/* 导航栏 */}
-      <nav className="sticky top-0 z-50 glass border-b border-white/50">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6">
-          <div className="flex justify-between items-center h-16 sm:h-[72px]">
-            <div className="flex items-center gap-4 sm:gap-6">
-              <Link href="/admin" className="flex items-center gap-2 text-stone-500 hover:text-stone-800 transition-colors">
-                <ArrowLeft className="w-4 h-4" />
-                <span className="font-medium hidden sm:inline text-sm">管理后台</span>
-              </Link>
-              <div className="w-px h-5 bg-stone-300 hidden sm:block" />
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
-                  <CreditCard className="w-4 h-4 text-indigo-600" />
-                </div>
-                <span className="text-lg font-bold text-stone-800 tracking-tight">卡牌管理</span>
-              </div>
-            </div>
-            
-            {user && (
-              <div className="flex items-center gap-3 sm:gap-4">
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-stone-100 rounded-full border border-stone-200/50">
-                  <div className="w-6 h-6 rounded-full bg-stone-300 flex items-center justify-center">
-                    <UserIcon className="w-3 h-3 text-white" />
-                  </div>
-                  <span className="font-semibold text-stone-600 text-sm hidden sm:inline">{user.displayName}</span>
-                </div>
-                <button 
-                  onClick={handleLogout} 
-                  className="p-2 bg-stone-50 hover:bg-red-50 text-stone-400 hover:text-red-500 rounded-lg transition-colors"
-                  title="退出登录"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </nav>
-
+    <>
       {/* 主内容 */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 pb-20">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 pb-20">
         {/* 标签页切换 */}
         <div className="flex gap-2 mb-6">
           <button
@@ -650,7 +582,7 @@ export default function AdminCardsPage() {
           </div>
           </>
         )}
-      </main>
+      </div>
 
       {/* 详情模态框 */}
       {selectedUser && (
@@ -767,6 +699,6 @@ export default function AdminCardsPage() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

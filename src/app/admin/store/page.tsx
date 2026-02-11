@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
 
 interface StoreItem {
   id: string;
@@ -19,7 +18,6 @@ interface StoreItem {
 }
 
 export default function AdminStorePage() {
-  const router = useRouter();
   const [items, setItems] = useState<StoreItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -172,21 +170,12 @@ export default function AdminStorePage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 py-12 px-4 sm:px-6 lg:px-8 font-sans text-slate-900">
-      <div className="max-w-7xl mx-auto">
+    <div>
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => router.push('/admin')}
-              className="group flex items-center justify-center w-10 h-10 rounded-full bg-white border border-slate-200 text-slate-500 hover:text-slate-900 hover:border-slate-300 transition-all shadow-sm"
-            >
-              <span className="group-hover:-translate-x-0.5 transition-transform">←</span>
-            </button>
-            <div>
-               <h1 className="text-2xl font-bold text-slate-900">商品管理</h1>
-               <p className="text-sm text-slate-500">管理积分商城的商品上架、定价与库存</p>
-            </div>
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-2xl font-bold text-stone-800">商品管理</h1>
+            <p className="text-stone-500 text-sm mt-1">管理积分商城的商品上架、定价与库存</p>
           </div>
           <button
             onClick={() => handleOpenModal()}
@@ -314,9 +303,8 @@ export default function AdminStorePage() {
             </div>
           </div>
         )}
-      </div>
 
-      {/* Edit/Create Modal */}
+        {/* Edit/Create Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
           <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-slide-up transform transition-all">
