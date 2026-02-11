@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, use, useCallback } from 'react';
+import { useEffect, useRef, useState, use, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Upload, Loader2, AlertCircle, Users, Package, Clock, User as UserIcon, Check, X, Gift, FileText, Copy } from 'lucide-react';
@@ -41,6 +41,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
   const [appendClaims, setAppendClaims] = useState('10');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
 
   const fetchData = useCallback(async () => {
@@ -79,6 +80,24 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
     void fetchData();
   }, [fetchData]);
 
+  const scheduleSuccessClear = useCallback(() => {
+    if (successTimeoutRef.current) {
+      clearTimeout(successTimeoutRef.current);
+    }
+    successTimeoutRef.current = setTimeout(() => {
+      setSuccess(null);
+      successTimeoutRef.current = null;
+    }, 5000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const handleUploadCodes = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -101,7 +120,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
       if (data.success) {
         setSuccess(`成功添加 ${data.codesAdded} 个兑换码`);
         fetchData();
-        setTimeout(() => setSuccess(null), 5000);
+        scheduleSuccessClear();
       } else {
         setError(data.message || '上传失败');
       }
@@ -138,7 +157,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
       if (data.success) {
         setSuccess(`成功追加 ${data.appended ?? delta} 个名额`);
         fetchData();
-        setTimeout(() => setSuccess(null), 5000);
+        scheduleSuccessClear();
       } else {
         setError(data.message || '追加失败');
       }
@@ -427,3 +446,4 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
     </div>
   );
 }
+

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, use, useCallback } from 'react';
+import { useEffect, useRef, useState, use, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Loader2, ArrowLeft, Copy, Check, Package, AlertCircle, LogOut, User as UserIcon, Gift, Sparkles } from 'lucide-react';
@@ -44,6 +44,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState(false);
   const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
@@ -86,6 +87,14 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     void fetchData();
   }, [fetchData]);
 
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const handleClaim = async () => {
     if (!user) {
       router.push(`/login?redirect=/project/${id}`);
@@ -126,7 +135,13 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     if (claimedInfo?.code) {
       navigator.clipboard.writeText(claimedInfo.code);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+      copyTimeoutRef.current = setTimeout(() => {
+        setCopied(false);
+        copyTimeoutRef.current = null;
+      }, 2000);
     }
   };
 
@@ -441,3 +456,5 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     </div>
   );
 }
+
+

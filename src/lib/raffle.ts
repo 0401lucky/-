@@ -3,8 +3,11 @@
  */
 
 import { kv } from "@vercel/kv";
+import { randomInt } from "crypto";
 import { nanoid } from "nanoid";
 import { creditQuotaToUser } from "./new-api";
+import { maskUserId } from "./logging";
+import { createUserNotification } from './notifications';
 import type {
   Raffle,
   RafflePrize,
@@ -453,7 +456,7 @@ export async function getRaffleEntries(
 function shuffleArray<T>(array: T[]): T[] {
   const shuffled = [...array];
   for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomInt(i + 1);
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
   return shuffled;
@@ -750,7 +753,24 @@ async function deliverRewards(
               ...deliveredWinner,
             });
           } catch (logError) {
-            console.error(`记录中奖记录失败 - 用户 ${winner.userId}:`, logError);
+            console.error("记录中奖记录失败", { userId: maskUserId(winner.userId), error: logError });
+          }
+
+          try {
+            await createUserNotification({
+              userId: winner.userId,
+              type: 'raffle_win',
+              title: '多人抽奖中奖：' + raffle.title,
+              content: '恭喜获得 ' + winner.prizeName + '（$' + winner.dollars + '）',
+              data: {
+                raffleId,
+                prizeName: winner.prizeName,
+                dollars: winner.dollars,
+                entryId: winner.entryId,
+              },
+            });
+          } catch (notifyError) {
+            console.error("记录中奖通知失败", { userId: maskUserId(winner.userId), error: notifyError });
           }
 
           return {
@@ -805,7 +825,7 @@ async function deliverRewards(
           },
         };
       } catch (error) {
-        console.error(`发放奖励失败 - 用户 ${winner.userId}:`, error);
+        console.error("发放奖励失败", { userId: maskUserId(winner.userId), error });
         return {
           winnerIndex,
           winner: {
@@ -1096,3 +1116,7 @@ export async function getUserRaffleWins(
 export async function getUserRaffles(userId: number): Promise<string[]> {
   return await kv.smembers(`${USER_RAFFLES_PREFIX}${userId}`);
 }
+
+
+
+

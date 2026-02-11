@@ -3,6 +3,8 @@ import { kv } from '@vercel/kv';
 import { nanoid } from 'nanoid';
 import { creditQuotaToUser } from '../new-api';
 import { executeRaffleDraw, joinRaffle, retryFailedRewards } from '../raffle';
+import { getTodayDirectTotal, reserveDailyDirectQuota, rollbackDailyDirectQuota } from '../lottery';
+import { getTodayDateString } from '../time';
 
 vi.mock('@vercel/kv', () => ({
   kv: {
@@ -14,6 +16,7 @@ vi.mock('@vercel/kv', () => ({
     lpush: vi.fn(),
     rpop: vi.fn(),
     del: vi.fn(),
+    decrby: vi.fn(),
   },
 }));
 
@@ -25,6 +28,32 @@ vi.mock('../new-api', () => ({
   creditQuotaToUser: vi.fn(),
 }));
 
+vi.mock('../notifications', () => ({
+  createUserNotification: vi.fn(),
+}));
+
+vi.mock('../time', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../time')>();
+  return {
+    ...mod,
+    getTodayDateString: vi.fn(() => '2026-02-10'),
+    getSecondsUntilMidnight: vi.fn(() => 3600),
+  };
+});
+
+vi.mock('../lottery', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../lottery')>();
+  return {
+    ...mod,
+    getLotteryConfig: vi.fn(async () => ({
+      enabled: true,
+      mode: 'direct' as const,
+      dailyDirectLimit: 2000,
+      tiers: [],
+    })),
+  };
+});
+
 describe('raffle robustness', () => {
   const mockKvSet = vi.mocked(kv.set);
   const mockKvGet = vi.mocked(kv.get);
@@ -32,6 +61,8 @@ describe('raffle robustness', () => {
   const mockKvSrem = vi.mocked(kv.srem);
   const mockKvEval = vi.mocked(kv.eval);
   const mockKvLpush = vi.mocked(kv.lpush);
+  const mockKvDecrby = vi.mocked(kv.decrby);
+  const mockGetTodayDateString = vi.mocked(getTodayDateString);
   const mockNanoid = vi.mocked(nanoid);
   const mockCreditQuotaToUser = vi.mocked(creditQuotaToUser);
 
@@ -39,6 +70,7 @@ describe('raffle robustness', () => {
     vi.clearAllMocks();
     vi.spyOn(console, 'error').mockImplementation(() => {});
     mockNanoid.mockReturnValue('mock-token');
+    mockGetTodayDateString.mockReturnValue('2026-02-10');
   });
 
   afterEach(() => {
@@ -257,4 +289,33 @@ describe('raffle robustness', () => {
     };
     expect(finalRaffle.winners?.[0]?.rewardStatus).toBe('delivered');
   });
+
+  it('stores direct total in cents and supports decimals', async () => {
+    mockKvGet.mockResolvedValue(12345);
+
+    const total = await getTodayDirectTotal();
+    expect(total).toBe(123.45);
+  });
+
+  it('reserves fractional daily direct quota via scaled cents', async () => {
+    mockKvEval.mockResolvedValue([1, 123]);
+
+    const result = await reserveDailyDirectQuota(1.23);
+
+    expect(result).toEqual({ success: true, newTotal: 1.23 });
+    expect(mockKvEval).toHaveBeenCalledWith(
+      expect.any(String),
+      ['lottery:daily_direct:2026-02-10'],
+      [123, 200000, expect.any(Number)]
+    );
+  });
+
+  it('rolls back fractional direct quota with scaled decrby', async () => {
+    mockKvDecrby.mockResolvedValue(0);
+
+    await rollbackDailyDirectQuota(2.75);
+
+    expect(mockKvDecrby).toHaveBeenCalledWith('lottery:daily_direct:2026-02-10', 275);
+  });
 });
+

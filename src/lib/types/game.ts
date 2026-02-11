@@ -42,8 +42,14 @@ export interface LinkGameShuffleMove {
   timestamp: number;
 }
 
+/** 连连看提示操作 */
+export interface LinkGameHintMove {
+  type: 'hint';
+  timestamp: number;
+}
+
 /** 连连看操作记录（联合类型） */
-export type LinkGameMove = LinkGameMatchMove | LinkGameShuffleMove;
+export type LinkGameMove = LinkGameMatchMove | LinkGameShuffleMove | LinkGameHintMove;
 
 /** 兼容旧格式的操作记录（用于服务端向后兼容） */
 export interface LinkGameLegacyMove {
@@ -119,6 +125,25 @@ export interface MemoryMove {
   timestamp: number;       // 操作时间戳
 }
 
+/** 已揭示的记忆卡片（用于断线恢复） */
+export interface MemoryRevealedCard {
+  index: number;
+  iconId: string;
+}
+
+/** 记忆游戏翻牌响应 */
+export interface MemoryFlipResult {
+  cardIndex: number;
+  iconId: string;
+  firstCardIndex?: number;
+  firstCardIconId?: string;
+  matched: boolean;
+  completed: boolean;
+  moveCount: number;
+  matchedCount: number;
+  move?: MemoryMove;
+}
+
 /** 记忆游戏会话 */
 export interface MemoryGameSession {
   id: string;
@@ -127,6 +152,9 @@ export interface MemoryGameSession {
   difficulty: MemoryDifficulty;
   seed: string;            // 随机种子
   cardLayout: string[];    // 卡片布局（iconId数组，服务端生成）
+  firstFlippedCard?: number | null; // 当前已翻开但尚未配对的卡片
+  matchedCards?: number[]; // 已配对成功的卡片索引
+  moveLog?: MemoryMove[];   // 服务端记录的真实翻牌步骤
   startedAt: number;
   expiresAt: number;
   status: GameSessionStatus;

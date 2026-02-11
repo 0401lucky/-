@@ -1,10 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loginToNewApi } from "@/lib/new-api";
-import { createSessionToken } from "@/lib/auth";
+import {
+  clearLoginFailures,
+  createSessionToken,
+  getLoginLockStatus,
+  recordLoginFailure,
+} from "@/lib/auth";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+
+function getClientIp(request: NextRequest): string {
+  const xForwardedFor = request.headers.get("x-forwarded-for");
+  if (xForwardedFor) {
+    return xForwardedFor.split(",")[0]?.trim() || "unknown";
+  }
+
+  const xRealIp = request.headers.get("x-real-ip");
+  if (xRealIp) {
+    return xRealIp.trim();
+  }
+
+  return "unknown";
+}
 
 export async function POST(request: NextRequest) {
   try {
     const { username, password } = await request.json();
+    const normalizedUsername = String(username ?? "").trim().toLowerCase();
 
     if (!username || !password) {
       return NextResponse.json(
@@ -13,14 +34,46 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const lockStatus = await getLoginLockStatus(normalizedUsername);
+    if (lockStatus.locked) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `登录失败次数过多，请 ${lockStatus.remainingSeconds} 秒后再试`,
+          retryAfter: lockStatus.remainingSeconds,
+        },
+        { status: 429 }
+      );
+    }
+
+    const ipRateLimitResult = await checkRateLimit(getClientIp(request), RATE_LIMITS['auth:login:ip']);
+    if (!ipRateLimitResult.success) {
+      return rateLimitResponse(ipRateLimitResult);
+    }
+
+    const usernameRateLimitResult = await checkRateLimit(normalizedUsername, RATE_LIMITS['auth:login:user']);
+    if (!usernameRateLimitResult.success) {
+      return rateLimitResponse(usernameRateLimitResult);
+    }
+
     const result = await loginToNewApi(username, password);
 
     if (!result.success) {
+      const failure = await recordLoginFailure(normalizedUsername);
+      const failureMessage = failure.locked
+        ? `登录失败次数过多，请 ${failure.remainingSeconds} 秒后再试`
+        : result.message;
       return NextResponse.json(
-        { success: false, message: result.message },
-        { status: 401 }
+        {
+          success: false,
+          message: failureMessage,
+          retryAfter: failure.locked ? failure.remainingSeconds : undefined,
+        },
+        { status: failure.locked ? 429 : 401 }
       );
     }
+
+    await clearLoginFailures(normalizedUsername);
 
     if (!result.user) {
       return NextResponse.json(
@@ -34,6 +87,7 @@ export async function POST(request: NextRequest) {
       id: result.user.id,
       username: result.user.username,
       displayName: result.user.display_name || result.user.username,
+      iat: Date.now(),
       exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 天过期
     };
 

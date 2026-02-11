@@ -5,6 +5,7 @@ import { addGamePointsWithLimit, applyPointsDelta, getUserPoints } from './point
 import { getSlotConfig } from './slot-config';
 import { getTodayDateString } from './time';
 import { getDailyPointsLimit } from './config';
+import { incrementSharedDailyStats } from './daily-stats';
 import type { DailyGameStats } from './types/game';
 import {
   SLOT_BET_OPTIONS,
@@ -78,13 +79,20 @@ const SYMBOL_BY_ID: Record<SlotSymbolId, (typeof SLOT_SYMBOLS)[number]> = SLOT_S
 );
 
 const TOTAL_WEIGHT = SLOT_SYMBOLS.reduce((sum, symbol) => sum + symbol.weight, 0);
+const UINT32_MAX_PLUS_ONE = 0x1_0000_0000;
 
 function randomInt(maxExclusive: number): number {
   if (!Number.isFinite(maxExclusive) || maxExclusive <= 0) {
     throw new Error('Invalid maxExclusive');
   }
-  const n = randomBytes(4).readUInt32BE(0);
-  return n % maxExclusive;
+
+  const limit = Math.floor(UINT32_MAX_PLUS_ONE / maxExclusive) * maxExclusive;
+  let value = randomBytes(4).readUInt32BE(0);
+  while (value >= limit) {
+    value = randomBytes(4).readUInt32BE(0);
+  }
+
+  return value % maxExclusive;
 }
 
 function pickSymbolId(): SlotSymbolId {
@@ -256,9 +264,7 @@ export async function spinSlot(
       };
     }
 
-    // 先写入 lastSpinAt，避免并发/重试导致多次发放
     const now = Date.now();
-    await kv.set(SLOT_LAST_SPIN_AT_KEY(userId), now, { ex: 60 });
 
     const reels: SlotSymbolId[] = [pickSymbolId(), pickSymbolId(), pickSymbolId()];
     const outcome = computeOutcome(reels);
@@ -275,11 +281,14 @@ export async function spinSlot(
       }
 
       const betCost = resolveBetCost(slotConfig.betCost, requestedBetCost);
-      const payout = computePayout(betCost, outcome.multiplier);
+      const rawPayout = computePayout(betCost, outcome.multiplier);
+      const remainingPointsLimit = Math.max(0, dailyLimit - dailyStats.pointsEarned);
+      const payout = Math.min(rawPayout, remainingPointsLimit);
+      const payoutCapped = payout < rawPayout;
 
       const pointsDelta = payout - betCost;
-      const description = (() => {
-        if (payout <= 0 || outcome.winType === 'none') {
+      const descriptionBase = (() => {
+        if (rawPayout <= 0 || outcome.winType === 'none') {
           return `老虎机挑战：投入${betCost}，未中奖，净 -${betCost}`;
         }
         if (outcome.winType === 'special_mix') {
@@ -299,6 +308,9 @@ export async function spinSlot(
           outcome.multiplier
         } 返奖${payout}，净 ${pointsDelta >= 0 ? `+${pointsDelta}` : String(pointsDelta)}`;
       })();
+      const description = payoutCapped
+        ? `${descriptionBase}（奖励受每日积分上限限制）`
+        : descriptionBase;
 
       const deltaResult = await applyPointsDelta(userId, pointsDelta, 'game_play', description);
       if (!deltaResult.success) {
@@ -320,18 +332,15 @@ export async function spinSlot(
         pointsDelta,
         createdAt: now,
       };
-
-      const newDailyStats: DailyGameStats = {
+      const newDailyStats = await incrementSharedDailyStats(
         userId,
-        date,
-        gamesPlayed: dailyStats.gamesPlayed + 1,
-        totalScore: dailyStats.totalScore + payout,
-        pointsEarned: dailyStats.pointsEarned,
-        lastGameAt: now,
-      };
+        payout,
+        dailyStats.pointsEarned + payout,
+        now,
+      );
 
       const tasks: Promise<unknown>[] = [
-        kv.set(DAILY_STATS_KEY(userId, date), newDailyStats, { ex: DAILY_STATS_TTL }),
+        kv.set(SLOT_LAST_SPIN_AT_KEY(userId), now, { ex: 60 }),
         kv.lpush(SLOT_RECORDS_KEY(userId), record),
       ];
       if (pointsDelta > 0) {
@@ -387,18 +396,15 @@ export async function spinSlot(
       pointsDelta: pointsResult.pointsEarned,
       createdAt: now,
     };
-
-    const newDailyStats: DailyGameStats = {
+    const newDailyStats = await incrementSharedDailyStats(
       userId,
-      date,
-      gamesPlayed: dailyStats.gamesPlayed + 1,
-      totalScore: dailyStats.totalScore + payout,
-      pointsEarned: pointsResult.dailyEarned,
-      lastGameAt: now,
-    };
+      payout,
+      pointsResult.dailyEarned,
+      now,
+    );
 
     const tasks: Promise<unknown>[] = [
-      kv.set(DAILY_STATS_KEY(userId, date), newDailyStats, { ex: DAILY_STATS_TTL }),
+      kv.set(SLOT_LAST_SPIN_AT_KEY(userId), now, { ex: 60 }),
       kv.lpush(SLOT_RECORDS_KEY(userId), record),
     ];
     const pointsDelta = pointsResult.pointsEarned;

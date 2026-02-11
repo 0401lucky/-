@@ -15,6 +15,7 @@ import type {
 
 // 常量配置
 import { getDailyPointsLimit } from './config';
+import { incrementSharedDailyStats } from './daily-stats';
 const SESSION_TTL = 5 * 60; // 5分钟
 const COOLDOWN_TTL = 5; // 5秒
 const MIN_GAME_DURATION = 10000; // 10秒
@@ -23,6 +24,11 @@ const VALID_SLOT_SCORES = [5, 10, 20, 40, 80];
 const MAX_POSSIBLE_SCORE = 400; // 80 * 5
 const DAILY_STATS_TTL = 48 * 60 * 60; // 48小时
 const MAX_RECORD_ENTRIES = 50;
+const MIN_BALL_DURATION_MS = 300;
+const MAX_BALL_DURATION_MS = 15000;
+const MAX_IDENTICAL_ANGLE_COUNT = 3;
+const MAX_IDENTICAL_POWER_COUNT = 3;
+const MAX_SUSPICIOUS_SUBMITS_PER_DAY = 5;
 
 // Key 格式
 const SESSION_KEY = (sessionId: string) => `game:session:${sessionId}`;
@@ -31,6 +37,7 @@ const DAILY_STATS_KEY = (userId: number, date: string) => `game:daily:${userId}:
 const RECORDS_KEY = (userId: number) => `game:records:${userId}`;
 const COOLDOWN_KEY = (userId: number) => `game:cooldown:${userId}`;
 const SUBMIT_LOCK_KEY = (sessionId: string) => `game:submit:${sessionId}`;
+const CHEAT_DAILY_KEY = (userId: number, date: string) => `game:cheat:daily:${userId}:${date}`;
 
 /**
  * 生成随机种子
@@ -182,6 +189,49 @@ export function validateGameResult(
   return { valid: true };
 }
 
+function countByRounded(values: number[], scale: number): number {
+  const counts = new Map<number, number>();
+  let maxCount = 0;
+
+  for (const value of values) {
+    const rounded = Math.round(value * scale);
+    const next = (counts.get(rounded) ?? 0) + 1;
+    counts.set(rounded, next);
+    if (next > maxCount) {
+      maxCount = next;
+    }
+  }
+
+  return maxCount;
+}
+
+function detectPachinkoAnomaly(result: GameResultSubmit): string | null {
+  const durations = result.balls.map((ball) => ball.duration);
+  const hasInvalidDuration = durations.some(
+    (duration) => duration < MIN_BALL_DURATION_MS || duration > MAX_BALL_DURATION_MS
+  );
+
+  if (hasInvalidDuration) {
+    return '弹珠时长异常';
+  }
+
+  const angles = result.balls.map((ball) => ball.angle);
+  const powers = result.balls.map((ball) => ball.power);
+  const sameAngleCount = countByRounded(angles, 10);
+  const samePowerCount = countByRounded(powers, 100);
+
+  if (sameAngleCount > MAX_IDENTICAL_ANGLE_COUNT && samePowerCount > MAX_IDENTICAL_POWER_COUNT) {
+    return '发射参数重复度异常';
+  }
+
+  const maxScoreBalls = result.balls.filter((ball) => ball.slotScore === 80).length;
+  if (result.score >= 360 && maxScoreBalls >= 4) {
+    return '高分命中率异常';
+  }
+
+  return null;
+}
+
 /**
  * 获取用户今日游戏统计
  */
@@ -256,9 +306,21 @@ export async function submitGameResult(
     return { success: false, message: '游戏时长过短' };
   }
 
-  // 获取今日统计
-  const date = getTodayDateString();
-  const dailyStats = await getDailyStats(userId);
+  const anomalyReason = detectPachinkoAnomaly(result);
+  if (anomalyReason) {
+    const date = getTodayDateString();
+    const ttlSeconds = DAILY_STATS_TTL;
+    const suspiciousCount = await kv.incr(CHEAT_DAILY_KEY(userId, date));
+    if (suspiciousCount === 1) {
+      await kv.expire(CHEAT_DAILY_KEY(userId, date), ttlSeconds);
+    }
+
+    await kv.del(lockKey);
+    const lockMessage = suspiciousCount >= MAX_SUSPICIOUS_SUBMITS_PER_DAY
+      ? '检测到异常提交行为，今日已限制继续提交'
+      : `检测到异常提交行为（${anomalyReason}）`;
+    return { success: false, message: lockMessage };
+  }
 
   // 获取动态配置的每日积分上限
   const dailyPointsLimit = await getDailyPointsLimit();
@@ -296,15 +358,7 @@ export async function submitGameResult(
   await kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL });
 
   // 更新每日统计（游戏次数和分数统计，积分已由原子操作处理）
-  const newDailyStats: DailyGameStats = {
-    userId,
-    date,
-    gamesPlayed: dailyStats.gamesPlayed + 1,
-    totalScore: dailyStats.totalScore + result.score,
-    pointsEarned: pointsResult.dailyEarned, // 使用原子操作返回的准确值
-    lastGameAt: Date.now(),
-  };
-  await kv.set(DAILY_STATS_KEY(userId, date), newDailyStats, { ex: DAILY_STATS_TTL });
+  await incrementSharedDailyStats(userId, result.score, pointsResult.dailyEarned);
 
   // 保存游戏记录
   await kv.lpush(RECORDS_KEY(userId), record);

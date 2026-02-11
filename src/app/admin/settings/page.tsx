@@ -2,7 +2,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { SLOT_BET_OPTIONS } from '@/lib/slot-constants';
 
@@ -27,12 +27,30 @@ export default function AdminSettingsPage() {
   const [savingSlot, setSavingSlot] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // 表单状态
   const [dailyPointsLimit, setDailyPointsLimit] = useState('');
   const [betModeEnabled, setBetModeEnabled] = useState(false);
   const [betCost, setBetCost] = useState('');
 
+  const scheduleSuccessClear = useCallback(() => {
+    if (successTimeoutRef.current) {
+      clearTimeout(successTimeoutRef.current);
+    }
+    successTimeoutRef.current = setTimeout(() => {
+      setSuccess(null);
+      successTimeoutRef.current = null;
+    }, 3000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current);
+      }
+    };
+  }, []);
   // 获取配置
   useEffect(() => {
     fetchConfig();
@@ -92,7 +110,7 @@ export default function AdminSettingsPage() {
       if (data.success) {
         setConfig(data.config);
         setSuccess('配置已保存');
-        setTimeout(() => setSuccess(null), 3000);
+        scheduleSuccessClear();
       } else {
         setError(data.message || '保存失败');
       }
@@ -122,7 +140,7 @@ export default function AdminSettingsPage() {
       if (data.success) {
         setSlotConfig(data.data.config);
         setSuccess('老虎机配置已保存');
-        setTimeout(() => setSuccess(null), 3000);
+        scheduleSuccessClear();
       } else {
         setError(data.message || '保存失败');
       }
@@ -304,3 +322,4 @@ export default function AdminSettingsPage() {
     </div>
   );
 }
+

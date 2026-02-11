@@ -3,12 +3,20 @@
 'use client';
 
 import { useState, useCallback, useRef } from 'react';
-import type { MemoryDifficulty, MemoryDifficultyConfig, MemoryMove } from '@/lib/types/game';
+import type {
+  MemoryDifficulty,
+  MemoryDifficultyConfig,
+  MemoryFlipResult,
+  MemoryMove,
+} from '@/lib/types/game';
 
 interface GameSession {
   sessionId: string;
   difficulty: MemoryDifficulty;
   cardLayout: string[];
+  matchedCards: number[];
+  firstFlippedCard: number | null;
+  moveCount: number;
   expiresAt: number;
   config: MemoryDifficultyConfig;
 }
@@ -36,6 +44,12 @@ interface GameResult {
     duration: number;
   };
   pointsEarned: number;
+}
+
+interface FlipResponse {
+  success: boolean;
+  message?: string;
+  data?: MemoryFlipResult;
 }
 
 export function useGameSession() {
@@ -171,6 +185,77 @@ export function useGameSession() {
     hasSubmittedRef.current = false;
   }, []);
 
+  const flipCard = useCallback(async (
+    sessionId: string,
+    cardIndex: number
+  ): Promise<MemoryFlipResult | null> => {
+    try {
+      const res = await fetch('/api/games/memory/flip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, cardIndex }),
+      });
+
+      const data: FlipResponse = await res.json();
+      if (!data.success || !data.data) {
+        setError(data.message || '翻牌失败');
+        return null;
+      }
+
+      const flipResult = data.data;
+
+      setSession((prev) => {
+        if (!prev || prev.sessionId !== sessionId) {
+          return prev;
+        }
+
+        const nextLayout = [...prev.cardLayout];
+        nextLayout[flipResult.cardIndex] = flipResult.iconId;
+
+        if (
+          flipResult.firstCardIndex !== undefined &&
+          flipResult.firstCardIconId !== undefined
+        ) {
+          nextLayout[flipResult.firstCardIndex] = flipResult.firstCardIconId;
+        }
+
+        const matchedSet = new Set(prev.matchedCards);
+        if (flipResult.matched && flipResult.firstCardIndex !== undefined) {
+          matchedSet.add(flipResult.firstCardIndex);
+          matchedSet.add(flipResult.cardIndex);
+        }
+
+        return {
+          ...prev,
+          cardLayout: nextLayout,
+          matchedCards: Array.from(matchedSet),
+          firstFlippedCard:
+            flipResult.matched || flipResult.firstCardIndex !== undefined
+              ? null
+              : flipResult.cardIndex,
+          moveCount: flipResult.moveCount,
+        };
+      });
+
+      return flipResult;
+    } catch {
+      setError('网络错误');
+      return null;
+    }
+  }, [setError]);
+
+  const syncSessionLayout = useCallback((sessionId: string, cardLayout: string[]) => {
+    setSession((prev) => {
+      if (!prev || prev.sessionId !== sessionId) {
+        return prev;
+      }
+      return {
+        ...prev,
+        cardLayout,
+      };
+    });
+  }, []);
+
   return {
     session,
     status,
@@ -181,6 +266,8 @@ export function useGameSession() {
     startGame,
     cancelGame,
     submitResult,
+    flipCard,
+    syncSessionLayout,
     resetSubmitFlag,
     setError,
   };

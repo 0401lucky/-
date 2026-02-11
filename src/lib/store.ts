@@ -3,7 +3,7 @@
 import { kv } from '@vercel/kv';
 import { nanoid } from 'nanoid';
 import { StoreItem, ExchangeLog } from './types/store';
-import { deductPoints } from './points';
+import { deductPoints, applyPointsDelta } from './points';
 import { creditQuotaToUser } from './new-api';
 import { CARD_DRAW_PRICE } from './cards/constants';
 
@@ -209,7 +209,7 @@ export async function exchangeItem(
   userId: number,
   itemId: string,
   quantity: number = 1
-): Promise<{ success: boolean; message: string; log?: ExchangeLog }> {
+): Promise<{ success: boolean; message: string; log?: ExchangeLog; uncertain?: boolean }> {
   if (!Number.isSafeInteger(quantity) || quantity < 1) {
     return { success: false, message: '数量参数错误' };
   }
@@ -255,14 +255,32 @@ export async function exchangeItem(
   let dailyLimitKey: string | null = null;
   if (hasDailyLimit) {
     dailyLimitKey = `exchange:daily:${userId}:${today}:${itemId}`;
-    const newCount = await kv.incr(dailyLimitKey);
-    // 设置过期时间（首次递增时）
-    if (newCount === 1) {
-      await kv.expire(dailyLimitKey, 48 * 60 * 60);
-    }
-    // 超限则回滚
-    if (newCount > (item.dailyLimit as number)) {
-      await kv.decr(dailyLimitKey);
+    const limitLuaScript = `
+      local key = KEYS[1]
+      local limit = tonumber(ARGV[1])
+      local ttl = tonumber(ARGV[2])
+
+      local newCount = redis.call('INCR', key)
+      if newCount == 1 then
+        redis.call('EXPIRE', key, ttl)
+      end
+
+      if newCount > limit then
+        redis.call('DECR', key)
+        return {0, newCount - 1}
+      end
+
+      return {1, newCount}
+    `;
+
+    const limitResult = await kv.eval(
+      limitLuaScript,
+      [dailyLimitKey],
+      [item.dailyLimit as number, 48 * 60 * 60]
+    ) as [number, number];
+    const [limitOk] = limitResult;
+
+    if (limitOk !== 1) {
       return { success: false, message: `今日已达限购上限（${item.dailyLimit}次）` };
     }
   }
@@ -306,7 +324,20 @@ export async function exchangeItem(
         : '卡牌抽奖次数增加失败';
     } else if (item.type === 'quota_direct') {
       // 直充额度
-      const creditResult = await creditQuotaToUser(userId, totalValue);
+      const creditResult = await creditQuotaToUser(userId, totalValue) as {
+        success: boolean;
+        message: string;
+        uncertain?: boolean;
+      };
+
+      if (creditResult.uncertain) {
+        return {
+          success: false,
+          message: creditResult.message || '充值结果不确定，请稍后查看余额',
+          uncertain: true,
+        };
+      }
+
       rewardSuccess = creditResult.success;
       rewardMessage = creditResult.message;
     }
@@ -327,12 +358,11 @@ export async function exchangeItem(
     }
     // 回滚积分
     try {
-      const { addPoints } = await import('./points');
-      await addPoints(
+      await applyPointsDelta(
         userId,
         totalPointsCost,
-        'admin_adjust',
-        `兑换失败回滚: ${item.name}${descriptionSuffix}`
+        'exchange_refund',
+        `兑换失败积分回滚: ${item.name}${descriptionSuffix}`
       );
     } catch (rollbackError) {
       console.error('Rollback failed:', rollbackError);

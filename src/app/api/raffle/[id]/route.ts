@@ -4,7 +4,7 @@
 
 import { NextResponse } from "next/server";
 import { getRaffle, getRaffleEntries, getUserRaffleStatus } from "@/lib/raffle";
-import { verifySession } from "@/lib/auth";
+import { verifySessionWithRevocation } from "@/lib/auth";
 import { cookies } from "next/headers";
 
 export async function GET(
@@ -39,7 +39,7 @@ export async function GET(
     const sessionCookie = cookieStore.get("app_session")?.value ?? cookieStore.get("session")?.value;
 
     if (sessionCookie) {
-      const session = verifySession(sessionCookie);
+      const session = await verifySessionWithRevocation(sessionCookie);
       if (session) {
         userStatus = await getUserRaffleStatus(id, session.userId);
       }

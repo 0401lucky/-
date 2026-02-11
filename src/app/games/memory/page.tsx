@@ -33,6 +33,8 @@ export default function MemoryGamePage() {
     startGame,
     cancelGame,
     submitResult,
+    flipCard,
+    syncSessionLayout,
     resetSubmitFlag,
     setError,
   } = useGameSession();
@@ -233,9 +235,15 @@ export default function MemoryGamePage() {
             </div>
             
             <GameBoard
+              sessionId={session.sessionId}
               difficulty={session.difficulty}
               cardLayout={session.cardLayout}
+              moveCount={session.moveCount}
+              matchedCards={session.matchedCards}
+              firstFlippedCard={session.firstFlippedCard}
               config={session.config}
+              onFlipCard={flipCard}
+              onSyncCardLayout={syncSessionLayout}
               onGameEnd={handleGameEnd}
               isRestored={isRestored}
             />

@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, Plus, Pause, Play, Trash2, Upload, 
   Loader2, AlertCircle, Users, Package, LayoutDashboard,
-  ChevronRight, LogOut, User as UserIcon, X, Check, Gift, Sparkles, ShoppingBag, Pin, Layers, MessageSquareText
+  ChevronRight, LogOut, User as UserIcon, X, Check, Gift, Sparkles, ShoppingBag, Pin, Layers, MessageSquareText, Megaphone, Activity
 } from 'lucide-react';
 
 interface Project {
@@ -41,6 +41,7 @@ export default function AdminPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
 
   const [name, setName] = useState('');
@@ -82,6 +83,24 @@ export default function AdminPage() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  const scheduleSuccessClear = useCallback(() => {
+    if (successTimeoutRef.current) {
+      clearTimeout(successTimeoutRef.current);
+    }
+    successTimeoutRef.current = setTimeout(() => {
+      setSuccess(null);
+      successTimeoutRef.current = null;
+    }, 5000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -137,7 +156,7 @@ export default function AdminPage() {
         setCodesFile(null);
         setNewUserOnly(false);
         fetchData();
-        setTimeout(() => setSuccess(null), 5000);
+        scheduleSuccessClear();
       } else {
         setError(data.message || '创建失败');
       }
@@ -259,6 +278,20 @@ export default function AdminPage() {
                   <span className="hidden sm:inline">反馈墙</span>
                 </Link>
                 <Link 
+                  href="/admin/announcements" 
+                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-sky-500 hover:from-cyan-600 hover:to-sky-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-cyan-200"
+                >
+                  <Megaphone className="w-4 h-4" />
+                  <span className="hidden sm:inline">公告管理</span>
+                </Link>
+                <Link
+                  href="/admin/dashboard"
+                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-indigo-500 to-violet-500 hover:from-indigo-600 hover:to-violet-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-indigo-200"
+                >
+                  <Activity className="w-4 h-4" />
+                  <span className="hidden sm:inline">运营仪表盘</span>
+                </Link>
+                <Link 
                   href="/admin/store" 
                   className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white rounded-full text-sm font-medium transition-all hover:shadow-lg hover:shadow-purple-200"
                 >
@@ -331,6 +364,20 @@ export default function AdminPage() {
               >
                 <MessageSquareText className="w-4 h-4" />
                 <span>反馈</span>
+              </Link>
+              <Link 
+                href="/admin/announcements" 
+                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-cyan-500 to-sky-500 text-white rounded-full text-sm font-medium shadow-sm"
+              >
+                <Megaphone className="w-4 h-4" />
+                <span>公告</span>
+              </Link>
+              <Link
+                href="/admin/dashboard"
+                className="shrink-0 flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-indigo-500 to-violet-500 text-white rounded-full text-sm font-medium shadow-sm"
+              >
+                <Activity className="w-4 h-4" />
+                <span>仪表盘</span>
               </Link>
               <Link 
                 href="/admin/store" 
@@ -828,3 +875,5 @@ export default function AdminPage() {
     </div>
   );
 }
+
+

@@ -6,13 +6,17 @@ import { nanoid } from 'nanoid';
 import { addGamePointsWithLimit } from './points';
 import { getTodayDateString } from './time';
 import { getDailyPointsLimit } from './config';
+import { incrementSharedDailyStats } from './daily-stats';
 import type {
   MemoryDifficulty,
   MemoryDifficultyConfig,
+  MemoryFlipResult,
   MemoryGameSession,
   MemoryGameResultSubmit,
+  MemoryRevealedCard,
   MemoryGameRecord,
   DailyGameStats,
+  MemoryMove,
 } from './types/game';
 
 // ============ 常量配置 ============
@@ -20,7 +24,6 @@ import type {
 const SESSION_TTL = 5 * 60; // 5分钟
 const COOLDOWN_TTL = 5; // 5秒
 const MIN_GAME_DURATION = 5000; // 5秒（记忆游戏可以更快）
-const DAILY_STATS_TTL = 48 * 60 * 60; // 48小时
 const MAX_RECORD_ENTRIES = 50;
 
 // 难度配置
@@ -70,6 +73,70 @@ const DAILY_STATS_KEY = (userId: number, date: string) => `game:daily:${userId}:
 const RECORDS_KEY = (userId: number) => `memory:records:${userId}`;
 const COOLDOWN_KEY = (userId: number) => `memory:cooldown:${userId}`;
 const SUBMIT_LOCK_KEY = (sessionId: string) => `memory:submit:${sessionId}`;
+
+export const MEMORY_REVEALED_SENTINEL = '__hidden__';
+
+function normalizeSession(session: MemoryGameSession): MemoryGameSession {
+  return {
+    ...session,
+    firstFlippedCard: session.firstFlippedCard ?? null,
+    matchedCards: Array.isArray(session.matchedCards) ? session.matchedCards : [],
+    moveLog: Array.isArray(session.moveLog) ? session.moveLog : [],
+  };
+}
+
+function getTotalCardsByDifficulty(difficulty: MemoryDifficulty): number {
+  const config = DIFFICULTY_CONFIG[difficulty];
+  return config.rows * config.cols;
+}
+
+function ensureMoveTimestamp(move: MemoryMove): MemoryMove {
+  return {
+    ...move,
+    timestamp: Number.isFinite(move.timestamp) ? move.timestamp : Date.now(),
+  };
+}
+
+export function maskCardLayout(layout: string[]): string[] {
+  return layout.map(() => MEMORY_REVEALED_SENTINEL);
+}
+
+export function buildRevealedCards(session: MemoryGameSession): MemoryRevealedCard[] {
+  const normalized = normalizeSession(session);
+  return normalized.matchedCards!
+    .filter((index) => Number.isInteger(index) && index >= 0 && index < normalized.cardLayout.length)
+    .map((index) => ({ index, iconId: normalized.cardLayout[index]! }));
+}
+
+export function buildMemorySessionView(session: MemoryGameSession): {
+  cardLayout: string[];
+  matchedCards: number[];
+  firstFlippedCard: number | null;
+  moveCount: number;
+} {
+  const normalized = normalizeSession(session);
+  const viewLayout = maskCardLayout(normalized.cardLayout);
+
+  for (const card of buildRevealedCards(normalized)) {
+    viewLayout[card.index] = card.iconId;
+  }
+
+  const firstFlippedCard = normalized.firstFlippedCard;
+  if (
+    typeof firstFlippedCard === 'number' &&
+    firstFlippedCard >= 0 &&
+    firstFlippedCard < normalized.cardLayout.length
+  ) {
+    viewLayout[firstFlippedCard] = normalized.cardLayout[firstFlippedCard]!;
+  }
+
+  return {
+    cardLayout: viewLayout,
+    matchedCards: [...normalized.matchedCards!],
+    firstFlippedCard: normalized.firstFlippedCard ?? null,
+    moveCount: normalized.moveLog!.length,
+  };
+}
 
 // ============ 工具函数 ============
 
@@ -228,6 +295,9 @@ export async function startMemoryGame(
     difficulty,
     seed,
     cardLayout,
+    firstFlippedCard: null,
+    matchedCards: [],
+    moveLog: [],
     startedAt: now,
     expiresAt: now + SESSION_TTL * 1000,
     status: 'playing',
@@ -253,7 +323,7 @@ export async function getActiveMemorySession(userId: number): Promise<MemoryGame
     return null;
   }
   
-  return session;
+  return normalizeSession(session);
 }
 
 /**
@@ -280,8 +350,10 @@ export function validateMemoryResult(
   session: MemoryGameSession,
   result: MemoryGameResultSubmit
 ): { valid: boolean; message?: string } {
-  const config = DIFFICULTY_CONFIG[session.difficulty];
+  const normalizedSession = normalizeSession(session);
+  const config = DIFFICULTY_CONFIG[normalizedSession.difficulty];
   const totalCards = config.rows * config.cols;
+  const authoritativeMoves = normalizedSession.moveLog ?? [];
   
   // 检查操作序列
   if (!Array.isArray(result.moves)) {
@@ -295,19 +367,19 @@ export function validateMemoryResult(
   
   // 步数范围检查（仅对已完成的游戏要求最少步数）
   const maxMoves = config.pairs * 10;
-  if (result.moves.length > maxMoves) {
+  if (authoritativeMoves.length > maxMoves) {
     return { valid: false, message: '操作步数异常' };
   }
   
   // 如果声称已完成，至少需要 pairs 步
-  if (result.completed && result.moves.length < config.pairs) {
+  if (result.completed && authoritativeMoves.length < config.pairs) {
     return { valid: false, message: '操作步数不足以完成游戏' };
   }
   
   // 重放验证
   const matchedCards = new Set<number>();
   
-  for (const move of result.moves) {
+  for (const move of authoritativeMoves) {
     // P0: 严格类型检查 - 防止非整数索引绕过验证
     if (!Number.isInteger(move.card1) || !Number.isInteger(move.card2)) {
       return { valid: false, message: '无效的卡片索引类型' };
@@ -334,8 +406,8 @@ export function validateMemoryResult(
     }
     
     // 验证匹配结果
-    const icon1 = session.cardLayout[move.card1];
-    const icon2 = session.cardLayout[move.card2];
+    const icon1 = normalizedSession.cardLayout[move.card1];
+    const icon2 = normalizedSession.cardLayout[move.card2];
     
     // 防止 undefined 比较
     if (icon1 === undefined || icon2 === undefined) {
@@ -358,6 +430,17 @@ export function validateMemoryResult(
   const actuallyCompleted = matchedCards.size === totalCards;
   if (result.completed !== actuallyCompleted) {
     return { valid: false, message: '完成状态不一致' };
+  }
+
+  const expectedMatched = new Set<number>(normalizedSession.matchedCards);
+  if (expectedMatched.size !== matchedCards.size) {
+    return { valid: false, message: '服务端匹配记录不一致' };
+  }
+
+  for (const index of matchedCards) {
+    if (!expectedMatched.has(index)) {
+      return { valid: false, message: '服务端匹配记录不一致' };
+    }
   }
   
   return { valid: true };
@@ -385,42 +468,67 @@ export async function submitMemoryResult(
     return { success: false, message: '游戏会话不存在或已过期' };
   }
 
-  if (session.userId !== userId) {
+  const normalizedSession = normalizeSession(session);
+
+  if (normalizedSession.userId !== userId) {
     await kv.del(lockKey);
     return { success: false, message: '会话不属于该用户' };
   }
 
-  if (session.status !== 'playing') {
+  if (normalizedSession.status !== 'playing') {
     return { success: false, message: '游戏会话已结束' };
   }
 
-  if (Date.now() > session.expiresAt) {
+  if (normalizedSession.firstFlippedCard !== null && normalizedSession.firstFlippedCard !== undefined) {
+    await kv.del(lockKey);
+    return { success: false, message: '存在未完成翻牌，请完成后再结算' };
+  }
+
+  if (Date.now() > normalizedSession.expiresAt) {
     await kv.del(SESSION_KEY(result.sessionId));
     await kv.del(lockKey);
     return { success: false, message: '游戏会话已过期' };
   }
 
   // 验证结果
-  const validation = validateMemoryResult(session, result);
+  const validation = validateMemoryResult(normalizedSession, result);
   if (!validation.valid) {
     await kv.del(lockKey);
     return { success: false, message: validation.message };
   }
 
   // 服务端时长校验
-  const serverDuration = Date.now() - session.startedAt;
+  const serverDuration = Date.now() - normalizedSession.startedAt;
   if (serverDuration < MIN_GAME_DURATION) {
     await kv.del(lockKey);
     return { success: false, message: '游戏时长过短' };
   }
 
   // 计算得分
-  const score = calculateScore(session.difficulty, result.moves.length, result.completed);
+  const authoritativeMoves = normalizedSession.moveLog ?? [];
 
-  // 获取今日统计
-  const date = getTodayDateString();
-  const dailyStats = await getDailyStats(userId);
+  if (result.moves.length > 0 && result.moves.length !== authoritativeMoves.length) {
+    await kv.del(lockKey);
+    return { success: false, message: '提交步数与服务端记录不一致' };
+  }
 
+  if (result.moves.length > 0) {
+    for (let i = 0; i < authoritativeMoves.length; i++) {
+      const expected = authoritativeMoves[i];
+      const actual = result.moves[i];
+      if (
+        !actual ||
+        expected.card1 !== actual.card1 ||
+        expected.card2 !== actual.card2 ||
+        expected.matched !== actual.matched
+      ) {
+        await kv.del(lockKey);
+        return { success: false, message: '提交步数与服务端记录不一致' };
+      }
+    }
+  }
+
+  const score = calculateScore(normalizedSession.difficulty, authoritativeMoves.length, result.completed);
   // 获取动态配置的每日积分上限
   const dailyPointsLimit = await getDailyPointsLimit();
 
@@ -440,8 +548,8 @@ export async function submitMemoryResult(
     userId,
     sessionId: result.sessionId,
     gameType: 'memory',
-    difficulty: session.difficulty,
-    moves: result.moves.length,
+    difficulty: normalizedSession.difficulty,
+    moves: authoritativeMoves.length,
     completed: result.completed,
     score,
     pointsEarned,
@@ -453,17 +561,8 @@ export async function submitMemoryResult(
   await kv.del(SESSION_KEY(result.sessionId));
   await kv.del(ACTIVE_SESSION_KEY(userId));
   await kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL });
-
   // 更新每日统计（游戏次数和分数统计，积分已由原子操作处理）
-  const newDailyStats: DailyGameStats = {
-    userId,
-    date,
-    gamesPlayed: dailyStats.gamesPlayed + 1,
-    totalScore: dailyStats.totalScore + score,
-    pointsEarned: pointsResult.dailyEarned, // 使用原子操作返回的准确值
-    lastGameAt: Date.now(),
-  };
-  await kv.set(DAILY_STATS_KEY(userId, date), newDailyStats, { ex: DAILY_STATS_TTL });
+  await incrementSharedDailyStats(userId, score, pointsResult.dailyEarned);
 
   // 保存记录
   await kv.lpush(RECORDS_KEY(userId), record);
@@ -482,3 +581,138 @@ export async function getMemoryRecords(
   const records = await kv.lrange<MemoryGameRecord>(RECORDS_KEY(userId), 0, limit - 1);
   return records ?? [];
 }
+
+/**
+ * 服务端翻牌：不向客户端暴露完整布局
+ */
+export async function flipMemoryCard(
+  userId: number,
+  sessionId: string,
+  cardIndex: number
+): Promise<{ success: boolean; data?: MemoryFlipResult; message?: string }> {
+  if (!Number.isInteger(cardIndex)) {
+    return { success: false, message: '无效的卡片索引' };
+  }
+
+  const session = await kv.get<MemoryGameSession>(SESSION_KEY(sessionId));
+  if (!session) {
+    return { success: false, message: '游戏会话不存在或已过期' };
+  }
+
+  const normalizedSession = normalizeSession(session);
+
+  if (normalizedSession.userId !== userId) {
+    return { success: false, message: '会话不属于该用户' };
+  }
+
+  if (normalizedSession.status !== 'playing') {
+    return { success: false, message: '游戏会话已结束' };
+  }
+
+  if (Date.now() > normalizedSession.expiresAt) {
+    await kv.del(SESSION_KEY(sessionId));
+    await kv.del(ACTIVE_SESSION_KEY(userId));
+    return { success: false, message: '游戏会话已过期' };
+  }
+
+  const totalCards = getTotalCardsByDifficulty(normalizedSession.difficulty);
+  if (cardIndex < 0 || cardIndex >= totalCards) {
+    return { success: false, message: '无效的卡片索引' };
+  }
+
+  const matchedSet = new Set<number>(normalizedSession.matchedCards);
+  if (matchedSet.has(cardIndex)) {
+    return { success: false, message: '该卡片已配对' };
+  }
+
+  const now = Date.now();
+  const cardIcon = normalizedSession.cardLayout[cardIndex];
+  if (!cardIcon) {
+    return { success: false, message: '卡片数据异常' };
+  }
+
+  const firstFlippedCard = normalizedSession.firstFlippedCard;
+  if (firstFlippedCard === cardIndex) {
+    return { success: false, message: '不能重复翻开同一张卡片' };
+  }
+
+  if (firstFlippedCard === null || firstFlippedCard === undefined) {
+    const nextSession: MemoryGameSession = {
+      ...normalizedSession,
+      firstFlippedCard: cardIndex,
+    };
+
+    const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
+    await kv.set(SESSION_KEY(sessionId), nextSession, { ex: ttlSeconds });
+
+    return {
+      success: true,
+      data: {
+        cardIndex,
+        iconId: cardIcon,
+        matched: false,
+        completed: matchedSet.size === totalCards,
+        moveCount: normalizedSession.moveLog!.length,
+        matchedCount: matchedSet.size,
+      },
+    };
+  }
+
+  if (firstFlippedCard < 0 || firstFlippedCard >= normalizedSession.cardLayout.length) {
+    const repairedSession: MemoryGameSession = {
+      ...normalizedSession,
+      firstFlippedCard: null,
+    };
+    const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
+    await kv.set(SESSION_KEY(sessionId), repairedSession, { ex: ttlSeconds });
+    return { success: false, message: '会话状态异常，请重试' };
+  }
+
+  const firstCardIcon = normalizedSession.cardLayout[firstFlippedCard];
+  if (!firstCardIcon) {
+    return { success: false, message: '卡片数据异常' };
+  }
+
+  const isMatch = firstCardIcon === cardIcon;
+  const move = ensureMoveTimestamp({
+    card1: firstFlippedCard,
+    card2: cardIndex,
+    matched: isMatch,
+    timestamp: now,
+  });
+
+  if (isMatch) {
+    matchedSet.add(firstFlippedCard);
+    matchedSet.add(cardIndex);
+  }
+
+  const newMoveLog = [...normalizedSession.moveLog!, move];
+  const newMatchedCards = Array.from(matchedSet).sort((a, b) => a - b);
+  const completed = newMatchedCards.length === totalCards;
+
+  const nextSession: MemoryGameSession = {
+    ...normalizedSession,
+    firstFlippedCard: null,
+    matchedCards: newMatchedCards,
+    moveLog: newMoveLog,
+  };
+
+  const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
+  await kv.set(SESSION_KEY(sessionId), nextSession, { ex: ttlSeconds });
+
+  return {
+    success: true,
+    data: {
+      cardIndex,
+      iconId: cardIcon,
+      firstCardIndex: firstFlippedCard,
+      firstCardIconId: firstCardIcon,
+      matched: isMatch,
+      completed,
+      moveCount: newMoveLog.length,
+      matchedCount: newMatchedCards.length,
+      move,
+    },
+  };
+}
+

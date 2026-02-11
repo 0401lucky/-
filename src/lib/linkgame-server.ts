@@ -6,6 +6,7 @@ import { nanoid } from 'nanoid';
 import { addGamePointsWithLimit } from './points';
 import { getTodayDateString } from './time';
 import { getDailyPointsLimit } from './config';
+import { incrementSharedDailyStats } from './daily-stats';
 import {
   generateTileLayout,
   LINKGAME_DIFFICULTY_CONFIG,
@@ -32,7 +33,6 @@ import type {
 const SESSION_TTL = 5 * 60; // 5分钟
 const COOLDOWN_TTL = 5; // 5秒
 const MIN_GAME_DURATION = 5000; // 5秒
-const DAILY_STATS_TTL = 48 * 60 * 60; // 48小时
 const MAX_RECORD_ENTRIES = 50;
 
 // Key 格式
@@ -97,6 +97,7 @@ export interface ValidationResult {
   matchedPairs?: number;
   maxStreak?: number;
   completed?: boolean;
+  hintsUsed?: number;
   shufflesUsed?: number;
 }
 
@@ -139,6 +140,7 @@ export function validateLinkGameResult(
   let matchedPairs = 0;
   let currentStreak = 0;
   let maxStreak = 0;
+  let serverHintsUsed = 0;
   let serverShufflesUsed = 0;
 
   for (const move of payload.moves) {
@@ -149,6 +151,14 @@ export function validateLinkGameResult(
 
     // Handle shuffle moves
     const moveType = (move as { type?: string }).type;
+    if (moveType === 'hint') {
+      serverHintsUsed++;
+      if (serverHintsUsed > hintLimit) {
+        return { ok: false, message: '提示次数超过限制' };
+      }
+      continue;
+    }
+
     if (moveType === 'shuffle') {
       serverShufflesUsed++;
       if (serverShufflesUsed > shuffleLimit) {
@@ -258,6 +268,7 @@ export function validateLinkGameResult(
     matchedPairs,
     maxStreak,
     completed: actuallyCompleted,
+    hintsUsed: serverHintsUsed,
     shufflesUsed: serverShufflesUsed,
   };
 }
@@ -417,24 +428,20 @@ export async function submitLinkGameResult(
     const combo = Math.max(0, (validation.maxStreak ?? 0) - 1);
     const timeRemainingSeconds = Math.max(0, config.timeLimit - Math.floor(serverDuration / 1000));
 
-    // Use server-counted shufflesUsed for scoring (don't trust client)
+    // 使用服务端统计的提示/洗牌次数计分（不信任客户端）
+    const validatedHintsUsed = validation.hintsUsed ?? 0;
     const validatedShufflesUsed = validation.shufflesUsed ?? 0;
     score = calculateScore({
       matchedPairs: validation.matchedPairs ?? 0,
       baseScore: config.baseScore,
       combo,
       timeRemainingSeconds,
-      hintsUsed: payload.hintsUsed,
+      hintsUsed: validatedHintsUsed,
       shufflesUsed: validatedShufflesUsed,
       hintPenalty: config.hintPenalty,
       shufflePenalty: config.shufflePenalty,
     });
   }
-
-  // 获取今日统计
-  const date = getTodayDateString();
-  const dailyStats = await getDailyStats(userId);
-
   // 获取动态配置的每日积分上限
   const dailyPointsLimit = await getDailyPointsLimit();
 
@@ -467,17 +474,8 @@ export async function submitLinkGameResult(
   await kv.del(SESSION_KEY(payload.sessionId));
   await kv.del(ACTIVE_SESSION_KEY(userId));
   await kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL });
-
   // 更新每日统计（游戏次数和分数统计，积分已由原子操作处理）
-  const newDailyStats: DailyGameStats = {
-    userId,
-    date,
-    gamesPlayed: dailyStats.gamesPlayed + 1,
-    totalScore: dailyStats.totalScore + score,
-    pointsEarned: pointsResult.dailyEarned,
-    lastGameAt: Date.now(),
-  };
-  await kv.set(DAILY_STATS_KEY(userId, date), newDailyStats, { ex: DAILY_STATS_TTL });
+  await incrementSharedDailyStats(userId, score, pointsResult.dailyEarned);
 
   // 保存记录
   await kv.lpush(RECORDS_KEY(userId), record);
@@ -496,3 +494,4 @@ export async function getLinkGameRecords(
   const records = await kv.lrange<LinkGameRecord>(RECORDS_KEY(userId), 0, limit - 1);
   return records ?? [];
 }
+

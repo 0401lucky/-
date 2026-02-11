@@ -10,6 +10,7 @@ interface CardProps {
   iconId: string;
   isFlipped: boolean;
   isMatched: boolean;
+  isLoading?: boolean;
   onClick: (index: number) => void;
   disabled: boolean;
 }
@@ -19,10 +20,14 @@ export const Card = memo(function Card({
   iconId,
   isFlipped,
   isMatched,
+  isLoading = false,
   onClick,
   disabled,
 }: CardProps) {
-  const iconData = CARD_ICON_MAP[iconId] || { emoji: '❓', color: '#6b7280' };
+  const isRevealed = iconId !== '__hidden__';
+  const iconData = isRevealed
+    ? (CARD_ICON_MAP[iconId] || { emoji: '❓', color: '#6b7280' })
+    : { emoji: '❔', color: '#6b7280' };
 
   const handleClick = () => {
     if (!disabled && !isFlipped && !isMatched) {
@@ -41,11 +46,11 @@ export const Card = memo(function Card({
       <div
         className={`
           relative w-full h-full transition-transform duration-300 transform-style-3d
-          ${isFlipped || isMatched ? 'rotate-y-180' : ''}
+          ${isFlipped || isMatched || isRevealed ? 'rotate-y-180' : ''}
         `}
         style={{
           transformStyle: 'preserve-3d',
-          transform: isFlipped || isMatched ? 'rotateY(180deg)' : 'rotateY(0deg)',
+          transform: isFlipped || isMatched || isRevealed ? 'rotateY(180deg)' : 'rotateY(0deg)',
         }}
       >
         {/* 卡片背面 */}
@@ -56,7 +61,7 @@ export const Card = memo(function Card({
             flex items-center justify-center
             shadow-lg border-2 border-white/20
             hover:shadow-xl hover:scale-105 transition-all duration-200
-            ${!disabled && !isFlipped && !isMatched ? 'hover:from-indigo-400 hover:to-purple-500' : ''}
+            ${!disabled && !isFlipped && !isMatched && !isLoading ? 'hover:from-indigo-400 hover:to-purple-500' : ''}
           `}
           style={{ backfaceVisibility: 'hidden' }}
         >
@@ -79,12 +84,13 @@ export const Card = memo(function Card({
           <span 
             className={`
               text-4xl sm:text-5xl
-              ${isMatched ? 'scale-110' : ''}
-              transition-transform duration-300
-            `}
-          >
-            {iconData.emoji}
-          </span>
+            ${isMatched ? 'scale-110' : ''}
+            transition-transform duration-300
+          `}
+          style={{ opacity: isLoading ? 0.65 : 1 }}
+        >
+          {iconData.emoji}
+        </span>
         </div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { X, Sparkles, Box, Calendar, Star, Repeat, Loader2 } from 'lucide-react';
 import type { CardConfig, Rarity } from '@/lib/cards/types';
@@ -33,6 +33,7 @@ export function CardDetail({ card, count, fragments = 0, firstAcquired, onClose,
   const [isVisible, setIsVisible] = useState(false);
   const [isExchanging, setIsExchanging] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const styles = RARITY_COLORS[card.rarity] || RARITY_COLORS.common;
   const isOwned = count > 0;
   
@@ -42,9 +43,14 @@ export function CardDetail({ card, count, fragments = 0, firstAcquired, onClose,
   useEffect(() => {
     setIsVisible(true);
     // Prevent body scroll when modal is open
+    const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
-      document.body.style.overflow = 'unset';
+      if (closeTimeoutRef.current) {
+        clearTimeout(closeTimeoutRef.current);
+        closeTimeoutRef.current = null;
+      }
+      document.body.style.overflow = originalOverflow;
     };
   }, []);
 
@@ -54,7 +60,13 @@ export function CardDetail({ card, count, fragments = 0, firstAcquired, onClose,
 
   const handleClose = () => {
     setIsVisible(false);
-    setTimeout(onClose, 300); // Wait for animation
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+    }
+    closeTimeoutRef.current = setTimeout(() => {
+      closeTimeoutRef.current = null;
+      onClose();
+    }, 300); // Wait for animation
   };
 
   const handleExchange = async () => {
@@ -214,3 +226,4 @@ export function CardDetail({ card, count, fragments = 0, firstAcquired, onClose,
     </div>
   );
 }
+

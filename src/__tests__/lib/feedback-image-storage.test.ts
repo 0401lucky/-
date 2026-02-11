@@ -41,6 +41,16 @@ describe('externalizeFeedbackImages', () => {
     );
 
     expect(mockPut).toHaveBeenCalledTimes(1);
+    expect(mockPut).toHaveBeenCalledWith(
+      expect.stringMatching(/^feedback\/\d{8}\/user\//),
+      expect.any(Buffer),
+      expect.objectContaining({
+        access: 'public',
+        addRandomSuffix: true,
+        contentType: 'image/png',
+        token: 'blob-test-token',
+      })
+    );
     expect(result[0].dataUrl).toBe('https://blob.vercel-storage.com/feedback/abc.png');
     expect(result[0].size).toBe(5);
   });

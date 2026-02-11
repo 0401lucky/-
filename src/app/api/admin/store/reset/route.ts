@@ -3,22 +3,19 @@
 
 import { NextResponse } from 'next/server';
 import { kv } from '@vercel/kv';
-import { getAuthUser, isAdmin } from '@/lib/auth';
+import { withAdmin } from '@/lib/api-guards';
 
 const STORE_ITEMS_KEY = 'store:items';
 
-export async function POST() {
-  // 验证管理员权限
-  const user = await getAuthUser();
-  if (!user || !isAdmin(user)) {
-    return NextResponse.json({ error: '无权限' }, { status: 403 });
-  }
+export const POST = withAdmin(
+  async () => {
+    // 删除现有商品数据
+    await kv.del(STORE_ITEMS_KEY);
 
-  // 删除现有商品数据
-  await kv.del(STORE_ITEMS_KEY);
-
-  return NextResponse.json({ 
-    success: true, 
-    message: '商店商品已重置，下次访问商店将自动初始化新配置' 
-  });
-}
+    return NextResponse.json({ 
+      success: true, 
+      message: '商店商品已重置，下次访问商店将自动初始化新配置' 
+    });
+  },
+  { forbiddenMessage: '无权限' }
+);

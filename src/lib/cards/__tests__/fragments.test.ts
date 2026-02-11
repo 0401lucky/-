@@ -83,5 +83,16 @@ describe('Card Fragment System', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBe('碎片不足');
     });
+
+    it('should fail without deducting when card is already owned', async () => {
+      const cardId = 'animal-s1-rare-柴犬';
+      // Lua script returns [0, currentFragments, 'already_owned']
+      mockKvEval.mockResolvedValue([0, 120, 'already_owned']);
+
+      const result = await exchangeFragmentsForCard(userId, cardId);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('已拥有该卡片，无需兑换');
+    });
   });
 });

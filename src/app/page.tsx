@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LogOut, User, LayoutDashboard, Gift, ChevronRight, Sparkles, Trophy, ArrowRight, CalendarDays, Gamepad2, Album, Users, MessageSquareText } from 'lucide-react';
+import { LogOut, User, LayoutDashboard, Gift, ChevronRight, Sparkles, Trophy, ArrowRight, CalendarDays, Gamepad2, Album, Users, MessageSquareText, Bell } from 'lucide-react';
 
 interface UserData {
   id: number;
@@ -27,6 +27,7 @@ interface Project {
 export default function HomePage() {
   const [user, setUser] = useState<UserData | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [notificationUnread, setNotificationUnread] = useState(0);
   const router = useRouter();
 
   const fetchData = async () => {
@@ -40,6 +41,18 @@ export default function HomePage() {
         const data = await userRes.json();
         if (data.success) {
           setUser(data.user);
+
+          try {
+            const unreadRes = await fetch('/api/notifications/unread-count', { cache: 'no-store' });
+            if (unreadRes.ok) {
+              const unreadData = await unreadRes.json();
+              if (unreadData.success) {
+                setNotificationUnread(Number(unreadData.data?.unreadCount) || 0);
+              }
+            }
+          } catch (error) {
+            console.error('Failed to fetch unread notifications', error);
+          }
         }
       }
 
@@ -71,6 +84,7 @@ export default function HomePage() {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
       setUser(null);
+      setNotificationUnread(0);
       router.refresh();
     } catch (error) {
       console.error('Logout failed', error);
@@ -102,6 +116,35 @@ export default function HomePage() {
                   >
                     <MessageSquareText className="w-4 h-4" />
                     <span className="hidden sm:inline">反馈墙</span>
+                  </Link>
+                  <Link
+                    href="/notifications"
+                    className="relative flex items-center gap-2 px-2.5 py-2 sm:px-4 sm:py-2 bg-sky-50 text-sky-600 rounded-xl text-sm font-semibold hover:bg-sky-100 transition-all duration-300 border border-sky-200"
+                    title="通知中心"
+                  >
+                    <Bell className="w-4 h-4" />
+                    <span className="hidden sm:inline">通知中心</span>
+                    {notificationUnread > 0 && (
+                      <span className="absolute -top-2 -right-2 min-w-5 h-5 px-1 rounded-full bg-red-500 text-white text-[10px] leading-5 text-center font-bold">
+                        {notificationUnread > 99 ? '99+' : notificationUnread}
+                      </span>
+                    )}
+                  </Link>
+                  <Link
+                    href="/rankings"
+                    className="flex items-center gap-2 px-2.5 py-2 sm:px-4 sm:py-2 bg-amber-50 text-amber-700 rounded-xl text-sm font-semibold hover:bg-amber-100 transition-all duration-300 border border-amber-200"
+                    title="排行榜"
+                  >
+                    <Trophy className="w-4 h-4" />
+                    <span className="hidden sm:inline">排行榜</span>
+                  </Link>
+                  <Link
+                    href="/profile"
+                    className="flex items-center gap-2 px-2.5 py-2 sm:px-4 sm:py-2 bg-emerald-50 text-emerald-700 rounded-xl text-sm font-semibold hover:bg-emerald-100 transition-all duration-300 border border-emerald-200"
+                    title="个人主页"
+                  >
+                    <User className="w-4 h-4" />
+                    <span className="hidden sm:inline">个人主页</span>
                   </Link>
                   {user.isAdmin && (
                     <Link
@@ -351,3 +394,9 @@ export default function HomePage() {
     </div>
   );
 }
+
+
+
+
+
+

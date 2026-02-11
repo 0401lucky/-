@@ -7,7 +7,7 @@ import { cancelMatch3Game } from '@/lib/match3';
 export async function POST() {
   const user = await getAuthUser();
   if (!user) {
-    return NextResponse.json({ error: '未登录' }, { status: 401 });
+    return NextResponse.json({ success: false, message: '未登录' }, { status: 401 });
   }
 
   try {
@@ -19,7 +19,7 @@ export async function POST() {
     return NextResponse.json({ success: true, message: '游戏已取消' });
   } catch (error) {
     console.error('Cancel match3 game error:', error);
-    return NextResponse.json({ error: '服务器错误' }, { status: 500 });
+    return NextResponse.json({ success: false, message: '服务器错误' }, { status: 500 });
   }
 }
 

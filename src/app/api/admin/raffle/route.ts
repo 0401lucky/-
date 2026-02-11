@@ -4,33 +4,12 @@
  */
 
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { verifySession, isAdminUsername } from "@/lib/auth";
+import { checkRaffleAdmin } from "./admin-auth";
 import { getRaffleList, createRaffle } from "@/lib/raffle";
 import type { CreateRaffleInput } from "@/lib/types/raffle";
 
-async function checkAdmin() {
-  const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get("app_session")?.value ?? cookieStore.get("session")?.value;
-
-  if (!sessionCookie) {
-    return { error: "请先登录", status: 401 };
-  }
-
-  const session = verifySession(sessionCookie);
-  if (!session) {
-    return { error: "登录已过期", status: 401 };
-  }
-
-  if (!isAdminUsername(session.username)) {
-    return { error: "无权限访问", status: 403 };
-  }
-
-  return { session };
-}
-
 export async function GET(request: Request) {
-  const authResult = await checkAdmin();
+  const authResult = await checkRaffleAdmin();
   if ("error" in authResult) {
     return NextResponse.json(
       { success: false, message: authResult.error },
@@ -60,7 +39,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const authResult = await checkAdmin();
+  const authResult = await checkRaffleAdmin();
   if ("error" in authResult) {
     return NextResponse.json(
       { success: false, message: authResult.error },
@@ -122,7 +101,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const raffle = await createRaffle(body, authResult.session.userId);
+    const raffle = await createRaffle(body, authResult.userId);
 
     return NextResponse.json({
       success: true,

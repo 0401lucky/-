@@ -1,24 +1,19 @@
 import { NextResponse } from 'next/server';
-import { getAuthUser } from '@/lib/auth';
 import { exchangeItem } from '@/lib/store';
 import { getUserPoints } from '@/lib/points';
+import { withUserRateLimit } from '@/lib/rate-limit';
 
-export async function POST(request: Request) {
-  const user = await getAuthUser();
-  if (!user) {
-    return NextResponse.json({ error: '未登录' }, { status: 401 });
-  }
-
+export const POST = withUserRateLimit('store:exchange', async (request, user) => {
   try {
     const { itemId, quantity } = await request.json();
     
     if (!itemId || typeof itemId !== 'string') {
-      return NextResponse.json({ error: '参数错误' }, { status: 400 });
+      return NextResponse.json({ success: false, message: '参数错误' }, { status: 400 });
     }
 
     const qty = quantity === undefined ? 1 : Number(quantity);
     if (!Number.isSafeInteger(qty) || qty < 1) {
-      return NextResponse.json({ error: '数量参数错误' }, { status: 400 });
+      return NextResponse.json({ success: false, message: '数量参数错误' }, { status: 400 });
     }
 
     const result = await exchangeItem(user.id, itemId, qty);
@@ -42,7 +37,7 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
-    console.error('Exchange error:', error);
-    return NextResponse.json({ error: '服务器错误' }, { status: 500 });
+    console.error('Exchange item error:', error);
+    return NextResponse.json({ success: false, message: '服务器错误' }, { status: 500 });
   }
-}
+});

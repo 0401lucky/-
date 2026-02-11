@@ -4,7 +4,7 @@
 
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { verifySession } from "@/lib/auth";
+import { verifySessionWithRevocation } from "@/lib/auth";
 import { joinRaffle, executeRaffleDraw, getRaffle } from "@/lib/raffle";
 
 export async function POST(
@@ -25,7 +25,7 @@ export async function POST(
       );
     }
 
-    const session = verifySession(sessionCookie);
+    const session = await verifySessionWithRevocation(sessionCookie);
     if (!session) {
       return NextResponse.json(
         { success: false, message: "登录已过期，请重新登录" },

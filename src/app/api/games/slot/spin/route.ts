@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthUser } from '@/lib/auth';
 import { spinSlot, type SlotPlayMode } from '@/lib/slot';
 import { recordUser } from '@/lib/kv';
+import { withUserRateLimit } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(request: NextRequest) {
-  const user = await getAuthUser();
-  if (!user) {
-    return NextResponse.json({ error: '未登录' }, { status: 401 });
-  }
-
+export const POST = withUserRateLimit('slot:spin', async (request: NextRequest, user) => {
   try {
     // 记录/更新用户信息（便于排行榜与管理端展示）
     await recordUser(user.id, user.username);
@@ -45,6 +40,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     console.error('Spin slot error:', error);
-    return NextResponse.json({ error: '服务器错误' }, { status: 500 });
+    return NextResponse.json({ success: false, message: '服务器错误' }, { status: 500 });
   }
-}
+});

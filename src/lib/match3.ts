@@ -6,6 +6,7 @@ import { nanoid } from 'nanoid';
 import { addGamePointsWithLimit } from './points';
 import { getTodayDateString } from './time';
 import { getDailyPointsLimit } from './config';
+import { incrementSharedDailyStats } from './daily-stats';
 import { MATCH3_DEFAULT_CONFIG, simulateMatch3Game } from './match3-engine';
 import type { DailyGameStats, GameSessionStatus } from './types/game';
 import type { Match3Config, Match3Move } from './match3-engine';
@@ -16,7 +17,6 @@ const TIME_LIMIT_MS = 60 * 1000;
 const SESSION_TTL = 2 * 60; // 2分钟：60s对局 + 提交缓冲
 const COOLDOWN_TTL = 5; // 5秒
 const MIN_GAME_DURATION = 10_000; // 10秒
-const DAILY_STATS_TTL = 48 * 60 * 60; // 48小时
 const MAX_RECORD_ENTRIES = 50;
 const MAX_MOVES_PER_GAME = 250;
 
@@ -230,9 +230,6 @@ export async function submitMatch3Result(
   }
 
   const score = sim.score;
-
-  const date = getTodayDateString();
-  const dailyStats = await getDailyStats(userId);
   const dailyPointsLimit = await getDailyPointsLimit();
 
   const pointsResult = await addGamePointsWithLimit(
@@ -260,20 +257,12 @@ export async function submitMatch3Result(
   await kv.del(SESSION_KEY(payload.sessionId));
   await kv.del(ACTIVE_SESSION_KEY(userId));
   await kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL });
-
-  const newDailyStats: DailyGameStats = {
-    userId,
-    date,
-    gamesPlayed: dailyStats.gamesPlayed + 1,
-    totalScore: dailyStats.totalScore + score,
-    pointsEarned: pointsResult.dailyEarned,
-    lastGameAt: Date.now(),
-  };
-  await kv.set(DAILY_STATS_KEY(userId, date), newDailyStats, { ex: DAILY_STATS_TTL });
+  await incrementSharedDailyStats(userId, score, pointsResult.dailyEarned);
 
   await kv.lpush(RECORDS_KEY(userId), record);
   await kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1);
 
   return { success: true, record, pointsEarned: pointsResult.pointsEarned };
 }
+
 

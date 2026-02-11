@@ -1,15 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getAuthUser } from '@/lib/auth';
 import { submitGameResult, getDailyStats } from '@/lib/game';
 import { getUserPoints } from '@/lib/points';
+import { withUserRateLimit } from '@/lib/rate-limit';
 import type { GameResultSubmit } from '@/lib/types/game';
 
-export async function POST(request: Request) {
-  const user = await getAuthUser();
-  if (!user) {
-    return NextResponse.json({ error: '未登录' }, { status: 401 });
-  }
-
+export const POST = withUserRateLimit('game:submit', async (request: Request, user) => {
   try {
     const body = await request.json();
     
@@ -22,7 +17,7 @@ export async function POST(request: Request) {
 
     // 验证必要字段
     if (!result.sessionId || typeof result.score !== 'number') {
-      return NextResponse.json({ error: '参数错误' }, { status: 400 });
+      return NextResponse.json({ success: false, message: '参数错误' }, { status: 400 });
     }
 
     const submitResult = await submitGameResult(user.id, result);
@@ -52,6 +47,6 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error('Submit game error:', error);
-    return NextResponse.json({ error: '服务器错误' }, { status: 500 });
+    return NextResponse.json({ success: false, message: '服务器错误' }, { status: 500 });
   }
-}
+});

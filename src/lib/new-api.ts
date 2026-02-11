@@ -1,4 +1,54 @@
+import { kv } from '@vercel/kv';
+import { maskUserId, maskUsername } from './logging';
+
 let _newApiUrl: string | null = null;
+
+const USER_QUOTA_LOCK_PREFIX = 'newapi:quota:credit:lock:';
+const USER_QUOTA_LOCK_TTL_SECONDS = 15;
+const USER_QUOTA_LOCK_RETRY_MS = 120;
+const USER_QUOTA_LOCK_MAX_RETRIES = 25;
+
+type UserQuotaLock = {
+  key: string;
+  token: string;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function acquireUserQuotaLock(userId: number): Promise<UserQuotaLock | null> {
+  const key = `${USER_QUOTA_LOCK_PREFIX}${userId}`;
+  const token = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+  for (let attempt = 0; attempt < USER_QUOTA_LOCK_MAX_RETRIES; attempt += 1) {
+    const locked = await kv.set(key, token, { nx: true, ex: USER_QUOTA_LOCK_TTL_SECONDS });
+    if (locked === 'OK') {
+      return { key, token };
+    }
+    await sleep(USER_QUOTA_LOCK_RETRY_MS);
+  }
+
+  return null;
+}
+
+async function releaseUserQuotaLock(lock: UserQuotaLock): Promise<void> {
+  const luaScript = `
+    local key = KEYS[1]
+    local expected = ARGV[1]
+    local current = redis.call('GET', key)
+    if current == expected then
+      return redis.call('DEL', key)
+    end
+    return 0
+  `;
+
+  try {
+    await kv.eval(luaScript, [lock.key], [lock.token]);
+  } catch (error) {
+    console.error('Release quota lock failed:', error);
+  }
+}
 
 function sanitizeEnvValue(value: string | undefined): string {
   if (!value) return '';
@@ -45,7 +95,7 @@ export async function loginToNewApi(username: string, password: string): Promise
     const baseUrl = getNewApiUrl();
     const safeUsername = sanitizeEnvValue(username);
     const safePassword = sanitizeEnvValue(password);
-    console.log(`Attempting login to ${baseUrl}/api/user/login with username: ${safeUsername}`);
+    console.log("Attempting login to new-api", { endpoint: `${baseUrl}/api/user/login`, username: maskUsername(safeUsername) });
     
     const response = await fetch(`${baseUrl}/api/user/login`, {
       method: "POST",
@@ -74,7 +124,7 @@ export async function loginToNewApi(username: string, password: string): Promise
       hasCookies: !!cookies, 
       cookiesLength: cookies.length,
       hasData: !!data.data,
-      userId: data.data?.id
+      userId: maskUserId(data.data?.id)
     });
 
     if (data.success) {
@@ -193,7 +243,7 @@ export async function getAdminSession(): Promise<string | null> {
     return null;
   }
 
-  console.log('Attempting admin login with username:', username);
+  console.log('Attempting admin login to new-api', { username: maskUsername(username) });
   
   const result = await loginToNewApi(username, password);
   
@@ -233,112 +283,123 @@ export async function creditQuotaToUser(
   }
   
   const { cookies: adminCookies, adminUserId } = loginResult;
+  const lock = await acquireUserQuotaLock(userId);
+  if (!lock) {
+    return { success: false, message: '系统繁忙，充值请求排队中，请稍后重试' };
+  }
+
   let expectedQuota: number | undefined;
 
   try {
-    // 先获取用户完整信息（必须，因为 PUT 会覆盖所有字段）
-    const userResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
-      headers: { 
-        Cookie: adminCookies,
-        'New-Api-User': String(adminUserId),
-      },
-    });
-    const userData = await userResponse.json();
-    
-    console.log('Get user response:', { success: userData.success, userId, hasData: !!userData.data });
-    
-    if (!userData.success || !userData.data) {
-      return { success: false, message: '获取用户信息失败' };
-    }
-
-    const user = userData.data;
-    const currentQuota = user.quota || 0;
-    // 1 USD = 500000 quota units
-    const quotaToAdd = Math.floor(dollars * 500000);
-    const newQuota = currentQuota + quotaToAdd;
-    expectedQuota = newQuota;
-
-    // 更新用户额度（必须传递完整用户对象，否则其他字段会被清空）
-    const updateResponse = await fetch(`${baseUrl}/api/user/`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: adminCookies,
-        'New-Api-User': String(adminUserId),
-      },
-      body: JSON.stringify({
-        id: userId,
-        username: user.username,
-        display_name: user.display_name,
-        group: user.group || 'default',
-        quota: newQuota,
-        remark: user.remark || '',
-      }),
-    });
-
-    let updateData;
     try {
-      updateData = await updateResponse.json();
-    } catch (parseError) {
-      // JSON 解析失败，可能请求已成功但响应异常
-      // 重新获取用户 quota 验证是否成功
-      console.warn('Update response parse failed, verifying with GET:', parseError);
-      const verifyResult = await verifyQuotaUpdate(userId, newQuota, adminCookies, adminUserId);
-      return verifyResult;
-    }
-    
-    console.log('Update user response:', { success: updateData.success, message: updateData.message, newQuota });
-    
-    if (updateData.success) {
-      return { 
-        success: true, 
-        message: `成功充值 $${dollars}`, 
-        newQuota 
+      // 先获取用户完整信息（必须，因为 PUT 会覆盖所有字段）
+      const userResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
+        headers: {
+          Cookie: adminCookies,
+          'New-Api-User': String(adminUserId),
+        },
+      });
+      const userData = await userResponse.json();
+
+      console.log('Get user response:', { success: userData.success, userId: maskUserId(userId), hasData: !!userData.data });
+
+      if (!userData.success || !userData.data) {
+        return { success: false, message: '获取用户信息失败' };
+      }
+
+      const user = userData.data;
+      const currentQuota = user.quota || 0;
+      // 1 USD = 500000 quota units
+      const quotaToAdd = Math.floor(dollars * 500000);
+      const newQuota = currentQuota + quotaToAdd;
+      expectedQuota = newQuota;
+
+      // 更新用户额度（保留已有字段，不以默认值覆盖缺失字段）
+      const updatePayload = {
+        ...user,
+        id: userId,
+        quota: newQuota,
       };
-    } else {
+      const sanitizedUpdatePayload = Object.fromEntries(
+        Object.entries(updatePayload).filter(([, value]) => value !== undefined)
+      );
+
+      const updateResponse = await fetch(`${baseUrl}/api/user/`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: adminCookies,
+          'New-Api-User': String(adminUserId),
+        },
+        body: JSON.stringify(sanitizedUpdatePayload),
+      });
+
+      let updateData;
+      try {
+        updateData = await updateResponse.json();
+      } catch (parseError) {
+        // JSON 解析失败，可能请求已成功但响应异常
+        // 重新获取用户 quota 验证是否成功
+        console.warn('Update response parse failed, verifying with GET:', parseError);
+        const verifyResult = await verifyQuotaUpdate(userId, newQuota, adminCookies, adminUserId);
+        return verifyResult;
+      }
+
+      console.log('Update user response:', { success: updateData.success, message: updateData.message, newQuota });
+
+      if (updateData.success) {
+        return {
+          success: true,
+          message: `成功充值 $${dollars}`,
+          newQuota,
+        };
+      }
+
       // 部分 new-api 场景会出现“实际已更新，但返回 success=false / 响应异常”的情况
       // 再次 GET 校验，避免误判为失败导致重复发放
       const verifyResult = await verifyQuotaUpdate(userId, newQuota, adminCookies, adminUserId);
       if (verifyResult.success || verifyResult.uncertain) {
         return verifyResult;
       }
-      return { 
-        success: false, 
-        message: updateData.message || '额度更新失败' 
+      return {
+        success: false,
+        message: updateData.message || '额度更新失败',
       };
-    }
-  } catch (error) {
-    console.error('Credit quota error:', error);
-    // 网络错误或其他异常，但 PUT 可能已经成功执行
-    // 尝试重新获取用户 quota 验证
-    console.warn('Credit quota failed with error, attempting verification...');
-    try {
-      const loginResult = await getAdminSessionWithUser();
-      if (loginResult) {
-        const verifyResult = await verifyQuotaUpdate(
-          userId, 
-          expectedQuota,
-          loginResult.cookies, 
-          loginResult.adminUserId
-        );
-        if (verifyResult.uncertain) {
-          // 不确定状态，不回滚，让调用方知道
-          return { 
-            success: false, 
-            message: '充值结果不确定，请稍后检查余额',
-            uncertain: true 
-          } as { success: boolean; message: string; newQuota?: number; uncertain?: boolean };
+    } catch (error) {
+      console.error('Credit quota error:', error);
+      // 网络错误或其他异常，但 PUT 可能已经成功执行
+      // 尝试重新获取用户 quota 验证
+      console.warn('Credit quota failed with error, attempting verification...');
+      try {
+        const nextLoginResult = await getAdminSessionWithUser();
+        if (nextLoginResult) {
+          const verifyResult = await verifyQuotaUpdate(
+            userId,
+            expectedQuota,
+            nextLoginResult.cookies,
+            nextLoginResult.adminUserId
+          );
+          if (verifyResult.uncertain) {
+            // 不确定状态，不回滚，让调用方知道
+            return {
+              success: false,
+              message: '充值结果不确定，请稍后检查余额',
+              uncertain: true,
+            } as { success: boolean; message: string; newQuota?: number; uncertain?: boolean };
+          }
+          return verifyResult;
         }
-        return verifyResult;
+      } catch (verifyError) {
+        console.error('Verification also failed:', verifyError);
       }
-    } catch (verifyError) {
-      console.error('Verification also failed:', verifyError);
+      return {
+        success: false,
+        message: '服务连接失败，结果不确定，请检查余额',
+        uncertain: true,
+      } as { success: boolean; message: string; newQuota?: number; uncertain?: boolean };
     }
-    return { 
-      success: false, 
-      message: '服务连接失败，结果不确定，请检查余额',
-      uncertain: true 
-    } as { success: boolean; message: string; newQuota?: number; uncertain?: boolean };
+  } finally {
+    await releaseUserQuotaLock(lock);
   }
 }
 
@@ -430,3 +491,4 @@ async function getAdminSessionWithUser(): Promise<{ cookies: string; adminUserId
     adminUserId: result.user.id,
   };
 }
+

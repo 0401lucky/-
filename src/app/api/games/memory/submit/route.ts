@@ -1,16 +1,11 @@
 // src/app/api/games/memory/submit/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthUser } from '@/lib/auth';
 import { submitMemoryResult } from '@/lib/memory';
+import { withUserRateLimit } from '@/lib/rate-limit';
 import type { MemoryGameResultSubmit } from '@/lib/types/game';
 
-export async function POST(request: NextRequest) {
-  const user = await getAuthUser();
-  if (!user) {
-    return NextResponse.json({ error: '未登录' }, { status: 401 });
-  }
-
+export const POST = withUserRateLimit('game:submit', async (request: NextRequest, user) => {
   try {
     const body = await request.json() as MemoryGameResultSubmit;
 
@@ -40,6 +35,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('Submit memory result error:', error);
-    return NextResponse.json({ error: '服务器错误' }, { status: 500 });
+    return NextResponse.json({ success: false, message: '服务器错误' }, { status: 500 });
   }
-}
+});

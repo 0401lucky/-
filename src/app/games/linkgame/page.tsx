@@ -461,6 +461,16 @@ export default function LinkGamePage() {
 
     const hint = findHint(board, session.config.rows, session.config.cols);
     if (hint) {
+      const hintMove: LinkGameMove = {
+        type: 'hint',
+        timestamp: Date.now(),
+      };
+      setMoves((prev) => {
+        const next = [...prev, hintMove];
+        movesRef.current = next;
+        return next;
+      });
+
       const index1 = indexOf(hint.pos1, session.config.cols);
       setSelected([index1]);
       

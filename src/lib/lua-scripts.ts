@@ -95,24 +95,24 @@ export const LOTTERY_SCRIPTS = {
   /**
    * 原子性预占直充额度
    * KEYS: [key]
-   * ARGV: [dollars, limit, ttl]
+   * ARGV: [cents, limitCents, ttl]
    * 返回: [success(0/1), newTotal]
    */
   reserveDailyDirectQuota: `
     local key = KEYS[1]
-    local dollars = tonumber(ARGV[1])
+    local cents = tonumber(ARGV[1])
     local limit = tonumber(ARGV[2])
     local ttl = tonumber(ARGV[3])
 
-    local newTotal = redis.call('INCRBY', key, dollars)
+    local newTotal = redis.call('INCRBY', key, cents)
 
     if redis.call('TTL', key) == -1 then
       redis.call('EXPIRE', key, ttl)
     end
 
     if newTotal > limit then
-      redis.call('DECRBY', key, dollars)
-      return {0, newTotal - dollars}
+      redis.call('DECRBY', key, cents)
+      return {0, newTotal - cents}
     end
 
     return {1, newTotal}

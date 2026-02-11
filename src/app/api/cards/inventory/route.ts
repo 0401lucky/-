@@ -9,7 +9,7 @@ export async function GET() {
     const user = await getAuthUser();
     
     if (!user) {
-      return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ success: false, message: '请先登录' }, { status: 401 });
     }
 
     const cardData = await getUserCardData(user.id.toString());
@@ -20,6 +20,7 @@ export async function GET() {
     });
   } catch (error) {
     console.error('Failed to fetch card inventory:', error);
-    return NextResponse.json({ success: false, message: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ success: false, message: '服务器错误' }, { status: 500 });
   }
 }
+

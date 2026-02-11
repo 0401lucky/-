@@ -2,6 +2,7 @@ import { kv } from '@vercel/kv';
 import { nanoid } from 'nanoid';
 import { type FeedbackImage } from '@/lib/feedback-image';
 import { externalizeFeedbackImages } from '@/lib/feedback-image-storage';
+import { createUserNotification } from './notifications';
 
 export type FeedbackStatus = 'open' | 'processing' | 'resolved' | 'closed';
 export type FeedbackRole = 'user' | 'admin';
@@ -325,6 +326,24 @@ export async function addFeedbackMessage(
     addIndexesForItem(updatedFeedback),
   ]);
 
+  if (role === 'admin') {
+    try {
+      const preview = content.trim().slice(0, 80);
+      await createUserNotification({
+        userId: feedback.userId,
+        type: 'feedback_reply',
+        title: '反馈收到新回复',
+        content: preview ? ('管理员回复：' + preview) : '管理员回复了你的反馈，点击查看详情',
+        data: {
+          feedbackId,
+          messageId: message.id,
+        },
+      });
+    } catch (notifyError) {
+      console.error('Create feedback reply notification failed:', notifyError);
+    }
+  }
+
   return {
     feedback: updatedFeedback,
     message,
@@ -468,3 +487,5 @@ export async function listAllFeedback(
     pagination: buildPagination(page, limit, total),
   };
 }
+
+

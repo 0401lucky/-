@@ -7,8 +7,10 @@ export type PointsSource =
   | 'daily_login'    // 每日登录
   | 'checkin_bonus'  // 签到奖励
   | 'exchange'       // 商店兑换（扣除）
+  | 'exchange_refund' // 商店兑换回滚（退还）
   | 'admin_adjust'   // 管理员调整
   | 'card_collection' // 卡牌集齐奖励
+  | 'ranking_reward' // 排行榜周期奖励
 
 /** 积分流水记录 */
 export interface PointsLog {

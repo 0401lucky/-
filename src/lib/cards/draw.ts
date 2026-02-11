@@ -3,6 +3,7 @@ import { CARDS } from "./config";
 import { CardConfig, Rarity } from "./types";
 import { RARITY_PROBABILITIES, RARITY_LEVELS, FRAGMENT_VALUES } from "./constants";
 import { getGuaranteedRarity, normalizePityCounters, type PityCounters } from "./pity";
+import { secureRandomFloat, secureRandomIndex } from "../random";
 
 export interface UserCards {
   inventory: string[];
@@ -100,7 +101,7 @@ export function selectCardByRarity(rarity: Rarity): CardConfig {
     return CARDS[CARDS.length - 1];
   }
 
-  return cardsInRarity[Math.floor(Math.random() * cardsInRarity.length)];
+  return cardsInRarity[secureRandomIndex(cardsInRarity.length)]!;
 }
 
 /**
@@ -112,7 +113,7 @@ export function selectCardByProbability(): CardConfig {
   const rarities = Object.keys(RARITY_PROBABILITIES) as Rarity[];
   const totalWeight = rarities.reduce((sum, r) => sum + RARITY_PROBABILITIES[r], 0);
 
-  let random = Math.random() * totalWeight;
+  let random = secureRandomFloat() * totalWeight;
   let selectedRarity: Rarity = "common";
 
   for (const rarity of rarities) {
@@ -135,7 +136,7 @@ function selectCardForDraw(counters: PityCounters): CardConfig {
 
   const minLevel = RARITY_LEVELS[guaranteed];
   const eligibleCards = CARDS.filter((c) => RARITY_LEVELS[c.rarity] >= minLevel);
-  return eligibleCards[Math.floor(Math.random() * eligibleCards.length)];
+  return eligibleCards[secureRandomIndex(eligibleCards.length)]!;
 }
 
 /**

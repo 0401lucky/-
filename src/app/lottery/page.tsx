@@ -78,6 +78,7 @@ export default function LotteryPage() {
   const [result, setResult] = useState<{ name: string; code: string; directCredit?: boolean; value?: number } | null>(null);
   const [showResultModal, setShowResultModal] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedRecordId, setCopiedRecordId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   // 排行榜
@@ -88,6 +89,8 @@ export default function LotteryPage() {
   const spinTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const confettiFrameRef = useRef<number | null>(null);
   const confettiEndTimeRef = useRef<number>(0);
+  const modalCopyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const recordCopyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // [M2修复] 清理函数
   useEffect(() => {
@@ -98,6 +101,12 @@ export default function LotteryPage() {
       }
       if (confettiFrameRef.current) {
         cancelAnimationFrame(confettiFrameRef.current);
+      }
+      if (modalCopyTimeoutRef.current) {
+        clearTimeout(modalCopyTimeoutRef.current);
+      }
+      if (recordCopyTimeoutRef.current) {
+        clearTimeout(recordCopyTimeoutRef.current);
       }
     };
   }, []);
@@ -318,7 +327,10 @@ export default function LotteryPage() {
     if (result?.code) {
       navigator.clipboard.writeText(result.code);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (modalCopyTimeoutRef.current) {
+        clearTimeout(modalCopyTimeoutRef.current);
+      }
+      modalCopyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -695,16 +707,20 @@ export default function LotteryPage() {
                           <button 
                               onClick={() => {
                                   navigator.clipboard.writeText(record.code);
-                                  // 简单的视觉反馈
-                                  const btn = document.getElementById(`copy-${record.id}`);
-                                  if(btn) btn.style.color = '#10b981';
-                                  setTimeout(() => { if(btn) btn.style.color = ''; }, 1000);
+                                  setCopiedRecordId(record.id);
+                                  if (recordCopyTimeoutRef.current) {
+                                    clearTimeout(recordCopyTimeoutRef.current);
+                                  }
+                                  recordCopyTimeoutRef.current = setTimeout(() => {
+                                    setCopiedRecordId((current) => (current === record.id ? null : current));
+                                  }, 1000);
                               }}
-                              id={`copy-${record.id}`}
-                              className="p-1.5 hover:bg-stone-100 rounded text-stone-400 hover:text-stone-600 transition-colors"
-                              title="复制"
+                              className={`p-1.5 hover:bg-stone-100 rounded transition-colors ${
+                                copiedRecordId === record.id ? 'text-green-500' : 'text-stone-400 hover:text-stone-600'
+                              }`}
+                              title={copiedRecordId === record.id ? '已复制' : '复制'}
                           >
-                              <Copy className="w-3 h-3" />
+                              {copiedRecordId === record.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                           </button>
                         </div>
                       )}

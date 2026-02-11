@@ -139,17 +139,46 @@ export async function deleteProject(projectId: string): Promise<void> {
 // 兑换码操作
 export async function addCodesToProject(projectId: string, codes: string[]): Promise<number> {
   if (codes.length === 0) return 0;
-  
-  const added = await kv.lpush(`codes:available:${projectId}`, ...codes);
-  const project = await getProject(projectId);
-  
-  if (project) {
-    await updateProject(projectId, {
-      codesCount: project.codesCount + codes.length,
-    });
-  }
-  
-  return added;
+
+  const projectKey = `projects:${projectId}`;
+  const codesKey = `codes:available:${projectId}`;
+
+  const luaScript = `
+    local projectKey = KEYS[1]
+    local codesKey = KEYS[2]
+
+    local codeCount = tonumber(ARGV[1]) or 0
+    if codeCount <= 0 then
+      return 0
+    end
+
+    local lpushArgs = { codesKey }
+    for i = 1, codeCount do
+      lpushArgs[#lpushArgs + 1] = ARGV[i + 1]
+    end
+
+    local listLength = redis.call('LPUSH', unpack(lpushArgs))
+
+    local projectJson = redis.call('GET', projectKey)
+    if projectJson then
+      local okP, project = pcall(cjson.decode, projectJson)
+      if okP and project then
+        local currentCodesCount = tonumber(project.codesCount) or 0
+        project.codesCount = currentCodesCount + codeCount
+        redis.call('SET', projectKey, cjson.encode(project))
+      end
+    end
+
+    return listLength
+  `;
+
+  const newLength = await kv.eval(
+    luaScript,
+    [projectKey, codesKey],
+    [codes.length, ...codes]
+  );
+
+  return Number(newLength) || 0;
 }
 
 export async function getAvailableCodesCount(projectId: string): Promise<number> {
@@ -261,12 +290,14 @@ export async function reserveDirectClaim(
 
   const projectKey = `projects:${projectId}`;
   const claimKey = `claimed:${projectId}:${userId}`;
+  const recordsKey = `records:${projectId}`;
   const userClaimedKey = `claimed:user:${userId}`;  // [Perf] 用户领取索引
 
   const luaScript = `
     local projectKey = KEYS[1]
     local claimKey = KEYS[2]
-    local userClaimedKey = KEYS[3]
+    local recordsKey = KEYS[3]
+    local userClaimedKey = KEYS[4]
 
     local now = tonumber(ARGV[1])
     local recordId = ARGV[2]
@@ -319,6 +350,7 @@ export async function reserveDirectClaim(
     local recordJson = cjson.encode(record)
 
     redis.call('SET', claimKey, recordJson)
+    redis.call('LPUSH', recordsKey, recordJson)
     redis.call('SET', projectKey, cjson.encode(project))
     redis.call('SADD', userClaimedKey, projectId)
 
@@ -327,7 +359,7 @@ export async function reserveDirectClaim(
 
   const result = await kv.eval(
     luaScript,
-    [projectKey, claimKey, userClaimedKey],
+    [projectKey, claimKey, recordsKey, userClaimedKey],
     [now, recordId, projectId, userId, username]
   ) as [number, string, string];
 
@@ -460,7 +492,7 @@ export async function rollbackDirectClaim(
     end
 
     -- 如果之前因为达到上限变为 exhausted，回滚后可能恢复 active（paused 不变）
-    if project.status == 'exhausted' and project.status ~= 'paused' then
+    if project.status == 'exhausted' then
       if maxClaims > 0 and project.claimedCount < maxClaims then
         project.status = 'active'
       end
@@ -786,23 +818,49 @@ export async function migrateNewUserEligibilityFromHistory(
 
 // 记录用户（首次登录时调用）
 export async function recordUser(userId: number, username: string): Promise<void> {
-  const existing = await kv.get<User>(`user:${userId}`);
-  if (!existing) {
-    await kv.set(`user:${userId}`, {
-      id: userId,
-      username,
-      firstSeen: Date.now(),
-    });
-  } else if (existing.username !== username) {
-    await kv.set(`user:${userId}`, {
-      ...existing,
-      username,
-    });
-  }
-  // 确保用户一定在用户集合中（便于后续管理/统计）
-  await kv.sadd('users:all', userId);
-}
+  const userKey = `user:${userId}`;
+  const usersAllKey = 'users:all';
+  const now = Date.now();
 
+  const luaScript = `
+    local userKey = KEYS[1]
+    local usersAllKey = KEYS[2]
+    local userId = tonumber(ARGV[1])
+    local username = ARGV[2]
+    local now = tonumber(ARGV[3])
+
+    local existingJson = redis.call('GET', userKey)
+    local user
+
+    if existingJson then
+      local ok, parsed = pcall(cjson.decode, existingJson)
+      if ok and parsed then
+        user = parsed
+      end
+    end
+
+    if not user then
+      user = {
+        id = userId,
+        username = username,
+        firstSeen = now,
+      }
+    else
+      user.id = tonumber(user.id) or userId
+      user.firstSeen = tonumber(user.firstSeen) or now
+      if user.username ~= username then
+        user.username = username
+      end
+    end
+
+    redis.call('SET', userKey, cjson.encode(user))
+    redis.call('SADD', usersAllKey, userId)
+
+    return 1
+  `;
+
+  await kv.eval(luaScript, [userKey, usersAllKey], [userId, username, now]);
+}
 // 获取所有用户
 export async function getAllUsers(): Promise<User[]> {
   const userIds = await kv.smembers('users:all') as number[];
@@ -879,17 +937,27 @@ export async function addExtraSpinCount(userId: number, count: number): Promise<
 // 返回 { success: boolean, remaining: number }
 export async function tryUseExtraSpin(userId: number): Promise<{ success: boolean; remaining: number }> {
   const key = `user:extra_spins:${userId}`;
-  
-  // 使用 DECR 原子减1
-  const newValue = await kv.decrby(key, 1);
-  
-  if (newValue < 0) {
-    // 减过头了，需要回滚
-    await kv.incrby(key, 1);
-    return { success: false, remaining: 0 };
+
+  const luaScript = `
+    local key = KEYS[1]
+    local current = tonumber(redis.call('GET', key) or '0')
+
+    if current <= 0 then
+      return {0, current}
+    end
+
+    local remaining = redis.call('DECRBY', key, 1)
+    return {1, remaining}
+  `;
+
+  const result = await kv.eval(luaScript, [key], []) as [number, number];
+  const [successFlag, remaining] = result;
+
+  if (successFlag !== 1) {
+    return { success: false, remaining: Math.max(0, remaining || 0) };
   }
-  
-  return { success: true, remaining: newValue };
+
+  return { success: true, remaining: Math.max(0, remaining || 0) };
 }
 
 // [C3修复] 回滚额外次数（失败补偿用）
@@ -1060,3 +1128,4 @@ export async function addCardDraws(
     drawsAvailable: Number(drawsRaw) || 0,
   };
 }
+

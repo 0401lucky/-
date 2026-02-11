@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -86,6 +86,7 @@ export default function DrawPage() {
   const [isFlipped, setIsFlipped] = useState(false);
   const [isMultiDraw, setIsMultiDraw] = useState(false);
   const [revealedCards, setRevealedCards] = useState<number[]>([]);
+  const drawTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   // Load inventory
   const fetchInventory = async () => {
@@ -118,6 +119,19 @@ export default function DrawPage() {
     void init();
   }, [router]);
 
+  const clearDrawTimeouts = () => {
+    for (const timeout of drawTimeoutsRef.current) {
+      clearTimeout(timeout);
+    }
+    drawTimeoutsRef.current = [];
+  };
+
+  useEffect(() => {
+    return () => {
+      clearDrawTimeouts();
+    };
+  }, []);
+
   // Handle Draw Logic
   const handleDraw = async (count: number = 1) => {
     if (drawing || !cardData || cardData.drawsAvailable < count) return;
@@ -129,10 +143,17 @@ export default function DrawPage() {
     setMultiResults([]);
     setIsMultiDraw(count > 1);
     setRevealedCards([]);
+    clearDrawTimeouts();
 
     try {
       // 1. Animation Phase
-      await new Promise(resolve => setTimeout(resolve, count > 1 ? 800 : 1500));
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          drawTimeoutsRef.current = drawTimeoutsRef.current.filter((item) => item !== timer);
+          resolve();
+        }, count > 1 ? 800 : 1500);
+        drawTimeoutsRef.current.push(timer);
+      });
 
       // 2. API Call
       const res = await fetch('/api/cards/draw', {
@@ -151,7 +172,11 @@ export default function DrawPage() {
             fragmentsAdded: data.data.fragmentsAdded
           });
           setShowResult(true);
-          setTimeout(() => setIsFlipped(true), 100);
+          const flipTimer = setTimeout(() => {
+            setIsFlipped(true);
+            drawTimeoutsRef.current = drawTimeoutsRef.current.filter((item) => item !== flipTimer);
+          }, 100);
+          drawTimeoutsRef.current.push(flipTimer);
 
           // Special Effects
           if (['legendary', 'legendary_rare', 'epic'].includes(data.data.card.rarity)) {
@@ -164,13 +189,15 @@ export default function DrawPage() {
 
           // 依次翻开卡牌
           data.data.cards.forEach((cardResult, index) => {
-            setTimeout(() => {
+            const revealTimer = setTimeout(() => {
               setRevealedCards(prev => [...prev, index]);
               // 高稀有度特效
               if (['legendary', 'legendary_rare', 'epic'].includes(cardResult.card.rarity)) {
                 triggerConfetti(cardResult.card.rarity);
               }
+              drawTimeoutsRef.current = drawTimeoutsRef.current.filter((item) => item !== revealTimer);
             }, 300 + index * 400);
+            drawTimeoutsRef.current.push(revealTimer);
           });
         }
 
@@ -598,3 +625,6 @@ export default function DrawPage() {
     </div>
   );
 }
+
+
+

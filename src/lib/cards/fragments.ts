@@ -114,12 +114,6 @@ export async function exchangeFragmentsForCard(userId: string, cardId: string): 
         }
     end
 
-    if (userData.fragments or 0) < price then
-        return {0, userData.fragments or 0, 'insufficient_fragments'}
-    end
-
-    userData.fragments = userData.fragments - price
-    
     local hasCard = false
     if userData.inventory then
         for _, id in ipairs(userData.inventory) do
@@ -132,9 +126,16 @@ export async function exchangeFragmentsForCard(userId: string, cardId: string): 
         userData.inventory = {}
     end
 
-    if not hasCard then
-        table.insert(userData.inventory, cardId)
+    if hasCard then
+        return {0, userData.fragments or 0, 'already_owned'}
     end
+
+    if (userData.fragments or 0) < price then
+        return {0, userData.fragments or 0, 'insufficient_fragments'}
+    end
+
+    userData.fragments = userData.fragments - price
+    table.insert(userData.inventory, cardId)
 
     redis.call('SET', userKey, cjson.encode(userData))
     return {1, userData.fragments, 'ok'}
@@ -146,6 +147,12 @@ export async function exchangeFragmentsForCard(userId: string, cardId: string): 
   if (success === 1) {
     return { success: true };
   } else {
-    return { success: false, message: error === 'insufficient_fragments' ? "碎片不足" : "兑换失败" };
+    if (error === 'insufficient_fragments') {
+      return { success: false, message: "碎片不足" };
+    }
+    if (error === 'already_owned') {
+      return { success: false, message: "已拥有该卡片，无需兑换" };
+    }
+    return { success: false, message: "兑换失败" };
   }
 }

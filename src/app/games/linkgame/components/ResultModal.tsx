@@ -28,6 +28,7 @@ export function ResultModal({
   const [displayScore, setDisplayScore] = useState(0);
 
   const playAgainRef = useRef<HTMLButtonElement>(null);
+  const focusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // [Perf] 动态导入彩带特效，减少首屏 JS 体积
   useEffect(() => {
@@ -77,8 +78,9 @@ export function ResultModal({
   useEffect(() => {
     if (isOpen) {
       // Focus play again button when modal opens
-      setTimeout(() => {
+      focusTimeoutRef.current = setTimeout(() => {
         playAgainRef.current?.focus();
+        focusTimeoutRef.current = null;
       }, 100);
       
       const duration = 1000;
@@ -96,7 +98,13 @@ export function ResultModal({
         }
       }, duration / steps);
 
-      return () => clearInterval(timer);
+      return () => {
+        if (focusTimeoutRef.current) {
+          clearTimeout(focusTimeoutRef.current);
+          focusTimeoutRef.current = null;
+        }
+        clearInterval(timer);
+      };
     }
   }, [isOpen, score]);
 
@@ -202,3 +210,4 @@ export function ResultModal({
     </div>
   );
 }
+

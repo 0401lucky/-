@@ -34,5 +34,5 @@ export function getSecondsUntilMidnight(): number {
   tomorrow.setUTCHours(0, 0, 0, 0);
   // 转回 UTC 计算差值
   const tomorrowUTC = new Date(tomorrow.getTime() - CHINA_TZ_OFFSET_MS);
-  return Math.ceil((tomorrowUTC.getTime() - now.getTime()) / 1000);
+  return Math.max(1, Math.ceil((tomorrowUTC.getTime() - now.getTime()) / 1000));
 }

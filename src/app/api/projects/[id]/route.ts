@@ -13,6 +13,7 @@ import {
 } from "@/lib/kv";
 import { getAuthUser } from "@/lib/auth";
 import { creditQuotaToUser } from "@/lib/new-api";
+import { withUserRateLimit } from "@/lib/rate-limit";
 
 export async function GET(
   request: NextRequest,
@@ -58,24 +59,19 @@ export async function GET(
   }
 }
 
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const POST = withUserRateLimit(
+  "project:claim",
+  async (
+    _request: NextRequest,
+    user,
+    { params }: { params: Promise<{ id: string }> }
+  ) => {
   let reservedNewUserBenefit = false;
   let reservedUserId: number | null = null;
   let reservedProjectId: string | null = null;
 
   try {
     const { id } = await params;
-    const user = await getAuthUser();
-
-    if (!user) {
-      return NextResponse.json(
-        { success: false, message: "请先登录" },
-        { status: 401 }
-      );
-    }
 
     const project = await getProject(id);
     if (!project) {
@@ -241,4 +237,8 @@ export async function POST(
       { status: 500 }
     );
   }
-}
+  },
+  { unauthorizedMessage: "请先登录" }
+);
+
+

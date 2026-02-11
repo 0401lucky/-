@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { 
@@ -103,6 +103,25 @@ export default function AdminLotteryPage() {
   // 消息提示
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scheduleSuccessClear = useCallback(() => {
+    if (successTimeoutRef.current) {
+      clearTimeout(successTimeoutRef.current);
+    }
+    successTimeoutRef.current = setTimeout(() => {
+      setSuccess(null);
+      successTimeoutRef.current = null;
+    }, 3000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const fetchData = useCallback(async () => {
     try {
@@ -225,7 +244,7 @@ export default function AdminLotteryPage() {
       const data = await res.json();
       if (data.success) {
         setSuccess('配置保存成功');
-        setTimeout(() => setSuccess(null), 3000);
+        scheduleSuccessClear();
       } else {
         setError(data.message || '保存失败');
       }
@@ -259,7 +278,7 @@ export default function AdminLotteryPage() {
         setUploadFile(null);
         // 刷新数据
         fetchData();
-        setTimeout(() => setSuccess(null), 3000);
+        scheduleSuccessClear();
       } else {
         setError(data.message || '上传失败');
       }
@@ -289,7 +308,7 @@ export default function AdminLotteryPage() {
       if (data.success) {
         setSuccess(`已清空【${tierName}】的 ${data.cleared} 个兑换码`);
         fetchData();
-        setTimeout(() => setSuccess(null), 3000);
+        scheduleSuccessClear();
       } else {
         setError(data.message || '清空失败');
       }
@@ -317,6 +336,7 @@ export default function AdminLotteryPage() {
       const data = await res.json();
       if (data.success) {
         setSuccess(`重新统计完成！处理 ${data.processed} 条记录，发现 ${data.corrected} 条档位不匹配`);
+        scheduleSuccessClear();
         if (data.details && data.details.length > 0) {
           console.log('档位不匹配详情:', data.details);
           alert(`发现 ${data.corrected} 条档位不匹配的记录，详情已打印到控制台。\n\n示例：\n${data.details.slice(0, 3).map((d: {code: string; recorded: string; actual: string}) => `码 ${d.code.substring(0, 8)}... 记录为 ${d.recorded}，实际为 ${d.actual}`).join('\n')}`);
@@ -890,3 +910,7 @@ export default function AdminLotteryPage() {
     </div>
   );
 }
+
+
+
+

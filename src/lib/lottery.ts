@@ -61,22 +61,13 @@ const LOTTERY_CODES_PREFIX = "lottery:codes:";        // 所有码（Set）
 const LOTTERY_USED_CODES_PREFIX = "lottery:used:";    // 已使用的码（Set）
 const LOTTERY_RECORDS_KEY = "lottery:records";
 const LOTTERY_USER_RECORDS_PREFIX = "lottery:user:records:";
-
-// 配置缓存（减少频繁的 KV 查询）
-let configCache: { data: LotteryConfig; expireAt: number } | null = null;
-const CONFIG_CACHE_TTL = 30 * 1000; // 30秒缓存
-
+// 配置读取以 KV 为准，避免多实例进程内缓存不一致
 // 获取抽奖配置（自动合并默认值，兼容旧配置，带内存缓存）
 export async function getLotteryConfig(): Promise<LotteryConfig> {
-  // 检查缓存是否有效
-  if (configCache && Date.now() < configCache.expireAt) {
-    return configCache.data;
-  }
 
   const config = await kv.get<Partial<LotteryConfig>>(LOTTERY_CONFIG_KEY);
   if (!config) {
     await kv.set(LOTTERY_CONFIG_KEY, DEFAULT_CONFIG);
-    configCache = { data: DEFAULT_CONFIG, expireAt: Date.now() + CONFIG_CACHE_TTL };
     return DEFAULT_CONFIG;
   }
 
@@ -90,22 +81,13 @@ export async function getLotteryConfig(): Promise<LotteryConfig> {
     tiers: config.tiers ?? DEFAULT_CONFIG.tiers,
   };
 
-  // 更新缓存
-  configCache = { data: result, expireAt: Date.now() + CONFIG_CACHE_TTL };
   return result;
-}
-
-// 清除配置缓存（供内部使用）
-function invalidateConfigCache(): void {
-  configCache = null;
 }
 
 // 更新抽奖配置
 export async function updateLotteryConfig(config: Partial<LotteryConfig>): Promise<void> {
   const current = await getLotteryConfig();
   await kv.set(LOTTERY_CONFIG_KEY, { ...current, ...config });
-  // 更新后清除缓存，确保下次读取获取最新值
-  invalidateConfigCache();
 }
 
 // 更新档位概率配置
@@ -424,41 +406,20 @@ function weightedRandomSelect(tiers: LotteryTier[]): LotteryTier | null {
   return tiers[tiers.length - 1];
 }
 
-// [P1-1/P1-2修复] 执行抽奖 - 使用可用集合 + 原子发码 + 完整异常补偿
-export async function spinLottery(
+type SpinCountConsumption = {
+  success: boolean;
+  message?: string;
+  rollback: () => Promise<void>;
+};
+
+async function consumeSpinCount(
   userId: number,
-  username: string,
   options?: SpinLotteryOptions
-): Promise<{ success: boolean; record?: LotteryRecord; message: string }> {
-  // [Final-B] 扣次数阶段也需要 try-catch 兜底
+): Promise<SpinCountConsumption> {
   let usedExtraSpin = false;
   let usedDailyFree = false;
-  
-  if (!options?.bypassSpinLimit) {
-    try {
-      // === 第一步：原子性扣减次数 ===
-      // 1. 优先尝试消耗额外次数（原子操作）
-      const extraResult = await tryUseExtraSpin(userId);
-      
-      if (extraResult.success) {
-        usedExtraSpin = true;
-      } else {
-        // 2. 如果没有额外次数，尝试原子性占用每日免费次数
-        const dailyResult = await tryClaimDailyFree(userId);
-        if (!dailyResult) {
-          return { success: false, message: "今日免费次数已用完，请签到获取更多机会" };
-        }
-        usedDailyFree = true;
-      }
-    } catch (spinCountError) {
-      // [Final-B] 扣次数阶段异常：直接返回失败，不需要回滚（因为还没成功扣）
-      console.error("扣次数阶段异常:", spinCountError);
-      return { success: false, message: "系统繁忙，请稍后再试" };
-    }
-  }
 
-  // 补偿函数：返还已扣减的次数
-  const rollbackSpinCount = async () => {
+  const rollback = async () => {
     try {
       if (usedExtraSpin) await rollbackExtraSpin(userId);
       if (usedDailyFree) await releaseDailyFree(userId);
@@ -466,6 +427,50 @@ export async function spinLottery(
       console.error("回滚次数失败:", e);
     }
   };
+
+  if (options?.bypassSpinLimit) {
+    return { success: true, rollback };
+  }
+
+  try {
+    const extraResult = await tryUseExtraSpin(userId);
+    if (extraResult.success) {
+      usedExtraSpin = true;
+      return { success: true, rollback };
+    }
+
+    const dailyResult = await tryClaimDailyFree(userId);
+    if (!dailyResult) {
+      return {
+        success: false,
+        message: "今日免费次数已用完，请签到获取更多机会",
+        rollback,
+      };
+    }
+
+    usedDailyFree = true;
+    return { success: true, rollback };
+  } catch (spinCountError) {
+    console.error("扣次数阶段异常:", spinCountError);
+    return {
+      success: false,
+      message: "系统繁忙，请稍后再试",
+      rollback,
+    };
+  }
+}
+
+// [P1-1/P1-2修复] 执行抽奖 - 使用可用集合 + 原子发码 + 完整异常补偿
+export async function spinLottery(
+  userId: number,
+  username: string,
+  options?: SpinLotteryOptions
+): Promise<{ success: boolean; record?: LotteryRecord; message: string }> {
+  const spinCountResult = await consumeSpinCount(userId, options);
+  if (!spinCountResult.success) {
+    return { success: false, message: spinCountResult.message || "系统繁忙，请稍后再试" };
+  }
+  const rollbackSpinCount = spinCountResult.rollback;
 
   // 后续逻辑的 try-catch 兜底
   try {
@@ -657,14 +662,15 @@ export async function getUserLotteryRecords(
 // ============ 直充模式相关函数 ============
 
 const LOTTERY_DAILY_DIRECT_KEY = "lottery:daily_direct:"; // 每日直充发放记录
+const DIRECT_AMOUNT_SCALE = 100; // 用美分存储，支持两位小数
 
 /**
  * 获取今日已发放的直充金额（美元）
  */
 export async function getTodayDirectTotal(): Promise<number> {
   const today = getTodayDateString();
-  const total = await kv.get<number>(`${LOTTERY_DAILY_DIRECT_KEY}${today}`);
-  return total || 0;
+  const totalCents = await kv.get<number>(`${LOTTERY_DAILY_DIRECT_KEY}${today}`);
+  return (totalCents || 0) / DIRECT_AMOUNT_SCALE;
 }
 
 /**
@@ -688,16 +694,22 @@ export async function reserveDailyDirectQuota(dollars: number): Promise<{ succes
   const today = getTodayDateString();
   const key = `${LOTTERY_DAILY_DIRECT_KEY}${today}`;
   const ttl = getSecondsUntilMidnight() + 3600; // 额外1小时缓冲
+  const cents = Math.round(dollars * DIRECT_AMOUNT_SCALE);
+  const limitCents = Math.round(config.dailyDirectLimit * DIRECT_AMOUNT_SCALE);
+
+  if (cents <= 0) {
+    return { success: false, newTotal: await getTodayDirectTotal() };
+  }
 
   // Lua 脚本：原子性预占额度
   const luaScript = `
     local key = KEYS[1]
-    local dollars = tonumber(ARGV[1])
+    local cents = tonumber(ARGV[1])
     local limit = tonumber(ARGV[2])
     local ttl = tonumber(ARGV[3])
 
     -- 原子性增加
-    local newTotal = redis.call('INCRBY', key, dollars)
+    local newTotal = redis.call('INCRBY', key, cents)
 
     -- 设置 TTL（仅当 key 没有过期时间时）
     if redis.call('TTL', key) == -1 then
@@ -707,8 +719,8 @@ export async function reserveDailyDirectQuota(dollars: number): Promise<{ succes
     -- 检查是否超限
     if newTotal > limit then
       -- 超限，回滚
-      redis.call('DECRBY', key, dollars)
-      return {0, newTotal - dollars}
+      redis.call('DECRBY', key, cents)
+      return {0, newTotal - cents}
     end
 
     return {1, newTotal}
@@ -717,11 +729,11 @@ export async function reserveDailyDirectQuota(dollars: number): Promise<{ succes
   const result = await kv.eval(
     luaScript,
     [key],
-    [dollars, config.dailyDirectLimit, ttl]
+    [cents, limitCents, ttl]
   ) as [number, number];
 
-  const [success, newTotal] = result;
-  return { success: success === 1, newTotal };
+  const [success, newTotalCents] = result;
+  return { success: success === 1, newTotal: (newTotalCents || 0) / DIRECT_AMOUNT_SCALE };
 }
 
 /**
@@ -731,7 +743,11 @@ export async function reserveDailyDirectQuota(dollars: number): Promise<{ succes
 export async function rollbackDailyDirectQuota(dollars: number): Promise<void> {
   const today = getTodayDateString();
   const key = `${LOTTERY_DAILY_DIRECT_KEY}${today}`;
-  await kv.decrby(key, dollars);
+  const cents = Math.round(dollars * DIRECT_AMOUNT_SCALE);
+  if (cents <= 0) {
+    return;
+  }
+  await kv.decrby(key, cents);
 }
 
 /**
@@ -756,38 +772,12 @@ export async function spinLotteryDirect(
 ): Promise<{ success: boolean; record?: LotteryRecord; message: string; uncertain?: boolean }> {
   // 动态导入避免循环依赖
   const { creditQuotaToUser } = await import('./new-api');
-  
-  let usedExtraSpin = false;
-  let usedDailyFree = false;
 
-  if (!options?.bypassSpinLimit) {
-    try {
-      // === 第一步：原子性扣减次数 ===
-      const extraResult = await tryUseExtraSpin(userId);
-      
-      if (extraResult.success) {
-        usedExtraSpin = true;
-      } else {
-        const dailyResult = await tryClaimDailyFree(userId);
-        if (!dailyResult) {
-          return { success: false, message: "今日免费次数已用完，请签到获取更多机会" };
-        }
-        usedDailyFree = true;
-      }
-    } catch (spinCountError) {
-      console.error("扣次数阶段异常:", spinCountError);
-      return { success: false, message: "系统繁忙，请稍后再试" };
-    }
+  const spinCountResult = await consumeSpinCount(userId, options);
+  if (!spinCountResult.success) {
+    return { success: false, message: spinCountResult.message || "系统繁忙，请稍后再试" };
   }
-
-  const rollbackSpinCount = async () => {
-    try {
-      if (usedExtraSpin) await rollbackExtraSpin(userId);
-      if (usedDailyFree) await releaseDailyFree(userId);
-    } catch (e) {
-      console.error("回滚次数失败:", e);
-    }
-  };
+  const rollbackSpinCount = spinCountResult.rollback;
 
   let reservedDollars = 0; // 记录已预占的额度，用于回滚
 
@@ -939,26 +929,49 @@ export async function spinLotteryAuto(
     case 'code':
       return spinLottery(userId, username, options);
     
-    case 'hybrid':
-      // 优先直充，检查是否有任何可抽的直充档位
-      const minValue = await getMinTierValue();
-      const canDirect = await checkDailyDirectLimit(minValue);
-      if (canDirect) {
-        const directResult = await spinLotteryDirect(userId, username, options);
-        if (directResult.success) {
-          return directResult;
-        }
-        // 结果不确定时，不降级（避免双重发放风险）
-        if (directResult.uncertain) {
-          console.warn("直充结果不确定，不降级到兑换码模式");
-          return directResult; // 直接返回不确定结果
-        }
-        // 明确失败（已回滚）时才降级到兑换码模式
-        console.log("直充明确失败，降级到兑换码模式:", directResult.message);
+    case 'hybrid': {
+      const spinCountResult = await consumeSpinCount(userId, options);
+      if (!spinCountResult.success) {
+        return { success: false, message: spinCountResult.message || "系统繁忙，请稍后再试" };
       }
-      return spinLottery(userId, username, options);
+
+      const childOptions: SpinLotteryOptions = { ...options, bypassSpinLimit: true };
+
+      try {
+        // 优先直充，检查是否有任何可抽的直充档位
+        const minValue = await getMinTierValue();
+        const canDirect = await checkDailyDirectLimit(minValue);
+        if (canDirect) {
+          const directResult = await spinLotteryDirect(userId, username, childOptions);
+          if (directResult.success) {
+            return directResult;
+          }
+          // 结果不确定时，不降级（避免双重发放风险）
+          if (directResult.uncertain) {
+            console.warn("直充结果不确定，不降级到兑换码模式");
+            return directResult;
+          }
+          // 明确失败时降级到兑换码模式
+          console.log("直充明确失败，降级到兑换码模式:", directResult.message);
+        }
+
+        const codeResult = await spinLottery(userId, username, childOptions);
+        if (codeResult.success) {
+          return codeResult;
+        }
+
+        await spinCountResult.rollback();
+        return codeResult;
+      } catch (error) {
+        console.error("hybrid 抽奖异常:", error);
+        await spinCountResult.rollback();
+        return { success: false, message: "系统错误，请稍后再试" };
+      }
+    }
     
     default:
       return spinLottery(userId, username, options);
   }
 }
+
+

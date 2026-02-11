@@ -6,7 +6,7 @@ import { getAuthUser } from '@/lib/auth';
 import { checkinToNewApi } from '@/lib/new-api';
 import { cookies } from 'next/headers';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 // Helper to create mock NextRequest
 function createMockRequest(body: object = {}): NextRequest {
@@ -37,6 +37,19 @@ vi.mock('@/lib/new-api', () => ({
 vi.mock('@/lib/rate-limit', () => ({
   checkRateLimit: vi.fn(),
   rateLimitResponse: vi.fn(),
+  withRateLimit: vi.fn(),
+  withUserRateLimit: vi.fn((_: string, handler: (request: Request, user: unknown, context: unknown) => Promise<Response>, options?: { unauthorizedMessage?: string }) => {
+    return async (request: Request, context?: unknown) => {
+      const user = await (getAuthUser as unknown as ReturnType<typeof vi.fn>)();
+      if (!user) {
+        return NextResponse.json(
+          { success: false, message: options?.unauthorizedMessage ?? '未登录' },
+          { status: 401 }
+        );
+      }
+      return handler(request, user, context);
+    };
+  }),
 }));
 
 vi.mock('next/headers', () => ({
@@ -144,3 +157,4 @@ describe('Checkin and Card Draw Integration', () => {
     });
   });
 });
+

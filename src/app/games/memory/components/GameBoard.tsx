@@ -4,31 +4,51 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card } from './Card';
-import type { MemoryDifficulty, MemoryDifficultyConfig, MemoryMove } from '@/lib/types/game';
+import type {
+  MemoryDifficulty,
+  MemoryDifficultyConfig,
+  MemoryFlipResult,
+  MemoryMove,
+} from '@/lib/types/game';
 import { DIFFICULTY_META } from '../lib/constants';
 
 interface GameBoardProps {
+  sessionId: string;
   difficulty: MemoryDifficulty;
   cardLayout: string[];
+  moveCount: number;
+  matchedCards: number[];
+  firstFlippedCard: number | null;
   config: MemoryDifficultyConfig;
+  onFlipCard: (sessionId: string, index: number) => Promise<MemoryFlipResult | null>;
+  onSyncCardLayout: (sessionId: string, cardLayout: string[]) => void;
   onGameEnd: (moves: MemoryMove[], completed: boolean, duration: number) => void;
   isRestored?: boolean;
 }
 
 export function GameBoard({
+  sessionId,
   difficulty,
   cardLayout,
+  moveCount,
+  matchedCards,
+  firstFlippedCard,
   config,
+  onFlipCard,
+  onSyncCardLayout,
   onGameEnd,
   isRestored = false,
 }: GameBoardProps) {
-  const [flippedCards, setFlippedCards] = useState<number[]>([]);
-  const [matchedCards, setMatchedCards] = useState<Set<number>>(new Set());
+  const [flippedCards, setFlippedCards] = useState<number[]>(
+    firstFlippedCard !== null ? [firstFlippedCard] : []
+  );
+  const [matchedSet, setMatchedSet] = useState<Set<number>>(new Set(matchedCards));
   const [moves, setMoves] = useState<MemoryMove[]>([]);
-  const [moveCount, setMoveCount] = useState(0);
+  const [serverMoveCount, setServerMoveCount] = useState(moveCount);
   const [timeLeft, setTimeLeft] = useState(config.timeLimit);
   const [isChecking, setIsChecking] = useState(false);
   const [hasEnded, setHasEnded] = useState(false);
+  const [pendingCards, setPendingCards] = useState<Set<number>>(new Set());
   
   const startTimeRef = useRef<number>(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -44,15 +64,37 @@ export function GameBoard({
   }, [moves]);
 
   useEffect(() => {
+    setMatchedSet(new Set(matchedCards));
+  }, [matchedCards]);
+
+  useEffect(() => {
+    if (firstFlippedCard === null) {
+      setFlippedCards([]);
+      return;
+    }
+
+    if (matchedSet.has(firstFlippedCard)) {
+      setFlippedCards([]);
+      return;
+    }
+
+    setFlippedCards([firstFlippedCard]);
+  }, [firstFlippedCard, matchedSet]);
+
+  useEffect(() => {
+    setServerMoveCount(moveCount);
+  }, [moveCount]);
+
+  useEffect(() => {
     startTimeRef.current = Date.now();
   }, []);
 
   // 计算预估得分
   const estimatedScore = useCallback(() => {
     const optimalMoves = config.pairs;
-    const extraMoves = Math.max(0, moveCount - optimalMoves);
+    const extraMoves = Math.max(0, serverMoveCount - optimalMoves);
     return Math.max(config.minScore, config.baseScore - extraMoves * config.penaltyPerMove);
-  }, [moveCount, config]);
+  }, [serverMoveCount, config]);
 
   // 游戏结束处理（只调用一次）
   const handleGameEnd = useCallback((completed: boolean) => {
@@ -99,48 +141,94 @@ export function GameBoard({
 
   // 检查是否完成
   useEffect(() => {
-    if (matchedCards.size === cardLayout.length && !endCalledRef.current) {
+    if (matchedSet.size === cardLayout.length && !endCalledRef.current) {
       Promise.resolve().then(() => handleGameEnd(true));
     }
-  }, [matchedCards.size, cardLayout.length, handleGameEnd]);
+  }, [matchedSet.size, cardLayout.length, handleGameEnd]);
 
   // 翻牌逻辑
-  const handleCardClick = useCallback((index: number) => {
-    if (isChecking || endCalledRef.current || flippedCards.includes(index) || matchedCards.has(index)) {
+  const handleCardClick = useCallback(async (index: number) => {
+    if (
+      isChecking ||
+      endCalledRef.current ||
+      flippedCards.includes(index) ||
+      matchedSet.has(index) ||
+      pendingCards.has(index)
+    ) {
       return;
     }
 
-    if (flippedCards.length === 0) {
-      // 翻第一张
-      setFlippedCards([index]);
-    } else if (flippedCards.length === 1) {
-      // 翻第二张
-      const firstIndex = flippedCards[0];
-      setFlippedCards([firstIndex, index]);
-      setIsChecking(true);
-      setMoveCount(prev => prev + 1);
+    setPendingCards((prev) => new Set([...prev, index]));
 
-      // 检查是否匹配
-      const isMatch = cardLayout[firstIndex] === cardLayout[index];
-      
-      const move: MemoryMove = {
-        card1: firstIndex,
-        card2: index,
-        matched: isMatch,
-        timestamp: Date.now(),
-      };
-      setMoves(prev => [...prev, move]);
+    const response = await onFlipCard(sessionId, index);
+    setPendingCards((prev) => {
+      const next = new Set(prev);
+      next.delete(index);
+      return next;
+    });
 
-      // P2: 保存 timeout ref 以便清理
-      flipTimeoutRef.current = setTimeout(() => {
-        if (isMatch) {
-          setMatchedCards(prev => new Set([...prev, firstIndex, index]));
-        }
-        setFlippedCards([]);
-        setIsChecking(false);
-      }, isMatch ? 300 : 800);
+    if (!response) {
+      return;
     }
-  }, [flippedCards, matchedCards, isChecking, cardLayout]);
+
+    const nextLayout = [...cardLayout];
+    nextLayout[response.cardIndex] = response.iconId;
+
+    if (response.firstCardIndex !== undefined && response.firstCardIconId !== undefined) {
+      nextLayout[response.firstCardIndex] = response.firstCardIconId;
+    }
+
+    onSyncCardLayout(sessionId, nextLayout);
+
+    if (!response.move) {
+      setFlippedCards([response.cardIndex]);
+      setServerMoveCount(response.moveCount);
+      if (response.completed && !endCalledRef.current) {
+        Promise.resolve().then(() => handleGameEnd(true));
+      }
+      return;
+    }
+
+    const firstIndex = response.firstCardIndex;
+    if (firstIndex === undefined) {
+      return;
+    }
+
+    setFlippedCards([firstIndex, response.cardIndex]);
+    setIsChecking(true);
+    setServerMoveCount(response.moveCount);
+    setMoves((prev) => [...prev, response.move!]);
+
+    if (response.matched) {
+      setMatchedSet((prev) => new Set([...prev, firstIndex, response.cardIndex]));
+    }
+
+    flipTimeoutRef.current = setTimeout(() => {
+      if (!response.matched) {
+        const revertedLayout = [...nextLayout];
+        revertedLayout[firstIndex] = '__hidden__';
+        revertedLayout[response.cardIndex] = '__hidden__';
+        onSyncCardLayout(sessionId, revertedLayout);
+      }
+      setFlippedCards([]);
+      setIsChecking(false);
+
+      if (response.completed && !endCalledRef.current) {
+        Promise.resolve().then(() => handleGameEnd(true));
+      }
+    }, response.matched ? 300 : 800);
+  }, [
+    isChecking,
+    endCalledRef,
+    flippedCards,
+    matchedSet,
+    pendingCards,
+    onFlipCard,
+    sessionId,
+    onSyncCardLayout,
+    cardLayout,
+    handleGameEnd,
+  ]);
 
   // 格式化时间
   const formatTime = (seconds: number) => {
@@ -168,7 +256,7 @@ export function GameBoard({
           <div className="flex items-center gap-6">
             <div className="text-center">
               <div className="text-xs text-slate-400 uppercase tracking-wider">步数</div>
-              <div className="text-xl font-bold text-slate-900 tabular-nums">{moveCount}</div>
+              <div className="text-xl font-bold text-slate-900 tabular-nums">{serverMoveCount}</div>
             </div>
             
             <div className="text-center">
@@ -189,12 +277,12 @@ export function GameBoard({
         <div className="mt-4">
           <div className="flex justify-between text-xs text-slate-400 mb-1">
             <span>配对进度</span>
-            <span>{matchedCards.size / 2} / {config.pairs}</span>
+            <span>{matchedSet.size / 2} / {config.pairs}</span>
           </div>
           <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
             <div 
               className="h-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-300"
-              style={{ width: `${(matchedCards.size / 2 / config.pairs) * 100}%` }}
+              style={{ width: `${(matchedSet.size / 2 / config.pairs) * 100}%` }}
             />
           </div>
         </div>
@@ -213,9 +301,10 @@ export function GameBoard({
             index={index}
             iconId={iconId}
             isFlipped={flippedCards.includes(index)}
-            isMatched={matchedCards.has(index)}
+            isMatched={matchedSet.has(index)}
+            isLoading={pendingCards.has(index)}
             onClick={handleCardClick}
-            disabled={isChecking || hasEnded}
+            disabled={isChecking || hasEnded || pendingCards.size > 0}
           />
         ))}
       </div>

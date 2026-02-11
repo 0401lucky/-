@@ -7,7 +7,7 @@ import { cancelMemoryGame } from '@/lib/memory';
 export async function POST() {
   const user = await getAuthUser();
   if (!user) {
-    return NextResponse.json({ error: '未登录' }, { status: 401 });
+    return NextResponse.json({ success: false, message: '未登录' }, { status: 401 });
   }
 
   try {
@@ -26,6 +26,6 @@ export async function POST() {
     });
   } catch (error) {
     console.error('Cancel memory game error:', error);
-    return NextResponse.json({ error: '服务器错误' }, { status: 500 });
+    return NextResponse.json({ success: false, message: '服务器错误' }, { status: 500 });
   }
 }

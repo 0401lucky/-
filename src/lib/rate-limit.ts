@@ -1,5 +1,6 @@
 import { kv } from "@vercel/kv";
 import { NextResponse } from "next/server";
+import { getAuthUser, type AuthUser } from "./auth";
 
 export interface RateLimitConfig {
   /** 时间窗口（秒），默认 60 */
@@ -23,6 +24,10 @@ const DEFAULT_MAX_REQUESTS = 10;
  * 预定义的速率限制规则
  */
 export const RATE_LIMITS = {
+  // 认证相关
+  'auth:login:ip': { windowSeconds: 60, maxRequests: 5, prefix: 'ratelimit:auth:login:ip' },
+  'auth:login:user': { windowSeconds: 60 * 60, maxRequests: 10, prefix: 'ratelimit:auth:login:user' },
+
   // 抽奖相关
   'lottery:spin': { windowSeconds: 60, maxRequests: 10, prefix: 'ratelimit:lottery:spin' },
   'lottery:records': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:lottery:records' },
@@ -44,6 +49,24 @@ export const RATE_LIMITS = {
 
   // 签到
   'checkin': { windowSeconds: 60, maxRequests: 5, prefix: 'ratelimit:checkin' },
+
+  // 排行榜
+  'rankings:games': { windowSeconds: 60, maxRequests: 40, prefix: 'ratelimit:rankings:games' },
+  'rankings:points': { windowSeconds: 60, maxRequests: 40, prefix: 'ratelimit:rankings:points' },
+  'rankings:checkin': { windowSeconds: 60, maxRequests: 40, prefix: 'ratelimit:rankings:checkin' },
+  'rankings:history': { windowSeconds: 60, maxRequests: 40, prefix: 'ratelimit:rankings:history' },
+  'rankings:settle': { windowSeconds: 60, maxRequests: 20, prefix: 'ratelimit:rankings:settle' },
+
+  // 通知与公告
+  'notifications:list': { windowSeconds: 60, maxRequests: 60, prefix: 'ratelimit:notifications:list' },
+  'notifications:read': { windowSeconds: 60, maxRequests: 60, prefix: 'ratelimit:notifications:read' },
+  'announcements:list': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:announcements:list' },
+  'announcements:admin': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:announcements:admin' },
+
+  // 个人主页与运营看板
+  'profile:overview': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:profile:overview' },
+  'admin:dashboard': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:admin:dashboard' },
+  'admin:alerts': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:admin:alerts' },
 
   // 通用 API
   'api:default': { windowSeconds: 60, maxRequests: 100, prefix: 'ratelimit:api' },
@@ -169,6 +192,50 @@ export function rateLimitResponse(result: RateLimitResult): NextResponse {
  * @param action 预定义的操作类型
  * @param userId 用户标识
  */
+
+export interface UserRateLimitOptions {
+  unauthorizedMessage?: string;
+  unauthorizedStatus?: number;
+}
+
+export type UserRateLimitHandler<TRequest extends Request = Request, TContext = unknown> = (
+  request: TRequest,
+  user: AuthUser,
+  context: TContext
+) => Promise<NextResponse>;
+
+/**
+ * 鉴权 + 速率限制 HOF
+ * 统一处理：未登录响应、速率限制拦截、通过后回调业务处理器
+ */
+export function withUserRateLimit<TRequest extends Request = Request, TContext = unknown>(
+  action: RateLimitAction,
+  handler: UserRateLimitHandler<TRequest, TContext>,
+  options: UserRateLimitOptions = {}
+): (request: TRequest, context: TContext) => Promise<NextResponse> {
+  const {
+    unauthorizedMessage = "未登录",
+    unauthorizedStatus = 401,
+  } = options;
+
+  return async (request: TRequest, context: TContext): Promise<NextResponse> => {
+    const user = await getAuthUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, message: unauthorizedMessage },
+        { status: unauthorizedStatus }
+      );
+    }
+
+    const limitedResponse = await withRateLimit(action, user.id);
+    if (limitedResponse) {
+      return limitedResponse;
+    }
+
+    return handler(request, user, context);
+  };
+}
+
 export async function checkRateLimitByAction(
   action: RateLimitAction,
   userId: string | number
@@ -191,3 +258,7 @@ export async function withRateLimit(
   }
   return null;
 }
+
+
+
+

@@ -58,20 +58,12 @@ function sanitizeFileName(name: string | undefined): string | undefined {
   return cleaned ? cleaned.slice(0, 80) : undefined;
 }
 
-function buildBlobPath(
-  feedbackId: string,
-  messageId: string,
-  role: FeedbackImageRole,
-  mimeType: string,
-  name: string | undefined,
-  index: number
-): string {
+function buildBlobPath(role: FeedbackImageRole, mimeType: string): string {
   const ext = FEEDBACK_IMAGE_EXTENSION_MAP[mimeType] ?? 'bin';
   const dateBucket = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const safeName = sanitizeFileName(name);
-  const baseName = safeName ? safeName.replace(/\.[^.]+$/, '') : `img-${index + 1}`;
 
-  return `feedback/${dateBucket}/${feedbackId}/${messageId}-${role}-${nanoid(6)}-${baseName}.${ext}`;
+  // Vercel Blob 当前仅支持 public 访问，使用高熵随机路径减少可枚举性与敏感信息暴露
+  return `feedback/${dateBucket}/${role}/${nanoid(24)}.${ext}`;
 }
 
 function isDataUrl(value: string): boolean {
@@ -89,27 +81,20 @@ export async function externalizeFeedbackImages(
   const token = getBlobToken();
 
   return Promise.all(
-    images.map(async (image, index) => {
+    images.map(async (image) => {
       const data = image.dataUrl?.trim() ?? '';
       if (!isDataUrl(data)) {
         return image;
       }
 
       const { mimeType, bytes } = decodeDataUrl(data);
-      const pathname = buildBlobPath(
-        options.feedbackId,
-        options.messageId,
-        options.role,
-        mimeType,
-        image.name,
-        index
-      );
+      const pathname = buildBlobPath(options.role, mimeType);
 
       const result = await put(pathname, bytes, {
         access: 'public',
         contentType: mimeType,
         token,
-        addRandomSuffix: false,
+        addRandomSuffix: true,
       });
 
       return {
@@ -122,3 +107,4 @@ export async function externalizeFeedbackImages(
     })
   );
 }
+
