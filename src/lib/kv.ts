@@ -1245,6 +1245,9 @@ export async function rollbackExtraSpin(userId: number): Promise<void> {
 }
 
 // 签到状态管理 - 使用中国时区
+const CHECKIN_HISTORY_RETENTION_DAYS = 400;
+const CHECKIN_HISTORY_RETENTION_SECONDS = CHECKIN_HISTORY_RETENTION_DAYS * 24 * 60 * 60;
+
 export async function hasCheckedInToday(userId: number): Promise<boolean> {
   const dateStr = getTodayDateString();
   const result = await kv.get(`user:checkin:${userId}:${dateStr}`);
@@ -1253,7 +1256,7 @@ export async function hasCheckedInToday(userId: number): Promise<boolean> {
 
 export async function setCheckedInToday(userId: number): Promise<void> {
   const dateStr = getTodayDateString();
-  const ttl = getSecondsUntilMidnight();
+  const ttl = CHECKIN_HISTORY_RETENTION_SECONDS;
   await kv.set(`user:checkin:${userId}:${dateStr}`, true, { ex: ttl });
 }
 
@@ -1267,7 +1270,7 @@ export async function grantCheckinLocalRewards(
   drawsAvailable: number;
 }> {
   const dateStr = getTodayDateString();
-  const ttl = getSecondsUntilMidnight();
+  const ttl = CHECKIN_HISTORY_RETENTION_SECONDS;
 
   const checkinKey = `user:checkin:${userId}:${dateStr}`;
   const extraSpinsKey = `user:extra_spins:${userId}`;

@@ -349,9 +349,11 @@ export async function getPointsLeaderboard(
 
 function getConsecutiveCheckinDays(
   checkinFlags: Array<unknown>,
+  startIndex = 0,
 ): number {
   let streak = 0;
-  for (const flag of checkinFlags) {
+  for (let index = startIndex; index < checkinFlags.length; index += 1) {
+    const flag = checkinFlags[index];
     if (!flag) break;
     streak += 1;
   }
@@ -383,7 +385,18 @@ export async function getCheckinStreak(
   }
 
   const values = keys.length > 0 ? await kv.mget<unknown[]>(...keys) : [];
-  return getConsecutiveCheckinDays(values ?? []);
+  const flags = values ?? [];
+  if (flags.length === 0) {
+    return 0;
+  }
+
+  // 连签口径：若今天尚未签到，但昨天已签到，则从昨天起算，避免白天未签到时被误判为 0。
+  const startIndex = flags[0] ? 0 : flags[1] ? 1 : -1;
+  if (startIndex < 0) {
+    return 0;
+  }
+
+  return getConsecutiveCheckinDays(flags, startIndex);
 }
 
 export async function getCheckinStreakLeaderboard(

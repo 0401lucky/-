@@ -143,6 +143,26 @@ describe('rankings', () => {
     expect(leaderboard.leaderboard[0]).toMatchObject({ userId: 1001, streak: 3 });
     expect(leaderboard.leaderboard[1]).toMatchObject({ userId: 1002, streak: 1 });
   });
+
+  it('counts streak from yesterday when today not checked in', async () => {
+    mockKvMget.mockImplementation(async (...keys: string[]) => {
+      const firstKey = keys[0] ?? '';
+      if (firstKey.includes('user:checkin:1001:')) {
+        return [null, true, true, null];
+      }
+      if (firstKey.includes('user:checkin:1002:')) {
+        return [null, true, null];
+      }
+      return [];
+    });
+
+    const streak = await getCheckinStreak(1001, 'all');
+    expect(streak).toBe(2);
+
+    const leaderboard = await getCheckinStreakLeaderboard('all', 10);
+    expect(leaderboard.leaderboard[0]).toMatchObject({ userId: 1001, streak: 2 });
+    expect(leaderboard.leaderboard[1]).toMatchObject({ userId: 1002, streak: 1 });
+  });
 });
 
 
