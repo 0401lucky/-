@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
+import {
+  buildKvUnavailablePayload,
+  getKvAvailabilityStatus,
+  getKvErrorInsight,
+  KV_UNAVAILABLE_RETRY_AFTER_SECONDS,
+} from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +22,19 @@ interface LotteryRecord {
 // GET - 获取今日运气最佳排行榜
 export async function GET(request: NextRequest) {
   try {
+    const kvStatus = getKvAvailabilityStatus();
+    if (!kvStatus.available) {
+      return NextResponse.json(
+        buildKvUnavailablePayload("排行榜服务暂时不可用，请稍后重试"),
+        {
+          status: 503,
+          headers: {
+            "Retry-After": KV_UNAVAILABLE_RETRY_AFTER_SECONDS.toString(),
+          },
+        }
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const limit = Math.min(parseInt(searchParams.get("limit") || "10"), 50);
 
@@ -82,6 +101,19 @@ export async function GET(request: NextRequest) {
     response.headers.set("Cache-Control", "no-store");
     return response;
   } catch (error) {
+    const kvInsight = getKvErrorInsight(error);
+    if (kvInsight.isUnavailable) {
+      return NextResponse.json(
+        buildKvUnavailablePayload("排行榜服务暂时不可用，请稍后重试"),
+        {
+          status: 503,
+          headers: {
+            "Retry-After": KV_UNAVAILABLE_RETRY_AFTER_SECONDS.toString(),
+          },
+        }
+      );
+    }
+
     console.error("Get today ranking error:", error);
     return NextResponse.json(
       { success: false, message: "获取排行榜失败" },

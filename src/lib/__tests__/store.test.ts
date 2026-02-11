@@ -107,11 +107,12 @@ describe('exchangeItem store safety', () => {
 
     const result = await exchangeItem(1002, 'item-1');
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
     expect(result.uncertain).toBe(true);
     expect(result.message).toContain('充值结果不确定');
     expect(mockApplyPointsDelta).not.toHaveBeenCalled();
     expect(mockKvDecr).not.toHaveBeenCalled();
+    expect(mockKvHincrby).toHaveBeenCalled();
   });
 
   it('rolls back points and daily limit when reward delivery fails', async () => {

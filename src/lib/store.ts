@@ -202,6 +202,25 @@ async function logExchange(log: ExchangeLog): Promise<void> {
   await kv.ltrim(key, 0, 99); // 保留最近100条
 }
 
+interface UncertainExchangeLog extends ExchangeLog {
+  status: 'uncertain';
+  detail: string;
+}
+
+/**
+ * 记录直充不确定状态（便于后续人工核对/补偿）
+ */
+async function logUncertainExchange(log: ExchangeLog, detail: string): Promise<void> {
+  const key = `exchange_uncertain:${log.userId}`;
+  const payload: UncertainExchangeLog = {
+    ...log,
+    status: 'uncertain',
+    detail,
+  };
+  await kv.lpush(key, payload);
+  await kv.ltrim(key, 0, 99); // 保留最近100条
+}
+
 /**
  * 执行商品兑换
  */
@@ -308,6 +327,7 @@ export async function exchangeItem(
   // 4. 发放奖励
   let rewardSuccess = false;
   let rewardMessage = '';
+  let rewardUncertain = false;
 
   try {
     if (item.type === 'lottery_spin') {
@@ -331,19 +351,63 @@ export async function exchangeItem(
       };
 
       if (creditResult.uncertain) {
-        return {
-          success: false,
-          message: creditResult.message || '充值结果不确定，请稍后查看余额',
-          uncertain: true,
-        };
+        rewardUncertain = true;
+        rewardMessage = creditResult.message || '充值结果不确定，请稍后查看余额';
+      } else {
+        rewardSuccess = creditResult.success;
+        rewardMessage = creditResult.message;
       }
-
-      rewardSuccess = creditResult.success;
-      rewardMessage = creditResult.message;
     }
   } catch (error) {
     console.error('Reward delivery error:', error);
     rewardMessage = '奖励发放失败';
+  }
+
+  if (rewardUncertain) {
+    const uncertainLog: ExchangeLog = {
+      id: nanoid(),
+      userId,
+      itemId,
+      itemName: quantity > 1 ? `${item.name} ×${quantity}（直充待确认）` : `${item.name}（直充待确认）`,
+      pointsCost: totalPointsCost,
+      value: totalValue,
+      type: item.type,
+      createdAt: Date.now(),
+    };
+
+    console.warn('Quota direct exchange uncertain:', {
+      userId,
+      itemId,
+      pointsCost: totalPointsCost,
+      value: totalValue,
+      message: rewardMessage,
+    });
+
+    try {
+      await logExchange(uncertainLog);
+    } catch (logError) {
+      console.error('Exchange log write failed (uncertain):', logError);
+    }
+
+    try {
+      await logUncertainExchange(uncertainLog, rewardMessage);
+    } catch (uncertainLogError) {
+      console.error('Uncertain exchange log write failed:', uncertainLogError);
+    }
+
+    try {
+      await kv.hincrby(STORE_ITEM_PURCHASE_COUNTS_KEY, itemId, quantity);
+    } catch (countError) {
+      console.error('Store item purchase count increment failed (uncertain, non-critical):', countError);
+    }
+
+    const uncertainHint = '本次兑换已登记为待确认状态，请勿重复兑换，稍后查看账户余额。';
+    return {
+      success: true,
+      message: `${rewardMessage}（${uncertainHint}）`,
+      uncertain: true,
+      log: uncertainLog,
+    };
   }
 
   // 5. 如果奖励发放失败，回滚积分和限购计数（尽力而为）

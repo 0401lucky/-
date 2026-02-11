@@ -20,6 +20,62 @@ export interface RateLimitResult {
 const DEFAULT_WINDOW = 60; // 1 分钟
 const DEFAULT_MAX_REQUESTS = 10;
 
+interface InMemoryRateLimitBucket {
+  timestamps: number[];
+  windowSeconds: number;
+}
+
+const inMemoryRateLimitStore = new Map<string, InMemoryRateLimitBucket>();
+let inMemorySweepCounter = 0;
+
+function checkRateLimitInMemory(
+  key: string,
+  now: number,
+  windowSeconds: number,
+  maxRequests: number
+): RateLimitResult {
+  const bucket = inMemoryRateLimitStore.get(key);
+  const windowStart = now - windowSeconds;
+  const activeTimestamps = (bucket?.timestamps ?? []).filter((timestamp) => timestamp > windowStart);
+
+  if (activeTimestamps.length >= maxRequests) {
+    const oldestTimestamp = activeTimestamps[0] ?? now;
+    inMemoryRateLimitStore.set(key, { timestamps: activeTimestamps, windowSeconds });
+
+    return {
+      success: false,
+      remaining: 0,
+      resetAt: oldestTimestamp + windowSeconds,
+    };
+  }
+
+  activeTimestamps.push(now);
+  inMemoryRateLimitStore.set(key, { timestamps: activeTimestamps, windowSeconds });
+
+  inMemorySweepCounter += 1;
+  if (inMemorySweepCounter >= 100) {
+    inMemorySweepCounter = 0;
+    for (const [bucketKey, value] of inMemoryRateLimitStore.entries()) {
+      const bucketWindowStart = now - value.windowSeconds;
+      const validTimestamps = value.timestamps.filter((timestamp) => timestamp > bucketWindowStart);
+      if (validTimestamps.length === 0) {
+        inMemoryRateLimitStore.delete(bucketKey);
+      } else if (validTimestamps.length !== value.timestamps.length) {
+        inMemoryRateLimitStore.set(bucketKey, {
+          timestamps: validTimestamps,
+          windowSeconds: value.windowSeconds,
+        });
+      }
+    }
+  }
+
+  return {
+    success: true,
+    remaining: Math.max(0, maxRequests - activeTimestamps.length),
+    resetAt: now + windowSeconds,
+  };
+}
+
 /**
  * 预定义的速率限制规则
  */
@@ -151,13 +207,8 @@ export async function checkRateLimit(
       resetAt: Math.floor(resetAt),
     };
   } catch (error) {
-    console.error("Rate limit check error:", error);
-    // 出错时默认允许请求（fail-open）
-    return {
-      success: true,
-      remaining: maxRequests,
-      resetAt: now + windowSeconds,
-    };
+    console.error("Rate limit check error, fallback to in-memory limiter:", error);
+    return checkRateLimitInMemory(key, now, windowSeconds, maxRequests);
   }
 }
 

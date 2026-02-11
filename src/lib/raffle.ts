@@ -33,11 +33,17 @@ const USER_RAFFLES_PREFIX = "user:raffles:";              // 用户参与的活�
 const USER_RAFFLE_WINS_PREFIX = "user:raffle_wins:";      // 用户中奖记录
 const RAFFLE_DRAW_LOCK_PREFIX = "raffle:draw_lock:";      // 开奖分布式锁
 const RAFFLE_DELIVERY_QUEUE_KEY = "raffle:delivery:queue"; // 发奖任务队列
+const RAFFLE_DELIVERY_PROCESSING_QUEUE_KEY = "raffle:delivery:processing"; // 发奖处理中队列
 const RAFFLE_DELIVERY_ENQUEUED_PREFIX = "raffle:delivery:enqueued:"; // 发奖任务去重标记
+const RAFFLE_DELIVERY_IDEMPOTENCY_PREFIX = "raffle:delivery:state:"; // 发奖幂等状态
 
 const DELIVERY_CONCURRENCY = 5; // P1: 发奖并发上限
 const DELIVERY_BATCH_SIZE = 20; // 单次队列处理的最大中奖人数
 const PENDING_RETRY_AFTER_MS = 10 * 60 * 1000; // pending 超过 10 分钟可重试
+const DELIVERY_JOB_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000; // 处理队列任务 5 分钟未 ack 视为崩溃可恢复
+const DELIVERY_IDEMPOTENCY_PROCESSING_TTL_SECONDS = 15 * 60; // 单笔发奖 processing 锁 15 分钟
+const DELIVERY_IDEMPOTENCY_UNCERTAIN_TTL_SECONDS = 24 * 60 * 60; // uncertain 状态保留 24 小时
+const DELIVERY_IDEMPOTENCY_DELIVERED_TTL_SECONDS = 90 * 24 * 60 * 60; // delivered 幂等状态保留 90 天
 
 // ============ 活动 CRUD ============
 
@@ -477,10 +483,216 @@ interface DeliveryQueueJob {
   reason: DeliveryQueueJobReason;
   enqueuedAt: number;
   attempts: number;
+  processingStartedAt?: number;
+  processingToken?: string;
+}
+
+type DeliveryIdempotencyStatus = "processing" | "delivered" | "uncertain";
+
+interface DeliveryIdempotencyState {
+  status: DeliveryIdempotencyStatus;
+  updatedAt: number;
+  message?: string;
 }
 
 function getDeliveryQueueFlagKey(raffleId: string): string {
   return `${RAFFLE_DELIVERY_ENQUEUED_PREFIX}${raffleId}`;
+}
+
+function getDeliveryIdempotencyKey(raffleId: string, entryId: string): string {
+  return `${RAFFLE_DELIVERY_IDEMPOTENCY_PREFIX}${raffleId}:${entryId}`;
+}
+
+function normalizeDeliveryQueueJob(job: DeliveryQueueJob): DeliveryQueueJob {
+  return {
+    raffleId: job.raffleId,
+    reason: job.reason === "draw" ? "draw" : "retry",
+    enqueuedAt: typeof job.enqueuedAt === "number" ? job.enqueuedAt : Date.now(),
+    attempts: Math.max(0, Math.floor(job.attempts ?? 0)),
+    processingStartedAt:
+      typeof job.processingStartedAt === "number" ? job.processingStartedAt : undefined,
+    processingToken: typeof job.processingToken === "string" ? job.processingToken : undefined,
+  };
+}
+
+function buildRetryDeliveryJob(job: DeliveryQueueJob, now = Date.now()): DeliveryQueueJob {
+  const normalizedJob = normalizeDeliveryQueueJob(job);
+  return {
+    raffleId: normalizedJob.raffleId,
+    reason: "retry",
+    enqueuedAt: now,
+    attempts: normalizedJob.attempts + 1,
+  };
+}
+
+async function popDeliveryJobToProcessingQueue(): Promise<string | null> {
+  const now = Date.now();
+  const processingToken = nanoid(10);
+  const popAndMoveScript = `
+    local raw = redis.call('RPOP', KEYS[1])
+    if not raw then
+      return nil
+    end
+
+    local ok, decoded = pcall(cjson.decode, raw)
+    if ok and type(decoded) == 'table' then
+      decoded.processingStartedAt = tonumber(ARGV[1])
+      decoded.processingToken = ARGV[2]
+      local encoded = cjson.encode(decoded)
+      redis.call('LPUSH', KEYS[2], encoded)
+      return encoded
+    end
+
+    redis.call('LPUSH', KEYS[2], raw)
+    return raw
+  `;
+
+  const raw = await kv.eval(
+    popAndMoveScript,
+    [RAFFLE_DELIVERY_QUEUE_KEY, RAFFLE_DELIVERY_PROCESSING_QUEUE_KEY],
+    [now, processingToken]
+  );
+
+  return typeof raw === "string" ? raw : null;
+}
+
+async function ackProcessingDeliveryJob(rawProcessingJob: string): Promise<boolean> {
+  const removed = await kv.lrem(RAFFLE_DELIVERY_PROCESSING_QUEUE_KEY, 1, rawProcessingJob);
+  return Number(removed) > 0;
+}
+
+async function requeueProcessingDeliveryJob(
+  rawProcessingJob: string,
+  jobToRequeue: DeliveryQueueJob
+): Promise<boolean> {
+  const requeueScript = `
+    local removed = redis.call('LREM', KEYS[1], 1, ARGV[1])
+    if removed > 0 then
+      redis.call('LPUSH', KEYS[2], ARGV[2])
+      return 1
+    end
+    return 0
+  `;
+
+  const moved = await kv.eval(
+    requeueScript,
+    [RAFFLE_DELIVERY_PROCESSING_QUEUE_KEY, RAFFLE_DELIVERY_QUEUE_KEY],
+    [rawProcessingJob, JSON.stringify(jobToRequeue)]
+  );
+
+  return Number(moved) > 0;
+}
+
+async function recoverTimedOutProcessingDeliveryJobs(now = Date.now()): Promise<number> {
+  const processingJobs = await kv.lrange<string>(RAFFLE_DELIVERY_PROCESSING_QUEUE_KEY, 0, -1);
+  if (processingJobs.length === 0) {
+    return 0;
+  }
+
+  let recovered = 0;
+
+  for (const rawProcessingJob of processingJobs) {
+    let parsedJob: DeliveryQueueJob | null = null;
+    try {
+      parsedJob = normalizeDeliveryQueueJob(JSON.parse(rawProcessingJob) as DeliveryQueueJob);
+    } catch {
+      const removed = await ackProcessingDeliveryJob(rawProcessingJob);
+      if (removed) {
+        recovered += 1;
+      }
+      continue;
+    }
+
+    if (!parsedJob.raffleId) {
+      const removed = await ackProcessingDeliveryJob(rawProcessingJob);
+      if (removed) {
+        recovered += 1;
+      }
+      continue;
+    }
+
+    const startedAt = parsedJob.processingStartedAt ?? parsedJob.enqueuedAt;
+    if (now - startedAt < DELIVERY_JOB_PROCESSING_TIMEOUT_MS) {
+      continue;
+    }
+
+    const retryJob = buildRetryDeliveryJob(parsedJob, now);
+    const moved = await requeueProcessingDeliveryJob(rawProcessingJob, retryJob);
+    if (moved) {
+      recovered += 1;
+    }
+  }
+
+  return recovered;
+}
+
+function parseDeliveryIdempotencyState(
+  rawState: DeliveryIdempotencyState | DeliveryIdempotencyStatus | null
+): DeliveryIdempotencyState | null {
+  if (!rawState) return null;
+
+  if (typeof rawState === "string") {
+    if (
+      rawState === "processing" ||
+      rawState === "delivered" ||
+      rawState === "uncertain"
+    ) {
+      return {
+        status: rawState,
+        updatedAt: Date.now(),
+      };
+    }
+    return null;
+  }
+
+  if (
+    typeof rawState.status !== "string" ||
+    (rawState.status !== "processing" &&
+      rawState.status !== "delivered" &&
+      rawState.status !== "uncertain")
+  ) {
+    return null;
+  }
+
+  return {
+    status: rawState.status,
+    updatedAt:
+      typeof rawState.updatedAt === "number" && Number.isFinite(rawState.updatedAt)
+        ? rawState.updatedAt
+        : Date.now(),
+    message: typeof rawState.message === "string" ? rawState.message : undefined,
+  };
+}
+
+async function getDeliveryIdempotencyState(
+  raffleId: string,
+  entryId: string
+): Promise<DeliveryIdempotencyState | null> {
+  const key = getDeliveryIdempotencyKey(raffleId, entryId);
+  const rawState = await kv.get<DeliveryIdempotencyState | DeliveryIdempotencyStatus>(key);
+  return parseDeliveryIdempotencyState(rawState ?? null);
+}
+
+async function setDeliveryIdempotencyState(
+  raffleId: string,
+  entryId: string,
+  state: DeliveryIdempotencyState,
+  ttlSeconds: number,
+  options?: {
+    nx?: boolean;
+  }
+): Promise<boolean> {
+  const setOptions = options?.nx
+    ? { ex: ttlSeconds, nx: true as const }
+    : { ex: ttlSeconds };
+
+  const setResult = await kv.set(getDeliveryIdempotencyKey(raffleId, entryId), state, setOptions);
+
+  return setResult === "OK";
+}
+
+async function clearDeliveryIdempotencyState(raffleId: string, entryId: string): Promise<void> {
+  await kv.del(getDeliveryIdempotencyKey(raffleId, entryId));
 }
 
 function isPendingRetryable(
@@ -726,16 +938,133 @@ async function deliverRewards(
       if (winnerIndex === undefined) return null;
 
       const winner = updatedWinners[winnerIndex];
-      if (winner.rewardStatus === "delivered") return null;
+      if (winner.rewardStatus === "delivered") {
+        return {
+          winnerIndex,
+          winner,
+          result: {
+            userId: winner.userId,
+            username: winner.username,
+            prizeName: winner.prizeName,
+            success: true,
+            message: winner.rewardMessage ?? "奖励已发放（幂等跳过）",
+          },
+        };
+      }
+
+      const idempotencyKey = getDeliveryIdempotencyKey(raffleId, winner.entryId);
+      const idempotencyState = await getDeliveryIdempotencyState(raffleId, winner.entryId);
+      if (idempotencyState?.status === "delivered") {
+        const deliveredWinner: RaffleWinner = {
+          ...winner,
+          rewardStatus: "delivered",
+          rewardMessage: idempotencyState.message ?? winner.rewardMessage ?? "奖励已发放（幂等跳过）",
+          deliveredAt: winner.deliveredAt ?? idempotencyState.updatedAt,
+        };
+
+        return {
+          winnerIndex,
+          winner: deliveredWinner,
+          result: {
+            userId: winner.userId,
+            username: winner.username,
+            prizeName: winner.prizeName,
+            success: true,
+            message: deliveredWinner.rewardMessage ?? "奖励已发放（幂等跳过）",
+          },
+        };
+      }
+
+      if (idempotencyState?.status === "processing") {
+        return {
+          winnerIndex,
+          winner: {
+            ...winner,
+            rewardStatus: "pending",
+            rewardMessage: idempotencyState.message ?? "奖励发放处理中",
+          },
+          result: {
+            userId: winner.userId,
+            username: winner.username,
+            prizeName: winner.prizeName,
+            success: false,
+            message: idempotencyState.message ?? "奖励发放处理中",
+          },
+        };
+      }
 
       const attemptedAt = Date.now();
       const rewardAttempts = (winner.rewardAttempts ?? 0) + 1;
+      const processingMessage = "奖励发放处理中";
+
+      const processingLocked = await setDeliveryIdempotencyState(
+        raffleId,
+        winner.entryId,
+        {
+          status: "processing",
+          updatedAt: attemptedAt,
+          message: processingMessage,
+        },
+        DELIVERY_IDEMPOTENCY_PROCESSING_TTL_SECONDS,
+        { nx: true }
+      );
+
+      if (!processingLocked) {
+        const latestState = await getDeliveryIdempotencyState(raffleId, winner.entryId);
+        if (latestState?.status === "delivered") {
+          const deliveredWinner: RaffleWinner = {
+            ...winner,
+            rewardStatus: "delivered",
+            rewardMessage: latestState.message ?? winner.rewardMessage ?? "奖励已发放（幂等跳过）",
+            deliveredAt: winner.deliveredAt ?? latestState.updatedAt,
+          };
+
+          return {
+            winnerIndex,
+            winner: deliveredWinner,
+            result: {
+              userId: winner.userId,
+              username: winner.username,
+              prizeName: winner.prizeName,
+              success: true,
+              message: deliveredWinner.rewardMessage ?? "奖励已发放（幂等跳过）",
+            },
+          };
+        }
+
+        return {
+          winnerIndex,
+          winner: {
+            ...winner,
+            rewardStatus: "pending",
+            rewardMessage: latestState?.message ?? "奖励发放处理中",
+          },
+          result: {
+            userId: winner.userId,
+            username: winner.username,
+            prizeName: winner.prizeName,
+            success: false,
+            message: latestState?.message ?? "奖励发放处理中",
+          },
+        };
+      }
 
       try {
         const creditResult = await creditQuotaToUser(winner.userId, winner.dollars) as
           { success: boolean; message: string; newQuota?: number; uncertain?: boolean };
 
         if (creditResult.success) {
+          await setDeliveryIdempotencyState(
+            raffleId,
+            winner.entryId,
+            {
+              status: "delivered",
+              updatedAt: Date.now(),
+              message: creditResult.message,
+            },
+            DELIVERY_IDEMPOTENCY_DELIVERED_TTL_SECONDS
+          );
+
           const deliveredWinner: RaffleWinner = {
             ...winner,
             rewardStatus: "delivered",
@@ -787,7 +1116,18 @@ async function deliverRewards(
         }
 
         if (creditResult.uncertain) {
-          // 结果不确定：不要标记失败（避免重复发放），保持 pending 便于后续人工核对
+          await setDeliveryIdempotencyState(
+            raffleId,
+            winner.entryId,
+            {
+              status: "uncertain",
+              updatedAt: Date.now(),
+              message: creditResult.message,
+            },
+            DELIVERY_IDEMPOTENCY_UNCERTAIN_TTL_SECONDS
+          );
+
+          // 结果不确定：保持 winner pending，避免重复发放
           return {
             winnerIndex,
             winner: {
@@ -806,6 +1146,8 @@ async function deliverRewards(
             },
           };
         }
+
+        await clearDeliveryIdempotencyState(raffleId, winner.entryId);
 
         return {
           winnerIndex,
@@ -826,12 +1168,32 @@ async function deliverRewards(
         };
       } catch (error) {
         console.error("发放奖励失败", { userId: maskUserId(winner.userId), error });
+        const uncertainMessage = error instanceof Error ? error.message : "发放异常";
+
+        try {
+          await setDeliveryIdempotencyState(
+            raffleId,
+            winner.entryId,
+            {
+              status: "uncertain",
+              updatedAt: Date.now(),
+              message: uncertainMessage,
+            },
+            DELIVERY_IDEMPOTENCY_UNCERTAIN_TTL_SECONDS
+          );
+        } catch (idempotencyError) {
+          console.error("写入发放 uncertain 状态失败", {
+            userId: maskUserId(winner.userId),
+            error: idempotencyError,
+          });
+        }
+
         return {
           winnerIndex,
           winner: {
             ...winner,
-            rewardStatus: "failed",
-            rewardMessage: error instanceof Error ? error.message : "发放异常",
+            rewardStatus: "pending",
+            rewardMessage: uncertainMessage,
             rewardAttemptedAt: attemptedAt,
             rewardAttempts,
           },
@@ -840,9 +1202,17 @@ async function deliverRewards(
             username: winner.username,
             prizeName: winner.prizeName,
             success: false,
-            message: "发放异常",
+            message: uncertainMessage,
           },
         };
+      } finally {
+        const finalState = await kv.get<DeliveryIdempotencyState | DeliveryIdempotencyStatus>(
+          idempotencyKey
+        );
+        const normalizedFinalState = parseDeliveryIdempotencyState(finalState ?? null);
+        if (normalizedFinalState?.status === "processing") {
+          await clearDeliveryIdempotencyState(raffleId, winner.entryId);
+        }
       }
     }
   );
@@ -968,6 +1338,8 @@ export async function processQueuedRaffleDeliveries(
 }> {
   const jobsLimit = Math.max(1, Math.min(maxJobs, 20));
 
+  await recoverTimedOutProcessingDeliveryJobs();
+
   let processedJobs = 0;
   let delivered = 0;
   let failed = 0;
@@ -976,19 +1348,21 @@ export async function processQueuedRaffleDeliveries(
   let lockedJobs = 0;
 
   for (let i = 0; i < jobsLimit; i++) {
-    const rawJob = await kv.rpop<string>(RAFFLE_DELIVERY_QUEUE_KEY);
-    if (!rawJob) {
+    const rawProcessingJob = await popDeliveryJobToProcessingQueue();
+    if (!rawProcessingJob) {
       break;
     }
 
     let job: DeliveryQueueJob | null = null;
     try {
-      job = JSON.parse(rawJob) as DeliveryQueueJob;
+      job = normalizeDeliveryQueueJob(JSON.parse(rawProcessingJob) as DeliveryQueueJob);
     } catch {
+      await ackProcessingDeliveryJob(rawProcessingJob);
       continue;
     }
 
     if (!job?.raffleId) {
+      await ackProcessingDeliveryJob(rawProcessingJob);
       continue;
     }
 
@@ -997,21 +1371,17 @@ export async function processQueuedRaffleDeliveries(
 
     if (result.status === "locked") {
       lockedJobs += 1;
-      await kv.lpush(
-        RAFFLE_DELIVERY_QUEUE_KEY,
-        JSON.stringify({ ...job, attempts: (job.attempts ?? 0) + 1, enqueuedAt: Date.now() })
-      );
+
+      await requeueProcessingDeliveryJob(rawProcessingJob, buildRetryDeliveryJob(job));
       continue;
     }
 
     if (result.status === "skipped") {
       skippedJobs += 1;
       if (result.waitingPending > 0) {
-        await kv.lpush(
-          RAFFLE_DELIVERY_QUEUE_KEY,
-          JSON.stringify({ ...job, reason: "retry", attempts: (job.attempts ?? 0) + 1, enqueuedAt: Date.now() })
-        );
+        await requeueProcessingDeliveryJob(rawProcessingJob, buildRetryDeliveryJob(job));
       } else {
+        await ackProcessingDeliveryJob(rawProcessingJob);
         await kv.del(flagKey);
       }
       // 避免本次循环中对同一活动无意义地反复出入队
@@ -1034,11 +1404,9 @@ export async function processQueuedRaffleDeliveries(
     pending += result.waitingPending;
 
     if (result.retryableRemaining > 0 || result.waitingPending > 0) {
-      await kv.lpush(
-        RAFFLE_DELIVERY_QUEUE_KEY,
-        JSON.stringify({ ...job, reason: "retry", attempts: (job.attempts ?? 0) + 1, enqueuedAt: Date.now() })
-      );
+      await requeueProcessingDeliveryJob(rawProcessingJob, buildRetryDeliveryJob(job));
     } else {
+      await ackProcessingDeliveryJob(rawProcessingJob);
       await kv.del(flagKey);
     }
   }

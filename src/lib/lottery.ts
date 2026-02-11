@@ -1,5 +1,5 @@
 import { kv } from "@vercel/kv";
-import { tryUseExtraSpin, tryClaimDailyFree, releaseDailyFree, rollbackExtraSpin } from "./kv";
+import { getKvErrorInsight, tryUseExtraSpin, tryClaimDailyFree, releaseDailyFree, rollbackExtraSpin } from "./kv";
 import { getTodayDateString, getSecondsUntilMidnight } from "./time";
 
 // 抽奖档位
@@ -61,27 +61,82 @@ const LOTTERY_CODES_PREFIX = "lottery:codes:";        // 所有码（Set）
 const LOTTERY_USED_CODES_PREFIX = "lottery:used:";    // 已使用的码（Set）
 const LOTTERY_RECORDS_KEY = "lottery:records";
 const LOTTERY_USER_RECORDS_PREFIX = "lottery:user:records:";
+
+function cloneDefaultLotteryConfig(): LotteryConfig {
+  return {
+    ...DEFAULT_CONFIG,
+    tiers: DEFAULT_TIERS.map((tier) => ({ ...tier })),
+  };
+}
+
+function sanitizeLotteryConfig(config: Partial<LotteryConfig>): LotteryConfig {
+  const fallback = cloneDefaultLotteryConfig();
+  const safeMode = config.mode === "code" || config.mode === "direct" || config.mode === "hybrid"
+    ? config.mode
+    : fallback.mode;
+
+  const tiers = Array.isArray(config.tiers) && config.tiers.length > 0
+    ? config.tiers.map((tier, index) => {
+      const base = fallback.tiers[index] ?? fallback.tiers[fallback.tiers.length - 1];
+      return {
+        id: typeof tier?.id === "string" && tier.id.trim() ? tier.id : base.id,
+        name: typeof tier?.name === "string" && tier.name.trim() ? tier.name : base.name,
+        value: typeof tier?.value === "number" && Number.isFinite(tier.value) ? tier.value : base.value,
+        probability: typeof tier?.probability === "number" && Number.isFinite(tier.probability)
+          ? tier.probability
+          : base.probability,
+        color: typeof tier?.color === "string" && tier.color.trim() ? tier.color : base.color,
+        codesCount: typeof tier?.codesCount === "number" && Number.isFinite(tier.codesCount)
+          ? tier.codesCount
+          : base.codesCount,
+        usedCount: typeof tier?.usedCount === "number" && Number.isFinite(tier.usedCount)
+          ? tier.usedCount
+          : base.usedCount,
+      };
+    })
+    : fallback.tiers;
+
+  return {
+    enabled: typeof config.enabled === "boolean" ? config.enabled : fallback.enabled,
+    mode: safeMode,
+    dailyDirectLimit: typeof config.dailyDirectLimit === "number" && Number.isFinite(config.dailyDirectLimit)
+      ? config.dailyDirectLimit
+      : fallback.dailyDirectLimit,
+    tiers,
+  };
+}
+
 // 配置读取以 KV 为准，避免多实例进程内缓存不一致
 // 获取抽奖配置（自动合并默认值，兼容旧配置，带内存缓存）
 export async function getLotteryConfig(): Promise<LotteryConfig> {
+  const fallback = cloneDefaultLotteryConfig();
 
-  const config = await kv.get<Partial<LotteryConfig>>(LOTTERY_CONFIG_KEY);
-  if (!config) {
-    await kv.set(LOTTERY_CONFIG_KEY, DEFAULT_CONFIG);
-    return DEFAULT_CONFIG;
+  try {
+    const config = await kv.get<Partial<LotteryConfig>>(LOTTERY_CONFIG_KEY);
+    if (!config) {
+      try {
+        await kv.set(LOTTERY_CONFIG_KEY, fallback);
+      } catch (setError) {
+        const setInsight = getKvErrorInsight(setError);
+        if (setInsight.isUnavailable) {
+          console.warn("KV 不可用，写入默认抽奖配置失败，已使用安全降级配置", setInsight.code);
+        } else {
+          console.error("写入默认抽奖配置失败，已使用安全降级配置:", setError);
+        }
+      }
+      return fallback;
+    }
+
+    return sanitizeLotteryConfig(config);
+  } catch (error) {
+    const insight = getKvErrorInsight(error);
+    if (insight.isUnavailable) {
+      console.warn("KV 不可用，读取抽奖配置降级为默认值:", insight.code);
+    } else {
+      console.error("读取抽奖配置失败，已降级为默认值:", error);
+    }
+    return fallback;
   }
-
-  // 合并默认值，确保新增字段有定义
-  const result: LotteryConfig = {
-    enabled: config.enabled ?? DEFAULT_CONFIG.enabled,
-    mode: config.mode ?? DEFAULT_CONFIG.mode,
-    dailyDirectLimit: typeof config.dailyDirectLimit === 'number'
-      ? config.dailyDirectLimit
-      : DEFAULT_CONFIG.dailyDirectLimit,
-    tiers: config.tiers ?? DEFAULT_CONFIG.tiers,
-  };
-
-  return result;
 }
 
 // 更新抽奖配置

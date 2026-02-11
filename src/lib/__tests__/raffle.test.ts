@@ -99,7 +99,7 @@ describe('raffle robustness', () => {
 
   it('always releases draw lock when retry read fails', async () => {
     mockKvSet.mockResolvedValue('OK');
-    mockKvGet.mockRejectedValue(new Error('kv get failed'));
+    mockKvGet.mockRejectedValueOnce(new Error('kv get failed'));
     mockKvEval.mockResolvedValue(1);
 
     await expect(retryFailedRewards('raffle-2')).rejects.toThrow('kv get failed');
@@ -145,10 +145,7 @@ describe('raffle robustness', () => {
       ],
     };
 
-    mockKvSet
-      .mockResolvedValueOnce('OK')
-      .mockResolvedValueOnce('OK')
-      .mockResolvedValueOnce('OK');
+    mockKvSet.mockResolvedValue('OK');
     mockKvGet
       .mockResolvedValueOnce(raffleBeforeDraw)
       .mockResolvedValueOnce(endedRaffleForDelivery);
@@ -178,10 +175,13 @@ describe('raffle robustness', () => {
       success: true,
     });
 
-    const finalRaffle = mockKvSet.mock.calls[2][1] as {
+    const finalRaffleCall = [...mockKvSet.mock.calls]
+      .reverse()
+      .find(([key]) => key === 'raffle:raffle-3');
+    const finalRaffle = finalRaffleCall?.[1] as {
       winners?: Array<{ rewardStatus: string }>;
-    };
-    expect(finalRaffle.winners?.[0]?.rewardStatus).toBe('delivered');
+    } | undefined;
+    expect(finalRaffle?.winners?.[0]?.rewardStatus).toBe('delivered');
   });
 
   it('returns quickly in auto-draw mode without waiting reward delivery', async () => {
@@ -284,10 +284,13 @@ describe('raffle robustness', () => {
     expect(result.message).toContain('超时待确认 1 笔');
     expect(mockCreditQuotaToUser).toHaveBeenCalledTimes(1);
 
-    const finalRaffle = mockKvSet.mock.calls[1][1] as {
+    const finalRaffleCall = [...mockKvSet.mock.calls]
+      .reverse()
+      .find(([key]) => key === 'raffle:raffle-5');
+    const finalRaffle = finalRaffleCall?.[1] as {
       winners?: Array<{ rewardStatus: string }>;
-    };
-    expect(finalRaffle.winners?.[0]?.rewardStatus).toBe('delivered');
+    } | undefined;
+    expect(finalRaffle?.winners?.[0]?.rewardStatus).toBe('delivered');
   });
 
   it('stores direct total in cents and supports decimals', async () => {

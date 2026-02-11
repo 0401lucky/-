@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isIP } from "node:net";
 import { loginToNewApi } from "@/lib/new-api";
 import {
   clearLoginFailures,
@@ -8,15 +9,74 @@ import {
 } from "@/lib/auth";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
-function getClientIp(request: NextRequest): string {
-  const xForwardedFor = request.headers.get("x-forwarded-for");
-  if (xForwardedFor) {
-    return xForwardedFor.split(",")[0]?.trim() || "unknown";
+const TRUSTED_IP_HEADERS = ["cf-connecting-ip", "true-client-ip", "x-real-ip"] as const;
+
+function normalizeIp(rawValue: string): string | null {
+  const trimmed = rawValue.trim().replace(/^"(.+)"$/, "$1");
+  if (!trimmed || trimmed.toLowerCase() === "unknown") {
+    return null;
   }
 
-  const xRealIp = request.headers.get("x-real-ip");
-  if (xRealIp) {
-    return xRealIp.trim();
+  let candidate = trimmed;
+  const bracketedMatch = candidate.match(/^\[([^\]]+)\](?::\d+)?$/);
+  if (bracketedMatch) {
+    candidate = bracketedMatch[1];
+  } else {
+    const ipv4WithPortMatch = candidate.match(/^(\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?$/);
+    if (ipv4WithPortMatch) {
+      candidate = ipv4WithPortMatch[1];
+    }
+  }
+
+  const zoneIndex = candidate.indexOf("%");
+  if (zoneIndex >= 0) {
+    candidate = candidate.slice(0, zoneIndex);
+  }
+
+  return isIP(candidate) ? candidate : null;
+}
+
+function extractLastValidForwardedIp(headerValue: string | null): string | null {
+  if (!headerValue) {
+    return null;
+  }
+
+  const candidates = headerValue
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const normalized = normalizeIp(candidates[index]);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function getClientIp(request: NextRequest): string {
+  for (const headerName of TRUSTED_IP_HEADERS) {
+    const headerValue = request.headers.get(headerName);
+    if (!headerValue) {
+      continue;
+    }
+
+    const normalized = normalizeIp(headerValue);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const forwardedForIp = extractLastValidForwardedIp(request.headers.get("x-forwarded-for"));
+  if (forwardedForIp) {
+    return forwardedForIp;
+  }
+
+  const vercelForwardedForIp = extractLastValidForwardedIp(request.headers.get("x-vercel-forwarded-for"));
+  if (vercelForwardedForIp) {
+    return vercelForwardedForIp;
   }
 
   return "unknown";

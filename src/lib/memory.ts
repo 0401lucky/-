@@ -73,6 +73,8 @@ const DAILY_STATS_KEY = (userId: number, date: string) => `game:daily:${userId}:
 const RECORDS_KEY = (userId: number) => `memory:records:${userId}`;
 const COOLDOWN_KEY = (userId: number) => `memory:cooldown:${userId}`;
 const SUBMIT_LOCK_KEY = (sessionId: string) => `memory:submit:${sessionId}`;
+const FLIP_LOCK_KEY = (sessionId: string) => `memory:flip:${sessionId}`;
+const FLIP_LOCK_TTL = 3;
 
 export const MEMORY_REVEALED_SENTINEL = '__hidden__';
 
@@ -594,52 +596,114 @@ export async function flipMemoryCard(
     return { success: false, message: '无效的卡片索引' };
   }
 
-  const session = await kv.get<MemoryGameSession>(SESSION_KEY(sessionId));
-  if (!session) {
-    return { success: false, message: '游戏会话不存在或已过期' };
+  const lockKey = FLIP_LOCK_KEY(sessionId);
+  const lockAcquired = await kv.set(lockKey, '1', { ex: FLIP_LOCK_TTL, nx: true });
+  if (!lockAcquired) {
+    return { success: false, message: '翻牌处理中，请稍后再试' };
   }
 
-  const normalizedSession = normalizeSession(session);
+  try {
+    const session = await kv.get<MemoryGameSession>(SESSION_KEY(sessionId));
+    if (!session) {
+      return { success: false, message: '游戏会话不存在或已过期' };
+    }
 
-  if (normalizedSession.userId !== userId) {
-    return { success: false, message: '会话不属于该用户' };
-  }
+    const normalizedSession = normalizeSession(session);
 
-  if (normalizedSession.status !== 'playing') {
-    return { success: false, message: '游戏会话已结束' };
-  }
+    if (normalizedSession.userId !== userId) {
+      return { success: false, message: '会话不属于该用户' };
+    }
 
-  if (Date.now() > normalizedSession.expiresAt) {
-    await kv.del(SESSION_KEY(sessionId));
-    await kv.del(ACTIVE_SESSION_KEY(userId));
-    return { success: false, message: '游戏会话已过期' };
-  }
+    if (normalizedSession.status !== 'playing') {
+      return { success: false, message: '游戏会话已结束' };
+    }
 
-  const totalCards = getTotalCardsByDifficulty(normalizedSession.difficulty);
-  if (cardIndex < 0 || cardIndex >= totalCards) {
-    return { success: false, message: '无效的卡片索引' };
-  }
+    if (Date.now() > normalizedSession.expiresAt) {
+      await kv.del(SESSION_KEY(sessionId));
+      await kv.del(ACTIVE_SESSION_KEY(userId));
+      return { success: false, message: '游戏会话已过期' };
+    }
 
-  const matchedSet = new Set<number>(normalizedSession.matchedCards);
-  if (matchedSet.has(cardIndex)) {
-    return { success: false, message: '该卡片已配对' };
-  }
+    const totalCards = getTotalCardsByDifficulty(normalizedSession.difficulty);
+    if (cardIndex < 0 || cardIndex >= totalCards) {
+      return { success: false, message: '无效的卡片索引' };
+    }
 
-  const now = Date.now();
-  const cardIcon = normalizedSession.cardLayout[cardIndex];
-  if (!cardIcon) {
-    return { success: false, message: '卡片数据异常' };
-  }
+    const matchedSet = new Set<number>(normalizedSession.matchedCards);
+    if (matchedSet.has(cardIndex)) {
+      return { success: false, message: '该卡片已配对' };
+    }
 
-  const firstFlippedCard = normalizedSession.firstFlippedCard;
-  if (firstFlippedCard === cardIndex) {
-    return { success: false, message: '不能重复翻开同一张卡片' };
-  }
+    const now = Date.now();
+    const cardIcon = normalizedSession.cardLayout[cardIndex];
+    if (!cardIcon) {
+      return { success: false, message: '卡片数据异常' };
+    }
 
-  if (firstFlippedCard === null || firstFlippedCard === undefined) {
+    const firstFlippedCard = normalizedSession.firstFlippedCard;
+    if (firstFlippedCard === cardIndex) {
+      return { success: false, message: '不能重复翻开同一张卡片' };
+    }
+
+    if (firstFlippedCard === null || firstFlippedCard === undefined) {
+      const nextSession: MemoryGameSession = {
+        ...normalizedSession,
+        firstFlippedCard: cardIndex,
+      };
+
+      const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
+      await kv.set(SESSION_KEY(sessionId), nextSession, { ex: ttlSeconds });
+
+      return {
+        success: true,
+        data: {
+          cardIndex,
+          iconId: cardIcon,
+          matched: false,
+          completed: matchedSet.size === totalCards,
+          moveCount: normalizedSession.moveLog!.length,
+          matchedCount: matchedSet.size,
+        },
+      };
+    }
+
+    if (firstFlippedCard < 0 || firstFlippedCard >= normalizedSession.cardLayout.length) {
+      const repairedSession: MemoryGameSession = {
+        ...normalizedSession,
+        firstFlippedCard: null,
+      };
+      const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
+      await kv.set(SESSION_KEY(sessionId), repairedSession, { ex: ttlSeconds });
+      return { success: false, message: '会话状态异常，请重试' };
+    }
+
+    const firstCardIcon = normalizedSession.cardLayout[firstFlippedCard];
+    if (!firstCardIcon) {
+      return { success: false, message: '卡片数据异常' };
+    }
+
+    const isMatch = firstCardIcon === cardIcon;
+    const move = ensureMoveTimestamp({
+      card1: firstFlippedCard,
+      card2: cardIndex,
+      matched: isMatch,
+      timestamp: now,
+    });
+
+    if (isMatch) {
+      matchedSet.add(firstFlippedCard);
+      matchedSet.add(cardIndex);
+    }
+
+    const newMoveLog = [...normalizedSession.moveLog!, move];
+    const newMatchedCards = Array.from(matchedSet).sort((a, b) => a - b);
+    const completed = newMatchedCards.length === totalCards;
+
     const nextSession: MemoryGameSession = {
       ...normalizedSession,
-      firstFlippedCard: cardIndex,
+      firstFlippedCard: null,
+      matchedCards: newMatchedCards,
+      moveLog: newMoveLog,
     };
 
     const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
@@ -650,69 +714,21 @@ export async function flipMemoryCard(
       data: {
         cardIndex,
         iconId: cardIcon,
-        matched: false,
-        completed: matchedSet.size === totalCards,
-        moveCount: normalizedSession.moveLog!.length,
-        matchedCount: matchedSet.size,
+        firstCardIndex: firstFlippedCard,
+        firstCardIconId: firstCardIcon,
+        matched: isMatch,
+        completed,
+        moveCount: newMoveLog.length,
+        matchedCount: newMatchedCards.length,
+        move,
       },
     };
+  } finally {
+    try {
+      await kv.del(lockKey);
+    } catch (lockReleaseError) {
+      console.error('Memory flip lock release failed:', lockReleaseError);
+    }
   }
-
-  if (firstFlippedCard < 0 || firstFlippedCard >= normalizedSession.cardLayout.length) {
-    const repairedSession: MemoryGameSession = {
-      ...normalizedSession,
-      firstFlippedCard: null,
-    };
-    const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
-    await kv.set(SESSION_KEY(sessionId), repairedSession, { ex: ttlSeconds });
-    return { success: false, message: '会话状态异常，请重试' };
-  }
-
-  const firstCardIcon = normalizedSession.cardLayout[firstFlippedCard];
-  if (!firstCardIcon) {
-    return { success: false, message: '卡片数据异常' };
-  }
-
-  const isMatch = firstCardIcon === cardIcon;
-  const move = ensureMoveTimestamp({
-    card1: firstFlippedCard,
-    card2: cardIndex,
-    matched: isMatch,
-    timestamp: now,
-  });
-
-  if (isMatch) {
-    matchedSet.add(firstFlippedCard);
-    matchedSet.add(cardIndex);
-  }
-
-  const newMoveLog = [...normalizedSession.moveLog!, move];
-  const newMatchedCards = Array.from(matchedSet).sort((a, b) => a - b);
-  const completed = newMatchedCards.length === totalCards;
-
-  const nextSession: MemoryGameSession = {
-    ...normalizedSession,
-    firstFlippedCard: null,
-    matchedCards: newMatchedCards,
-    moveLog: newMoveLog,
-  };
-
-  const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
-  await kv.set(SESSION_KEY(sessionId), nextSession, { ex: ttlSeconds });
-
-  return {
-    success: true,
-    data: {
-      cardIndex,
-      iconId: cardIcon,
-      firstCardIndex: firstFlippedCard,
-      firstCardIconId: firstCardIcon,
-      matched: isMatch,
-      completed,
-      moveCount: newMoveLog.length,
-      matchedCount: newMatchedCards.length,
-      move,
-    },
-  };
 }
 

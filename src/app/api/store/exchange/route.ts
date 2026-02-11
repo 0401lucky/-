@@ -18,9 +18,10 @@ export const POST = withUserRateLimit('store:exchange', async (request, user) =>
 
     const result = await exchangeItem(user.id, itemId, qty);
     
-    if (!result.success) {
+    if (!result.success && !result.uncertain) {
       return NextResponse.json({ 
         success: false, 
+        uncertain: result.uncertain,
         message: result.message 
       }, { status: 400 });
     }
@@ -29,8 +30,9 @@ export const POST = withUserRateLimit('store:exchange', async (request, user) =>
     const newBalance = await getUserPoints(user.id);
 
     return NextResponse.json({
-      success: true,
+      success: result.success || !!result.uncertain,
       message: result.message,
+      uncertain: result.uncertain,
       data: {
         log: result.log,
         newBalance,
@@ -41,3 +43,4 @@ export const POST = withUserRateLimit('store:exchange', async (request, user) =>
     return NextResponse.json({ success: false, message: '服务器错误' }, { status: 500 });
   }
 });
+

@@ -41,6 +41,9 @@ const calculateAngles = () => {
 
 const PRIZES_WITH_ANGLES = calculateAngles();
 
+const RANKING_POLL_INTERVAL_MS = 15000;
+const RANKING_MAX_BACKOFF_MS = 120000;
+
 interface UserData {
   id: number;
   username: string;
@@ -91,24 +94,53 @@ export default function LotteryPage() {
   const confettiEndTimeRef = useRef<number>(0);
   const modalCopyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const recordCopyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const rankingPollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const rankingInFlightRef = useRef(false);
+  const rankingFailCountRef = useRef(0);
+  const rankingUnmountedRef = useRef(false);
 
   // [M2修复] 清理函数
   useEffect(() => {
+    rankingUnmountedRef.current = false;
+
     return () => {
+      rankingUnmountedRef.current = true;
+      rankingInFlightRef.current = false;
+
       // 组件卸载时清理所有定时器和动画
       if (spinTimeoutRef.current) {
         clearTimeout(spinTimeoutRef.current);
+        spinTimeoutRef.current = null;
       }
       if (confettiFrameRef.current) {
         cancelAnimationFrame(confettiFrameRef.current);
+        confettiFrameRef.current = null;
       }
       if (modalCopyTimeoutRef.current) {
         clearTimeout(modalCopyTimeoutRef.current);
+        modalCopyTimeoutRef.current = null;
       }
       if (recordCopyTimeoutRef.current) {
         clearTimeout(recordCopyTimeoutRef.current);
+        recordCopyTimeoutRef.current = null;
+      }
+      if (rankingPollTimeoutRef.current) {
+        clearTimeout(rankingPollTimeoutRef.current);
+        rankingPollTimeoutRef.current = null;
       }
     };
+  }, []);
+
+  const clearRankingPollTimer = useCallback(() => {
+    if (rankingPollTimeoutRef.current) {
+      clearTimeout(rankingPollTimeoutRef.current);
+      rankingPollTimeoutRef.current = null;
+    }
+  }, []);
+
+  const getRankingBackoffDelay = useCallback((failCount: number) => {
+    const level = Math.min(Math.max(failCount, 0), 3);
+    return Math.min(RANKING_POLL_INTERVAL_MS * (2 ** level), RANKING_MAX_BACKOFF_MS);
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -152,45 +184,77 @@ export default function LotteryPage() {
   }, [router]);
 
   const fetchRanking = useCallback(async () => {
+    if (rankingUnmountedRef.current || rankingInFlightRef.current) {
+      return;
+    }
+
+    rankingInFlightRef.current = true;
+    let fetchOk = false;
+
     try {
       const res = await fetch('/api/lottery/ranking?limit=10', { cache: 'no-store' });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setRanking(data.ranking || []);
-        }
+      if (!res.ok) {
+        throw new Error('排行榜请求失败: ' + res.status);
       }
+
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.message || '排行榜返回失败状态');
+      }
+
+      if (!rankingUnmountedRef.current) {
+        setRanking(data.ranking || []);
+      }
+      rankingFailCountRef.current = 0;
+      fetchOk = true;
     } catch (err) {
+      rankingFailCountRef.current += 1;
       console.error('获取排行榜失败', err);
     } finally {
-      setRankingLoading(false);
+      rankingInFlightRef.current = false;
+      if (!rankingUnmountedRef.current) {
+        setRankingLoading(false);
+      }
+
+      clearRankingPollTimer();
+      if (!rankingUnmountedRef.current && document.visibilityState === 'visible') {
+        const nextDelay = fetchOk
+          ? RANKING_POLL_INTERVAL_MS
+          : getRankingBackoffDelay(rankingFailCountRef.current);
+        rankingPollTimeoutRef.current = setTimeout(() => {
+          if (!rankingUnmountedRef.current) {
+            void fetchRanking();
+          }
+        }, nextDelay);
+      }
     }
-  }, []);
+  }, [clearRankingPollTimer, getRankingBackoffDelay]);
 
   // 初始化数据
   useEffect(() => {
     void fetchData();
     void fetchRanking();
 
-    // [LIVE] 轮询刷新排行榜，避免榜单停留在首屏数据
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        void fetchRanking();
-      }
-    }, 15000);
-
     const onVisibilityChange = () => {
+      if (rankingUnmountedRef.current) {
+        return;
+      }
+
       if (document.visibilityState === 'visible') {
+        rankingFailCountRef.current = 0;
+        clearRankingPollTimer();
         void fetchRanking();
+      } else {
+        clearRankingPollTimer();
       }
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
-      clearInterval(interval);
+      clearRankingPollTimer();
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [fetchData, fetchRanking]);
+  }, [clearRankingPollTimer, fetchData, fetchRanking]);
 
   const handleSpin = async () => {
     if (!canSpin || spinning) return;

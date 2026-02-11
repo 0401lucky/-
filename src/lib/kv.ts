@@ -1,6 +1,285 @@
 import { kv } from "@vercel/kv";
 import { getTodayDateString, getSecondsUntilMidnight } from "./time";
 
+const VERCEL_KV_REQUIRED_URL_ENV_KEY = "KV_REST_API_URL";
+const VERCEL_KV_TOKEN_ENV_KEYS = ["KV_REST_API_TOKEN", "KV_REST_API_READ_ONLY_TOKEN"] as const;
+
+const KV_ENV_GROUPS = [
+  {
+    provider: "upstash",
+    keys: ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"] as const,
+  },
+] as const;
+
+const KV_ENV_MISSING_PATTERNS = [
+  "missing required environment variables",
+  "missing environment variable",
+  "kv_rest_api_url",
+  "kv_rest_api_token",
+  "kv_rest_api_read_only_token",
+  "upstash_redis_rest_url",
+  "upstash_redis_rest_token",
+];
+
+const KV_AUTH_PATTERNS = ["unauthorized", "forbidden", "invalid token", "authentication"];
+const KV_TIMEOUT_PATTERNS = ["timeout", "timed out", "deadline exceeded", "etimedout", "econnaborted"];
+const KV_NETWORK_PATTERNS = [
+  "network",
+  "econnreset",
+  "econnrefused",
+  "enotfound",
+  "socket hang up",
+  "fetch failed",
+  "connect",
+];
+const KV_RATE_LIMIT_PATTERNS = ["too many requests", "rate limit", "429"];
+
+export const KV_UNAVAILABLE_RETRY_AFTER_SECONDS = 30;
+
+export type KvAvailabilityReason = "ok" | "missing_env";
+
+export interface KvAvailabilityStatus {
+  available: boolean;
+  reason: KvAvailabilityReason;
+  provider: "vercel" | "upstash" | null;
+  missingEnvKeys: string[];
+}
+
+export type KvErrorCode =
+  | "KV_ENV_MISSING"
+  | "KV_AUTH"
+  | "KV_TIMEOUT"
+  | "KV_NETWORK"
+  | "KV_RATE_LIMITED"
+  | "KV_UPSTREAM"
+  | "KV_UNKNOWN"
+  | "NON_KV_ERROR";
+
+export interface KvErrorInsight {
+  isKvError: boolean;
+  isUnavailable: boolean;
+  retryable: boolean;
+  code: KvErrorCode;
+  status: number | null;
+  message: string;
+}
+
+function hasEnvValue(name: string): boolean {
+  const value = process.env[name];
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function includesAnyPattern(text: string, patterns: readonly string[]): boolean {
+  return patterns.some((pattern) => text.includes(pattern));
+}
+
+function getErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const candidate = (error as { status?: unknown; response?: { status?: unknown } }).status
+    ?? (error as { response?: { status?: unknown } }).response?.status;
+
+  if (typeof candidate === "number" && Number.isFinite(candidate)) {
+    return candidate;
+  }
+
+  if (typeof candidate === "string") {
+    const parsed = Number.parseInt(candidate, 10);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") {
+      return message;
+    }
+  }
+
+  return "unknown kv error";
+}
+
+export function getKvAvailabilityStatus(): KvAvailabilityStatus {
+  const vercelUrlReady = hasEnvValue(VERCEL_KV_REQUIRED_URL_ENV_KEY);
+  const vercelTokenReady = VERCEL_KV_TOKEN_ENV_KEYS.some((key) => hasEnvValue(key));
+
+  if (vercelUrlReady && vercelTokenReady) {
+    return {
+      available: true,
+      reason: "ok",
+      provider: "vercel",
+      missingEnvKeys: [],
+    };
+  }
+
+  const matchedGroup = KV_ENV_GROUPS.find((group) => group.keys.every((key) => hasEnvValue(key)));
+
+  if (matchedGroup) {
+    return {
+      available: true,
+      reason: "ok",
+      provider: matchedGroup.provider,
+      missingEnvKeys: [],
+    };
+  }
+
+  const missingEnvKeys = [
+    ...(vercelUrlReady ? [] : [VERCEL_KV_REQUIRED_URL_ENV_KEY]),
+    ...(vercelTokenReady ? [] : [...VERCEL_KV_TOKEN_ENV_KEYS]),
+  ];
+
+  return {
+    available: false,
+    reason: "missing_env",
+    provider: null,
+    missingEnvKeys,
+  };
+}
+
+export function isKvAvailable(): boolean {
+  return getKvAvailabilityStatus().available;
+}
+
+export function getKvErrorInsight(error: unknown): KvErrorInsight {
+  const message = getErrorMessage(error);
+  const normalizedMessage = message.toLowerCase();
+  const status = getErrorStatus(error);
+  const name = error && typeof error === "object" && "name" in error
+    ? String((error as { name?: unknown }).name ?? "")
+    : "";
+  const code = error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code ?? "")
+    : "";
+  const normalizedMeta = `${name} ${code}`.toLowerCase();
+  const fingerprint = `${normalizedMessage} ${normalizedMeta}`;
+
+  const hasKvFingerprint =
+    fingerprint.includes("@vercel/kv")
+    || fingerprint.includes("vercel kv")
+    || fingerprint.includes("upstash")
+    || fingerprint.includes("redis")
+    || fingerprint.includes("kv_rest_api");
+
+  if (includesAnyPattern(normalizedMessage, KV_ENV_MISSING_PATTERNS)) {
+    return {
+      isKvError: true,
+      isUnavailable: true,
+      retryable: false,
+      code: "KV_ENV_MISSING",
+      status,
+      message,
+    };
+  }
+
+  if (status === 401 || status === 403 || includesAnyPattern(fingerprint, KV_AUTH_PATTERNS)) {
+    return {
+      isKvError: true,
+      isUnavailable: true,
+      retryable: false,
+      code: "KV_AUTH",
+      status,
+      message,
+    };
+  }
+
+  if (status === 408 || status === 504 || includesAnyPattern(fingerprint, KV_TIMEOUT_PATTERNS)) {
+    return {
+      isKvError: true,
+      isUnavailable: true,
+      retryable: true,
+      code: "KV_TIMEOUT",
+      status,
+      message,
+    };
+  }
+
+  if (status === 429 || includesAnyPattern(fingerprint, KV_RATE_LIMIT_PATTERNS)) {
+    return {
+      isKvError: true,
+      isUnavailable: true,
+      retryable: true,
+      code: "KV_RATE_LIMITED",
+      status,
+      message,
+    };
+  }
+
+  if (includesAnyPattern(fingerprint, KV_NETWORK_PATTERNS)) {
+    return {
+      isKvError: true,
+      isUnavailable: true,
+      retryable: true,
+      code: "KV_NETWORK",
+      status,
+      message,
+    };
+  }
+
+  if (typeof status === "number" && status >= 500) {
+    return {
+      isKvError: true,
+      isUnavailable: true,
+      retryable: true,
+      code: "KV_UPSTREAM",
+      status,
+      message,
+    };
+  }
+
+  if (hasKvFingerprint) {
+    return {
+      isKvError: true,
+      isUnavailable: true,
+      retryable: true,
+      code: "KV_UNKNOWN",
+      status,
+      message,
+    };
+  }
+
+  return {
+    isKvError: false,
+    isUnavailable: false,
+    retryable: false,
+    code: "NON_KV_ERROR",
+    status,
+    message,
+  };
+}
+
+export function isKvUnavailableError(error: unknown): boolean {
+  return getKvErrorInsight(error).isUnavailable;
+}
+
+export function buildKvUnavailablePayload(message: string): {
+  success: false;
+  code: "KV_UNAVAILABLE";
+  message: string;
+  retryAfter: number;
+} {
+  return {
+    success: false,
+    code: "KV_UNAVAILABLE",
+    message,
+    retryAfter: KV_UNAVAILABLE_RETRY_AFTER_SECONDS,
+  };
+}
+
 // 项目接口
 export interface Project {
   id: string;
