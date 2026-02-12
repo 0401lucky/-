@@ -5,13 +5,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, ChevronLeft, Star, Trophy, Zap, Layers, X } from 'lucide-react';
-import TowerCanvas from './components/TowerCanvas';
-import FloorDisplay from './components/FloorDisplay';
-import PlayerStats from './components/PlayerStats';
+import { AlertTriangle, ChevronLeft, Star, Trophy, Zap, Layers, X, HelpCircle } from 'lucide-react';
+import LaneCards from './components/LaneCards';
+import FloatingText from './components/FloatingText';
+import type { FloatingTextItem } from './components/FloatingText';
+import GameHeader from './components/GameHeader';
 import ResultModal from './components/ResultModal';
 import { useGameSession } from './hooks/useGameSession';
-import { createTowerRng, generateFloor, simulateTowerGame, floorToPoints } from '@/lib/tower-engine';
+import { createTowerRng, generateFloor, simulateTowerGame } from '@/lib/tower-engine';
 import type { TowerFloor } from '@/lib/tower-engine';
 import {
   ANIM_WALK_DURATION,
@@ -81,7 +82,7 @@ export default function TowerPage() {
   const [currentFloor, setCurrentFloor] = useState<TowerFloor | null>(null);
   const [animState, setAnimState] = useState<AnimState>('idle');
   const [selectedLane, setSelectedLane] = useState<number | null>(null);
-  const [floatingTexts, setFloatingTexts] = useState<Array<{ text: string; x: number; y: number; color: string; age: number }>>([]);
+  const [floatingTexts, setFloatingTexts] = useState<FloatingTextItem[]>([]);
   const [result, setResult] = useState<{
     floorsClimbed: number;
     finalPower: number;
@@ -92,11 +93,14 @@ export default function TowerPage() {
   const [showLimitWarning, setShowLimitWarning] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
   const [pendingSubmitChoices, setPendingSubmitChoices] = useState<number[] | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
+  const [powerChanged, setPowerChanged] = useState(false);
 
   const choicesRef = useRef<number[]>([]);
   const rngRef = useRef<(() => number) | null>(null);
   const powerRef = useRef(1);
   const animTimersRef = useRef<Set<TimerHandle>>(new Set());
+  const floatingIdRef = useRef(0);
 
   const scheduleTimer = useCallback((callback: () => void, delay: number) => {
     const timerId = window.setTimeout(() => {
@@ -123,18 +127,14 @@ export default function TowerPage() {
     powerRef.current = power;
   }, [power]);
 
-  // 飘字动画
-  useEffect(() => {
-    if (floatingTexts.length === 0) return;
-    const id = requestAnimationFrame(() => {
-      setFloatingTexts((prev) =>
-        prev
-          .map((ft) => ({ ...ft, age: ft.age + 1 }))
-          .filter((ft) => ft.age < 60)
-      );
-    });
-    return () => cancelAnimationFrame(id);
-  }, [floatingTexts]);
+  // 飘字辅助函数
+  const addFloatingText = useCallback((text: string, color: string) => {
+    const id = ++floatingIdRef.current;
+    setFloatingTexts((prev) => [...prev, { id, text, color }]);
+    scheduleTimer(() => {
+      setFloatingTexts((prev) => prev.filter((ft) => ft.id !== id));
+    }, 1200);
+  }, [scheduleTimer]);
 
   // 初始化
   useEffect(() => {
@@ -276,15 +276,14 @@ export default function TowerPage() {
           if (powerRef.current > lane.value) {
             // 攻击动画
             setAnimState('attacking');
-            setFloatingTexts((prev) => [
-              ...prev,
-              { text: `+${lane.value}`, x: 180, y: 300, color: '#ef5350', age: 0 },
-            ]);
+            addFloatingText(`+${lane.value}`, '#ef5350');
 
             scheduleTimer(() => {
               const newPower = powerRef.current + lane.value;
               setPower(newPower);
               powerRef.current = newPower;
+              setPowerChanged(true);
+              scheduleTimer(() => setPowerChanged(false), 300);
 
               const newChoices = [...choicesRef.current, laneIndex];
               choicesRef.current = newChoices;
@@ -301,10 +300,7 @@ export default function TowerPage() {
           } else {
             // 死亡
             setAnimState('death');
-            setFloatingTexts((prev) => [
-              ...prev,
-              { text: 'GAME OVER', x: 180, y: 260, color: '#ff1744', age: 0 },
-            ]);
+            addFloatingText('GAME OVER', '#ff1744');
 
             const newChoices = [...choicesRef.current, laneIndex];
             choicesRef.current = newChoices;
@@ -330,14 +326,13 @@ export default function TowerPage() {
             floatText = `x${lane.value}`;
           }
 
-          setFloatingTexts((prev) => [
-            ...prev,
-            { text: floatText, x: 180, y: 300, color: lane.type === 'add' ? '#66bb6a' : '#ffa726', age: 0 },
-          ]);
+          addFloatingText(floatText, lane.type === 'add' ? '#66bb6a' : '#ffa726');
 
           scheduleTimer(() => {
             setPower(newPower);
             powerRef.current = newPower;
+            setPowerChanged(true);
+            scheduleTimer(() => setPowerChanged(false), 300);
 
             const newChoices = [...choicesRef.current, laneIndex];
             choicesRef.current = newChoices;
@@ -354,7 +349,7 @@ export default function TowerPage() {
         }
       }, ANIM_WALK_DURATION);
     },
-    [phase, session, currentFloor, isAnimating, loading, pendingSubmitChoices, handleSubmit, scheduleTimer]
+    [phase, session, currentFloor, isAnimating, loading, pendingSubmitChoices, handleSubmit, scheduleTimer, addFloatingText]
   );
 
   const handleStart = useCallback(async () => {
@@ -644,108 +639,104 @@ export default function TowerPage() {
         )}
 
         {phase === 'playing' && session && currentFloor && (
-          <div className="grid grid-cols-1 lg:grid-cols-[400px_1fr] gap-8 items-start animate-in fade-in duration-300">
-            <div className="space-y-4">
-              {/* Canvas + 通道选择按钮 */}
-              <div className="relative">
-                <TowerCanvas
-                  currentFloor={currentFloor}
-                  playerPower={power}
-                  floorNumber={floorNumber}
-                  animState={animState}
-                  selectedLane={selectedLane}
-                  floatingTexts={floatingTexts}
-                />
-                <FloorDisplay
-                  floor={currentFloor}
-                  playerPower={power}
-                  onChooseLane={handleChooseLane}
-                  disabled={isAnimating || loading || hasPendingSubmit}
-                  selectedLane={selectedLane}
-                />
-              </div>
+          <div className="max-w-lg mx-auto animate-in fade-in duration-300">
+            {/* 粘性状态栏 */}
+            <GameHeader
+              floorNumber={floorNumber}
+              power={power}
+              choicesCount={choices.length}
+              powerChanged={powerChanged}
+            />
 
-              {/* 状态面板 */}
-              <PlayerStats
-                power={power}
-                floorNumber={floorNumber}
-                choicesCount={choices.length}
+            {/* 核心交互区 */}
+            <div className="relative my-6">
+              <LaneCards
+                floor={currentFloor}
+                playerPower={power}
+                onChooseLane={handleChooseLane}
+                disabled={isAnimating || loading || hasPendingSubmit}
+                selectedLane={selectedLane}
+                animState={animState}
               />
+              <FloatingText items={floatingTexts} />
+            </div>
 
-              {/* 操作栏 */}
-              <div className="bg-white/90 backdrop-blur-md rounded-2xl p-4 shadow-sm border border-slate-100">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm text-slate-500 font-medium">
-                    预估得分：<span className="font-bold text-slate-900 tabular-nums">{floorToPoints(choices.length)}</span>
-                  </div>
-                  <button
-                    onClick={handleCancel}
-                    disabled={loading || isAnimating}
-                    className="inline-flex items-center gap-2 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed font-medium px-2 py-1 rounded-lg hover:bg-red-50"
-                    type="button"
-                  >
-                    <X className="w-4 h-4" />
-                    放弃
-                  </button>
+            {/* 玩家角色标记 */}
+            <div className="flex justify-center my-6">
+              <div className="relative">
+                <div className={`
+                  w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-400 to-blue-600
+                  flex items-center justify-center text-3xl shadow-lg shadow-blue-200
+                  transition-all duration-300
+                  ${animState === 'walking' ? 'animate-bounce' : ''}
+                  ${animState === 'attacking' ? 'scale-110' : ''}
+                  ${animState === 'powerup' ? 'scale-110 ring-4 ring-yellow-300/50' : ''}
+                  ${animState === 'death' ? 'animate-death-flash' : ''}
+                `}>
+                  ⚔️
                 </div>
-
-                {isRestored && (
-                  <div className="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-100 text-amber-700 text-xs font-medium text-center">
-                    已恢复中断的游戏进度
-                  </div>
-                )}
+                <div className="absolute -top-2 -right-2 bg-amber-500 text-white text-xs font-black px-1.5 py-0.5 rounded-lg shadow-sm tabular-nums">
+                  {power}
+                </div>
               </div>
             </div>
 
-            {/* 右侧说明 */}
-            <div className="bg-white/90 backdrop-blur-md rounded-3xl p-6 shadow-sm border border-slate-100">
-              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-6">操作指南</h3>
-              <div className="space-y-5">
-                <div className="flex items-start gap-4 p-4 rounded-2xl bg-slate-50/50">
-                  <div className="w-10 h-10 rounded-xl bg-red-500 text-white flex items-center justify-center shrink-0 shadow-lg shadow-red-200 text-xl">
-                    👾
-                  </div>
-                  <div>
-                    <div className="font-bold text-slate-900 text-sm mb-1">怪物</div>
-                    <div className="text-sm text-slate-600 leading-relaxed">
-                      力量值 &gt; 怪物数字 → 击败并吞噬（力量 + 怪物值）。
-                      力量值 &le; 怪物 → Game Over！
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-4 p-4 rounded-2xl bg-slate-50/50">
-                  <div className="w-10 h-10 rounded-xl bg-green-500 text-white flex items-center justify-center shrink-0 shadow-lg shadow-green-200 text-xl">
-                    💚
-                  </div>
-                  <div>
-                    <div className="font-bold text-slate-900 text-sm mb-1">加法增益</div>
-                    <div className="text-sm text-slate-600 leading-relaxed">直接增加你的力量值。</div>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-4 p-4 rounded-2xl bg-slate-50/50">
-                  <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-lg shadow-amber-200 text-xl">
-                    ⭐
-                  </div>
-                  <div>
-                    <div className="font-bold text-slate-900 text-sm mb-1">乘法增益</div>
-                    <div className="text-sm text-slate-600 leading-relaxed">力量值翻倍！出现概率较低但效果强大。</div>
-                  </div>
-                </div>
-
-                {status?.pointsLimitReached && (
-                  <div className="flex items-start gap-4 p-4 rounded-2xl bg-orange-50 border border-orange-100">
-                    <div className="w-10 h-10 rounded-xl bg-orange-500 text-white flex items-center justify-center shrink-0 shadow-lg shadow-orange-200">
-                      <AlertTriangle className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="font-bold text-orange-800 text-sm mb-1">积分上限提示</div>
-                      <div className="text-sm text-orange-700 leading-relaxed">今日积分已达上限。本局仍可游玩，但不会获得积分奖励。</div>
-                    </div>
-                  </div>
-                )}
+            {/* 操作栏 */}
+            <div className="bg-white/90 backdrop-blur-md rounded-2xl p-4 shadow-sm border border-slate-100">
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  onClick={() => setShowHelp((v) => !v)}
+                  className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-600 transition-colors font-medium px-2 py-1 rounded-lg hover:bg-slate-50"
+                  type="button"
+                >
+                  <HelpCircle className="w-4 h-4" />
+                  帮助
+                </button>
+                <button
+                  onClick={handleCancel}
+                  disabled={loading || isAnimating}
+                  className="inline-flex items-center gap-1.5 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed font-medium px-2 py-1 rounded-lg hover:bg-red-50"
+                  type="button"
+                >
+                  <X className="w-4 h-4" />
+                  放弃游戏
+                </button>
               </div>
+
+              {isRestored && (
+                <div className="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-100 text-amber-700 text-xs font-medium text-center">
+                  已恢复中断的游戏进度
+                </div>
+              )}
+
+              {showHelp && (
+                <div className="mt-3 space-y-2 animate-slide-up">
+                  <div className="flex items-center gap-2 p-2.5 rounded-xl bg-red-50 text-sm">
+                    <span className="text-lg">👾</span>
+                    <span className="text-slate-600">
+                      <span className="font-bold text-red-600">怪物</span> — 力量 &gt; 怪物数值可击败并吞噬，否则 Game Over
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 p-2.5 rounded-xl bg-green-50 text-sm">
+                    <span className="text-lg">💚</span>
+                    <span className="text-slate-600">
+                      <span className="font-bold text-green-600">加法增益</span> — 直接增加力量值
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-50 text-sm">
+                    <span className="text-lg">⭐</span>
+                    <span className="text-slate-600">
+                      <span className="font-bold text-amber-600">乘法增益</span> — 力量值翻倍
+                    </span>
+                  </div>
+                  {status?.pointsLimitReached && (
+                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-orange-50 border border-orange-100 text-sm">
+                      <AlertTriangle className="w-4 h-4 text-orange-500 shrink-0" />
+                      <span className="text-orange-700">今日积分已达上限，本局不获得积分</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
