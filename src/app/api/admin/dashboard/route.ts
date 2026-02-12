@@ -18,7 +18,12 @@ export const GET = withAdmin(
       const { searchParams } = new URL(request.url);
       const runDetect = searchParams.get('detect') !== '0';
 
-      const detection = runDetect ? await runAnomalyDetection() : null;
+      const detection = runDetect
+        ? await runAnomalyDetection({
+            maxUsers: 300,
+            concurrency: 6,
+          })
+        : null;
       const [dashboard, alerts] = await Promise.all([
         getDashboardOverview(),
         getAlertsSnapshot({ historyLimit: 20 }),

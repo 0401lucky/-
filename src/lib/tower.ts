@@ -1,4 +1,4 @@
-// src/lib/match3.ts - 消消乐（Match-3）后端逻辑
+// src/lib/tower.ts - 爬塔游戏后端逻辑
 
 import { randomBytes } from 'crypto';
 import { kv } from '@vercel/kv';
@@ -7,56 +7,52 @@ import { addGamePointsWithLimit } from './points';
 import { getTodayDateString } from './time';
 import { getDailyPointsLimit } from './config';
 import { incrementSharedDailyStats } from './daily-stats';
-import { MATCH3_DEFAULT_CONFIG, simulateMatch3Game } from './match3-engine';
+import { simulateTowerGame, floorToPoints } from './tower-engine';
 import type { DailyGameStats, GameSessionStatus } from './types/game';
-import type { Match3Config, Match3Move } from './match3-engine';
 
-const GAME_TYPE = 'match3' as const;
+const GAME_TYPE = 'tower' as const;
 
-const TIME_LIMIT_MS = 60 * 1000;
-const SESSION_TTL = 2 * 60; // 2分钟：60s对局 + 提交缓冲
+const SESSION_TTL = 10 * 60; // 10分钟：回合制无时限但需合理上限
 const COOLDOWN_TTL = 5; // 5秒
-const MIN_GAME_DURATION = 10_000; // 10秒
+const MIN_GAME_DURATION = 5_000; // 5秒
 const MAX_RECORD_ENTRIES = 50;
-const MAX_MOVES_PER_GAME = 250;
+const MAX_CHOICES = 500;
 
 // Key 格式
-const SESSION_KEY = (sessionId: string) => `match3:session:${sessionId}`;
-const ACTIVE_SESSION_KEY = (userId: number) => `match3:active:${userId}`;
+const SESSION_KEY = (sessionId: string) => `tower:session:${sessionId}`;
+const ACTIVE_SESSION_KEY = (userId: number) => `tower:active:${userId}`;
 const DAILY_STATS_KEY = (userId: number, date: string) => `game:daily:${userId}:${date}`;
-const RECORDS_KEY = (userId: number) => `match3:records:${userId}`;
-const COOLDOWN_KEY = (userId: number) => `match3:cooldown:${userId}`;
-const SUBMIT_LOCK_KEY = (sessionId: string) => `match3:submit:${sessionId}`;
+const RECORDS_KEY = (userId: number) => `tower:records:${userId}`;
+const COOLDOWN_KEY = (userId: number) => `tower:cooldown:${userId}`;
+const SUBMIT_LOCK_KEY = (sessionId: string) => `tower:submit:${sessionId}`;
 
-export interface Match3GameSession {
+export interface TowerGameSession {
   id: string;
   userId: number;
   gameType: typeof GAME_TYPE;
   seed: string;
-  config: Match3Config;
-  timeLimitMs: number;
   startedAt: number;
   expiresAt: number;
   status: GameSessionStatus;
 }
 
-export interface Match3GameRecord {
+export interface TowerGameRecord {
   id: string;
   userId: number;
   sessionId: string;
   gameType: typeof GAME_TYPE;
-  score: number;
+  floorsClimbed: number;
+  finalPower: number;
+  gameOver: boolean;
+  score: number; // = floorToPoints(floorsClimbed)
   pointsEarned: number;
-  moves: number;
-  cascades: number;
-  tilesCleared: number;
   duration: number;
   createdAt: number;
 }
 
-export interface Match3GameResultSubmit {
+export interface TowerGameResultSubmit {
   sessionId: string;
-  moves: Match3Move[];
+  choices: number[];
 }
 
 function generateSeed(): string {
@@ -89,16 +85,16 @@ export async function getDailyStats(userId: number): Promise<DailyGameStats> {
   };
 }
 
-export async function getMatch3Records(userId: number, limit: number = 20): Promise<Match3GameRecord[]> {
-  const records = await kv.lrange<Match3GameRecord>(RECORDS_KEY(userId), 0, limit - 1);
+export async function getTowerRecords(userId: number, limit: number = 20): Promise<TowerGameRecord[]> {
+  const records = await kv.lrange<TowerGameRecord>(RECORDS_KEY(userId), 0, limit - 1);
   return records ?? [];
 }
 
-export async function getActiveMatch3Session(userId: number): Promise<Match3GameSession | null> {
+export async function getActiveTowerSession(userId: number): Promise<TowerGameSession | null> {
   const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
   if (!activeSessionId) return null;
 
-  const session = await kv.get<Match3GameSession>(SESSION_KEY(activeSessionId));
+  const session = await kv.get<TowerGameSession>(SESSION_KEY(activeSessionId));
   if (!session) {
     await kv.del(ACTIVE_SESSION_KEY(userId));
     return null;
@@ -106,10 +102,9 @@ export async function getActiveMatch3Session(userId: number): Promise<Match3Game
   return session;
 }
 
-export async function startMatch3Game(
-  userId: number,
-  config?: Partial<Match3Config>
-): Promise<{ success: boolean; session?: Match3GameSession; message?: string }> {
+export async function startTowerGame(
+  userId: number
+): Promise<{ success: boolean; session?: TowerGameSession; message?: string }> {
   if (await isInCooldown(userId)) {
     const remaining = await getCooldownRemaining(userId);
     return { success: false, message: `请等待 ${remaining} 秒后再开始游戏` };
@@ -117,7 +112,7 @@ export async function startMatch3Game(
 
   const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
   if (activeSessionId) {
-    const activeSession = await kv.get<Match3GameSession>(SESSION_KEY(activeSessionId));
+    const activeSession = await kv.get<TowerGameSession>(SESSION_KEY(activeSessionId));
     if (!activeSession) {
       await kv.del(ACTIVE_SESSION_KEY(userId));
     } else if (activeSession.status === 'playing' && Date.now() < activeSession.expiresAt) {
@@ -129,13 +124,11 @@ export async function startMatch3Game(
   }
 
   const now = Date.now();
-  const session: Match3GameSession = {
+  const session: TowerGameSession = {
     id: nanoid(),
     userId,
     gameType: GAME_TYPE,
     seed: generateSeed(),
-    config: { ...MATCH3_DEFAULT_CONFIG, ...(config ?? {}) },
-    timeLimitMs: TIME_LIMIT_MS,
     startedAt: now,
     expiresAt: now + SESSION_TTL * 1000,
     status: 'playing',
@@ -147,7 +140,7 @@ export async function startMatch3Game(
   return { success: true, session };
 }
 
-export async function cancelMatch3Game(userId: number): Promise<{ success: boolean; message?: string }> {
+export async function cancelTowerGame(userId: number): Promise<{ success: boolean; message?: string }> {
   const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
   if (!activeSessionId) return { success: false, message: '没有正在进行的游戏' };
 
@@ -158,7 +151,7 @@ export async function cancelMatch3Game(userId: number): Promise<{ success: boole
   return { success: true };
 }
 
-function validateSubmitPayload(payload: Match3GameResultSubmit): { ok: true } | { ok: false; message: string } {
+function validateSubmitPayload(payload: TowerGameResultSubmit): { ok: true } | { ok: false; message: string } {
   if (!payload || typeof payload !== 'object') {
     return { ok: false, message: '无效的提交数据' };
   }
@@ -167,28 +160,27 @@ function validateSubmitPayload(payload: Match3GameResultSubmit): { ok: true } | 
     return { ok: false, message: '无效的会话ID' };
   }
 
-  if (!Array.isArray(payload.moves)) {
-    return { ok: false, message: '无效的操作序列' };
+  if (!Array.isArray(payload.choices)) {
+    return { ok: false, message: '无效的选择序列' };
   }
 
-  if (payload.moves.length > MAX_MOVES_PER_GAME) {
-    return { ok: false, message: '操作步数过多' };
+  if (payload.choices.length > MAX_CHOICES) {
+    return { ok: false, message: '选择步数过多' };
   }
 
-  for (const move of payload.moves) {
-    if (!move || typeof move !== 'object') return { ok: false, message: '操作数据格式错误' };
-    if (!Number.isInteger(move.from) || !Number.isInteger(move.to)) {
-      return { ok: false, message: '操作坐标必须为整数' };
+  for (const choice of payload.choices) {
+    if (!Number.isInteger(choice) || choice < 0) {
+      return { ok: false, message: '选择索引必须为非负整数' };
     }
   }
 
   return { ok: true };
 }
 
-export async function submitMatch3Result(
+export async function submitTowerResult(
   userId: number,
-  payload: Match3GameResultSubmit
-): Promise<{ success: boolean; record?: Match3GameRecord; pointsEarned?: number; message?: string }> {
+  payload: TowerGameResultSubmit
+): Promise<{ success: boolean; record?: TowerGameRecord; pointsEarned?: number; message?: string }> {
   const payloadCheck = validateSubmitPayload(payload);
   if (!payloadCheck.ok) return { success: false, message: payloadCheck.message };
 
@@ -198,7 +190,7 @@ export async function submitMatch3Result(
     return { success: false, message: '请勿重复提交' };
   }
 
-  const session = await kv.get<Match3GameSession>(SESSION_KEY(payload.sessionId));
+  const session = await kv.get<TowerGameSession>(SESSION_KEY(payload.sessionId));
   if (!session) {
     await kv.del(lockKey);
     return { success: false, message: '游戏会话不存在或已过期' };
@@ -223,14 +215,14 @@ export async function submitMatch3Result(
     return { success: false, message: '游戏时长过短' };
   }
 
-  // 服务端复算
-  const sim = simulateMatch3Game(session.seed, session.config, payload.moves, { maxMoves: MAX_MOVES_PER_GAME });
+  // 服务端重放验证
+  const sim = simulateTowerGame(session.seed, payload.choices);
   if (!sim.ok) {
     await kv.del(lockKey);
     return { success: false, message: sim.message };
   }
 
-  const score = sim.score;
+  const score = floorToPoints(sim.floorsClimbed);
   const dailyPointsLimit = await getDailyPointsLimit();
 
   const pointsResult = await addGamePointsWithLimit(
@@ -238,20 +230,20 @@ export async function submitMatch3Result(
     score,
     dailyPointsLimit,
     'game_play',
-    `消消乐得分 ${score}`
+    `爬塔挑战 ${sim.floorsClimbed}层 得分 ${score}`
   );
 
-  const record: Match3GameRecord = {
+  const record: TowerGameRecord = {
     id: nanoid(),
     userId,
     sessionId: payload.sessionId,
     gameType: GAME_TYPE,
+    floorsClimbed: sim.floorsClimbed,
+    finalPower: sim.finalPower,
+    gameOver: sim.gameOver,
     score,
     pointsEarned: pointsResult.pointsEarned,
-    moves: sim.stats.movesApplied,
-    cascades: sim.stats.cascades,
-    tilesCleared: sim.stats.tilesCleared,
-    duration: Math.min(serverDuration, TIME_LIMIT_MS),
+    duration: serverDuration,
     createdAt: Date.now(),
   };
 
@@ -265,5 +257,3 @@ export async function submitMatch3Result(
 
   return { success: true, record, pointsEarned: pointsResult.pointsEarned };
 }
-
-

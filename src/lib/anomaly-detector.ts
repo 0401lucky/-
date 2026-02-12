@@ -7,6 +7,8 @@ const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 const RECENT_SCAN_LIMIT = 200;
 const POINTS_SPIKE_THRESHOLD = 5000;
 const LOTTERY_HIGH_FREQUENCY_THRESHOLD = 80;
+const DEFAULT_DETECTION_CONCURRENCY = 4;
+const MAX_DETECTION_CONCURRENCY = 16;
 
 const GAME_ACTIVITY_KEYS = [
   (userId: number) => `slot:records:${userId}`,
@@ -14,6 +16,7 @@ const GAME_ACTIVITY_KEYS = [
   (userId: number) => `match3:records:${userId}`,
   (userId: number) => `memory:records:${userId}`,
   (userId: number) => `game:records:${userId}`,
+  (userId: number) => `tower:records:${userId}`,
 ];
 
 interface AlertItem {
@@ -57,6 +60,12 @@ export interface DashboardOverview {
 function toFiniteNumber(value: unknown): number {
   const num = Number(value);
   return Number.isFinite(num) ? num : 0;
+}
+
+function toPositiveInteger(value: unknown, fallback: number): number {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  return Math.floor(num);
 }
 
 function getChinaDate(date: Date = new Date()): Date {
@@ -158,73 +167,109 @@ async function triggerAlertOncePerDay(
   return true;
 }
 
-export async function runAnomalyDetection(options: { referenceTime?: number } = {}): Promise<{
+async function detectUserAnomalies(
+  user: { id: number | string; username: string },
+  todayStartAt: number,
+): Promise<number> {
+  const userId = Number(user.id);
+  if (!Number.isFinite(userId) || userId <= 0) return 0;
+
+  let triggeredAlerts = 0;
+  const pointsBaselineKey = `anomaly:baseline:points:${userId}`;
+  const [currentPoints, baselineRaw] = await Promise.all([
+    getUserPoints(userId),
+    kv.get<number>(pointsBaselineKey),
+  ]);
+
+  const baseline = toFiniteNumber(baselineRaw);
+  const delta = currentPoints - baseline;
+
+  if (baseline > 0 && delta >= POINTS_SPIKE_THRESHOLD) {
+    const triggered = await triggerAlertOncePerDay(
+      `points_spike:${userId}`,
+      'warning',
+      'points_spike',
+      `用户 ${user.username} 积分短时增长异常（+${delta}）`,
+      {
+        userId,
+        username: user.username,
+        delta,
+      }
+    );
+    if (triggered) {
+      triggeredAlerts += 1;
+    }
+  }
+
+  await kv.set(pointsBaselineKey, currentPoints, { ex: 72 * 60 * 60 });
+
+  const lotteryRecords = await kv.lrange<{ createdAt?: number }>(
+    `lottery:user:records:${userId}`,
+    0,
+    RECENT_SCAN_LIMIT - 1,
+  );
+  const todayLotteryCount = (lotteryRecords ?? []).reduce((count, record) => {
+    return toFiniteNumber(record?.createdAt) >= todayStartAt ? count + 1 : count;
+  }, 0);
+
+  if (todayLotteryCount >= LOTTERY_HIGH_FREQUENCY_THRESHOLD) {
+    const triggered = await triggerAlertOncePerDay(
+      `lottery_high_frequency:${userId}`,
+      'critical',
+      'lottery_high_frequency',
+      `用户 ${user.username} 今日抽奖频次异常（${todayLotteryCount} 次）`,
+      {
+        userId,
+        username: user.username,
+        count: todayLotteryCount,
+      }
+    );
+    if (triggered) {
+      triggeredAlerts += 1;
+    }
+  }
+
+  return triggeredAlerts;
+}
+
+export async function runAnomalyDetection(options: {
+  referenceTime?: number;
+  maxUsers?: number;
+  concurrency?: number;
+} = {}): Promise<{
   scannedUsers: number;
   triggeredAlerts: number;
 }> {
   const now = options.referenceTime ?? Date.now();
   const todayStartAt = getChinaDayStartUtc(now);
-  const users = await getAllUsers();
-  let triggeredAlerts = 0;
+  const allUsers = await getAllUsers();
 
-  for (const user of users) {
-    const userId = Number(user.id);
-    if (!Number.isFinite(userId) || userId <= 0) continue;
+  const maxUsers = toPositiveInteger(options.maxUsers, allUsers.length);
+  const users = allUsers.slice(0, Math.min(maxUsers, allUsers.length));
+  const concurrency = Math.min(
+    MAX_DETECTION_CONCURRENCY,
+    toPositiveInteger(options.concurrency, DEFAULT_DETECTION_CONCURRENCY),
+  );
+  const workerCount = Math.max(1, Math.min(concurrency, users.length || 1));
 
-    const pointsBaselineKey = `anomaly:baseline:points:${userId}`;
-    const [currentPoints, baselineRaw] = await Promise.all([
-      getUserPoints(userId),
-      kv.get<number>(pointsBaselineKey),
-    ]);
+  let cursor = 0;
+  const workers = Array.from({ length: workerCount }, async () => {
+    let workerTriggered = 0;
 
-    const baseline = toFiniteNumber(baselineRaw);
-    const delta = currentPoints - baseline;
+    while (true) {
+      const currentIndex = cursor;
+      cursor += 1;
+      if (currentIndex >= users.length) break;
 
-    if (baseline > 0 && delta >= POINTS_SPIKE_THRESHOLD) {
-      const triggered = await triggerAlertOncePerDay(
-        `points_spike:${userId}`,
-        'warning',
-        'points_spike',
-        `用户 ${user.username} 积分短时增长异常（+${delta}）`,
-        {
-          userId,
-          username: user.username,
-          delta,
-        }
-      );
-      if (triggered) {
-        triggeredAlerts += 1;
-      }
+      const user = users[currentIndex];
+      workerTriggered += await detectUserAnomalies(user, todayStartAt);
     }
 
-    await kv.set(pointsBaselineKey, currentPoints, { ex: 72 * 60 * 60 });
+    return workerTriggered;
+  });
 
-    const lotteryRecords = await kv.lrange<{ createdAt?: number }>(
-      `lottery:user:records:${userId}`,
-      0,
-      RECENT_SCAN_LIMIT - 1,
-    );
-    const todayLotteryCount = (lotteryRecords ?? []).reduce((count, record) => {
-      return toFiniteNumber(record?.createdAt) >= todayStartAt ? count + 1 : count;
-    }, 0);
-
-    if (todayLotteryCount >= LOTTERY_HIGH_FREQUENCY_THRESHOLD) {
-      const triggered = await triggerAlertOncePerDay(
-        `lottery_high_frequency:${userId}`,
-        'critical',
-        'lottery_high_frequency',
-        `用户 ${user.username} 今日抽奖频次异常（${todayLotteryCount} 次）`,
-        {
-          userId,
-          username: user.username,
-          count: todayLotteryCount,
-        }
-      );
-      if (triggered) {
-        triggeredAlerts += 1;
-      }
-    }
-  }
+  const triggerCounts = await Promise.all(workers);
+  const triggeredAlerts = triggerCounts.reduce((sum, value) => sum + value, 0);
 
   return {
     scannedUsers: users.length,

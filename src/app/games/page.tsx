@@ -18,16 +18,51 @@ export default function GamesPage() {
   const router = useRouter();
   const [stats, setStats] = useState<GameStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [statsError, setStatsError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/games/pachinko/status')
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) {
+    let cancelled = false;
+
+    const fetchStats = async () => {
+      setLoading(true);
+      setStatsError(null);
+
+      try {
+        const res = await fetch('/api/games/pachinko/status');
+        const data = (await res.json().catch(() => null)) as {
+          success?: boolean;
+          data?: GameStats;
+          message?: string;
+        } | null;
+
+        if (!res.ok) {
+          throw new Error(data?.message ?? `加载游戏状态失败（HTTP ${res.status}）`);
+        }
+
+        if (!data?.success || !data.data) {
+          throw new Error(data?.message ?? '加载游戏状态失败');
+        }
+
+        if (!cancelled) {
           setStats(data.data);
         }
-      })
-      .finally(() => setLoading(false));
+      } catch (error) {
+        if (!cancelled) {
+          setStats(null);
+          setStatsError(error instanceof Error ? error.message : '网络错误，请稍后重试');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void fetchStats();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const games = [
@@ -76,6 +111,15 @@ export default function GamesPage() {
       href: '/games/linkgame',
       available: true,
     },
+    {
+      id: 'tower',
+      name: '爬塔挑战',
+      description: '选择路线击败怪物，吞噬数值壮大自己，挑战最高层！',
+      icon: '🗼',
+      color: 'from-red-500 to-amber-600',
+      href: '/games/tower',
+      available: true,
+    },
   ];
 
   return (
@@ -110,6 +154,11 @@ export default function GamesPage() {
           <p className="text-lg text-slate-500 max-w-2xl mx-auto">
             挑战小游戏赢取积分，兑换丰富奖励。
           </p>
+          {statsError && (
+            <p className="mt-4 text-sm text-red-600" role="alert">
+              {statsError}
+            </p>
+          )}
         </div>
 
         {/* 积分信息卡片 */}
@@ -159,42 +208,65 @@ export default function GamesPage() {
 
         {/* 游戏列表 */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {games.map((game) => (
-            <div
-              key={game.id}
-              className={`group relative bg-white rounded-3xl overflow-hidden transition-all duration-300 border border-slate-100 ${
-                game.available 
-                  ? 'hover:shadow-2xl hover:shadow-slate-200/50 cursor-pointer hover:-translate-y-1' 
-                  : 'opacity-70 grayscale-[0.5]'
-              }`}
-              onClick={() => game.available && router.push(game.href)}
-            >
-              {/* 游戏图标区域 */}
-              <div className={`h-48 flex items-center justify-center bg-gradient-to-br ${game.color} relative overflow-hidden`}>
-                <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                <span className="text-7xl transform group-hover:scale-110 transition-transform duration-300 drop-shadow-md">
-                  {game.icon}
-                </span>
-              </div>
-              
-              {/* 游戏信息 */}
-              <div className="p-6">
-                <h3 className="text-xl font-bold text-slate-900 mb-2">{game.name}</h3>
-                <p className="text-slate-500 text-sm leading-relaxed">{game.description}</p>
-                
-                <div className="mt-4 flex items-center text-sm font-medium text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity transform translate-y-2 group-hover:translate-y-0">
-                  {game.available ? '开始游戏 →' : '敬请期待'}
+          {games.map((game) => {
+            const titleId = `${game.id}-title`;
+            const descId = `${game.id}-desc`;
+            const cardContent = (
+              <>
+                {/* 游戏图标区域 */}
+                <div className={`h-48 flex items-center justify-center bg-gradient-to-br ${game.color} relative overflow-hidden`}>
+                  <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <span className="text-7xl transform group-hover:scale-110 transition-transform duration-300 drop-shadow-md">
+                    {game.icon}
+                  </span>
                 </div>
-              </div>
 
-              {/* 不可用标签 */}
-              {!game.available && (
+                {/* 游戏信息 */}
+                <div className="p-6">
+                  <h3 id={titleId} className="text-xl font-bold text-slate-900 mb-2">
+                    {game.name}
+                  </h3>
+                  <p id={descId} className="text-slate-500 text-sm leading-relaxed">
+                    {game.description}
+                  </p>
+
+                  <div className="mt-4 flex items-center text-sm font-medium text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity transform translate-y-2 group-hover:translate-y-0">
+                    {game.available ? '开始游戏 →' : '敬请期待'}
+                  </div>
+                </div>
+              </>
+            );
+
+            if (game.available) {
+              return (
+                <Link
+                  key={game.id}
+                  href={game.href}
+                  aria-labelledby={titleId}
+                  aria-describedby={descId}
+                  className="group relative block bg-white rounded-3xl overflow-hidden transition-all duration-300 border border-slate-100 hover:shadow-2xl hover:shadow-slate-200/50 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
+                >
+                  {cardContent}
+                </Link>
+              );
+            }
+
+            return (
+              <article
+                key={game.id}
+                aria-labelledby={titleId}
+                aria-describedby={descId}
+                className="group relative bg-white rounded-3xl overflow-hidden transition-all duration-300 border border-slate-100 opacity-70 grayscale-[0.5]"
+              >
+                {cardContent}
+
+                {/* 不可用标签 */}
                 <div className="absolute top-4 right-4 bg-slate-900/10 backdrop-blur-sm text-slate-900 text-xs font-bold px-3 py-1.5 rounded-full border border-slate-200/20">
                   COMING SOON
                 </div>
-              )}
-            </div>
-          ))}
+              </article>
+            );
+          })}
         </div>
 
         {/* 规则说明 */}

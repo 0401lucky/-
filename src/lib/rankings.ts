@@ -9,7 +9,7 @@ const MAX_STREAK_DAYS = 400;
 export type RankingPeriod = 'daily' | 'weekly' | 'monthly';
 export type PointsRankingPeriod = 'all' | 'monthly';
 export type CheckinRankingPeriod = 'all' | 'monthly';
-export type SupportedRankingGame = Extract<GameType, 'slot' | 'linkgame' | 'match3' | 'memory' | 'pachinko'>;
+export type SupportedRankingGame = Extract<GameType, 'slot' | 'linkgame' | 'match3' | 'memory' | 'pachinko' | 'tower'>;
 
 interface BaseRecord {
   score?: number;
@@ -79,6 +79,7 @@ const GAME_RECORD_KEY: Record<SupportedRankingGame, (userId: number) => string> 
   match3: (userId) => `match3:records:${userId}`,
   memory: (userId) => `memory:records:${userId}`,
   pachinko: (userId) => `game:records:${userId}`,
+  tower: (userId) => `tower:records:${userId}`,
 };
 
 function getChinaDate(date: Date = new Date()): Date {
@@ -217,7 +218,7 @@ export async function getAllGamesLeaderboardByRange(
   const limitPerGame = Math.max(1, Math.min(100, Math.floor(options.limitPerGame ?? 20)));
   const overallLimit = Math.max(1, Math.min(100, Math.floor(options.overallLimit ?? 20)));
 
-  const gameTypes: SupportedRankingGame[] = ['slot', 'linkgame', 'match3', 'memory', 'pachinko'];
+  const gameTypes: SupportedRankingGame[] = ['slot', 'linkgame', 'match3', 'memory', 'pachinko', 'tower'];
   const gameResults: GameRankingResult[] = [];
 
   const overallMap = new Map<number, Omit<OverallLeaderboardEntry, 'rank'>>();

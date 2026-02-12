@@ -5,7 +5,7 @@ import { getPointsLogs, getUserPoints } from './points';
 import { getCheckinStreak } from './rankings';
 import { listUserNotifications } from './notifications';
 
-type ProfileGameType = 'slot' | 'linkgame' | 'match3' | 'memory' | 'pachinko' | 'lottery';
+type ProfileGameType = 'slot' | 'linkgame' | 'match3' | 'memory' | 'pachinko' | 'tower' | 'lottery';
 
 export interface ProfileRecentRecord {
   gameType: ProfileGameType;
@@ -65,6 +65,7 @@ const GAME_RECORD_KEYS: Array<{ type: ProfileGameType; key: (userId: number) => 
   { type: 'match3', key: (userId) => `match3:records:${userId}` },
   { type: 'memory', key: (userId) => `memory:records:${userId}` },
   { type: 'pachinko', key: (userId) => `game:records:${userId}` },
+  { type: 'tower', key: (userId) => `tower:records:${userId}` },
   { type: 'lottery', key: (userId) => `lottery:user:records:${userId}` },
 ];
 

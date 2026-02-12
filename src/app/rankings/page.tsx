@@ -9,7 +9,7 @@ type GamePeriod = 'daily' | 'weekly' | 'monthly';
 type SimplePeriod = 'all' | 'monthly';
 type SettlementPeriod = 'weekly' | 'monthly';
 
-type SupportedGame = 'slot' | 'linkgame' | 'match3' | 'memory' | 'pachinko';
+type SupportedGame = 'slot' | 'linkgame' | 'match3' | 'memory' | 'pachinko' | 'tower';
 
 interface GameOverallEntry {
   rank: number;
@@ -88,6 +88,7 @@ const GAME_LABEL: Record<SupportedGame, string> = {
   match3: '消消乐',
   memory: '记忆翻牌',
   pachinko: '弹珠游戏',
+  tower: '爬塔挑战',
 };
 
 export default function RankingsPage() {

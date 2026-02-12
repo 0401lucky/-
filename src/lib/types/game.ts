@@ -1,7 +1,7 @@
 // src/lib/types/game.ts
 
 /** 游戏类型 */
-export type GameType = 'pachinko' | 'memory' | 'slot' | 'match3' | 'linkgame';
+export type GameType = 'pachinko' | 'memory' | 'slot' | 'match3' | 'linkgame' | 'tower';
 
 /** 连连看难度 */
 export type LinkGameDifficulty = 'easy' | 'normal' | 'hard';

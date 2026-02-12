@@ -16,7 +16,12 @@ export const GET = withAdmin(
       const historyLimit = Number.isFinite(historyLimitRaw) ? historyLimitRaw : 50;
       const runDetect = searchParams.get('detect') === '1';
 
-      const detection = runDetect ? await runAnomalyDetection() : null;
+      const detection = runDetect
+        ? await runAnomalyDetection({
+            maxUsers: 300,
+            concurrency: 6,
+          })
+        : null;
       const data = await getAlertsSnapshot({ historyLimit });
 
       return NextResponse.json({
