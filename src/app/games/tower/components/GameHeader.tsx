@@ -1,6 +1,6 @@
 'use client';
 
-import { Layers, Zap, Star } from 'lucide-react';
+import { Layers, Zap, Star, Shield } from 'lucide-react';
 import { floorToPoints } from '@/lib/tower-engine';
 
 interface GameHeaderProps {
@@ -8,9 +8,11 @@ interface GameHeaderProps {
   power: number;
   choicesCount: number;
   powerChanged?: boolean;
+  hasShield?: boolean;
+  isBossFloor?: boolean;
 }
 
-export default function GameHeader({ floorNumber, power, choicesCount, powerChanged }: GameHeaderProps) {
+export default function GameHeader({ floorNumber, power, choicesCount, powerChanged, hasShield, isBossFloor }: GameHeaderProps) {
   const estimatedScore = floorToPoints(choicesCount);
 
   // 进度条颜色随层数变化
@@ -26,8 +28,12 @@ export default function GameHeader({ floorNumber, power, choicesCount, powerChan
   // 进度百分比 (50层为满)
   const progressPercent = Math.min((floorNumber / 50) * 100, 100);
 
+  const headerBg = isBossFloor
+    ? 'bg-red-50/90 backdrop-blur-md border border-red-200'
+    : 'bg-white/90 backdrop-blur-md border border-slate-100';
+
   return (
-    <div className="sticky top-0 z-20 bg-white/90 backdrop-blur-md border border-slate-100 rounded-2xl shadow-sm mb-4 overflow-hidden">
+    <div className={`sticky top-0 z-20 ${headerBg} rounded-2xl shadow-sm mb-4 overflow-hidden transition-colors duration-300`}>
       <div className="flex items-center justify-between px-4 py-3">
         {/* 层数 */}
         <div className="flex items-center gap-2">
@@ -46,6 +52,17 @@ export default function GameHeader({ floorNumber, power, choicesCount, powerChan
           <span className={`text-xl font-black text-amber-700 tabular-nums ${powerChanged ? 'animate-score-pop' : ''}`}>
             {power}
           </span>
+        </div>
+
+        {/* 护盾状态 */}
+        <div className={`flex items-center justify-center w-9 h-9 rounded-xl border transition-colors duration-300 ${
+          hasShield
+            ? 'bg-blue-50 border-blue-200'
+            : 'bg-slate-50 border-slate-200'
+        }`}>
+          <Shield className={`w-5 h-5 transition-colors duration-300 ${
+            hasShield ? 'text-blue-500' : 'text-slate-300'
+          }`} />
         </div>
 
         {/* 预估得分 */}

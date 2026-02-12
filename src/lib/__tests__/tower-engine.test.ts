@@ -5,6 +5,7 @@ import {
   generateFloor,
   simulateTowerGame,
   type TowerLaneContent,
+  type ResolvedLaneContent,
 } from '../tower-engine';
 
 function sequenceRng(values: number[]): () => number {
@@ -16,15 +17,19 @@ function sequenceRng(values: number[]): () => number {
   };
 }
 
+function resolveLane(lane: TowerLaneContent): ResolvedLaneContent {
+  return lane.type === 'mystery' ? lane.hidden : lane;
+}
+
 function findFirstFloorLane(
-  predicate: (lane: TowerLaneContent) => boolean
-): { seed: string; choice: number; lane: TowerLaneContent } {
+  predicate: (lane: ResolvedLaneContent) => boolean
+): { seed: string; choice: number; lane: ResolvedLaneContent } {
   for (let i = 0; i < 5000; i += 1) {
     const seed = `tower-seed-${i}`;
     const floor = generateFloor(createTowerRng(seed), 1, 1);
-    const choice = floor.lanes.findIndex(predicate);
+    const choice = floor.lanes.findIndex((l) => predicate(resolveLane(l)));
     if (choice >= 0) {
-      const lane = floor.lanes[choice];
+      const lane = resolveLane(floor.lanes[choice]);
       if (lane) {
         return { seed, choice, lane };
       }
@@ -45,21 +50,22 @@ function findTwoFloorGrowthScenario(): {
     const rng = createTowerRng(seed);
 
     const floor1 = generateFloor(rng, 1, 1);
-    const firstChoice = floor1.lanes.findIndex((lane) => lane.type === 'add');
+    const firstChoice = floor1.lanes.findIndex((l) => resolveLane(l).type === 'add');
     if (firstChoice < 0) continue;
 
-    const firstLane = floor1.lanes[firstChoice];
-    if (!firstLane || firstLane.type !== 'add') continue;
+    const firstLane = resolveLane(floor1.lanes[firstChoice]);
+    if (firstLane.type !== 'add') continue;
 
     const powerAfterFloor1 = 1 + firstLane.value;
     const floor2 = generateFloor(rng, 2, powerAfterFloor1);
-    const secondChoice = floor2.lanes.findIndex(
-      (lane) => lane.type === 'monster' && lane.value < powerAfterFloor1
-    );
+    const secondChoice = floor2.lanes.findIndex((l) => {
+      const resolved = resolveLane(l);
+      return resolved.type === 'monster' && resolved.value < powerAfterFloor1;
+    });
     if (secondChoice < 0) continue;
 
-    const secondLane = floor2.lanes[secondChoice];
-    if (!secondLane || secondLane.type !== 'monster') continue;
+    const secondLane = resolveLane(floor2.lanes[secondChoice]);
+    if (secondLane.type !== 'monster') continue;
 
     return {
       seed,
@@ -73,19 +79,40 @@ function findTwoFloorGrowthScenario(): {
 }
 
 describe('tower-engine', () => {
-  it('会在保底安全路触发时修正不可通关楼层', () => {
+  it('会在保底安全路触发时确保存在安全通道', () => {
+    // 新 RNG 模式：每条通道消费 3 次 (shieldRoll, typeRoll, valueRoll)
+    // 层 1: laneCount=[2,2], safeChance=1.0, shieldChance=0, mysteryChance=0
+    // idx0=0 → laneCount=2, idx1=0 → needSafe=true
+    // Lane 0: idx2=0.9(shield), idx3=0.9(type), idx4=0.9(value) → monster(3)
+    // Lane 1: idx5=0.9(shield), idx6=0(type), idx7=0(value) → add(1)
     const rng = sequenceRng([0, 0, 0.9, 0.9, 0.9, 0.9, 0, 0]);
     const floor = generateFloor(rng, 1, 1);
 
     expect(floor.lanes).toHaveLength(2);
-    expect(floor.lanes.some((lane) => lane.type === 'add')).toBe(true);
+    expect(floor.lanes.some((lane) => resolveLane(lane).type === 'add')).toBe(true);
   });
 
   it('在中层难度允许生成乘法增益通道', () => {
-    const rng = sequenceRng([0, 0, 0.35, 0, 0.9, 0]);
+    // 层 6: shieldChance=0.05, hasMultiply=true, multiplyMin=2, multiplyMax=2, mysteryChance=0.15
+    // idx0=0 → laneCount=2
+    // idx1=0.5 → needSafe (0.5 < 0.85)
+    // Lane 0: idx2=0.1(>=0.05 not shield), idx3=0.35(multiply), idx4=0.5(value: 2+floor(0.5*1)=2)
+    // Lane 1: idx5=0.1(>=0.05 not shield), idx6=0.5(>=0.4 monster), idx7=0.1(value: 2+floor(0.1*7)=2)
+    // Mystery: idx8=0.5(>0.15 skip), idx9=0.5(>0.15 skip)
+    const rng = sequenceRng([0, 0.5, 0.1, 0.35, 0.5, 0.1, 0.5, 0.1, 0.5, 0.5]);
     const floor = generateFloor(rng, 6, 3);
 
-    expect(floor.lanes.some((lane) => lane.type === 'multiply')).toBe(true);
+    expect(floor.lanes.some((lane) => resolveLane(lane).type === 'multiply')).toBe(true);
+  });
+
+  it('Boss 层在 10 的倍数时生成', () => {
+    const rng = createTowerRng('boss-test');
+    let power = 100;
+    const floor10 = generateFloor(rng, 10, power);
+
+    expect(floor10.isBoss).toBe(true);
+    expect(floor10.lanes).toHaveLength(2);
+    expect(floor10.lanes.some((l) => resolveLane(l).type === 'boss')).toBe(true);
   });
 
   it('会拒绝非法输入参数', () => {
@@ -152,12 +179,74 @@ describe('tower-engine', () => {
     expect(result.finalPower).toBe(scenario.expectedPower);
   });
 
+  it('护盾可抵挡一次致命怪物攻击', () => {
+    // 搜索一个 seed，在前几层内能找到 shield 通道和致命 monster
+    for (let i = 0; i < 5000; i++) {
+      const seed = `shield-test-${i}`;
+      const rng = createTowerRng(seed);
+      let power = 1;
+      let shield = false;
+      const choices: number[] = [];
+
+      let found = false;
+      for (let f = 1; f <= 20; f++) {
+        const floor = generateFloor(rng, f, power);
+
+        if (!shield) {
+          // 寻找 shield 通道
+          const shieldIdx = floor.lanes.findIndex((l) => resolveLane(l).type === 'shield');
+          if (shieldIdx >= 0) {
+            choices.push(shieldIdx);
+            shield = true;
+            continue;
+          }
+        } else {
+          // 有盾，寻找打不过的怪物
+          const lethalIdx = floor.lanes.findIndex((l) => {
+            const r = resolveLane(l);
+            return r.type === 'monster' && r.value >= power;
+          });
+          if (lethalIdx >= 0) {
+            choices.push(lethalIdx);
+            // 护盾应该抵挡了
+            const sim = simulateTowerGame(seed, choices);
+            expect(sim.ok).toBe(true);
+            if (sim.ok) {
+              expect(sim.gameOver).toBe(false);
+              expect(sim.finalShield).toBe(false);
+            }
+            found = true;
+            break;
+          }
+        }
+
+        // 选择安全路线继续
+        const safeIdx = floor.lanes.findIndex((l) => {
+          const r = resolveLane(l);
+          return r.type === 'add' || (r.type === 'monster' && r.value < power);
+        });
+        if (safeIdx < 0) break;
+        choices.push(safeIdx);
+        const r = resolveLane(floor.lanes[safeIdx]);
+        if (r.type === 'add') power += r.value;
+        else if (r.type === 'monster' && power > r.value) power += r.value;
+      }
+
+      if (found) return;
+    }
+
+    throw new Error('未找到可验证护盾机制的样本');
+  });
+
   it('floorToPoints 在分段与上限边界上计算正确', () => {
     expect(floorToPoints(-1)).toBe(0);
-    expect(floorToPoints(1)).toBe(10);
-    expect(floorToPoints(10)).toBe(100);
-    expect(floorToPoints(15)).toBe(135);
-    expect(floorToPoints(18)).toBe(150);
-    expect(floorToPoints(100)).toBe(150);
+    expect(floorToPoints(0)).toBe(0);
+    expect(floorToPoints(1)).toBe(20);
+    expect(floorToPoints(10)).toBe(200);
+    expect(floorToPoints(15)).toBe(275);
+    expect(floorToPoints(20)).toBe(350);
+    expect(floorToPoints(30)).toBe(450);
+    expect(floorToPoints(40)).toBe(500);
+    expect(floorToPoints(100)).toBe(500);
   });
 });

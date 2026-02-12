@@ -13,16 +13,19 @@ import GameHeader from './components/GameHeader';
 import ResultModal from './components/ResultModal';
 import { useGameSession } from './hooks/useGameSession';
 import { createTowerRng, generateFloor, simulateTowerGame } from '@/lib/tower-engine';
-import type { TowerFloor } from '@/lib/tower-engine';
+import type { TowerFloor, TowerLaneContent, ResolvedLaneContent } from '@/lib/tower-engine';
 import {
   ANIM_WALK_DURATION,
   ANIM_ATTACK_DURATION,
   ANIM_POWERUP_DURATION,
   ANIM_DEATH_DURATION,
+  ANIM_REVEAL_DURATION,
+  ANIM_SHIELD_BLOCK_DURATION,
+  ANIM_BOSS_DEFEAT_DURATION,
 } from './lib/constants';
 
 type Phase = 'loading' | 'ready' | 'playing' | 'result';
-type AnimState = 'idle' | 'walking' | 'attacking' | 'powerup' | 'death' | 'nextFloor';
+type AnimState = 'idle' | 'walking' | 'attacking' | 'powerup' | 'death' | 'nextFloor' | 'revealing' | 'shieldBlock' | 'bossDefeated';
 type TimerHandle = ReturnType<typeof setTimeout> | number;
 
 function choicesStorageKey(sessionId: string) {
@@ -79,9 +82,11 @@ export default function TowerPage() {
   const [phase, setPhase] = useState<Phase>('loading');
   const [choices, setChoices] = useState<number[]>([]);
   const [power, setPower] = useState(1);
+  const [shield, setShield] = useState(false);
   const [currentFloor, setCurrentFloor] = useState<TowerFloor | null>(null);
   const [animState, setAnimState] = useState<AnimState>('idle');
   const [selectedLane, setSelectedLane] = useState<number | null>(null);
+  const [revealedLane, setRevealedLane] = useState<TowerLaneContent | null>(null);
   const [floatingTexts, setFloatingTexts] = useState<FloatingTextItem[]>([]);
   const [result, setResult] = useState<{
     floorsClimbed: number;
@@ -99,6 +104,7 @@ export default function TowerPage() {
   const choicesRef = useRef<number[]>([]);
   const rngRef = useRef<(() => number) | null>(null);
   const powerRef = useRef(1);
+  const shieldRef = useRef(false);
   const animTimersRef = useRef<Set<TimerHandle>>(new Set());
   const floatingIdRef = useRef(0);
 
@@ -126,6 +132,10 @@ export default function TowerPage() {
   useEffect(() => {
     powerRef.current = power;
   }, [power]);
+
+  useEffect(() => {
+    shieldRef.current = shield;
+  }, [shield]);
 
   // 飘字辅助函数
   const addFloatingText = useCallback((text: string, color: string) => {
@@ -169,21 +179,42 @@ export default function TowerPage() {
       // 重建 rng 状态到正确位置
       const freshRng = createTowerRng(session.seed);
       let currentPower = 1;
+      let currentShield = false;
       for (let i = 0; i < restoredChoices.length; i++) {
         const floor = generateFloor(freshRng, i + 1, currentPower);
-        const lane = floor.lanes[restoredChoices[i]];
-        if (lane.type === 'monster' && currentPower > lane.value) {
-          currentPower += lane.value;
+        let lane = floor.lanes[restoredChoices[i]];
+        if (lane.type === 'mystery') lane = lane.hidden;
+
+        if (lane.type === 'boss') {
+          if (currentPower > lane.value) {
+            currentPower += lane.value * 2;
+          } else if (currentShield) {
+            currentShield = false;
+          }
+        } else if (lane.type === 'monster') {
+          if (currentPower > lane.value) {
+            currentPower += lane.value;
+          } else if (currentShield) {
+            currentShield = false;
+          }
         } else if (lane.type === 'add') {
           currentPower += lane.value;
         } else if (lane.type === 'multiply') {
           currentPower *= lane.value;
+        } else if (lane.type === 'shield') {
+          if (currentShield) {
+            currentPower += lane.value;
+          } else {
+            currentShield = true;
+          }
         }
       }
 
       rngRef.current = freshRng;
       setPower(sim.finalPower);
       powerRef.current = sim.finalPower;
+      setShield(sim.finalShield);
+      shieldRef.current = sim.finalShield;
 
       if (sim.gameOver) {
         // 恢复后已死亡 - 直接提交
@@ -200,6 +231,8 @@ export default function TowerPage() {
       setChoices([]);
       setPower(1);
       powerRef.current = 1;
+      setShield(false);
+      shieldRef.current = false;
 
       if (restoredChoices.length > 0) {
         clearChoices(session.sessionId);
@@ -213,6 +246,7 @@ export default function TowerPage() {
     setPhase('playing');
     setAnimState('idle');
     setSelectedLane(null);
+    setRevealedLane(null);
     setIsAnimating(false);
     setPendingSubmitChoices(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -264,88 +298,115 @@ export default function TowerPage() {
         return;
       }
 
-      const lane = currentFloor.lanes[laneIndex];
+      const rawLane = currentFloor.lanes[laneIndex];
       setSelectedLane(laneIndex);
       setIsAnimating(true);
-
-      // 行走动画
       setAnimState('walking');
 
-      scheduleTimer(() => {
-        if (lane.type === 'monster') {
+      // --- 内部闭包函数 ---
+
+      const advanceToNextFloor = (options?: { newPower?: number; shieldChange?: 'gain' | 'lose' }) => {
+        if (options?.newPower !== undefined) {
+          setPower(options.newPower);
+          powerRef.current = options.newPower;
+          setPowerChanged(true);
+          scheduleTimer(() => setPowerChanged(false), 300);
+        }
+
+        if (options?.shieldChange === 'gain') {
+          setShield(true);
+          shieldRef.current = true;
+        } else if (options?.shieldChange === 'lose') {
+          setShield(false);
+          shieldRef.current = false;
+        }
+
+        const newChoices = [...choicesRef.current, laneIndex];
+        choicesRef.current = newChoices;
+        setChoices(newChoices);
+        saveChoices(session.sessionId, newChoices);
+
+        const nextFloor = generateFloor(rngRef.current!, newChoices.length + 1, powerRef.current);
+        setCurrentFloor(nextFloor);
+        setRevealedLane(null);
+        setAnimState('idle');
+        setSelectedLane(null);
+        setIsAnimating(false);
+      };
+
+      const handleDeath = () => {
+        setAnimState('death');
+        addFloatingText('GAME OVER', '#ff1744');
+
+        const newChoices = [...choicesRef.current, laneIndex];
+        choicesRef.current = newChoices;
+        setChoices(newChoices);
+        saveChoices(session.sessionId, newChoices);
+
+        scheduleTimer(() => {
+          void handleSubmit(newChoices);
+        }, ANIM_DEATH_DURATION);
+      };
+
+      const handleShieldBlock = () => {
+        setAnimState('shieldBlock');
+        addFloatingText('护盾抵挡!', '#42a5f5');
+        scheduleTimer(() => advanceToNextFloor({ shieldChange: 'lose' }), ANIM_SHIELD_BLOCK_DURATION);
+      };
+
+      const executeLaneEffect = (lane: ResolvedLaneContent) => {
+        if (lane.type === 'boss') {
           if (powerRef.current > lane.value) {
-            // 攻击动画
+            setAnimState('bossDefeated');
+            addFloatingText(`+${lane.value * 2}`, '#ff6d00');
+            scheduleTimer(() => advanceToNextFloor({ newPower: powerRef.current + lane.value * 2 }), ANIM_BOSS_DEFEAT_DURATION);
+          } else if (shieldRef.current) {
+            handleShieldBlock();
+          } else {
+            handleDeath();
+          }
+        } else if (lane.type === 'monster') {
+          if (powerRef.current > lane.value) {
             setAnimState('attacking');
             addFloatingText(`+${lane.value}`, '#ef5350');
-
-            scheduleTimer(() => {
-              const newPower = powerRef.current + lane.value;
-              setPower(newPower);
-              powerRef.current = newPower;
-              setPowerChanged(true);
-              scheduleTimer(() => setPowerChanged(false), 300);
-
-              const newChoices = [...choicesRef.current, laneIndex];
-              choicesRef.current = newChoices;
-              setChoices(newChoices);
-              saveChoices(session.sessionId, newChoices);
-
-              // 生成下一层
-              const nextFloor = generateFloor(rngRef.current!, newChoices.length + 1, newPower);
-              setCurrentFloor(nextFloor);
-              setAnimState('idle');
-              setSelectedLane(null);
-              setIsAnimating(false);
-            }, ANIM_ATTACK_DURATION);
+            scheduleTimer(() => advanceToNextFloor({ newPower: powerRef.current + lane.value }), ANIM_ATTACK_DURATION);
+          } else if (shieldRef.current) {
+            handleShieldBlock();
           } else {
-            // 死亡
-            setAnimState('death');
-            addFloatingText('GAME OVER', '#ff1744');
-
-            const newChoices = [...choicesRef.current, laneIndex];
-            choicesRef.current = newChoices;
-            setChoices(newChoices);
-            saveChoices(session.sessionId, newChoices);
-
-            scheduleTimer(() => {
-              void handleSubmit(newChoices);
-            }, ANIM_DEATH_DURATION);
+            handleDeath();
           }
-        } else {
-          // 增益动画
+        } else if (lane.type === 'shield') {
           setAnimState('powerup');
-
-          let newPower: number;
-          let floatText: string;
-
-          if (lane.type === 'add') {
-            newPower = powerRef.current + lane.value;
-            floatText = `+${lane.value}`;
+          if (shieldRef.current) {
+            addFloatingText(`+${lane.value}`, '#42a5f5');
+            scheduleTimer(() => advanceToNextFloor({ newPower: powerRef.current + lane.value }), ANIM_POWERUP_DURATION);
           } else {
-            newPower = powerRef.current * lane.value;
-            floatText = `x${lane.value}`;
+            addFloatingText('获得护盾!', '#42a5f5');
+            scheduleTimer(() => advanceToNextFloor({ shieldChange: 'gain' }), ANIM_POWERUP_DURATION);
           }
+        } else if (lane.type === 'add') {
+          setAnimState('powerup');
+          addFloatingText(`+${lane.value}`, '#66bb6a');
+          scheduleTimer(() => advanceToNextFloor({ newPower: powerRef.current + lane.value }), ANIM_POWERUP_DURATION);
+        } else if (lane.type === 'multiply') {
+          setAnimState('powerup');
+          addFloatingText(`x${lane.value}`, '#ffa726');
+          scheduleTimer(() => advanceToNextFloor({ newPower: powerRef.current * lane.value }), ANIM_POWERUP_DURATION);
+        }
+      };
 
-          addFloatingText(floatText, lane.type === 'add' ? '#66bb6a' : '#ffa726');
+      // --- 行走后执行 ---
 
+      scheduleTimer(() => {
+        if (rawLane.type === 'mystery') {
+          const resolved = rawLane.hidden;
+          setRevealedLane(resolved);
+          setAnimState('revealing');
           scheduleTimer(() => {
-            setPower(newPower);
-            powerRef.current = newPower;
-            setPowerChanged(true);
-            scheduleTimer(() => setPowerChanged(false), 300);
-
-            const newChoices = [...choicesRef.current, laneIndex];
-            choicesRef.current = newChoices;
-            setChoices(newChoices);
-            saveChoices(session.sessionId, newChoices);
-
-            // 生成下一层
-            const nextFloor = generateFloor(rngRef.current!, newChoices.length + 1, newPower);
-            setCurrentFloor(nextFloor);
-            setAnimState('idle');
-            setSelectedLane(null);
-            setIsAnimating(false);
-          }, ANIM_POWERUP_DURATION);
+            executeLaneEffect(resolved);
+          }, ANIM_REVEAL_DURATION);
+        } else {
+          executeLaneEffect(rawLane);
         }
       }, ANIM_WALK_DURATION);
     },
@@ -366,7 +427,10 @@ export default function TowerPage() {
       setChoices([]);
       setPower(1);
       powerRef.current = 1;
+      setShield(false);
+      shieldRef.current = false;
       setCurrentFloor(null);
+      setRevealedLane(null);
     }
   }, [startGame, setError, status?.pointsLimitReached]);
 
@@ -380,7 +444,10 @@ export default function TowerPage() {
       setChoices([]);
       setPower(1);
       powerRef.current = 1;
+      setShield(false);
+      shieldRef.current = false;
       setCurrentFloor(null);
+      setRevealedLane(null);
     }
   }, [startGame, setError]);
 
@@ -391,11 +458,14 @@ export default function TowerPage() {
     setChoices([]);
     setPower(1);
     powerRef.current = 1;
+    setShield(false);
+    shieldRef.current = false;
     setCurrentFloor(null);
     setResult(null);
     setPendingSubmitChoices(null);
     setAnimState('idle');
     setSelectedLane(null);
+    setRevealedLane(null);
     setIsAnimating(false);
     setPhase('ready');
   }, [cancelGame, session]);
@@ -415,7 +485,10 @@ export default function TowerPage() {
     setChoices([]);
     setPower(1);
     powerRef.current = 1;
+    setShield(false);
+    shieldRef.current = false;
     setCurrentFloor(null);
+    setRevealedLane(null);
     resetSubmitFlag();
     setPhase('ready');
     void fetchStatus();
@@ -646,6 +719,8 @@ export default function TowerPage() {
               power={power}
               choicesCount={choices.length}
               powerChanged={powerChanged}
+              hasShield={shield}
+              isBossFloor={currentFloor.isBoss}
             />
 
             {/* 核心交互区 */}
@@ -657,6 +732,8 @@ export default function TowerPage() {
                 disabled={isAnimating || loading || hasPendingSubmit}
                 selectedLane={selectedLane}
                 animState={animState}
+                revealedLane={revealedLane}
+                hasShield={shield}
               />
               <FloatingText items={floatingTexts} />
             </div>
@@ -669,8 +746,9 @@ export default function TowerPage() {
                   flex items-center justify-center text-3xl shadow-lg shadow-blue-200
                   transition-all duration-300
                   ${animState === 'walking' ? 'animate-bounce' : ''}
-                  ${animState === 'attacking' ? 'scale-110' : ''}
+                  ${animState === 'attacking' || animState === 'bossDefeated' ? 'scale-110' : ''}
                   ${animState === 'powerup' ? 'scale-110 ring-4 ring-yellow-300/50' : ''}
+                  ${animState === 'shieldBlock' ? 'scale-110 ring-4 ring-blue-300/50' : ''}
                   ${animState === 'death' ? 'animate-death-flash' : ''}
                 `}>
                   ⚔️
@@ -678,6 +756,11 @@ export default function TowerPage() {
                 <div className="absolute -top-2 -right-2 bg-amber-500 text-white text-xs font-black px-1.5 py-0.5 rounded-lg shadow-sm tabular-nums">
                   {power}
                 </div>
+                {shield && (
+                  <div className="absolute -top-2 -left-2 bg-blue-500 text-white text-xs px-1.5 py-0.5 rounded-lg shadow-sm">
+                    🛡️
+                  </div>
+                )}
               </div>
             </div>
 
@@ -727,6 +810,24 @@ export default function TowerPage() {
                     <span className="text-lg">⭐</span>
                     <span className="text-slate-600">
                       <span className="font-bold text-amber-600">乘法增益</span> — 力量值翻倍
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 p-2.5 rounded-xl bg-orange-50 text-sm">
+                    <span className="text-lg">💀</span>
+                    <span className="text-slate-600">
+                      <span className="font-bold text-orange-600">Boss</span> — 每10层出现，击败获得双倍数值奖励
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 p-2.5 rounded-xl bg-blue-50 text-sm">
+                    <span className="text-lg">🛡️</span>
+                    <span className="text-slate-600">
+                      <span className="font-bold text-blue-600">护盾</span> — 获得护盾可抵挡一次致命攻击；已有护盾时转化为力量
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 p-2.5 rounded-xl bg-purple-50 text-sm">
+                    <span className="text-lg">❓</span>
+                    <span className="text-slate-600">
+                      <span className="font-bold text-purple-600">迷雾</span> — 隐藏通道内容，选择后揭示真实效果
                     </span>
                   </div>
                   {status?.pointsLimitReached && (
