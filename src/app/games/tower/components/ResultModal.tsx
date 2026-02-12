@@ -45,10 +45,10 @@ export default function ResultModal({
           </div>
 
           <h3 className="text-2xl font-black text-slate-900 mb-1">
-            {gameOver ? '挑战结束!' : '成功突破!'}
+            {gameOver ? '挑战结束!' : '安全结算!'}
           </h3>
           <p className="text-slate-500 text-sm mb-8 font-medium">
-            {gameOver ? '遇到了比你更强的敌人...' : '完成了所有挑战！'}
+            {gameOver ? '遇到了比你更强的敌人...' : '你选择了带着战利品安全离场'}
           </p>
 
           <div className="grid grid-cols-2 gap-4 mb-8">

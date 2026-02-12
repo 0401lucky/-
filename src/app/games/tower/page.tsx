@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, ChevronLeft, Star, Trophy, Zap, Layers, X, HelpCircle } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, Star, Trophy, Zap, Layers, X, HelpCircle, Flag } from 'lucide-react';
 import LaneCards from './components/LaneCards';
 import FloatingText from './components/FloatingText';
 import type { FloatingTextItem } from './components/FloatingText';
@@ -99,6 +99,7 @@ export default function TowerPage() {
   const [isAnimating, setIsAnimating] = useState(false);
   const [pendingSubmitChoices, setPendingSubmitChoices] = useState<number[] | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [showSettleConfirm, setShowSettleConfirm] = useState(false);
   const [powerChanged, setPowerChanged] = useState(false);
 
   const choicesRef = useRef<number[]>([]);
@@ -467,6 +468,7 @@ export default function TowerPage() {
     setSelectedLane(null);
     setRevealedLane(null);
     setIsAnimating(false);
+    setShowSettleConfirm(false);
     setPhase('ready');
   }, [cancelGame, session]);
 
@@ -475,6 +477,17 @@ export default function TowerPage() {
     setError(null);
     void handleSubmit(pendingSubmitChoices);
   }, [pendingSubmitChoices, loading, setError, handleSubmit]);
+
+  const handleSettle = useCallback(() => {
+    if (isAnimating || loading || pendingSubmitChoices !== null || choicesRef.current.length === 0) return;
+    setShowSettleConfirm(true);
+  }, [isAnimating, loading, pendingSubmitChoices]);
+
+  const handleConfirmSettle = useCallback(() => {
+    setShowSettleConfirm(false);
+    setIsAnimating(true);
+    void handleSubmit(choicesRef.current);
+  }, [handleSubmit]);
 
   const handlePlayAgain = useCallback(async () => {
     setResult(null);
@@ -776,6 +789,15 @@ export default function TowerPage() {
                   帮助
                 </button>
                 <button
+                  onClick={handleSettle}
+                  disabled={loading || isAnimating || choices.length === 0 || hasPendingSubmit}
+                  className="inline-flex items-center gap-1.5 text-emerald-600 hover:text-emerald-700 font-semibold px-3 py-1.5 rounded-lg hover:bg-emerald-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed border border-emerald-200 hover:border-emerald-300 disabled:border-transparent"
+                  type="button"
+                >
+                  <Flag className="w-4 h-4" />
+                  主动结算
+                </button>
+                <button
                   onClick={handleCancel}
                   disabled={loading || isAnimating}
                   className="inline-flex items-center gap-1.5 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed font-medium px-2 py-1 rounded-lg hover:bg-red-50"
@@ -853,6 +875,43 @@ export default function TowerPage() {
             onPlayAgain={handlePlayAgain}
             onBackToGames={handleBackToGames}
           />
+        )}
+
+        {/* 主动结算确认 */}
+        {showSettleConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white rounded-[2rem] p-8 max-w-sm w-full shadow-2xl animate-in zoom-in-95 slide-in-from-bottom-4">
+              <div className="text-center">
+                <div className="w-16 h-16 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto mb-5 border border-emerald-100 rotate-3">
+                  <Flag className="w-8 h-8 text-emerald-500" />
+                </div>
+                <h3 className="text-xl font-extrabold text-slate-900 mb-2">确认结算？</h3>
+                <p className="text-slate-500 mb-4 leading-relaxed text-sm">
+                  当前已爬到第 <span className="font-bold text-slate-900 tabular-nums">{choices.length}</span> 层，
+                  力量值 <span className="font-bold text-slate-900 tabular-nums">{power}</span>。
+                </p>
+                <p className="text-slate-400 mb-8 text-xs">
+                  结算后将按已通过的层数计算积分，本局结束。
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowSettleConfirm(false)}
+                    className="flex-1 py-3 px-4 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-colors"
+                    type="button"
+                  >
+                    继续攀爬
+                  </button>
+                  <button
+                    onClick={handleConfirmSettle}
+                    className="flex-1 py-3 px-4 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl transition-colors shadow-lg shadow-emerald-200"
+                    type="button"
+                  >
+                    确认结算
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* 积分上限警告 */}
