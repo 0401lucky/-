@@ -89,7 +89,10 @@ describe('rankings', () => {
       overallLimit: 10,
     });
 
-    expect(result.games).toHaveLength(5);
+    const gameTypes = result.games.map((item) => item.gameType).sort();
+
+    expect(result.games).toHaveLength(6);
+    expect(gameTypes).toEqual(['linkgame', 'match3', 'memory', 'pachinko', 'slot', 'tower']);
     expect(result.overall[0]).toMatchObject({
       userId: 1001,
     });
@@ -164,5 +167,4 @@ describe('rankings', () => {
     expect(leaderboard.leaderboard[1]).toMatchObject({ userId: 1002, streak: 1 });
   });
 });
-
 
