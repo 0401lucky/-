@@ -400,6 +400,25 @@ export async function getCheckinStreak(
   return getConsecutiveCheckinDays(flags, startIndex);
 }
 
+export async function getTotalCheckinDays(userId: number): Promise<number> {
+  const chinaNow = getChinaDate();
+  const keys: string[] = [];
+  for (let offset = 0; offset < MAX_STREAK_DAYS; offset += 1) {
+    const d = new Date(chinaNow);
+    d.setUTCDate(d.getUTCDate() - offset);
+    const dateStr = formatChinaDate(d);
+    keys.push(`user:checkin:${userId}:${dateStr}`);
+  }
+
+  const values = keys.length > 0 ? await kv.mget<unknown[]>(...keys) : [];
+  const flags = values ?? [];
+  let total = 0;
+  for (const flag of flags) {
+    if (flag) total += 1;
+  }
+  return total;
+}
+
 export async function getCheckinStreakLeaderboard(
   period: CheckinRankingPeriod = 'all',
   limit = 20,

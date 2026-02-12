@@ -35,6 +35,7 @@ interface ProfileOverviewData {
   };
   gameplay: {
     checkinStreak: number;
+    totalCheckinDays: number;
     recentRecords: Array<{
       gameType: string;
       score: number;
@@ -174,7 +175,7 @@ export default function ProfilePage() {
           <div className="bg-white border border-stone-200 rounded-2xl p-5">
             <p className="text-xs text-stone-500 mb-2">签到连续天数</p>
             <p className="text-2xl font-bold text-stone-800">{loading ? '-' : `${data?.gameplay.checkinStreak ?? 0} 天`}</p>
-            <p className="text-xs text-stone-500 mt-2">未读通知 {loading ? '-' : data?.notifications.unreadCount ?? 0}</p>
+            <p className="text-xs text-stone-500 mt-2">累计签到 {loading ? '-' : `${data?.gameplay.totalCheckinDays ?? 0} 天`}</p>
           </div>
         </section>
 

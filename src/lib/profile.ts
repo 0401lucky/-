@@ -2,7 +2,7 @@ import { kv } from '@vercel/kv';
 import { ALBUMS, CARDS } from './cards/config';
 import { getUserCardData } from './cards/draw';
 import { getPointsLogs, getUserPoints } from './points';
-import { getCheckinStreak } from './rankings';
+import { getCheckinStreak, getTotalCheckinDays } from './rankings';
 import { listUserNotifications } from './notifications';
 
 type ProfileGameType = 'slot' | 'linkgame' | 'match3' | 'memory' | 'pachinko' | 'tower' | 'lottery';
@@ -44,6 +44,7 @@ export interface ProfileOverview {
   };
   gameplay: {
     checkinStreak: number;
+    totalCheckinDays: number;
     recentRecords: ProfileRecentRecord[];
   };
   notifications: {
@@ -140,6 +141,7 @@ export async function getProfileOverview(
     pointsLogs,
     cardData,
     checkinStreak,
+    totalCheckinDays,
     recentRecords,
     notificationResult,
   ] = await Promise.all([
@@ -147,6 +149,7 @@ export async function getProfileOverview(
     getPointsLogs(user.id, 10),
     getUserCardData(String(user.id)),
     getCheckinStreak(user.id, 'all'),
+    getTotalCheckinDays(user.id),
     getRecentRecords(user.id, 10),
     listUserNotifications(user.id, { page: 1, limit: 5 }),
   ]);
@@ -180,6 +183,7 @@ export async function getProfileOverview(
     },
     gameplay: {
       checkinStreak,
+      totalCheckinDays,
       recentRecords,
     },
     notifications: {
