@@ -247,6 +247,7 @@ describe('tower-engine', () => {
     expect(floorToPoints(20)).toBe(350);
     expect(floorToPoints(30)).toBe(450);
     expect(floorToPoints(40)).toBe(500);
-    expect(floorToPoints(100)).toBe(500);
+    expect(floorToPoints(100)).toBe(800);
+    expect(floorToPoints(300)).toBe(1500);
   });
 });

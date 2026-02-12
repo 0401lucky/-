@@ -675,7 +675,7 @@ export default function TowerPage() {
                   </div>
                   <div className="p-4 bg-amber-50 rounded-xl text-sm text-amber-700 leading-relaxed border border-amber-100">
                     <span className="font-semibold">积分规则：</span>
-                    得分 = 爬过的层数转化积分（1-10层每层20分，11-20层每层15分，21-30层每层10分，31层起每层5分，单局上限500分）。
+                    得分 = 爬过的层数转化积分（1-10层每层20分，11-20层每层15分，21-30层每层10分，31层起每层5分，单局上限1500分）。
                   </div>
                 </div>
               </div>

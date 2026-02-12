@@ -322,7 +322,7 @@ export function simulateTowerGame(
 // ---- 积分转换 ----
 
 export function floorToPoints(floorsClimbed: number): number {
-  const MAX_POINTS = 500;
+  const MAX_POINTS = 1500;
   let points = 0;
 
   if (floorsClimbed <= 0) return 0;
