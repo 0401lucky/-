@@ -12,7 +12,7 @@ import type { FloatingTextItem } from './components/FloatingText';
 import GameHeader from './components/GameHeader';
 import ResultModal from './components/ResultModal';
 import { useGameSession } from './hooks/useGameSession';
-import { createTowerRng, generateFloor, simulateTowerGame } from '@/lib/tower-engine';
+import { createTowerRng, generateFloor, simulateTowerGame, MAX_POWER, formatPower } from '@/lib/tower-engine';
 import type { TowerFloor, TowerLaneContent, ResolvedLaneContent } from '@/lib/tower-engine';
 import {
   ANIM_WALK_DURATION,
@@ -188,23 +188,23 @@ export default function TowerPage() {
 
         if (lane.type === 'boss') {
           if (currentPower > lane.value) {
-            currentPower += lane.value * 2;
+            currentPower = Math.min(currentPower + lane.value * 2, MAX_POWER);
           } else if (currentShield) {
             currentShield = false;
           }
         } else if (lane.type === 'monster') {
           if (currentPower > lane.value) {
-            currentPower += lane.value;
+            currentPower = Math.min(currentPower + lane.value, MAX_POWER);
           } else if (currentShield) {
             currentShield = false;
           }
         } else if (lane.type === 'add') {
-          currentPower += lane.value;
+          currentPower = Math.min(currentPower + lane.value, MAX_POWER);
         } else if (lane.type === 'multiply') {
-          currentPower *= lane.value;
+          currentPower = Math.min(currentPower * lane.value, MAX_POWER);
         } else if (lane.type === 'shield') {
           if (currentShield) {
-            currentPower += lane.value;
+            currentPower = Math.min(currentPower + lane.value, MAX_POWER);
           } else {
             currentShield = true;
           }
@@ -270,6 +270,17 @@ export default function TowerPage() {
         return;
       }
 
+      // 检查是否为失败结果
+      if ('failed' in res) {
+        setIsAnimating(false);
+        if (res.expired) {
+          // 会话已过期，清除重试状态，不再建议重试
+          clearChoices(sessionId);
+          setPendingSubmitChoices(null);
+        }
+        return;
+      }
+
       clearChoices(sessionId);
       setPendingSubmitChoices(null);
       setError(null);
@@ -308,8 +319,9 @@ export default function TowerPage() {
 
       const advanceToNextFloor = (options?: { newPower?: number; shieldChange?: 'gain' | 'lose' }) => {
         if (options?.newPower !== undefined) {
-          setPower(options.newPower);
-          powerRef.current = options.newPower;
+          const clampedPower = Math.min(options.newPower, MAX_POWER);
+          setPower(clampedPower);
+          powerRef.current = clampedPower;
           setPowerChanged(true);
           scheduleTimer(() => setPowerChanged(false), 300);
         }
@@ -671,7 +683,7 @@ export default function TowerPage() {
                 <div className="mt-6 space-y-3">
                   <div className="p-4 bg-slate-50 rounded-xl text-sm text-slate-500 leading-relaxed border border-slate-100">
                     <span className="font-semibold text-slate-700">玩法说明：</span>
-                    初始力量值为 1，每层有 2-3 条通道。遇到比你弱的怪物可击败并吞噬它的数值；遇到不弱于你的怪物则 Game Over。
+                    初始力量值为 1，每层有 2-3 条通道。遇到比你弱的怪物可击败并吞噬它的数值；遇到不弱于你的怪物则 Game Over。力量值上限为 999,999,999。
                   </div>
                   <div className="p-4 bg-amber-50 rounded-xl text-sm text-amber-700 leading-relaxed border border-amber-100">
                     <span className="font-semibold">积分规则：</span>
@@ -702,7 +714,7 @@ export default function TowerPage() {
                             第 {r.floorsClimbed} 层
                           </div>
                           <div className="text-xs text-slate-500 tabular-nums">
-                            力量 {r.finalPower} · {r.score} 分
+                            力量 {formatPower(r.finalPower)} · {r.score} 分
                           </div>
                         </div>
                       </div>
@@ -767,7 +779,7 @@ export default function TowerPage() {
                   ⚔️
                 </div>
                 <div className="absolute -top-2 -right-2 bg-amber-500 text-white text-xs font-black px-1.5 py-0.5 rounded-lg shadow-sm tabular-nums">
-                  {power}
+                  {formatPower(power)}
                 </div>
                 {shield && (
                   <div className="absolute -top-2 -left-2 bg-blue-500 text-white text-xs px-1.5 py-0.5 rounded-lg shadow-sm">
@@ -888,7 +900,7 @@ export default function TowerPage() {
                 <h3 className="text-xl font-extrabold text-slate-900 mb-2">确认结算？</h3>
                 <p className="text-slate-500 mb-4 leading-relaxed text-sm">
                   当前已爬到第 <span className="font-bold text-slate-900 tabular-nums">{choices.length}</span> 层，
-                  力量值 <span className="font-bold text-slate-900 tabular-nums">{power}</span>。
+                  力量值 <span className="font-bold text-slate-900 tabular-nums">{formatPower(power)}</span>。
                 </p>
                 <p className="text-slate-400 mb-8 text-xs">
                   结算后将按已通过的层数计算积分，本局结束。

@@ -36,6 +36,13 @@ interface SubmitResponse {
   pointsEarned: number;
 }
 
+interface SubmitFailure {
+  failed: true;
+  expired: boolean;
+}
+
+type SubmitResult = SubmitResponse | SubmitFailure;
+
 interface ApiResponse<T> {
   success?: boolean;
   data?: T;
@@ -69,7 +76,7 @@ export function useGameSession() {
   const [isRestored, setIsRestored] = useState(false);
 
   const hasSubmittedRef = useRef(false);
-  const submitInFlightRef = useRef<Promise<SubmitResponse | null> | null>(null);
+  const submitInFlightRef = useRef<Promise<SubmitResult | null> | null>(null);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -169,7 +176,7 @@ export function useGameSession() {
   }, [session, fetchStatus]);
 
   const submitResult = useCallback(
-    async (choices: number[]): Promise<SubmitResponse | null> => {
+    async (choices: number[]): Promise<SubmitResult | null> => {
       if (!session) return null;
 
       if (submitInFlightRef.current) {
@@ -180,7 +187,7 @@ export function useGameSession() {
       hasSubmittedRef.current = true;
       setLoading(true);
 
-      const submitPromise = (async (): Promise<SubmitResponse | null> => {
+      const submitPromise = (async (): Promise<SubmitResult | null> => {
         try {
           const res = await fetch('/api/games/tower/submit', {
             method: 'POST',
@@ -189,16 +196,12 @@ export function useGameSession() {
           });
           const data = await parseApiResponse<SubmitResponse>(res);
 
-          if (!res.ok) {
+          if (!res.ok || !data?.success || !data.data) {
             hasSubmittedRef.current = false;
-            setError(buildHttpErrorMessage(res, data, '结算提交失败，请重试或放弃本局'));
-            return null;
-          }
-
-          if (!data?.success || !data.data) {
-            hasSubmittedRef.current = false;
-            setError(data?.message || '结算提交失败，请重试或放弃本局');
-            return null;
+            const msg = data?.message ?? `结算提交失败（HTTP ${res.status}）`;
+            const isExpired = /过期|不存在/.test(msg);
+            setError(isExpired ? '游戏会话已过期，本局无法结算' : msg);
+            return { failed: true, expired: isExpired };
           }
 
           setError(null);
@@ -209,7 +212,7 @@ export function useGameSession() {
         } catch {
           hasSubmittedRef.current = false;
           setError('结算提交失败，网络异常，请稍后重试');
-          return null;
+          return { failed: true, expired: false };
         } finally {
           setLoading(false);
           submitInFlightRef.current = null;

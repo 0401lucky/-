@@ -37,6 +37,17 @@ export type TowerSimulateResult =
       message: string;
     };
 
+// ---- 力量值上限 ----
+
+export const MAX_POWER = 999_999_999;
+
+export function formatPower(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
 // ---- 难度配置 ----
 
 interface DifficultyRange {
@@ -273,7 +284,7 @@ export function simulateTowerGame(
 
     if (lane.type === 'boss') {
       if (power > lane.value) {
-        power += lane.value * 2;
+        power = Math.min(power + lane.value * 2, MAX_POWER);
         bossesDefeated++;
       } else if (shield) {
         shield = false;
@@ -284,7 +295,7 @@ export function simulateTowerGame(
       }
     } else if (lane.type === 'monster') {
       if (power > lane.value) {
-        power += lane.value;
+        power = Math.min(power + lane.value, MAX_POWER);
       } else if (shield) {
         shield = false;
       } else {
@@ -293,12 +304,12 @@ export function simulateTowerGame(
         deathLane = choiceIndex;
       }
     } else if (lane.type === 'add') {
-      power += lane.value;
+      power = Math.min(power + lane.value, MAX_POWER);
     } else if (lane.type === 'multiply') {
-      power *= lane.value;
+      power = Math.min(power * lane.value, MAX_POWER);
     } else if (lane.type === 'shield') {
       if (shield) {
-        power += lane.value;
+        power = Math.min(power + lane.value, MAX_POWER);
       } else {
         shield = true;
       }

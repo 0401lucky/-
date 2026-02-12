@@ -12,7 +12,7 @@ import type { DailyGameStats, GameSessionStatus } from './types/game';
 
 const GAME_TYPE = 'tower' as const;
 
-const SESSION_TTL = 10 * 60; // 10分钟：回合制无时限但需合理上限
+const SESSION_TTL = 30 * 60; // 30分钟：回合制无实时压力，给予充足时间
 const COOLDOWN_TTL = 5; // 5秒
 const MIN_GAME_DURATION = 5_000; // 5秒
 const MAX_RECORD_ENTRIES = 50;

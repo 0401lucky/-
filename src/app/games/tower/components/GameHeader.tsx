@@ -1,7 +1,7 @@
 'use client';
 
 import { Layers, Zap, Star, Shield } from 'lucide-react';
-import { floorToPoints } from '@/lib/tower-engine';
+import { floorToPoints, formatPower } from '@/lib/tower-engine';
 
 interface GameHeaderProps {
   floorNumber: number;
@@ -50,7 +50,7 @@ export default function GameHeader({ floorNumber, power, choicesCount, powerChan
         <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-xl px-3 py-1.5">
           <Zap className="w-5 h-5 text-amber-600" />
           <span className={`text-xl font-black text-amber-700 tabular-nums ${powerChanged ? 'animate-score-pop' : ''}`}>
-            {power}
+            {formatPower(power)}
           </span>
         </div>
 
