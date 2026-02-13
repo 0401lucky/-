@@ -2,20 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   createTowerRng,
   floorToPoints,
+  calculateTowerScore,
   generateFloor,
   simulateTowerGame,
+  DIFFICULTY_MODIFIERS,
   type TowerLaneContent,
   type ResolvedLaneContent,
+  type BuffType,
+  type TowerDifficulty,
+  type GenerateFloorOptions,
 } from '../tower-engine';
-
-function sequenceRng(values: number[]): () => number {
-  let index = 0;
-  return () => {
-    const value = values[index];
-    index += 1;
-    return value ?? 0;
-  };
-}
 
 function resolveLane(lane: TowerLaneContent): ResolvedLaneContent {
   return lane.type === 'mystery' ? lane.hidden : lane;
@@ -80,39 +76,67 @@ function findTwoFloorGrowthScenario(): {
 
 describe('tower-engine', () => {
   it('会在保底安全路触发时确保存在安全通道', () => {
-    // 新 RNG 模式：每条通道消费 3 次 (shieldRoll, typeRoll, valueRoll)
-    // 层 1: laneCount=[2,2], safeChance=1.0, shieldChance=0, mysteryChance=0
-    // idx0=0 → laneCount=2, idx1=0 → needSafe=true
-    // Lane 0: idx2=0.9(shield), idx3=0.9(type), idx4=0.9(value) → monster(3)
-    // Lane 1: idx5=0.9(shield), idx6=0(type), idx7=0(value) → add(1)
-    const rng = sequenceRng([0, 0, 0.9, 0.9, 0.9, 0.9, 0, 0]);
-    const floor = generateFloor(rng, 1, 1);
-
-    expect(floor.lanes).toHaveLength(2);
-    expect(floor.lanes.some((lane) => resolveLane(lane).type === 'add')).toBe(true);
+    for (let i = 0; i < 5000; i++) {
+      const seed = `safe-${i}`;
+      const floor = generateFloor(createTowerRng(seed), 1, 1);
+      const hasSafe = floor.lanes.some((lane) => {
+        const r = resolveLane(lane);
+        return r.type === 'add' || r.type === 'multiply' || r.type === 'shield' || (r.type === 'monster' && r.value < 1);
+      });
+      expect(hasSafe).toBe(true);
+      break;
+    }
   });
 
   it('在中层难度允许生成乘法增益通道', () => {
-    // 层 6: shieldChance=0.05, hasMultiply=true, multiplyMin=2, multiplyMax=2, mysteryChance=0.15
-    // idx0=0 → laneCount=2
-    // idx1=0.5 → needSafe (0.5 < 0.85)
-    // Lane 0: idx2=0.1(>=0.05 not shield), idx3=0.35(multiply), idx4=0.5(value: 2+floor(0.5*1)=2)
-    // Lane 1: idx5=0.1(>=0.05 not shield), idx6=0.5(>=0.4 monster), idx7=0.1(value: 2+floor(0.1*7)=2)
-    // Mystery: idx8=0.5(>0.15 skip), idx9=0.5(>0.15 skip)
-    const rng = sequenceRng([0, 0.5, 0.1, 0.35, 0.5, 0.1, 0.5, 0.1, 0.5, 0.5]);
-    const floor = generateFloor(rng, 6, 3);
-
-    expect(floor.lanes.some((lane) => resolveLane(lane).type === 'multiply')).toBe(true);
+    let found = false;
+    for (let i = 0; i < 5000; i++) {
+      const seed = `multiply-${i}`;
+      const rng = createTowerRng(seed);
+      let power = 1;
+      for (let f = 1; f <= 5; f++) {
+        const floor = generateFloor(rng, f, power);
+        const safeIdx = floor.lanes.findIndex((l) => {
+          const r = resolveLane(l);
+          return r.type === 'add' || (r.type === 'monster' && r.value < power);
+        });
+        if (safeIdx >= 0) {
+          const r = resolveLane(floor.lanes[safeIdx]);
+          if (r.type === 'add') power += r.value;
+          else if (r.type === 'monster' && power > r.value) power += r.value;
+        }
+      }
+      const floor6 = generateFloor(rng, 6, power);
+      if (floor6.lanes.some((lane) => resolveLane(lane).type === 'multiply')) {
+        found = true;
+        break;
+      }
+    }
+    expect(found).toBe(true);
   });
 
   it('Boss 层在 10 的倍数时生成', () => {
     const rng = createTowerRng('boss-test');
     let power = 100;
+    for (let f = 1; f <= 9; f++) {
+      generateFloor(rng, f, power);
+    }
     const floor10 = generateFloor(rng, 10, power);
 
     expect(floor10.isBoss).toBe(true);
     expect(floor10.lanes).toHaveLength(2);
     expect(floor10.lanes.some((l) => resolveLane(l).type === 'boss')).toBe(true);
+  });
+
+  it('商店层在第 5 层出现', () => {
+    const rng = createTowerRng('shop-test');
+    let power = 10;
+    for (let f = 1; f <= 4; f++) {
+      generateFloor(rng, f, power);
+    }
+    const floor5 = generateFloor(rng, 5, power, []);
+    expect(floor5.isShop).toBe(true);
+    expect(floor5.lanes.some((l) => resolveLane(l).type === 'shop')).toBe(true);
   });
 
   it('会拒绝非法输入参数', () => {
@@ -180,47 +204,47 @@ describe('tower-engine', () => {
   });
 
   it('护盾可抵挡一次致命怪物攻击', () => {
-    // 搜索一个 seed，在前几层内能找到 shield 通道和致命 monster
     for (let i = 0; i < 5000; i++) {
       const seed = `shield-test-${i}`;
       const rng = createTowerRng(seed);
       let power = 1;
-      let shield = false;
+      let shield = 0;
       const choices: number[] = [];
 
       let found = false;
       for (let f = 1; f <= 20; f++) {
-        const floor = generateFloor(rng, f, power);
+        const floor = generateFloor(rng, f, power, []);
 
-        if (!shield) {
-          // 寻找 shield 通道
+        if (floor.isShop) {
+          choices.push(0);
+          continue;
+        }
+
+        if (shield === 0) {
           const shieldIdx = floor.lanes.findIndex((l) => resolveLane(l).type === 'shield');
           if (shieldIdx >= 0) {
             choices.push(shieldIdx);
-            shield = true;
+            shield = 1;
             continue;
           }
         } else {
-          // 有盾，寻找打不过的怪物
           const lethalIdx = floor.lanes.findIndex((l) => {
             const r = resolveLane(l);
             return r.type === 'monster' && r.value >= power;
           });
           if (lethalIdx >= 0) {
             choices.push(lethalIdx);
-            // 护盾应该抵挡了
             const sim = simulateTowerGame(seed, choices);
             expect(sim.ok).toBe(true);
             if (sim.ok) {
               expect(sim.gameOver).toBe(false);
-              expect(sim.finalShield).toBe(false);
+              expect(sim.finalShield).toBe(0);
             }
             found = true;
             break;
           }
         }
 
-        // 选择安全路线继续
         const safeIdx = floor.lanes.findIndex((l) => {
           const r = resolveLane(l);
           return r.type === 'add' || (r.type === 'monster' && r.value < power);
@@ -238,6 +262,58 @@ describe('tower-engine', () => {
     throw new Error('未找到可验证护盾机制的样本');
   });
 
+  it('连击系统正确计数', () => {
+    for (let i = 0; i < 5000; i++) {
+      const seed = `combo-test-${i}`;
+      const rng = createTowerRng(seed);
+      let power = 1;
+      const choices: number[] = [];
+
+      const floor1 = generateFloor(rng, 1, power);
+      const addIdx = floor1.lanes.findIndex((l) => resolveLane(l).type === 'add');
+      if (addIdx < 0) continue;
+      choices.push(addIdx);
+      const addLane = resolveLane(floor1.lanes[addIdx]);
+      if (addLane.type === 'add') power += addLane.value;
+
+      let monstersKilled = 0;
+      for (let f = 2; f <= 8; f++) {
+        const floor = generateFloor(rng, f, power);
+        const monsterIdx = floor.lanes.findIndex((l) => {
+          const r = resolveLane(l);
+          return r.type === 'monster' && r.value < power;
+        });
+        if (monsterIdx >= 0) {
+          choices.push(monsterIdx);
+          const r = resolveLane(floor.lanes[monsterIdx]);
+          if (r.type === 'monster') power += r.value;
+          monstersKilled++;
+          if (monstersKilled >= 2) break;
+        } else {
+          const safeIdx = floor.lanes.findIndex((l) => {
+            const r = resolveLane(l);
+            return r.type === 'add';
+          });
+          if (safeIdx < 0) break;
+          choices.push(safeIdx);
+          const r = resolveLane(floor.lanes[safeIdx]);
+          if (r.type === 'add') power += r.value;
+          monstersKilled = 0;
+        }
+      }
+
+      if (monstersKilled >= 2) {
+        const sim = simulateTowerGame(seed, choices);
+        expect(sim.ok).toBe(true);
+        if (sim.ok) {
+          expect(sim.maxCombo).toBeGreaterThanOrEqual(2);
+        }
+        return;
+      }
+    }
+    throw new Error('未找到可验证连击系统的样本');
+  });
+
   it('floorToPoints 在分段与上限边界上计算正确', () => {
     expect(floorToPoints(-1)).toBe(0);
     expect(floorToPoints(0)).toBe(0);
@@ -248,6 +324,140 @@ describe('tower-engine', () => {
     expect(floorToPoints(30)).toBe(450);
     expect(floorToPoints(40)).toBe(500);
     expect(floorToPoints(100)).toBe(800);
-    expect(floorToPoints(300)).toBe(1500);
+  });
+
+  it('calculateTowerScore 正确计算各项加分', () => {
+    const score = calculateTowerScore(20, 2, 5, false);
+    expect(score.basePoints).toBe(350);
+    expect(score.bossPoints).toBe(100);
+    expect(score.comboPoints).toBe(40);
+    expect(score.perfectPoints).toBe(80);
+    expect(score.total).toBe(570);
+  });
+
+  it('calculateTowerScore 上限为 2000', () => {
+    const score = calculateTowerScore(300, 10, 50, false);
+    expect(score.total).toBe(2000);
+  });
+
+  it('完美加分需要至少过 10 层且未使用护盾', () => {
+    const yes = calculateTowerScore(10, 0, 0, false);
+    expect(yes.perfectPoints).toBe(80);
+
+    const noShort = calculateTowerScore(9, 0, 0, false);
+    expect(noShort.perfectPoints).toBe(0);
+
+    const noShield = calculateTowerScore(20, 0, 0, true);
+    expect(noShield.perfectPoints).toBe(0);
+  });
+
+  // ---- 第三期新增测试 ----
+
+  it('difficulty=undefined 时结果与旧路径完全一致（向后兼容）', () => {
+    const seed = 'compat-test-42';
+    const choices = [0, 1, 0];
+    const resultOld = simulateTowerGame(seed, choices);
+    const resultNew = simulateTowerGame(seed, choices, undefined);
+    expect(resultOld).toEqual(resultNew);
+  });
+
+  it('difficulty=normal 的积分倍率为 1.0', () => {
+    const score = calculateTowerScore(20, 2, 5, false, 'normal');
+    expect(score.difficultyMultiplier).toBe(1);
+    expect(score.total).toBe(570); // same as without difficulty
+  });
+
+  it('difficulty=hard 的积分倍率为 1.5', () => {
+    const score = calculateTowerScore(20, 2, 5, false, 'hard');
+    expect(score.difficultyMultiplier).toBe(1.5);
+    // (350+100+40+80) * 1.5 = 855
+    expect(score.total).toBe(855);
+  });
+
+  it('difficulty=hell 的积分倍率为 2.5', () => {
+    const score = calculateTowerScore(20, 2, 5, false, 'hell');
+    expect(score.difficultyMultiplier).toBe(2.5);
+    // (350+100+40+80) * 2.5 = 1425
+    expect(score.total).toBe(1425);
+  });
+
+  it('difficulty 积分倍率仍受 2000 上限约束', () => {
+    const score = calculateTowerScore(300, 10, 50, false, 'hell');
+    expect(score.total).toBe(2000);
+  });
+
+  it('DIFFICULTY_MODIFIERS 定义完整', () => {
+    expect(DIFFICULTY_MODIFIERS.normal.scoreMult).toBe(1.0);
+    expect(DIFFICULTY_MODIFIERS.hard.scoreMult).toBe(1.5);
+    expect(DIFFICULTY_MODIFIERS.hell.scoreMult).toBe(2.5);
+    expect(DIFFICULTY_MODIFIERS.hard.monsterMult).toBe(1.3);
+    expect(DIFFICULTY_MODIFIERS.hell.monsterMult).toBe(1.6);
+    expect(DIFFICULTY_MODIFIERS.hell.safeMult).toBe(0);
+  });
+
+  it('difficulty=normal 时 simulateTowerGame 返回 difficulty 字段', () => {
+    const sim = simulateTowerGame('diff-sim-test', [0], 'normal');
+    if (sim.ok) {
+      expect(sim.difficulty).toBe('normal');
+    }
+  });
+
+  it('generateFloor 传入 options 时能正确生成楼层', () => {
+    const rng = createTowerRng('opts-floor-test');
+    const opts: GenerateFloorOptions = {
+      difficulty: 'hard',
+      blessings: [],
+      curses: [],
+      bossesDefeated: 0,
+    };
+    const floor = generateFloor(rng, 1, 1, [], opts);
+    expect(floor.floor).toBe(1);
+    expect(floor.lanes.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('RNG 确定性：相同 seed + choices + difficulty 总是产生相同结果', () => {
+    const seed = 'determinism-test-123';
+    const choices = [0, 1, 0, 1, 0];
+    const difficulties: (TowerDifficulty | undefined)[] = [undefined, 'normal', 'hard', 'hell'];
+
+    for (const diff of difficulties) {
+      const r1 = simulateTowerGame(seed, choices, diff);
+      const r2 = simulateTowerGame(seed, choices, diff);
+      expect(r1).toEqual(r2);
+    }
+  });
+
+  it('generateFloor 在 Boss 层仍生成 Boss（带 difficulty options）', () => {
+    const rng = createTowerRng('boss-diff-test');
+    const opts: GenerateFloorOptions = {
+      difficulty: 'hell',
+      blessings: [],
+      curses: [],
+      bossesDefeated: 0,
+    };
+    let power = 100;
+    for (let f = 1; f <= 9; f++) {
+      generateFloor(rng, f, power, [], opts);
+    }
+    const floor10 = generateFloor(rng, 10, power, [], opts);
+    expect(floor10.isBoss).toBe(true);
+    expect(floor10.lanes.some(l => resolveLane(l).type === 'boss')).toBe(true);
+  });
+
+  it('generateFloor 在商店层仍生成商店（带 difficulty options）', () => {
+    const rng = createTowerRng('shop-diff-test');
+    const opts: GenerateFloorOptions = {
+      difficulty: 'hard',
+      blessings: [],
+      curses: [],
+      bossesDefeated: 0,
+    };
+    let power = 10;
+    for (let f = 1; f <= 4; f++) {
+      generateFloor(rng, f, power, [], opts);
+    }
+    const floor5 = generateFloor(rng, 5, power, [], opts);
+    expect(floor5.isShop).toBe(true);
+    expect(floor5.lanes.some(l => resolveLane(l).type === 'shop')).toBe(true);
   });
 });

@@ -30,6 +30,11 @@ export default {
         'mystery-reveal': 'mystery-reveal 0.5s ease-out forwards',
         'shield-break': 'shield-break 0.5s ease-out forwards',
         'boss-glow': 'boss-glow 1.5s ease-in-out infinite',
+        'trap-shake': 'trap-shake 0.5s ease-out',
+        'shop-glow': 'shop-glow 1.5s ease-in-out infinite',
+        'combo-fire': 'combo-fire 0.8s ease-in-out infinite',
+        'blessing-glow': 'blessing-glow 2s ease-in-out infinite',
+        'curse-pulse': 'curse-pulse 1.5s ease-in-out infinite',
       },
       keyframes: {
         'tile-entrance': {
@@ -113,6 +118,29 @@ export default {
         'boss-glow': {
           '0%, 100%': { boxShadow: '0 0 8px rgba(234, 88, 12, 0.6)' },
           '50%': { boxShadow: '0 0 30px rgba(234, 88, 12, 0.9), 0 0 60px rgba(234, 88, 12, 0.5)' },
+        },
+        'trap-shake': {
+          '0%, 100%': { transform: 'translateX(0) rotate(0deg)' },
+          '20%': { transform: 'translateX(-5px) rotate(-2deg)' },
+          '40%': { transform: 'translateX(5px) rotate(2deg)' },
+          '60%': { transform: 'translateX(-3px) rotate(-1deg)' },
+          '80%': { transform: 'translateX(3px) rotate(1deg)' },
+        },
+        'shop-glow': {
+          '0%, 100%': { boxShadow: '0 0 8px rgba(168, 85, 247, 0.4)' },
+          '50%': { boxShadow: '0 0 25px rgba(168, 85, 247, 0.7), 0 0 50px rgba(168, 85, 247, 0.3)' },
+        },
+        'combo-fire': {
+          '0%, 100%': { textShadow: '0 0 5px rgba(239, 68, 68, 0.6)' },
+          '50%': { textShadow: '0 0 20px rgba(239, 68, 68, 0.9), 0 0 40px rgba(251, 146, 60, 0.5)' },
+        },
+        'blessing-glow': {
+          '0%, 100%': { boxShadow: '0 0 4px rgba(217, 167, 37, 0.3)' },
+          '50%': { boxShadow: '0 0 15px rgba(217, 167, 37, 0.6), 0 0 30px rgba(251, 191, 36, 0.3)' },
+        },
+        'curse-pulse': {
+          '0%, 100%': { boxShadow: '0 0 4px rgba(220, 38, 38, 0.3)', transform: 'scale(1)' },
+          '50%': { boxShadow: '0 0 12px rgba(220, 38, 38, 0.6)', transform: 'scale(1.02)' },
         },
       },
     },

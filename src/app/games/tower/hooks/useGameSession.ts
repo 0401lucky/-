@@ -1,12 +1,14 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
+import type { TowerDifficulty } from '@/lib/tower-engine';
 
 interface TowerSession {
   sessionId: string;
   seed: string;
   startedAt: number;
   expiresAt: number;
+  difficulty?: TowerDifficulty;
 }
 
 export interface TowerRecord {
@@ -18,6 +20,14 @@ export interface TowerRecord {
   pointsEarned: number;
   duration: number;
   createdAt: number;
+  basePoints?: number;
+  bossPoints?: number;
+  comboPoints?: number;
+  perfectPoints?: number;
+  bossesDefeated?: number;
+  maxCombo?: number;
+  difficulty?: TowerDifficulty;
+  difficultyMultiplier?: number;
 }
 
 interface TowerStatus {
@@ -54,6 +64,7 @@ interface StartResponse {
   seed: string;
   startedAt: number;
   expiresAt: number;
+  difficulty?: TowerDifficulty;
 }
 
 async function parseApiResponse<T>(res: Response): Promise<ApiResponse<T> | null> {
@@ -106,7 +117,7 @@ export function useGameSession() {
     }
   }, []);
 
-  const startGame = useCallback(async () => {
+  const startGame = useCallback(async (difficulty?: TowerDifficulty) => {
     setLoading(true);
     setError(null);
     hasSubmittedRef.current = false;
@@ -114,7 +125,11 @@ export function useGameSession() {
     setIsRestored(false);
 
     try {
-      const res = await fetch('/api/games/tower/start', { method: 'POST' });
+      const res = await fetch('/api/games/tower/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(difficulty ? { difficulty } : {}),
+      });
       const data = await parseApiResponse<StartResponse>(res);
 
       if (!res.ok) {
@@ -132,6 +147,7 @@ export function useGameSession() {
         seed: data.data.seed,
         startedAt: data.data.startedAt,
         expiresAt: data.data.expiresAt,
+        difficulty: data.data.difficulty,
       });
 
       return true;

@@ -56,6 +56,7 @@ export async function GET() {
               seed: activeSession.seed,
               startedAt: activeSession.startedAt,
               expiresAt: activeSession.expiresAt,
+              difficulty: activeSession.difficulty,
             }
           : null,
       },

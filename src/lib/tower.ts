@@ -7,7 +7,8 @@ import { addGamePointsWithLimit } from './points';
 import { getTodayDateString } from './time';
 import { getDailyPointsLimit } from './config';
 import { incrementSharedDailyStats } from './daily-stats';
-import { simulateTowerGame, floorToPoints } from './tower-engine';
+import { simulateTowerGame, calculateTowerScore } from './tower-engine';
+import type { TowerDifficulty } from './tower-engine';
 import type { DailyGameStats, GameSessionStatus } from './types/game';
 
 const GAME_TYPE = 'tower' as const;
@@ -17,6 +18,8 @@ const COOLDOWN_TTL = 5; // 5秒
 const MIN_GAME_DURATION = 5_000; // 5秒
 const MAX_RECORD_ENTRIES = 50;
 const MAX_CHOICES = 500;
+
+const VALID_DIFFICULTIES: TowerDifficulty[] = ['normal', 'hard', 'hell'];
 
 // Key 格式
 const SESSION_KEY = (sessionId: string) => `tower:session:${sessionId}`;
@@ -34,6 +37,7 @@ export interface TowerGameSession {
   startedAt: number;
   expiresAt: number;
   status: GameSessionStatus;
+  difficulty?: TowerDifficulty;
 }
 
 export interface TowerGameRecord {
@@ -44,10 +48,18 @@ export interface TowerGameRecord {
   floorsClimbed: number;
   finalPower: number;
   gameOver: boolean;
-  score: number; // = floorToPoints(floorsClimbed)
+  score: number;
+  basePoints: number;
+  bossPoints: number;
+  comboPoints: number;
+  perfectPoints: number;
+  bossesDefeated: number;
+  maxCombo: number;
   pointsEarned: number;
   duration: number;
   createdAt: number;
+  difficulty?: TowerDifficulty;
+  difficultyMultiplier?: number;
 }
 
 export interface TowerGameResultSubmit {
@@ -103,11 +115,17 @@ export async function getActiveTowerSession(userId: number): Promise<TowerGameSe
 }
 
 export async function startTowerGame(
-  userId: number
+  userId: number,
+  difficulty?: TowerDifficulty,
 ): Promise<{ success: boolean; session?: TowerGameSession; message?: string }> {
   if (await isInCooldown(userId)) {
     const remaining = await getCooldownRemaining(userId);
     return { success: false, message: `请等待 ${remaining} 秒后再开始游戏` };
+  }
+
+  // 校验难度参数
+  if (difficulty !== undefined && !VALID_DIFFICULTIES.includes(difficulty)) {
+    return { success: false, message: '无效的难度选择' };
   }
 
   const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
@@ -132,6 +150,7 @@ export async function startTowerGame(
     startedAt: now,
     expiresAt: now + SESSION_TTL * 1000,
     status: 'playing',
+    ...(difficulty !== undefined ? { difficulty } : {}),
   };
 
   await kv.set(SESSION_KEY(session.id), session, { ex: SESSION_TTL });
@@ -215,22 +234,33 @@ export async function submitTowerResult(
     return { success: false, message: '游戏时长过短' };
   }
 
+  // 向后兼容：旧 session 无 difficulty 字段
+  const difficulty = session.difficulty ?? undefined;
+
   // 服务端重放验证
-  const sim = simulateTowerGame(session.seed, payload.choices);
+  const sim = simulateTowerGame(session.seed, payload.choices, difficulty);
   if (!sim.ok) {
     await kv.del(lockKey);
     return { success: false, message: sim.message };
   }
 
-  const score = floorToPoints(sim.floorsClimbed);
+  const scoreBreakdown = calculateTowerScore(
+    sim.floorsClimbed,
+    sim.bossesDefeated,
+    sim.maxCombo,
+    sim.usedShield,
+    difficulty,
+  );
+  const score = scoreBreakdown.total;
   const dailyPointsLimit = await getDailyPointsLimit();
 
+  const diffLabel = difficulty ? ` [${difficulty}]` : '';
   const pointsResult = await addGamePointsWithLimit(
     userId,
     score,
     dailyPointsLimit,
     'game_play',
-    `爬塔挑战 ${sim.floorsClimbed}层 得分 ${score}`
+    `爬塔挑战${diffLabel} ${sim.floorsClimbed}层 Boss×${sim.bossesDefeated} Combo×${sim.maxCombo} 得分 ${score}`
   );
 
   const record: TowerGameRecord = {
@@ -242,9 +272,19 @@ export async function submitTowerResult(
     finalPower: sim.finalPower,
     gameOver: sim.gameOver,
     score,
+    basePoints: scoreBreakdown.basePoints,
+    bossPoints: scoreBreakdown.bossPoints,
+    comboPoints: scoreBreakdown.comboPoints,
+    perfectPoints: scoreBreakdown.perfectPoints,
+    bossesDefeated: sim.bossesDefeated,
+    maxCombo: sim.maxCombo,
     pointsEarned: pointsResult.pointsEarned,
     duration: serverDuration,
     createdAt: Date.now(),
+    ...(difficulty !== undefined ? {
+      difficulty,
+      difficultyMultiplier: scoreBreakdown.difficultyMultiplier,
+    } : {}),
   };
 
   await kv.del(SESSION_KEY(payload.sessionId));

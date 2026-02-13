@@ -1,7 +1,8 @@
 'use client';
 
-import { Trophy, Star, Skull, Zap } from 'lucide-react';
-import { formatPower } from '@/lib/tower-engine';
+import { Trophy, Star, Skull, Zap, Flame, Shield, Swords } from 'lucide-react';
+import { formatPower, DIFFICULTY_LABELS } from '@/lib/tower-engine';
+import type { TowerDifficulty } from '@/lib/tower-engine';
 
 interface ResultModalProps {
   floorsClimbed: number;
@@ -9,6 +10,14 @@ interface ResultModalProps {
   gameOver: boolean;
   score: number;
   pointsEarned: number;
+  bossesDefeated?: number;
+  maxCombo?: number;
+  basePoints?: number;
+  bossPoints?: number;
+  comboPoints?: number;
+  perfectPoints?: number;
+  difficulty?: TowerDifficulty;
+  difficultyMultiplier?: number;
   onPlayAgain: () => void;
   onBackToGames: () => void;
 }
@@ -19,81 +28,131 @@ export default function ResultModal({
   gameOver,
   score,
   pointsEarned,
+  bossesDefeated = 0,
+  maxCombo = 0,
+  basePoints,
+  bossPoints = 0,
+  comboPoints = 0,
+  perfectPoints = 0,
+  difficulty,
+  difficultyMultiplier,
   onPlayAgain,
   onBackToGames,
 }: ResultModalProps) {
+  const hasBreakdown = basePoints !== undefined;
+  const showDiffMult = difficultyMultiplier && difficultyMultiplier > 1;
+
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
-      <div className="bg-white rounded-[2rem] p-8 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-300 slide-in-from-bottom-8">
-        <div className="text-center relative">
-          <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-40 h-40 bg-yellow-300 rounded-full blur-3xl opacity-20 pointer-events-none" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* 背景遮罩 */}
+      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-fade-in" />
 
-          <div className="relative inline-flex mb-6">
-            <div className={`w-20 h-20 rounded-2xl flex items-center justify-center shadow-lg transform rotate-3 ${
-              gameOver
-                ? 'bg-gradient-to-br from-red-400 to-red-600 shadow-red-200'
-                : 'bg-gradient-to-br from-yellow-400 to-orange-500 shadow-orange-200'
-            }`}>
-              {gameOver ? (
-                <Skull className="w-10 h-10 text-white drop-shadow-md" />
-              ) : (
-                <Trophy className="w-10 h-10 text-white drop-shadow-md" />
-              )}
-            </div>
-            <div className="absolute -top-2 -right-2 bg-white rounded-full p-1 shadow-sm">
-              <Star className="w-6 h-6 text-yellow-500 fill-yellow-500" />
-            </div>
+      {/* 弹窗主体 */}
+      <div className="relative bg-white/90 backdrop-blur-xl rounded-3xl shadow-2xl p-8 max-w-sm w-full border border-white/50 animate-pop-in overflow-hidden">
+        {/* 装饰背景 */}
+        <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 opacity-10" />
+        <div className="absolute -top-10 -right-10 w-40 h-40 bg-pink-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob" />
+        <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-indigo-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-2000" />
+
+        {/* 标题部分 */}
+        <div className="relative text-center mb-8">
+          <div className="inline-block p-4 rounded-full bg-gradient-to-br from-indigo-100 to-white shadow-inner mb-4 animate-float">
+            {gameOver ? (
+              <Skull className="w-12 h-12 text-slate-400" />
+            ) : (
+              <Trophy className="w-12 h-12 text-yellow-500 drop-shadow-sm" />
+            )}
           </div>
-
-          <h3 className="text-2xl font-black text-slate-900 mb-1">
-            {gameOver ? '挑战结束!' : '安全结算!'}
-          </h3>
-          <p className="text-slate-500 text-sm mb-8 font-medium">
-            {gameOver ? '遇到了比你更强的敌人...' : '你选择了带着战利品安全离场'}
+          <h2 className="text-3xl font-black text-slate-800 mb-1 tracking-tight">
+            {!gameOver ? (
+              <span className="bg-gradient-to-r from-indigo-600 to-pink-600 bg-clip-text text-transparent">
+                挑战成功!
+              </span>
+            ) : (
+              <span className="text-slate-700">游戏结束</span>
+            )}
+          </h2>
+          <p className="text-slate-500 font-medium">
+            {!gameOver ? '你已经登顶成功！' : '下次继续加油！'}
           </p>
+        </div>
 
-          <div className="grid grid-cols-2 gap-4 mb-8">
-            <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-2xl p-4 border border-slate-200">
-              <div className="text-xs text-slate-400 uppercase tracking-wider mb-1 font-bold">到达层数</div>
-              <div className="text-3xl font-black text-slate-900 tabular-nums tracking-tight flex items-center justify-center gap-1">
-                {floorsClimbed}
-                <span className="text-base font-normal text-slate-400">层</span>
-              </div>
-            </div>
-
-            <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-2xl p-4 border border-slate-200">
-              <div className="text-xs text-slate-400 uppercase tracking-wider mb-1 font-bold">最终力量</div>
-              <div className="text-3xl font-black text-slate-900 tabular-nums tracking-tight flex items-center justify-center gap-1">
-                <Zap className="w-5 h-5 text-yellow-500" />
-                {formatPower(finalPower)}
-              </div>
-            </div>
-
-            <div className="bg-emerald-50 rounded-2xl p-4 border border-emerald-100 flex flex-col items-center justify-center">
-              <div className="text-xs text-emerald-600 uppercase tracking-wider mb-1 font-bold">获得积分</div>
-              <div className="text-xl font-black text-emerald-600 tabular-nums">+{pointsEarned}</div>
-            </div>
-
-            <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex flex-col items-center justify-center">
-              <div className="text-xs text-slate-400 uppercase tracking-wider mb-1 font-bold">游戏得分</div>
-              <div className="text-xl font-black text-slate-700 tabular-nums">{score}</div>
+        {/* 成绩卡片 */}
+        <div className="relative grid grid-cols-2 gap-3 mb-8">
+          <div className="bg-white/50 rounded-2xl p-4 border border-white/60 shadow-sm flex flex-col items-center justify-center">
+            <div className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">Score</div>
+            <div className="text-2xl font-black text-indigo-600 tabular-nums">
+              {score.toLocaleString()}
             </div>
           </div>
 
-          <div className="flex gap-3">
-            <button
-              onClick={onBackToGames}
-              className="flex-1 py-3.5 px-4 border-2 border-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 hover:border-slate-200 transition-colors active:scale-[0.98]"
-              type="button"
-            >
-              返回
-            </button>
-            <button
-              onClick={onPlayAgain}
-              className="flex-1 py-3.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-2xl transition-all shadow-lg shadow-slate-200 hover:shadow-xl hover:-translate-y-0.5 active:scale-[0.98]"
-              type="button"
-            >
-              再来一局
+          <div className="bg-white/50 rounded-2xl p-4 border border-white/60 shadow-sm flex flex-col items-center justify-center">
+            <div className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">Floors</div>
+            <div className="text-2xl font-black text-slate-700 tabular-nums">
+              {floorsClimbed} <span className="text-sm font-normal text-slate-400">/ 50</span>
+            </div>
+          </div>
+
+          <div className="col-span-2 bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl p-4 border border-amber-100 shadow-sm flex items-center justify-between px-6">
+            <div className="flex items-center gap-2">
+              <Zap className="w-5 h-5 text-amber-500" />
+              <span className="text-sm font-bold text-amber-700">最终战力</span>
+            </div>
+            <div className="text-xl font-black text-amber-600 tabular-nums">
+              {formatPower(finalPower)}
+            </div>
+          </div>
+        </div>
+
+        {/* 详细得分列表（仅胜利显示） */}
+        {!gameOver && hasBreakdown && (
+          <div className="bg-slate-50/80 rounded-xl p-4 mb-8 text-sm space-y-2 border border-slate-100">
+            <div className="flex justify-between text-slate-600">
+              <span>基础分</span>
+              <span className="font-bold">{basePoints}</span>
+            </div>
+            {(bossPoints > 0) && (
+              <div className="flex justify-between text-emerald-600">
+                <span>Boss 击杀奖励</span>
+                <span className="font-bold">+{bossPoints}</span>
+              </div>
+            )}
+            {(comboPoints > 0) && (
+              <div className="flex justify-between text-purple-600">
+                <span>连击加成</span>
+                <span className="font-bold">+{comboPoints}</span>
+              </div>
+            )}
+            {showDiffMult && (
+              <div className="flex justify-between text-orange-600">
+                <span>难度倍率</span>
+                <span className="font-bold">x{difficultyMultiplier}</span>
+              </div>
+            )}
+            <div className="pt-2 border-t border-slate-200 flex justify-between font-black text-slate-800 text-base">
+              <span>总分</span>
+              <span>{score}</span>
+            </div>
+          </div>
+        )}
+
+        {/* 按钮组 */}
+        <div className="relative space-y-3">
+          <button
+            onClick={onPlayAgain}
+            className="w-full py-4 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-bold text-lg shadow-lg shadow-indigo-200 hover:shadow-indigo-300 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2 group"
+          >
+            <div className="group-hover:rotate-180 transition-transform duration-500">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
+            </div>
+            {!gameOver ? '再玩一次' : '重新开始'}
+          </button>
+
+          <div onClick={onBackToGames} className="block cursor-pointer">
+            <button className="w-full py-4 rounded-xl bg-white text-slate-600 font-bold border-2 border-slate-100 hover:border-slate-200 hover:bg-slate-50 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg>
+              返回游戏列表
             </button>
           </div>
         </div>
