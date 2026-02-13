@@ -59,9 +59,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         />
 
         {/* Main content area */}
-        <div className="flex-1 lg:ml-60 min-w-0">
+        <div className="flex-1 lg:ml-72 min-w-0 p-4 lg:p-6 transition-all duration-300">
           {/* Mobile top bar */}
-          <header className="sticky top-0 z-30 lg:hidden glass border-b border-white/50">
+          <header className="sticky top-0 z-30 lg:hidden glass rounded-2xl mb-4 shadow-sm border border-white/50">
             <div className="flex items-center justify-between px-4 h-14">
               <button
                 onClick={() => setMobileOpen(true)}
@@ -85,7 +85,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </header>
 
           {/* Page content */}
-          <main>{children}</main>
+          <main className="min-h-[calc(100vh-6rem)]">{children}</main>
         </div>
       </div>
     </AdminContext.Provider>

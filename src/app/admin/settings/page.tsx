@@ -75,7 +75,7 @@ export default function AdminSettingsPage() {
         const parsedBetCost = Number(slotData.data.config.betCost);
         const safeBetCost =
           Number.isInteger(parsedBetCost) &&
-          SLOT_BET_OPTIONS.includes(parsedBetCost as (typeof SLOT_BET_OPTIONS)[number])
+            SLOT_BET_OPTIONS.includes(parsedBetCost as (typeof SLOT_BET_OPTIONS)[number])
             ? parsedBetCost
             : SLOT_BET_OPTIONS[0];
         setBetCost(String(safeBetCost));
@@ -158,32 +158,32 @@ export default function AdminSettingsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-stone-800 mb-8">设置</h1>
+      <h1 className="text-2xl font-black text-stone-800 mb-8 tracking-tight">系统设置</h1>
 
       {/* 错误提示 */}
       {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700">
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700 font-bold animate-pulse">
           {error}
         </div>
       )}
 
       {/* 成功提示 */}
       {success && (
-        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-xl text-green-700">
+        <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-700 font-bold animate-flip-in-x">
           ✓ {success}
         </div>
       )}
 
       {/* 配置表单 */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-        <div className="p-6 border-b border-slate-100">
-          <h2 className="text-lg font-semibold text-slate-900">游戏配置</h2>
+      <div className="glass-card rounded-[2rem] shadow-sm border border-white/60 overflow-hidden mb-8">
+        <div className="p-8 border-b border-stone-100 bg-white/40">
+          <h2 className="text-lg font-black text-stone-800">游戏配置</h2>
         </div>
 
-        <div className="p-6 space-y-6">
+        <div className="p-8 space-y-8">
           {/* 每日积分上限 */}
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
+            <label className="block text-sm font-bold text-stone-500 uppercase tracking-widest mb-3">
               每日积分上限
             </label>
             <div className="flex items-center gap-4">
@@ -193,22 +193,22 @@ export default function AdminSettingsPage() {
                 onChange={(e) => setDailyPointsLimit(e.target.value)}
                 min="100"
                 max="100000"
-                className="w-40 px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                className="w-48 px-5 py-3 border-2 border-stone-100 bg-stone-50/50 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none font-black text-lg transition-all"
               />
-              <span className="text-slate-500">积分/天/用户</span>
+              <span className="text-stone-400 font-bold">积分/天/用户</span>
             </div>
-            <p className="mt-2 text-sm text-slate-400">
+            <p className="mt-3 text-sm text-stone-400 font-medium leading-relaxed">
               用户每天通过游戏最多可获得的积分数量（所有游戏累计）。
               达到上限后仍可游玩，但不再获得积分。
             </p>
           </div>
 
           {/* 保存按钮 */}
-          <div className="pt-4 border-t border-slate-100">
+          <div className="pt-6 border-t border-stone-100">
             <button
               onClick={handleSave}
               disabled={saving}
-              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-semibold rounded-lg transition-colors"
+              className="px-8 py-3.5 gradient-warm text-white font-black rounded-2xl shadow-lg shadow-orange-500/30 hover:shadow-orange-500/40 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
             >
               {saving ? '保存中...' : '保存配置'}
             </button>
@@ -217,61 +217,66 @@ export default function AdminSettingsPage() {
       </div>
 
       {/* 老虎机配置 */}
-      <div className="mt-6 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-        <div className="p-6 border-b border-slate-100">
-          <h2 className="text-lg font-semibold text-slate-900">老虎机设置</h2>
+      <div className="glass-card rounded-[2rem] shadow-sm border border-white/60 overflow-hidden">
+        <div className="p-8 border-b border-stone-100 bg-white/40">
+          <h2 className="text-lg font-black text-stone-800">老虎机设置</h2>
         </div>
 
-        <div className="p-6 space-y-6">
-          <div className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-200">
+        <div className="p-8 space-y-8">
+          <div className="flex items-center justify-between p-6 bg-stone-50/50 rounded-3xl border border-stone-100 hover:bg-stone-50 transition-colors">
             <div className="pr-6">
-              <div className="text-sm font-semibold text-slate-800">挑战模式</div>
-              <div className="text-xs text-slate-500 mt-1">
+              <div className="text-base font-black text-stone-800">挑战模式</div>
+              <div className="text-sm text-stone-400 mt-1 font-medium">
                 开启后，用户可消耗积分选择档位旋转（默认期望为负，避免刷分）。
               </div>
             </div>
             <button
               type="button"
               onClick={() => setBetModeEnabled((v) => !v)}
-              className={`relative w-12 h-7 rounded-full transition-colors ${
-                betModeEnabled ? 'bg-emerald-500' : 'bg-slate-300'
-              }`}
+              className={`relative w-14 h-8 rounded-full transition-all duration-300 shadow-inner ${betModeEnabled ? 'bg-emerald-500' : 'bg-stone-300'
+                }`}
               aria-label="Toggle bet mode"
             >
               <span
-                className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-sm transition-all ${
-                  betModeEnabled ? 'left-6' : 'left-1'
-                }`}
+                className={`absolute top-1 w-6 h-6 bg-white rounded-full shadow-sm transition-all duration-300 ${betModeEnabled ? 'left-7' : 'left-1'
+                  }`}
               />
             </button>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">每次消耗积分</label>
+            <label className="block text-sm font-bold text-stone-500 uppercase tracking-widest mb-3">每次消耗积分</label>
             <div className="flex items-center gap-4">
-              <select
-                value={betCost}
-                onChange={(e) => setBetCost(e.target.value)}
-                className="w-40 px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
-              >
-                {SLOT_BET_OPTIONS.map((opt) => (
-                  <option key={opt} value={String(opt)}>
-                    {opt}
-                  </option>
-                ))}
-              </select>
-              <span className="text-slate-500">积分/次</span>
+              <div className="relative">
+                <select
+                  value={betCost}
+                  onChange={(e) => setBetCost(e.target.value)}
+                  className="w-48 px-5 py-3 border-2 border-stone-100 bg-stone-50/50 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none font-black text-lg transition-all appearance-none pr-10 cursor-pointer hover:bg-white"
+                >
+                  {SLOT_BET_OPTIONS.map((opt) => (
+                    <option key={opt} value={String(opt)}>
+                      {opt}
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2.5 4.5L6 8L9.5 4.5" stroke="#a8a29e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              </div>
+              <span className="text-stone-400 font-bold">积分/次</span>
             </div>
-            <p className="mt-2 text-sm text-slate-400">
-              下注档位固定为 <span className="font-semibold">{SLOT_BET_OPTIONS.join(' / ')}</span>。
+            <p className="mt-3 text-sm text-stone-400 font-medium">
+              下注档位固定为 <span className="font-bold text-stone-600">{SLOT_BET_OPTIONS.join(' / ')}</span>。
             </p>
           </div>
 
-          <div className="pt-4 border-t border-slate-100">
+          <div className="pt-6 border-t border-stone-100">
             <button
               onClick={handleSaveSlot}
               disabled={savingSlot}
-              className="px-6 py-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white font-semibold rounded-lg transition-colors"
+              className="px-8 py-3.5 bg-stone-800 hover:bg-stone-900 disabled:bg-stone-400 text-white font-black rounded-2xl shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition-all"
             >
               {savingSlot ? '保存中...' : '保存老虎机配置'}
             </button>
@@ -281,7 +286,7 @@ export default function AdminSettingsPage() {
 
       {/* 配置信息 */}
       {(config?.updatedAt || slotConfig?.updatedAt) && (
-        <div className="mt-6 text-sm text-slate-400 text-center space-y-1">
+        <div className="mt-8 text-xs font-bold text-stone-300 text-center space-y-1 uppercase tracking-wider">
           {config?.updatedAt && (
             <div>
               系统配置更新：{new Date(config.updatedAt).toLocaleString('zh-CN')}

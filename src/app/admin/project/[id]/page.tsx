@@ -103,7 +103,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
       });
 
       const data = await res.json();
-      
+
       if (data.success) {
         setSuccess(`成功添加 ${data.codesAdded} 个兑换码`);
         fetchData();
@@ -181,8 +181,8 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
           </div>
           <h2 className="text-xl font-bold text-stone-800 mb-2">出错了</h2>
           <p className="text-stone-500 mb-8 text-sm">{error || '找不到该项目'}</p>
-          <Link 
-            href="/admin" 
+          <Link
+            href="/admin"
             className="inline-flex items-center justify-center w-full px-6 py-3 gradient-warm text-white rounded-xl font-semibold hover:shadow-lg shadow-orange-500/20 transition-all active:scale-95"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
@@ -248,20 +248,19 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
                       💰 直充 ${project.directDollars}
                     </span>
                   )}
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
-                    project.status === 'active' 
-                      ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' 
-                      : project.status === 'paused' 
-                        ? 'bg-amber-50 text-amber-600 border border-amber-100' 
-                        : 'bg-stone-100 text-stone-500 border border-stone-200'
-                  }`}>
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${project.status === 'active'
+                    ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                    : project.status === 'paused'
+                      ? 'bg-amber-50 text-amber-600 border border-amber-100'
+                      : 'bg-stone-100 text-stone-500 border border-stone-200'
+                    }`}>
                     {project.status === 'active' ? '进行中' : project.status === 'paused' ? '已暂停' : '已领完'}
                   </span>
                 </div>
                 <p className="text-stone-500 mt-2 text-sm md:text-base leading-relaxed max-w-2xl">{project.description || '暂无描述'}</p>
               </div>
             </div>
-            
+
             {isDirectProject ? (
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
                 <input
@@ -269,7 +268,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
                   min="1"
                   value={appendClaims}
                   onChange={(e) => setAppendClaims(e.target.value)}
-                  className="w-full sm:w-32 px-4 py-3 bg-white border border-stone-200 rounded-xl focus:border-orange-500 focus:ring-4 focus:ring-orange-100 transition-all outline-none text-stone-800 font-medium"
+                  className="w-full sm:w-32 px-5 py-3.5 bg-stone-50 border-2 border-stone-100 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 transition-all outline-none text-stone-800 font-bold"
                   placeholder="追加名额"
                   disabled={uploading}
                 />
@@ -277,15 +276,15 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
                   type="button"
                   onClick={handleAppendClaims}
                   disabled={uploading}
-                  className={`group relative inline-flex items-center justify-center gap-2 px-6 py-3 gradient-warm text-white rounded-xl font-semibold shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 transition-all duration-300 active:scale-95 overflow-hidden ${uploading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                  className={`group relative inline-flex items-center justify-center gap-2 px-6 py-3.5 gradient-warm text-white rounded-2xl font-black shadow-lg shadow-orange-500/30 hover:shadow-orange-500/40 transition-all duration-300 active:scale-95 hover:scale-105 overflow-hidden ${uploading ? 'opacity-70 cursor-not-allowed' : ''}`}
                 >
-                  <Users className={`w-4 h-4 relative z-10 ${uploading ? 'animate-bounce' : ''}`} />
+                  <Users className={`w-5 h-5 relative z-10 ${uploading ? 'animate-bounce' : ''}`} />
                   <span className="relative z-10 text-sm">{uploading ? '处理中...' : '追加名额'}</span>
                 </button>
               </div>
             ) : (
-              <label className={`group relative inline-flex items-center justify-center gap-2 px-6 py-3 gradient-warm text-white rounded-xl font-semibold shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 transition-all duration-300 active:scale-95 cursor-pointer overflow-hidden ${uploading ? 'opacity-70 cursor-not-allowed' : ''}`}>
-                <Upload className={`w-4 h-4 relative z-10 ${uploading ? 'animate-bounce' : ''}`} />
+              <label className={`group relative inline-flex items-center justify-center gap-2 px-6 py-3.5 gradient-warm text-white rounded-2xl font-black shadow-lg shadow-orange-500/30 hover:shadow-orange-500/40 transition-all duration-300 active:scale-95 hover:scale-105 cursor-pointer overflow-hidden ${uploading ? 'opacity-70 cursor-not-allowed' : ''}`}>
+                <Upload className={`w-5 h-5 relative z-10 ${uploading ? 'animate-bounce' : ''}`} />
                 <span className="relative z-10 text-sm">{uploading ? '上传中...' : '追加兑换码'}</span>
                 <input type="file" accept=".txt" onChange={handleUploadCodes} disabled={uploading} className="hidden" />
               </label>
@@ -294,39 +293,39 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
 
           {/* 统计网格 */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-            <div className="bg-stone-50/50 rounded-2xl p-5 md:p-6 border border-stone-100 hover:bg-white hover:shadow-sm transition-all">
+            <div className="glass-card rounded-2xl p-5 md:p-6 border border-white/60 hover:scale-105 transition-all duration-300">
               <div className="flex items-center gap-2 text-stone-500 mb-2">
                 <Users className="w-4 h-4" />
-                <span className="text-xs font-bold uppercase tracking-wide">已领取</span>
+                <span className="text-xs font-black uppercase tracking-wide">已领取</span>
               </div>
-              <p className="text-2xl md:text-3xl font-bold text-stone-800">{project.claimedCount}</p>
+              <p className="text-2xl md:text-3xl font-black text-stone-800">{project.claimedCount}</p>
             </div>
-            
-            <div className="bg-orange-50/30 rounded-2xl p-5 md:p-6 border border-orange-100/50 hover:bg-orange-50/50 hover:shadow-sm transition-all">
+
+            <div className="glass-card rounded-2xl p-5 md:p-6 border border-orange-100/50 bg-gradient-to-br from-orange-50/50 to-white/50 hover:scale-105 transition-all duration-300">
               <div className="flex items-center gap-2 text-orange-600 mb-2">
-                <Users className="w-4 h-4" />
-                <span className="text-xs font-bold uppercase tracking-wide">剩余名额</span>
+                <Gift className="w-4 h-4" />
+                <span className="text-xs font-black uppercase tracking-wide">剩余名额</span>
               </div>
-              <p className="text-2xl md:text-3xl font-bold text-orange-600">{remaining}</p>
+              <p className="text-2xl md:text-3xl font-black text-orange-600">{remaining}</p>
             </div>
-            
-            <div className="bg-stone-50/50 rounded-2xl p-5 md:p-6 border border-stone-100 hover:bg-white hover:shadow-sm transition-all">
+
+            <div className="glass-card rounded-2xl p-5 md:p-6 border border-white/60 hover:scale-105 transition-all duration-300">
               <div className="flex items-center gap-2 text-stone-500 mb-2">
                 <Package className="w-4 h-4" />
-                <span className="text-xs font-bold uppercase tracking-wide">库存总量</span>
+                <span className="text-xs font-black uppercase tracking-wide">库存总量</span>
               </div>
-              <p className="text-2xl md:text-3xl font-bold text-stone-800">{project.codesCount}</p>
+              <p className="text-2xl md:text-3xl font-black text-stone-800">{project.codesCount}</p>
             </div>
-            
-            <div className="bg-stone-50/50 rounded-2xl p-5 md:p-6 border border-stone-100 hover:bg-white hover:shadow-sm transition-all">
+
+            <div className="glass-card rounded-2xl p-5 md:p-6 border border-white/60 hover:scale-105 transition-all duration-300">
               <div className="flex items-center gap-2 text-stone-500 mb-2">
                 <Clock className="w-4 h-4" />
-                <span className="text-xs font-bold uppercase tracking-wide">创建时间</span>
+                <span className="text-xs font-black uppercase tracking-wide">创建时间</span>
               </div>
-              <p className="text-sm font-semibold text-stone-800 truncate mt-1">
+              <p className="text-sm font-bold text-stone-800 truncate mt-1">
                 {new Date(project.createdAt).toLocaleDateString()}
               </p>
-              <p className="text-xs text-stone-400 mt-0.5">
+              <p className="text-xs text-stone-400 font-bold mt-0.5">
                 {new Date(project.createdAt).toLocaleTimeString()}
               </p>
             </div>
@@ -358,48 +357,47 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
               {records.map((record) => (
-                <div 
-                  key={record.id} 
-                  className="glass-card rounded-2xl p-5 group border border-white/60"
+                <div
+                  key={record.id}
+                  className="glass-card rounded-2xl p-5 group border border-white/60 hover:border-orange-200 hover:shadow-lg transition-all duration-300 hover:-translate-y-1"
                 >
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-stone-100 flex items-center justify-center border border-white shadow-sm">
-                        <UserIcon className="w-5 h-5 text-stone-400" />
+                      <div className="w-10 h-10 rounded-2xl bg-stone-100 flex items-center justify-center border border-white shadow-sm group-hover:bg-orange-50/50 transition-colors">
+                        <UserIcon className="w-5 h-5 text-stone-400 group-hover:text-orange-500 transition-colors" />
                       </div>
                       <div>
-                        <p className="font-bold text-stone-800 leading-tight text-sm">{record.username}</p>
+                        <p className="font-black text-stone-800 leading-tight text-sm">{record.username}</p>
                         <p className="text-[10px] font-bold text-stone-400 uppercase tracking-wider mt-0.5">
                           ID: {record.userId}
                         </p>
                       </div>
                     </div>
                   </div>
-                  
+
                   <div className="mb-4">
                     {record.directCredit ? (
-                      <div className="relative bg-stone-50/80 rounded-xl p-4 border border-stone-100 group-hover:border-orange-200 transition-colors">
+                      <div className="relative bg-stone-50/50 rounded-xl p-4 border border-stone-100 group-hover:border-orange-200/50 transition-colors">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-stone-400 uppercase tracking-wide">直充金额</span>
-                          <span className="text-lg font-extrabold text-stone-800 tabular-nums">${record.creditedDollars}</span>
+                          <span className="text-lg font-black text-stone-800 tabular-nums">${record.creditedDollars}</span>
                         </div>
                         <div className="mt-3 flex items-center justify-center">
-                          <span className={`px-3 py-1 rounded-full text-xs font-bold border ${
-                            record.creditStatus === 'uncertain'
-                              ? 'bg-amber-50 text-amber-700 border-amber-200'
-                              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                          }`}>
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold border ${record.creditStatus === 'uncertain'
+                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            }`}>
                             {record.creditStatus === 'uncertain' ? '待确认' : '已直充'}
                           </span>
                         </div>
                       </div>
                     ) : (
-                      <div 
+                      <div
                         onClick={() => handleCopyCode(record.code)}
-                        className="relative bg-stone-50/80 rounded-xl p-3 border border-stone-100 group-hover:border-orange-200 transition-colors cursor-pointer active:scale-[0.98]"
+                        className="relative bg-stone-50/50 rounded-xl p-3 border border-stone-100 group-hover:border-orange-200/50 transition-colors cursor-pointer active:scale-[0.98] group-hover:bg-white/80"
                         title="点击复制"
                       >
-                        <p className="font-mono text-sm text-stone-700 break-all text-center font-semibold group-hover:text-orange-600 transition-colors">
+                        <p className="font-mono text-sm text-stone-700 break-all text-center font-bold group-hover:text-orange-600 transition-colors">
                           {record.code}
                         </p>
                         <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -408,8 +406,8 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
                       </div>
                     )}
                   </div>
-                  
-                  <div className="flex items-center gap-1.5 text-xs text-stone-400 border-t border-stone-100 pt-3">
+
+                  <div className="flex items-center gap-1.5 text-xs text-stone-400 border-t border-stone-100 pt-3 font-bold group-hover:border-orange-100/50">
                     <Clock className="w-3.5 h-3.5" />
                     <span>{new Date(record.claimedAt).toLocaleString()}</span>
                   </div>

@@ -102,11 +102,10 @@ function SidebarContent({
                     <Link
                       href={item.href}
                       onClick={onNavClick}
-                      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                        active
+                      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${active
                           ? 'bg-orange-50 text-orange-700 border-l-2 border-orange-500 shadow-sm'
                           : 'text-stone-600 hover:bg-stone-100 hover:text-stone-800 border-l-2 border-transparent'
-                      }`}
+                        }`}
                     >
                       <Icon className={`w-[18px] h-[18px] ${active ? 'text-orange-500' : 'text-stone-400'}`} />
                       {item.name}
@@ -163,24 +162,26 @@ export default function AdminSidebar({
 }) {
   return (
     <>
-      {/* Desktop sidebar */}
-      <aside className="hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 lg:w-60 bg-white/80 backdrop-blur-xl border-r border-stone-200/60 z-40">
-        <SidebarContent user={user} onLogout={onLogout} />
+      {/* Desktop sidebar - Floating Glass Panel */}
+      <aside className="hidden lg:flex lg:flex-col lg:fixed lg:top-4 lg:bottom-4 lg:left-4 lg:w-64 z-40">
+        <div className="h-full glass rounded-3xl flex flex-col shadow-glass border border-white/60">
+          <SidebarContent user={user} onLogout={onLogout} />
+        </div>
       </aside>
 
       {/* Mobile overlay */}
       {mobileOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
-          {/* backdrop */}
+          {/* background blur */}
           <div
-            className="absolute inset-0 bg-stone-900/30 backdrop-blur-sm"
+            className="absolute inset-0 bg-stone-900/20 backdrop-blur-sm transition-opacity duration-300"
             onClick={onMobileClose}
           />
-          {/* drawer */}
-          <aside className="relative w-72 max-w-[80vw] h-full bg-white shadow-2xl animate-slide-in-left">
+          {/* drawer - Floating Glass style */}
+          <aside className="absolute top-4 left-4 bottom-4 w-72 max-w-[85vw] glass rounded-3xl shadow-2xl animate-scale-in flex flex-col overflow-hidden">
             <button
               onClick={onMobileClose}
-              className="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-stone-100 text-stone-400 z-10"
+              className="absolute top-4 right-4 p-2 rounded-full hover:bg-stone-100/50 text-stone-400 z-10 transition-colors"
             >
               <X className="w-5 h-5" />
             </button>

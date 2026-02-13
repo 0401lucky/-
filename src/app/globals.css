@@ -255,7 +255,30 @@ body {
   .animate-pulse,
   .animate-pulse-glow,
   .shine-effect::after,
-  .animate-pointer-wobble {
+  .animate-pointer-wobble,
+  .animate-blob, 
+  .animate-pop-in {
     animation: none !important;
   }
+}
+
+@keyframes blob {
+  0% { transform: translate(0px, 0px) scale(1); }
+  33% { transform: translate(30px, -50px) scale(1.1); }
+  66% { transform: translate(-20px, 20px) scale(0.9); }
+  100% { transform: translate(0px, 0px) scale(1); }
+}
+
+.animate-blob {
+  animation: blob 7s infinite;
+}
+
+@keyframes popIn {
+  0% { opacity: 0; transform: scale(0.5); }
+  70% { transform: scale(1.1); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.animate-pop-in {
+  animation: popIn 0.5s cubic-bezier(0.26, 0.53, 0.74, 1.48) forwards;
 }

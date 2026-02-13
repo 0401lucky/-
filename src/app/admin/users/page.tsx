@@ -62,14 +62,14 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'new' | 'claimed'>('all');
-  
+
   // 分页状态
   const [page, setPage] = useState(1);
   const [totalUsers, setTotalUsers] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [usersStats, setUsersStats] = useState<UsersStatsSummary | null>(null);
-  
+
   // 用户详情模态框
   const [selectedUser, setSelectedUser] = useState<UserWithStats | null>(null);
   const [userClaims, setUserClaims] = useState<ClaimRecord[]>([]);
@@ -77,7 +77,7 @@ export default function UsersPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [migratingEligibility, setMigratingEligibility] = useState(false);
-  
+
   // 积分相关状态
   const [userPoints, setUserPoints] = useState<number | null>(null);
   const [userPointsLogs, setUserPointsLogs] = useState<PointsLog[]>([]);
@@ -85,20 +85,20 @@ export default function UsersPage() {
   const [adjustReason, setAdjustReason] = useState('');
   const [adjusting, setAdjusting] = useState(false);
   const [pointsError, setPointsError] = useState(false);
-  
+
   // 请求序号防抖，防止竞态
   const requestIdRef = useRef(0);
 
   useEffect(() => {
     let result = users;
-    
+
     // 类型过滤（前端过滤，因为搜索在后端）
     if (filterType === 'new') {
       result = result.filter(u => u.isNewUser);
     } else if (filterType === 'claimed') {
       result = result.filter(u => !u.isNewUser);
     }
-    
+
     setFilteredUsers(result);
   }, [users, filterType]);
 
@@ -139,7 +139,7 @@ export default function UsersPage() {
   // 加载更多用户
   const loadMoreUsers = async () => {
     if (loadingMore || !hasMore) return;
-    
+
     setLoadingMore(true);
     try {
       const nextPage = page + 1;
@@ -175,7 +175,7 @@ export default function UsersPage() {
   const handleUserClick = async (u: UserWithStats) => {
     // 递增请求序号，用于防止竞态
     const currentRequestId = ++requestIdRef.current;
-    
+
     setSelectedUser(u);
     setLoadingDetail(true);
     // 清空所有详情数据，防止显示上一个用户的数据
@@ -186,17 +186,17 @@ export default function UsersPage() {
     setAdjustAmount('');
     setAdjustReason('');
     setPointsError(false);
-    
+
     try {
       // 并行获取用户详情和积分信息
       const [detailRes, pointsRes] = await Promise.all([
         fetch(`/api/admin/users/${u.id}`),
         fetch(`/api/admin/points?userId=${u.id}`)
       ]);
-      
+
       // 检查是否仍是最新请求
       if (currentRequestId !== requestIdRef.current) return;
-      
+
       if (detailRes.ok) {
         const data = await detailRes.json();
         if (data.success) {
@@ -204,7 +204,7 @@ export default function UsersPage() {
           setUserLotteryRecords(data.lotteryRecords || []);
         }
       }
-      
+
       if (pointsRes.ok) {
         const pointsData = await pointsRes.json();
         if (pointsData.success && pointsData.data) {
@@ -232,14 +232,14 @@ export default function UsersPage() {
 
   const handleAdjustPoints = async () => {
     if (!selectedUser || !adjustAmount || !adjustReason.trim()) return;
-    
+
     // 使用 Number 而非 parseInt，更严格的验证
     const amount = Number(adjustAmount);
     if (!Number.isSafeInteger(amount) || amount === 0) {
       alert('请输入有效的积分数量（必须是非零整数）');
       return;
     }
-    
+
     setAdjusting(true);
     try {
       const res = await fetch('/api/admin/points', {
@@ -251,7 +251,7 @@ export default function UsersPage() {
           description: adjustReason.trim()
         })
       });
-      
+
       const data = await res.json();
       if (data.success) {
         // 刷新积分数据
@@ -358,256 +358,253 @@ export default function UsersPage() {
 
   return (
     <>
-        {/* 操作栏 */}
-        <div className="flex justify-end mb-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={handleMigrateNewUserEligibility}
-              disabled={migratingEligibility}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-orange-500 border border-orange-500 rounded-xl hover:bg-orange-600 hover:border-orange-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Star className={`w-4 h-4 ${migratingEligibility ? 'animate-pulse' : ''}`} />
-              {migratingEligibility ? '迁移中...' : '迁移新人资格'}
-            </button>
+      {/* 操作栏 */}
+      <div className="flex justify-end mb-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleMigrateNewUserEligibility}
+            disabled={migratingEligibility}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-orange-500 border border-orange-500 rounded-xl hover:bg-orange-600 hover:border-orange-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Star className={`w-4 h-4 ${migratingEligibility ? 'animate-pulse' : ''}`} />
+            {migratingEligibility ? '迁移中...' : '迁移新人资格'}
+          </button>
 
-            <button
-              onClick={handleSyncUsers}
-              disabled={syncing}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-stone-600 bg-white border border-stone-200 rounded-xl hover:bg-stone-50 hover:border-stone-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-              {syncing ? '同步中...' : '同步历史用户'}
-            </button>
-          </div>
+          <button
+            onClick={handleSyncUsers}
+            disabled={syncing}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-stone-600 bg-white border border-stone-200 rounded-xl hover:bg-stone-50 hover:border-stone-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? '同步中...' : '同步历史用户'}
+          </button>
         </div>
+      </div>
 
-        {/* 统计卡片 */}
-        <div className="grid grid-cols-3 gap-4 mb-8">
-          <div className="glass rounded-2xl p-5 border border-white/50">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
-                <Users className="w-5 h-5 text-blue-500" />
-              </div>
-              <span className="text-sm font-medium text-stone-500">总用户数</span>
+      {/* 统计卡片 */}
+      <div className="grid grid-cols-3 gap-4 mb-8">
+        <div className="glass-card rounded-2xl p-5 border border-white/60 hover:scale-105 transition-all duration-300">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shadow-sm">
+              <Users className="w-5 h-5 text-blue-500" />
             </div>
-            <p className="text-3xl font-bold text-stone-800">{usersStats?.total ?? (totalUsers || users.length)}</p>
+            <span className="text-sm font-black text-stone-400 uppercase tracking-wide">总用户数</span>
           </div>
-          <div className="glass rounded-2xl p-5 border border-white/50">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center">
-                <Star className="w-5 h-5 text-emerald-500" />
-              </div>
-              <span className="text-sm font-medium text-stone-500">新用户</span>
-            </div>
-            <p className="text-3xl font-bold text-emerald-600">{newUserCount}</p>
-          </div>
-          <div className="glass rounded-2xl p-5 border border-white/50">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center">
-                <Gift className="w-5 h-5 text-orange-500" />
-              </div>
-              <span className="text-sm font-medium text-stone-500">已使用新人资格</span>
-            </div>
-            <p className="text-3xl font-bold text-orange-600">{claimedUserCount}</p>
-          </div>
+          <p className="text-3xl font-black text-stone-800">{usersStats?.total ?? (totalUsers || users.length)}</p>
         </div>
-
-        {/* 搜索和筛选 */}
-        <div className="flex flex-col sm:flex-row gap-4 mb-6">
-          <div className="relative flex-1">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-stone-400" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索用户名或ID..."
-              className="w-full pl-12 pr-4 py-3 bg-white border border-stone-200 rounded-xl focus:border-orange-500 focus:ring-4 focus:ring-orange-100 transition-all outline-none text-stone-800 placeholder-stone-400 font-medium"
-            />
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setFilterType('all')}
-              className={`px-4 py-2.5 rounded-xl font-medium text-sm transition-all ${
-                filterType === 'all' 
-                  ? 'bg-stone-800 text-white' 
-                  : 'bg-white border border-stone-200 text-stone-600 hover:bg-stone-50'
-              }`}
-            >
-              全部
-            </button>
-            <button
-              onClick={() => setFilterType('new')}
-              className={`px-4 py-2.5 rounded-xl font-medium text-sm transition-all ${
-                filterType === 'new' 
-                  ? 'bg-emerald-500 text-white' 
-                  : 'bg-white border border-stone-200 text-stone-600 hover:bg-stone-50'
-              }`}
-            >
-              🆕 新用户
-            </button>
-            <button
-              onClick={() => setFilterType('claimed')}
-              className={`px-4 py-2.5 rounded-xl font-medium text-sm transition-all ${
-                filterType === 'claimed' 
-                  ? 'bg-orange-500 text-white' 
-                  : 'bg-white border border-stone-200 text-stone-600 hover:bg-stone-50'
-              }`}
-            >
-              已使用资格
-            </button>
-          </div>
-        </div>
-
-        {/* 用户列表 */}
-        {/* [Perf] 移除 glass 类避免 backdrop-blur 影响滚动性能 */}
-        <div className="bg-white/95 rounded-3xl shadow-sm overflow-hidden border border-stone-200/60">
-          {filteredUsers.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-24 px-4">
-              <div className="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mb-4">
-                <Users className="w-8 h-8 text-stone-400" />
-              </div>
-              <h2 className="text-lg font-bold text-stone-700 mb-1">暂无用户</h2>
-              <p className="text-stone-500 text-sm">
-                {searchQuery ? '未找到匹配的用户' : '还没有用户领取过福利'}
-              </p>
+        <div className="glass-card rounded-2xl p-5 border border-white/60 hover:scale-105 transition-all duration-300">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center shadow-sm">
+              <Star className="w-5 h-5 text-emerald-500" />
             </div>
-          ) : (
-            <div>
-              {/* Desktop Table Header */}
-              <div className="hidden lg:grid grid-cols-[2fr_1fr_1fr_1fr_1fr_80px] px-8 py-4 bg-stone-50/80 border-b border-stone-200/60 text-xs font-bold text-stone-400 uppercase tracking-wider">
-                <div className="pl-2">用户</div>
-                <div>状态</div>
-                <div>兑换码领取</div>
-                <div>抽奖次数</div>
-                <div>首次访问</div>
-                <div className="text-right pr-2">操作</div>
-              </div>
-              
-              {/* [Perf] 添加 transform 提升为合成层，优化滚动性能 */}
-              <div className="divide-y divide-stone-100" style={{ transform: 'translateZ(0)' }}>
-                {filteredUsers.map((u) => (
-                  <div
-                    key={u.id}
-                    onClick={() => handleUserClick(u)}
-                    className="group cursor-pointer hover:bg-stone-50/80"
-                  >
-                    {/* Desktop View */}
-                    <div className="hidden lg:grid grid-cols-[2fr_1fr_1fr_1fr_1fr_80px] px-8 py-5 items-center gap-4">
-                      {/* User */}
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-50 to-stone-100 flex items-center justify-center border border-stone-200 group-hover:border-blue-200">
-                          <UserIcon className="w-5 h-5 text-blue-500" />
-                        </div>
-                        <div>
-                          <span className="font-bold text-stone-700 text-[15px] group-hover:text-blue-600">{u.username}</span>
-                          <p className="text-xs text-stone-400">ID: {u.id}</p>
-                        </div>
+            <span className="text-sm font-black text-stone-400 uppercase tracking-wide">新用户</span>
+          </div>
+          <p className="text-3xl font-black text-emerald-600">{newUserCount}</p>
+        </div>
+        <div className="glass-card rounded-2xl p-5 border border-white/60 hover:scale-105 transition-all duration-300">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center shadow-sm">
+              <Gift className="w-5 h-5 text-orange-500" />
+            </div>
+            <span className="text-sm font-black text-stone-400 uppercase tracking-wide">已使用新人资格</span>
+          </div>
+          <p className="text-3xl font-black text-orange-600">{claimedUserCount}</p>
+        </div>
+      </div>
+
+      {/* 搜索和筛选 */}
+      <div className="flex flex-col sm:flex-row gap-4 mb-6">
+        <div className="relative flex-1 group">
+          <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
+            <Search className="w-5 h-5 text-stone-400 group-focus-within:text-orange-500 transition-colors" />
+          </div>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="搜索用户名或ID..."
+            className="w-full pl-12 pr-6 py-3.5 bg-white/80 backdrop-blur-sm border-2 border-stone-100 rounded-2xl focus:border-orange-400 focus:ring-4 focus:ring-orange-100 transition-all outline-none text-stone-800 placeholder-stone-400 font-bold shadow-sm"
+          />
+        </div>
+        <div className="flex gap-2 bg-stone-100/50 p-1 rounded-2xl border border-stone-200/50 backdrop-blur-sm">
+          <button
+            onClick={() => setFilterType('all')}
+            className={`px-5 py-2.5 rounded-xl font-black text-sm transition-all duration-300 ${filterType === 'all'
+                ? 'bg-white text-stone-800 shadow-sm scale-105'
+                : 'text-stone-500 hover:text-stone-700 hover:bg-white/50'
+              }`}
+          >
+            全部
+          </button>
+          <button
+            onClick={() => setFilterType('new')}
+            className={`px-5 py-2.5 rounded-xl font-black text-sm transition-all duration-300 ${filterType === 'new'
+                ? 'bg-emerald-100 text-emerald-700 shadow-sm scale-105'
+                : 'text-stone-500 hover:text-emerald-600 hover:bg-emerald-50'
+              }`}
+          >
+            🆕 新用户
+          </button>
+          <button
+            onClick={() => setFilterType('claimed')}
+            className={`px-5 py-2.5 rounded-xl font-black text-sm transition-all duration-300 ${filterType === 'claimed'
+                ? 'bg-orange-100 text-orange-700 shadow-sm scale-105'
+                : 'text-stone-500 hover:text-orange-600 hover:bg-orange-50'
+              }`}
+          >
+            已使用资格
+          </button>
+        </div>
+      </div>
+
+      {/* 用户列表 */}
+      {/* [Perf] 移除 glass 类避免 backdrop-blur 影响滚动性能 */}
+      <div className="bg-white/95 rounded-3xl shadow-sm overflow-hidden border border-stone-200/60">
+        {filteredUsers.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-24 px-4">
+            <div className="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mb-4">
+              <Users className="w-8 h-8 text-stone-400" />
+            </div>
+            <h2 className="text-lg font-bold text-stone-700 mb-1">暂无用户</h2>
+            <p className="text-stone-500 text-sm">
+              {searchQuery ? '未找到匹配的用户' : '还没有用户领取过福利'}
+            </p>
+          </div>
+        ) : (
+          <div>
+            {/* Desktop Table Header */}
+            <div className="hidden lg:grid grid-cols-[2fr_1fr_1fr_1fr_1fr_80px] px-8 py-4 bg-stone-50/80 border-b border-stone-200/60 text-xs font-bold text-stone-400 uppercase tracking-wider">
+              <div className="pl-2">用户</div>
+              <div>状态</div>
+              <div>兑换码领取</div>
+              <div>抽奖次数</div>
+              <div>首次访问</div>
+              <div className="text-right pr-2">操作</div>
+            </div>
+
+            {/* [Perf] 添加 transform 提升为合成层，优化滚动性能 */}
+            <div className="divide-y divide-stone-100" style={{ transform: 'translateZ(0)' }}>
+              {filteredUsers.map((u) => (
+                <div
+                  key={u.id}
+                  onClick={() => handleUserClick(u)}
+                  className="group cursor-pointer hover:bg-stone-50/80"
+                >
+                  {/* Desktop View */}
+                  <div className="hidden lg:grid grid-cols-[2fr_1fr_1fr_1fr_1fr_80px] px-8 py-5 items-center gap-4">
+                    {/* User */}
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-50 to-stone-100 flex items-center justify-center border border-stone-200 group-hover:border-blue-200">
+                        <UserIcon className="w-5 h-5 text-blue-500" />
                       </div>
-
-                      {/* Status */}
                       <div>
-                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${
-                          u.isNewUser 
-                            ? 'bg-emerald-50 text-emerald-600 border-emerald-100' 
-                            : 'bg-stone-100 text-stone-500 border-stone-200'
-                        }`}>
-                          {u.isNewUser ? '🆕 新用户' : '老用户'}
-                        </span>
-                      </div>
-
-                      {/* Claims Count */}
-                      <div className="flex items-center gap-2">
-                        <Gift className="w-4 h-4 text-orange-400" />
-                        <span className="text-sm font-semibold text-stone-600">{u.claimsCount} 次</span>
-                      </div>
-
-                      {/* Lottery Count */}
-                      <div className="flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-purple-400" />
-                        <span className="text-sm font-semibold text-stone-600">{u.lotteryCount} 次</span>
-                      </div>
-
-                      {/* First Seen */}
-                      <span className="text-sm text-stone-500">
-                        {new Date(u.firstSeen).toLocaleDateString()}
-                      </span>
-
-                      {/* Actions */}
-                      <div className="flex justify-end">
-                        <div className="w-8 h-8 rounded-lg bg-stone-50 text-stone-400 flex items-center justify-center border border-stone-100 group-hover:bg-white group-hover:border-blue-200 group-hover:text-blue-500">
-                          <ChevronRight className="w-4 h-4" />
-                        </div>
+                        <span className="font-bold text-stone-700 text-[15px] group-hover:text-blue-600">{u.username}</span>
+                        <p className="text-xs text-stone-400">ID: {u.id}</p>
                       </div>
                     </div>
 
-                    {/* Mobile Card View */}
-                    <div className="lg:hidden p-5 flex flex-col gap-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center border border-blue-100">
-                            <UserIcon className="w-5 h-5 text-blue-500" />
-                          </div>
-                          <div>
-                            <h3 className="font-bold text-stone-800 text-base">{u.username}</h3>
-                            <p className="text-xs text-stone-400">ID: {u.id}</p>
-                          </div>
-                        </div>
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-bold border ${
-                          u.isNewUser 
-                            ? 'bg-emerald-50 text-emerald-600 border-emerald-100' 
-                            : 'bg-stone-100 text-stone-500 border-stone-200'
+                    {/* Status */}
+                    <div>
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${u.isNewUser
+                          ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                          : 'bg-stone-100 text-stone-500 border-stone-200'
                         }`}>
-                          {u.isNewUser ? '🆕 新' : '老用户'}
-                        </span>
-                      </div>
-                      
-                      <div className="bg-stone-50/50 rounded-xl p-4 border border-stone-100 grid grid-cols-3 gap-4">
-                        <div className="text-center">
-                          <p className="text-xs text-stone-500 mb-1">兑换码</p>
-                          <p className="font-bold text-stone-800">{u.claimsCount}</p>
-                        </div>
-                        <div className="text-center border-x border-stone-200">
-                          <p className="text-xs text-stone-500 mb-1">抽奖</p>
-                          <p className="font-bold text-stone-800">{u.lotteryCount}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-xs text-stone-500 mb-1">首次访问</p>
-                          <p className="font-bold text-stone-800 text-xs">{new Date(u.firstSeen).toLocaleDateString()}</p>
-                        </div>
+                        {u.isNewUser ? '🆕 新用户' : '老用户'}
+                      </span>
+                    </div>
+
+                    {/* Claims Count */}
+                    <div className="flex items-center gap-2">
+                      <Gift className="w-4 h-4 text-orange-400" />
+                      <span className="text-sm font-semibold text-stone-600">{u.claimsCount} 次</span>
+                    </div>
+
+                    {/* Lottery Count */}
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-purple-400" />
+                      <span className="text-sm font-semibold text-stone-600">{u.lotteryCount} 次</span>
+                    </div>
+
+                    {/* First Seen */}
+                    <span className="text-sm text-stone-500">
+                      {new Date(u.firstSeen).toLocaleDateString()}
+                    </span>
+
+                    {/* Actions */}
+                    <div className="flex justify-end">
+                      <div className="w-8 h-8 rounded-lg bg-stone-50 text-stone-400 flex items-center justify-center border border-stone-100 group-hover:bg-white group-hover:border-blue-200 group-hover:text-blue-500">
+                        <ChevronRight className="w-4 h-4" />
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
-              
-              {/* 加载更多按钮 */}
-              {hasMore && (
-                <div className="p-4 text-center border-t border-stone-100">
-                  <button
-                    onClick={loadMoreUsers}
-                    disabled={loadingMore}
-                    className="px-6 py-2 bg-blue-500 text-white rounded-lg font-bold text-sm hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                  >
-                    {loadingMore ? (
-                      <span className="flex items-center gap-2">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        加载中...
+
+                  {/* Mobile Card View */}
+                  <div className="lg:hidden p-5 flex flex-col gap-4">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center border border-blue-100">
+                          <UserIcon className="w-5 h-5 text-blue-500" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-stone-800 text-base">{u.username}</h3>
+                          <p className="text-xs text-stone-400">ID: {u.id}</p>
+                        </div>
+                      </div>
+                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-bold border ${u.isNewUser
+                          ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                          : 'bg-stone-100 text-stone-500 border-stone-200'
+                        }`}>
+                        {u.isNewUser ? '🆕 新' : '老用户'}
                       </span>
-                    ) : (
-                      `加载更多 (已加载 ${users.length}/${totalUsers})`
-                    )}
-                  </button>
+                    </div>
+
+                    <div className="bg-stone-50/50 rounded-xl p-4 border border-stone-100 grid grid-cols-3 gap-4">
+                      <div className="text-center">
+                        <p className="text-xs text-stone-500 mb-1">兑换码</p>
+                        <p className="font-bold text-stone-800">{u.claimsCount}</p>
+                      </div>
+                      <div className="text-center border-x border-stone-200">
+                        <p className="text-xs text-stone-500 mb-1">抽奖</p>
+                        <p className="font-bold text-stone-800">{u.lotteryCount}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-xs text-stone-500 mb-1">首次访问</p>
+                        <p className="font-bold text-stone-800 text-xs">{new Date(u.firstSeen).toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              )}
-              
-              {!hasMore && users.length > 0 && (
-                <div className="p-4 text-center text-stone-400 text-sm border-t border-stone-100">
-                  已加载全部 {totalUsers} 位用户
-                </div>
-              )}
+              ))}
             </div>
-          )}
-        </div>
+
+            {/* 加载更多按钮 */}
+            {hasMore && (
+              <div className="p-4 text-center border-t border-stone-100">
+                <button
+                  onClick={loadMoreUsers}
+                  disabled={loadingMore}
+                  className="px-6 py-2 bg-blue-500 text-white rounded-lg font-bold text-sm hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  {loadingMore ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      加载中...
+                    </span>
+                  ) : (
+                    `加载更多 (已加载 ${users.length}/${totalUsers})`
+                  )}
+                </button>
+              </div>
+            )}
+
+            {!hasMore && users.length > 0 && (
+              <div className="p-4 text-center text-stone-400 text-sm border-t border-stone-100">
+                已加载全部 {totalUsers} 位用户
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 用户详情模态框 */}
       {selectedUser && (
@@ -616,7 +613,7 @@ export default function UsersPage() {
             className="absolute inset-0 bg-stone-900/30"
             onClick={() => setSelectedUser(null)}
           />
-          
+
           <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl overflow-hidden animate-fade-in ring-1 ring-black/5 max-h-[80vh] flex flex-col">
             {/* Header */}
             <div className="px-6 py-4 border-b border-stone-100 flex justify-between items-center bg-stone-50/50 shrink-0">
@@ -629,7 +626,7 @@ export default function UsersPage() {
                   <p className="text-xs text-stone-400">ID: {selectedUser.id}</p>
                 </div>
               </div>
-              <button 
+              <button
                 onClick={() => setSelectedUser(null)}
                 className="w-8 h-8 rounded-full hover:bg-stone-100 flex items-center justify-center text-stone-400 transition-colors"
               >
@@ -647,9 +644,8 @@ export default function UsersPage() {
                 <div className="space-y-6">
                   {/* 用户状态 */}
                   <div className="flex items-center gap-3 p-4 rounded-xl bg-stone-50 border border-stone-100">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                      selectedUser.isNewUser ? 'bg-emerald-100' : 'bg-orange-100'
-                    }`}>
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${selectedUser.isNewUser ? 'bg-emerald-100' : 'bg-orange-100'
+                      }`}>
                       {selectedUser.isNewUser ? (
                         <Star className="w-5 h-5 text-emerald-600" />
                       ) : (
@@ -689,7 +685,7 @@ export default function UsersPage() {
                           )}
                         </div>
                       </div>
-                      
+
                       {/* 调整表单 */}
                       <div className="space-y-3 pt-3 border-t border-amber-200">
                         <div className="grid grid-cols-2 gap-3">
@@ -726,7 +722,7 @@ export default function UsersPage() {
                         </button>
                       </div>
                     </div>
-                    
+
                     {/* 积分流水 */}
                     {pointsError ? (
                       <div className="mt-3 text-xs text-red-500">积分流水加载失败</div>
@@ -795,13 +791,12 @@ export default function UsersPage() {
                             {claim.directCredit ? (
                               <div className="flex items-center gap-2">
                                 <span className="text-sm font-medium text-orange-600">🎁 ${claim.creditedDollars}</span>
-                                <span className={`text-xs px-2 py-0.5 rounded-full ${
-                                  claim.creditStatus === 'success' ? 'bg-green-100 text-green-600' :
-                                  claim.creditStatus === 'pending' ? 'bg-yellow-100 text-yellow-600' :
-                                  'bg-red-100 text-red-600'
-                                }`}>
+                                <span className={`text-xs px-2 py-0.5 rounded-full ${claim.creditStatus === 'success' ? 'bg-green-100 text-green-600' :
+                                    claim.creditStatus === 'pending' ? 'bg-yellow-100 text-yellow-600' :
+                                      'bg-red-100 text-red-600'
+                                  }`}>
                                   {claim.creditStatus === 'success' ? '已直充' :
-                                   claim.creditStatus === 'pending' ? '处理中' : '不确定'}
+                                    claim.creditStatus === 'pending' ? '处理中' : '不确定'}
                                 </span>
                               </div>
                             ) : (
