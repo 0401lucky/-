@@ -1,6 +1,6 @@
 'use client';
 
-import { Layers, Zap, Star, Shield, Flame } from 'lucide-react';
+import { Zap, Shield, Flame } from 'lucide-react';
 import { floorToPoints, formatPower } from '@/lib/tower-engine';
 import type { BuffType, TowerDifficulty, ThemeFloorType, ActiveBlessing, ActiveCurse } from '@/lib/tower-engine';
 import {
@@ -8,7 +8,6 @@ import {
   DIFFICULTY_LABELS,
   BLESSING_ICONS, BLESSING_LABELS,
   CURSE_ICONS, CURSE_LABELS,
-  THEME_LABELS, THEME_ICONS,
 } from '@/lib/tower-engine';
 
 interface GameHeaderProps {
@@ -40,7 +39,6 @@ export default function GameHeader({
   power,
   choicesCount,
   powerChanged,
-  hasShield,
   shieldCount = 0,
   isBossFloor,
   isShopFloor,
@@ -89,8 +87,8 @@ export default function GameHeader({
           <div className="flex flex-col gap-1">
             {difficulty && (
               <span className={`text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full w-fit ${difficulty === 'hell' ? 'bg-red-100 text-red-600' :
-                  difficulty === 'hard' ? 'bg-orange-100 text-orange-600' :
-                    'bg-emerald-100 text-emerald-600'
+                difficulty === 'hard' ? 'bg-orange-100 text-orange-600' :
+                  'bg-emerald-100 text-emerald-600'
                 }`}>
                 {DIFFICULTY_LABELS[difficulty]}
               </span>
@@ -121,8 +119,8 @@ export default function GameHeader({
         <div className="flex items-center gap-2">
           {/* 护盾 */}
           <div className={`relative flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-300 ${shieldCount > 0
-              ? 'bg-blue-50 text-blue-500 shadow-sm border border-blue-200'
-              : 'bg-transparent text-slate-300'
+            ? 'bg-blue-50 text-blue-500 shadow-sm border border-blue-200'
+            : 'bg-transparent text-slate-300'
             }`}>
             <Shield className="w-6 h-6" />
             {shieldCount > 0 && (
@@ -146,8 +144,8 @@ export default function GameHeader({
           {/* Combo */}
           {combo > 0 && (
             <div className={`flex-shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-lg border font-bold ${combo >= 3
-                ? 'bg-red-50 text-red-600 border-red-200 animate-pulse'
-                : 'bg-orange-50 text-orange-600 border-orange-200'
+              ? 'bg-red-50 text-red-600 border-red-200 animate-pulse'
+              : 'bg-orange-50 text-orange-600 border-orange-200'
               }`}>
               <Flame className="w-3 h-3 fill-current" />
               <span>Combo x{combo}</span>

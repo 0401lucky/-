@@ -1,7 +1,10 @@
 'use client';
 
 import type { TowerFloor, TowerLaneContent, BuffType, ThemeFloorType, ActiveBlessing, ActiveCurse } from '@/lib/tower-engine';
-import { BUFF_LABELS, BUFF_ICONS, BUFF_DESCRIPTIONS, THEME_LABELS, THEME_ICONS } from '@/lib/tower-engine';
+import { BUFF_LABELS, BUFF_DESCRIPTIONS, THEME_ICONS } from '@/lib/tower-engine';
+import {
+  HelpCircle, Ghost, Skull, Shield, Plus, X as XIcon, ShoppingBag, Bomb, Wind, Star
+} from 'lucide-react';
 
 type AnimState = 'idle' | 'walking' | 'attacking' | 'powerup' | 'death' | 'nextFloor' | 'revealing' | 'shieldBlock' | 'bossDefeated' | 'trapped' | 'shopping';
 
@@ -37,7 +40,6 @@ export default function LaneCards({
   animState,
   revealedLane,
   hasShield,
-  shieldCount = 0,
   combo = 0,
   buffs = [],
   blessings = [],
@@ -119,7 +121,7 @@ export default function LaneCards({
                 ${isOther && isAnimating ? 'opacity-30 scale-90 blur-[1px]' : ''}
                 ${isSelected && animState === 'revealing' ? 'animate-flip' : ''}
                 ${isSelected && animState === 'trapped' ? 'animate-shake' : ''}
-                ${getCardStyle(displayLane, effectivePower, isSelected, animState, hasShield)}
+                ${getCardStyle(displayLane, effectivePower, isSelected, animState)}
               `}
             >
               {/* 卡片光泽效果 */}
@@ -152,19 +154,20 @@ export default function LaneCards({
   );
 }
 
-function getIcon(lane: TowerLaneContent, seeThrough?: boolean): string {
+
+function getIcon(lane: TowerLaneContent, seeThrough?: boolean): React.ReactNode {
   if (lane.type === 'mystery') {
     if (seeThrough) return getIcon(lane.hidden);
-    return '❓';
+    return <HelpCircle className="w-10 h-10 text-purple-400" />;
   }
-  if (lane.type === 'monster') return '👾';
-  if (lane.type === 'boss') return '💀';
-  if (lane.type === 'shield') return '🛡️';
-  if (lane.type === 'add') return '💚';
-  if (lane.type === 'multiply') return '⭐';
-  if (lane.type === 'shop') return BUFF_ICONS[lane.buff];
-  if (lane.type === 'trap') return lane.subtype === 'sub' ? '💣' : '🌀';
-  return '❓';
+  if (lane.type === 'monster') return <Ghost className="w-10 h-10 text-red-500" />;
+  if (lane.type === 'boss') return <Skull className="w-10 h-10 text-red-700" />;
+  if (lane.type === 'shield') return <Shield className="w-10 h-10 text-blue-500" />;
+  if (lane.type === 'add') return <Plus className="w-10 h-10 text-green-500" />;
+  if (lane.type === 'multiply') return <XIcon className="w-10 h-10 text-amber-500" />;
+  if (lane.type === 'shop') return <ShoppingBag className="w-10 h-10 text-purple-500" />;
+  if (lane.type === 'trap') return lane.subtype === 'sub' ? <Bomb className="w-10 h-10 text-slate-700" /> : <Wind className="w-10 h-10 text-slate-500" />;
+  return <HelpCircle className="w-10 h-10 text-slate-300" />;
 }
 
 function getLabel(lane: TowerLaneContent, seeThrough?: boolean): string {
@@ -258,9 +261,8 @@ function getCardStyle(
   power: number,
   isSelected: boolean,
   animState: AnimState,
-  hasShield?: boolean,
 ): string {
-  const base = 'bg-white/80 backdrop-blur-md shadow-sm';
+
 
   if (lane.type === 'mystery') {
     return `bg-gradient-to-br from-indigo-50 to-purple-50 border-purple-200 hover:border-purple-300 text-purple-900`;

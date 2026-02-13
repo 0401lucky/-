@@ -1,0 +1,54 @@
+
+> redemption-code-distributor@0.1.0 lint
+> eslint .
+
+
+D:\code\模型计算\兑换码分发\src\app\admin\page.tsx
+  8:3  warning  'ChevronRight' is defined but never used  @typescript-eslint/no-unused-vars
+
+D:\code\模型计算\兑换码分发\src\app\games\tower\components\GameHeader.tsx
+   3:10  warning  'Layers' is defined but never used        @typescript-eslint/no-unused-vars
+   3:23  warning  'Star' is defined but never used          @typescript-eslint/no-unused-vars
+  11:3   warning  'THEME_LABELS' is defined but never used  @typescript-eslint/no-unused-vars
+  11:17  warning  'THEME_ICONS' is defined but never used   @typescript-eslint/no-unused-vars
+  43:3   warning  'hasShield' is defined but never used     @typescript-eslint/no-unused-vars
+
+D:\code\模型计算\兑换码分发\src\app\games\tower\components\LaneCards.tsx
+    4:54  warning  'THEME_LABELS' is defined but never used          @typescript-eslint/no-unused-vars
+   40:3   warning  'shieldCount' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  261:3   warning  'hasShield' is defined but never used             @typescript-eslint/no-unused-vars
+  263:9   warning  'base' is assigned a value but never used         @typescript-eslint/no-unused-vars
+
+D:\code\模型计算\兑换码分发\src\app\games\tower\components\ResultModal.tsx
+   3:18  warning  'Star' is defined but never used                     @typescript-eslint/no-unused-vars
+   3:36  warning  'Flame' is defined but never used                    @typescript-eslint/no-unused-vars
+   3:43  warning  'Shield' is defined but never used                   @typescript-eslint/no-unused-vars
+   3:51  warning  'Swords' is defined but never used                   @typescript-eslint/no-unused-vars
+   4:23  warning  'DIFFICULTY_LABELS' is defined but never used        @typescript-eslint/no-unused-vars
+  30:3   warning  'pointsEarned' is defined but never used             @typescript-eslint/no-unused-vars
+  31:3   warning  'bossesDefeated' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  32:3   warning  'maxCombo' is assigned a value but never used        @typescript-eslint/no-unused-vars
+  36:3   warning  'perfectPoints' is assigned a value but never used   @typescript-eslint/no-unused-vars
+  37:3   warning  'difficulty' is defined but never used               @typescript-eslint/no-unused-vars
+
+D:\code\模型计算\兑换码分发\src\app\games\tower\page.tsx
+    8:44  warning  'Trophy' is defined but never used                           @typescript-eslint/no-unused-vars
+  254:11  error    'currentBlessings' is never reassigned. Use 'const' instead  prefer-const
+  255:11  error    'currentCurses' is never reassigned. Use 'const' instead     prefer-const
+
+D:\code\模型计算\兑换码分发\src\lib\__tests__\tower-engine.test.ts
+   11:8  warning  'BuffType' is defined but never used              @typescript-eslint/no-unused-vars
+  120:9  error    'power' is never reassigned. Use 'const' instead  prefer-const
+  133:9  error    'power' is never reassigned. Use 'const' instead  prefer-const
+  438:9  error    'power' is never reassigned. Use 'const' instead  prefer-const
+  455:9  error    'power' is never reassigned. Use 'const' instead  prefer-const
+
+D:\code\模型计算\兑换码分发\src\lib\tower-engine.ts
+  310:10  warning  'getDifficulty' is defined but never used  @typescript-eslint/no-unused-vars
+  444:11  warning  'r3' is assigned a value but never used    @typescript-eslint/no-unused-vars
+  483:11  warning  'r2' is assigned a value but never used    @typescript-eslint/no-unused-vars
+  602:3   warning  'ownedBuffs' is defined but never used     @typescript-eslint/no-unused-vars
+
+✖ 32 problems (6 errors, 26 warnings)
+  6 errors and 0 warnings potentially fixable with the `--fix` option.
+

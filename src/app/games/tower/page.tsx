@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, ChevronLeft, Star, Trophy, Zap, Layers, X, HelpCircle, Flag, Shield } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, Star, Zap, Layers, X, HelpCircle, Flag, Shield, Ghost, Plus, ShoppingBag } from 'lucide-react';
 import LaneCards from './components/LaneCards';
 import FloatingText from './components/FloatingText';
 import type { FloatingTextItem } from './components/FloatingText';
@@ -251,8 +251,8 @@ export default function TowerPage() {
       let currentShield = 0;
       let currentCombo = 0;
       const currentBuffs: BuffType[] = [];
-      let currentBlessings: ActiveBlessing[] = [];
-      let currentCurses: ActiveCurse[] = [];
+      const currentBlessings: ActiveBlessing[] = [];
+      const currentCurses: ActiveCurse[] = [];
       let currentBossesDefeated = 0;
 
       for (let i = 0; i < restoredChoices.length; i++) {
@@ -565,6 +565,7 @@ export default function TowerPage() {
         const decrementedCurses = cursesRef.current
           .map(c => ({ ...c, remainingFloors: c.remainingFloors - 1 }))
           .filter(c => c.remainingFloors > 0);
+
         const expiredCurses = cursesRef.current.filter(c => c.remainingFloors <= 1);
         for (const ec of expiredCurses) {
           addFloatingText(`${CURSE_ICONS[ec.type]} ${CURSE_LABELS[ec.type]} 解除`, '#22c55e');
@@ -1243,19 +1244,27 @@ export default function TowerPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-3 text-xs">
                     <div className="p-3 bg-red-50 rounded-2xl border border-red-100">
-                      <div className="font-bold text-red-700 mb-1">👾 怪物</div>
+                      <div className="font-bold text-red-700 mb-1 flex items-center gap-1">
+                        <Ghost className="w-4 h-4" /> 怪物
+                      </div>
                       <div className="text-red-600/80">你的力量需 &gt; 怪物。击败后获得力量。</div>
                     </div>
                     <div className="p-3 bg-green-50 rounded-2xl border border-green-100">
-                      <div className="font-bold text-green-700 mb-1">💚 增益</div>
+                      <div className="font-bold text-green-700 mb-1 flex items-center gap-1">
+                        <Plus className="w-4 h-4" /> 增益
+                      </div>
                       <div className="text-green-600/80">直接增加力量(+)，或翻倍(*)。</div>
                     </div>
                     <div className="p-3 bg-blue-50 rounded-2xl border border-blue-100">
-                      <div className="font-bold text-blue-700 mb-1">🛡️ 护盾</div>
+                      <div className="font-bold text-blue-700 mb-1 flex items-center gap-1">
+                        <Shield className="w-4 h-4" /> 护盾
+                      </div>
                       <div className="text-blue-600/80">抵挡一次伤害。满则转力量。</div>
                     </div>
                     <div className="p-3 bg-purple-50 rounded-2xl border border-purple-100">
-                      <div className="font-bold text-purple-700 mb-1">🛍️ 商店</div>
+                      <div className="font-bold text-purple-700 mb-1 flex items-center gap-1">
+                        <ShoppingBag className="w-4 h-4" /> 商店
+                      </div>
                       <div className="text-purple-600/80">每5层。购买强力永久被动。</div>
                     </div>
                   </div>

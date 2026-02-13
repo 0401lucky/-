@@ -1,7 +1,7 @@
 'use client';
 
-import { Trophy, Star, Skull, Zap, Flame, Shield, Swords } from 'lucide-react';
-import { formatPower, DIFFICULTY_LABELS } from '@/lib/tower-engine';
+import { RotateCcw, Home, Trophy, Share2, Zap, Skull } from 'lucide-react';
+import { floorToPoints, formatPower, MAX_POWER } from '@/lib/tower-engine';
 import type { TowerDifficulty } from '@/lib/tower-engine';
 
 interface ResultModalProps {
@@ -27,14 +27,14 @@ export default function ResultModal({
   finalPower,
   gameOver,
   score,
-  pointsEarned,
-  bossesDefeated = 0,
-  maxCombo = 0,
+  // pointsEarned, // Removed as unused
+  // bossesDefeated = 0, // Removed as unused
+  // maxCombo = 0, // Removed as unused
   basePoints,
   bossPoints = 0,
   comboPoints = 0,
-  perfectPoints = 0,
-  difficulty,
+  // perfectPoints = 0, // Removed as unused
+  // difficulty, // Removed as unused
   difficultyMultiplier,
   onPlayAgain,
   onBackToGames,

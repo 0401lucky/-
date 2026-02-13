@@ -11,43 +11,45 @@ interface DifficultySelectProps {
   disabled?: boolean;
 }
 
+import { Leaf, Sword, Skull } from 'lucide-react';
+
 const DIFFICULTIES: {
   key: TowerDifficulty;
-  icon: string;
+  icon: React.ReactNode;
   color: string;
   borderColor: string;
   textColor: string;
   description: string;
   features: string[];
 }[] = [
-  {
-    key: 'normal',
-    icon: '🌿',
-    color: 'from-emerald-400 to-green-500',
-    borderColor: 'border-emerald-200',
-    textColor: 'text-emerald-600',
-    description: '标准挑战难度，适合所有玩家',
-    features: ['怪物标准强度', '有安全路线保障', '正常陷阱概率'],
-  },
-  {
-    key: 'hard',
-    icon: '⚔️',
-    color: 'from-orange-400 to-amber-500',
-    borderColor: 'border-orange-200',
-    textColor: 'text-orange-600',
-    description: '怪物更强，迷雾更多，但积分 ×1.5',
-    features: ['怪物强度 ×1.3', '迷雾概率 +15%', '安全路减少 30%'],
-  },
-  {
-    key: 'hell',
-    icon: '💀',
-    color: 'from-red-500 to-rose-600',
-    borderColor: 'border-red-200',
-    textColor: 'text-red-600',
-    description: '极限挑战，无安全路线，积分 ×2.5',
-    features: ['怪物强度 ×1.6', '迷雾概率 +25%', '无安全路线保障'],
-  },
-];
+    {
+      key: 'normal',
+      icon: <Leaf className="w-12 h-12" />,
+      color: 'from-emerald-400 to-green-500',
+      borderColor: 'border-emerald-200',
+      textColor: 'text-emerald-600',
+      description: '标准挑战难度，适合所有玩家',
+      features: ['怪物标准强度', '有安全路线保障', '正常陷阱概率'],
+    },
+    {
+      key: 'hard',
+      icon: <Sword className="w-12 h-12" />,
+      color: 'from-orange-400 to-amber-500',
+      borderColor: 'border-orange-200',
+      textColor: 'text-orange-600',
+      description: '怪物更强，迷雾更多，但积分 ×1.5',
+      features: ['怪物强度 ×1.3', '迷雾概率 +15%', '安全路减少 30%'],
+    },
+    {
+      key: 'hell',
+      icon: <Skull className="w-12 h-12" />,
+      color: 'from-red-500 to-rose-600',
+      borderColor: 'border-red-200',
+      textColor: 'text-red-600',
+      description: '极限挑战，无安全路线，积分 ×2.5',
+      features: ['怪物强度 ×1.6', '迷雾概率 +25%', '无安全路线保障'],
+    },
+  ];
 
 export default function DifficultySelect({ onSelect, disabled }: DifficultySelectProps) {
   return (
