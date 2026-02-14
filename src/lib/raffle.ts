@@ -553,7 +553,21 @@ async function popDeliveryJobToProcessingQueue(): Promise<string | null> {
     [now, processingToken]
   );
 
-  return typeof raw === "string" ? raw : null;
+  if (typeof raw === "string") {
+    return raw;
+  }
+
+  // @vercel/kv 在部分场景会自动把 JSON 字符串反序列化为对象。
+  // 这里统一转回字符串，确保后续 JSON.parse 与 LREM 精确匹配都能工作。
+  if (raw && typeof raw === "object") {
+    try {
+      return JSON.stringify(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 async function ackProcessingDeliveryJob(rawProcessingJob: string): Promise<boolean> {
