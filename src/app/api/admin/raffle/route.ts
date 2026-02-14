@@ -5,7 +5,7 @@
 
 import { NextResponse } from "next/server";
 import { checkRaffleAdmin } from "./admin-auth";
-import { getRaffleList, createRaffle } from "@/lib/raffle";
+import { getRaffleList, createRaffle, processQueuedRaffleDeliveries } from "@/lib/raffle";
 import type { CreateRaffleInput } from "@/lib/types/raffle";
 
 export async function GET(request: Request) {
@@ -18,6 +18,13 @@ export async function GET(request: Request) {
   }
 
   try {
+    // Hobby 计划下 Cron 触发频率有限，管理端访问时顺带推进一轮队列。
+    try {
+      await processQueuedRaffleDeliveries(1);
+    } catch (error) {
+      console.error("管理端列表触发发奖队列失败:", error);
+    }
+
     const { searchParams } = new URL(request.url);
     const statusFilter = searchParams.get("status");
 
