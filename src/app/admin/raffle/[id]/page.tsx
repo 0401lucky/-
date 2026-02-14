@@ -31,12 +31,12 @@ interface RaffleWinner {
 
 const PENDING_RETRY_AFTER_MS = 10 * 60 * 1000;
 
-function isStalePendingReward(winner: RaffleWinner, drawnAt?: number, now = Date.now()): boolean {
+function isRetryablePendingReward(winner: RaffleWinner, drawnAt?: number, now = Date.now()): boolean {
   if (winner.rewardStatus !== 'pending') return false;
   const attempts = winner.rewardAttempts ?? 0;
-  if (attempts === 0) return false;
+  if (attempts === 0) return true;
   const lastAttemptAt = winner.rewardAttemptedAt ?? drawnAt;
-  if (!lastAttemptAt) return false;
+  if (!lastAttemptAt) return true;
   return now - lastAttemptAt >= PENDING_RETRY_AFTER_MS;
 }
 
@@ -385,10 +385,10 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
 
   const now = Date.now();
   const failedRewards = raffle.winners?.filter(w => w.rewardStatus === 'failed') || [];
-  const stalePendingRewards = raffle.winners?.filter((winner) =>
-    isStalePendingReward(winner, raffle.drawnAt, now)
+  const retryablePendingRewards = raffle.winners?.filter((winner) =>
+    isRetryablePendingReward(winner, raffle.drawnAt, now)
   ) || [];
-  const retryableRewardsCount = failedRewards.length + stalePendingRewards.length;
+  const retryableRewardsCount = failedRewards.length + retryablePendingRewards.length;
 
   // 编辑模式渲染
   if (isEditing && raffle.status === 'draft') {
@@ -773,7 +773,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
               {retryableRewardsCount > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-red-600">
-                    {failedRewards.length} 笔失败，{stalePendingRewards.length} 笔超时待确认
+                    {failedRewards.length} 笔失败，{retryablePendingRewards.length} 笔待重试
                   </span>
                   <button
                     onClick={handleRetryFailedRewards}
@@ -818,7 +818,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
                           </span>
                         )}
                         {winner.rewardStatus === 'pending' && (
-                          isStalePendingReward(winner, raffle.drawnAt, now) ? (
+                          isRetryablePendingReward(winner, raffle.drawnAt, now) ? (
                             <span className="flex items-center gap-1 text-orange-600" title={winner.rewardMessage}>
                               <AlertTriangle className="w-4 h-4" />
                               待重试
