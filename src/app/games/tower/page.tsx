@@ -17,6 +17,8 @@ import {
   createTowerRng,
   generateFloor,
   simulateTowerGame,
+  rollBlessing,
+  rollCurse,
   MAX_POWER,
   formatPower,
   BUFF_LABELS,
@@ -251,11 +253,20 @@ export default function TowerPage() {
       let currentShield = 0;
       let currentCombo = 0;
       const currentBuffs: BuffType[] = [];
-      const currentBlessings: ActiveBlessing[] = [];
-      const currentCurses: ActiveCurse[] = [];
+      let currentBlessings: ActiveBlessing[] = [];
+      let currentCurses: ActiveCurse[] = [];
       let currentBossesDefeated = 0;
 
       for (let i = 0; i < restoredChoices.length; i++) {
+        if (difficulty) {
+          currentBlessings = currentBlessings
+            .map(b => ({ ...b, remainingFloors: b.remainingFloors - 1 }))
+            .filter(b => b.remainingFloors > 0);
+          currentCurses = currentCurses
+            .map(c => ({ ...c, remainingFloors: c.remainingFloors - 1 }))
+            .filter(c => c.remainingFloors > 0);
+        }
+
         const floorOpts: GenerateFloorOptions | undefined = difficulty
           ? { difficulty, blessings: currentBlessings, curses: currentCurses, bossesDefeated: currentBossesDefeated }
           : undefined;
@@ -285,6 +296,12 @@ export default function TowerPage() {
             currentPower = Math.min(currentPower + gain + comboBonus, MAX_POWER);
             currentCombo++;
             currentBossesDefeated++;
+            if (difficulty) {
+              const blessing = rollBlessing(freshRng, currentBlessings);
+              if (blessing) {
+                currentBlessings = [...currentBlessings.filter(b => b.type !== blessing.type), blessing];
+              }
+            }
           } else if (currentShield > 0) {
             currentShield--;
             currentCombo = 0;
@@ -332,10 +349,14 @@ export default function TowerPage() {
             currentPower = Math.max(1, Math.ceil(currentPower / lane.value));
           }
           currentCombo = 0;
+          if (difficulty) {
+            const curse = rollCurse(freshRng);
+            if (curse) {
+              currentCurses = [...currentCurses.filter(c => c.type !== curse.type), curse];
+            }
+          }
         }
 
-        // 从 sim 结果同步祝福/诅咒状态（逐层递减 + 新增）
-        // 使用 sim 的最终状态来还原
       }
 
       rngRef.current = freshRng;
@@ -636,10 +657,14 @@ export default function TowerPage() {
             const totalGain = gain + comboBonus;
             const text = comboBonus > 0 ? `+${totalGain} (COMBO)` : `+${totalGain}`;
             addFloatingText(text, '#ff6d00');
+            const newBlessing = session.difficulty && rngRef.current
+              ? rollBlessing(rngRef.current, blessingsRef.current)
+              : null;
             scheduleTimer(() => advanceToNextFloor({
               newPower: powerRef.current + totalGain,
               comboChange: 'increment',
               bossDefeated: true,
+              ...(newBlessing ? { newBlessing } : {}),
             }), ANIM_BOSS_DEFEAT_DURATION);
           } else if (shieldRef.current > 0) {
             handleShieldBlock();
@@ -710,12 +735,16 @@ export default function TowerPage() {
           }), ANIM_SHOP_DURATION);
         } else if (lane.type === 'trap') {
           setAnimState('trapped');
+          const newCurse = session.difficulty && rngRef.current
+            ? rollCurse(rngRef.current)
+            : null;
           if (lane.subtype === 'sub') {
             const newPower = Math.max(1, powerRef.current - lane.value);
             addFloatingText(`-${lane.value}!`, '#f44336');
             scheduleTimer(() => advanceToNextFloor({
               newPower,
               comboChange: 'reset',
+              ...(newCurse ? { newCurse } : {}),
             }), ANIM_TRAP_DURATION);
           } else {
             const newPower = Math.max(1, Math.ceil(powerRef.current / lane.value));
@@ -723,6 +752,7 @@ export default function TowerPage() {
             scheduleTimer(() => advanceToNextFloor({
               newPower,
               comboChange: 'reset',
+              ...(newCurse ? { newCurse } : {}),
             }), ANIM_TRAP_DURATION);
           }
         }

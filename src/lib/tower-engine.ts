@@ -576,7 +576,7 @@ function generateThemeFloorByType(
 
 // ---- 祝福/诅咒系统 ----
 
-function rollBlessing(rng: Rng, activeBlessings: ActiveBlessing[]): ActiveBlessing | null {
+export function rollBlessing(rng: Rng, activeBlessings: ActiveBlessing[]): ActiveBlessing | null {
   const roll = rng(); // 始终消耗 1 次 rng
   const available = ALL_BLESSINGS.filter(b => !activeBlessings.some(ab => ab.type === b));
   if (available.length === 0) return null;
@@ -584,7 +584,7 @@ function rollBlessing(rng: Rng, activeBlessings: ActiveBlessing[]): ActiveBlessi
   return { type: available[idx], remainingFloors: 5 };
 }
 
-function rollCurse(rng: Rng): ActiveCurse | null {
+export function rollCurse(rng: Rng): ActiveCurse | null {
   const probRoll = rng(); // 始终消耗 1 次 rng
   const typeRoll = rng(); // 始终消耗 1 次 rng (共 2 次)
   if (probRoll >= 0.2) return null; // 20% 概率
