@@ -27,6 +27,9 @@ export default function RulesPanel({ onClose }: RulesPanelProps) {
   const cropList: CropId[] = ['wheat', 'carrot', 'tomato', 'strawberry', 'corn', 'pumpkin', 'watermelon', 'golden_apple'];
   const oneCycleYield = Math.max(0, Math.round((1 - WATER_MISS_PENALTY) * 100));
   const twoCycleYield = Math.max(0, Math.round((1 - WATER_MISS_PENALTY * 2) * 100));
+  const strawberry = CROPS.strawberry;
+  const rainyYield = Math.floor(strawberry.baseYield * WEATHERS.rainy.yieldModifier);
+  const rainyNet = rainyYield - strawberry.seedCost;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-12 overflow-y-auto" onClick={onClose}>
@@ -233,7 +236,7 @@ export default function RulesPanel({ onClose }: RulesPanelProps) {
             </h3>
             <div className="space-y-2 pl-8">
               <p><b>道具商店：</b>点击快捷栏的<b>「🏪 道具商店」</b>按钮打开商店，花积分购买增益道具</p>
-              <p><b>Buff 道具：</b>购买后立即激活，持续一段时间自动生效，同类 buff 不可叠加</p>
+              <p><b>Buff 道具：</b>购买后立即激活，持续一段时间自动生效（默认同类不可叠加）</p>
               <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 space-y-1 text-xs">
                 <p className="text-violet-800 font-medium">可用 Buff：</p>
                 <p className="text-violet-700">🐱 小猫助手 — 自动浇水 12h</p>
@@ -244,10 +247,11 @@ export default function RulesPanel({ onClose }: RulesPanelProps) {
                 <p className="text-violet-700">⏩ 时光沙漏 — 生长速度 2x，6h</p>
               </div>
               <p><b>即时道具：</b>购买后进入背包，在背包中手动使用，一次性消耗</p>
+              <p><b>数量购买：</b>即时道具支持一次购买多个（1~99），Buff 道具单次仅可购买 1 个</p>
               <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 space-y-1 text-xs">
                 <p className="text-orange-800 font-medium">即时道具：</p>
                 <p className="text-orange-700">🧪 时光加速器 — 全部田地加速 60 分钟</p>
-                <p className="text-orange-700">💊 高级肥料 — 指定一块田加速 30 分钟</p>
+                <p className="text-orange-700">💊 高级肥料 — 背包中会先弹出选田面板，再对指定田地加速 30 分钟</p>
                 <p className="text-orange-700">🔫 速效驱虫剂 — 清除全部害虫 + 2h 免疫</p>
                 <p className="text-orange-700">🎲 神秘种子袋 — 随机作物免费种在空地</p>
               </div>
@@ -264,7 +268,7 @@ export default function RulesPanel({ onClose }: RulesPanelProps) {
             <div className="space-y-2 pl-8">
               <p><b>铲除：</b>可以随时铲除田地上的作物（包括枯萎的），但<b>不退还</b>种子费用。有枯萎作物时可用<b>「一键铲除」</b>批量清理</p>
               <p><b>离线生长：</b>关闭页面后作物继续生长，回来时自动计算进度。但离线期间浇水超时也会正常计算减产或枯萎</p>
-              <p><b>收获举例：</b>种一株草莓（成本 50），雨天 (+15% 产量)、浇水正常、无害虫 → 收获 120 × 1.15 = <b>138 积分</b>，净赚 88</p>
+              <p><b>收获举例：</b>种一株草莓（成本 {strawberry.seedCost}），雨天 (+15% 产量)、浇水正常、无害虫 → 收获 {strawberry.baseYield} × 1.15 = <b>{rainyYield} 积分</b>，净赚 {rainyNet}</p>
             </div>
           </section>
         </div>
