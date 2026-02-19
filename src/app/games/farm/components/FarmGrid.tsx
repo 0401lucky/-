@@ -24,7 +24,6 @@ export default function FarmGrid({
   onRemovePest,
   onRemoveCrop,
 }: FarmGridProps) {
-  // 自适应列数
   const count = plots.length;
   let gridCols = 'grid-cols-2';
   if (count >= 9) gridCols = 'grid-cols-3 sm:grid-cols-4';
@@ -33,16 +32,21 @@ export default function FarmGrid({
   return (
     <div className={`grid ${gridCols} gap-3`}>
       {plots.map((plot) => (
-        <PlotCard
+        <div
           key={plot.index}
-          plot={plot}
-          actionLoading={actionLoading}
-          onPlant={() => onPlant(plot.index)}
-          onWater={() => onWater(plot.index)}
-          onHarvest={() => onHarvest(plot.index)}
-          onRemovePest={() => onRemovePest(plot.index)}
-          onRemoveCrop={() => onRemoveCrop(plot.index)}
-        />
+          className="animate-farm-plot-enter"
+          style={{ animationDelay: `${plot.index * 60}ms` }}
+        >
+          <PlotCard
+            plot={plot}
+            actionLoading={actionLoading}
+            onPlant={() => onPlant(plot.index)}
+            onWater={() => onWater(plot.index)}
+            onHarvest={() => onHarvest(plot.index)}
+            onRemovePest={() => onRemovePest(plot.index)}
+            onRemoveCrop={() => onRemoveCrop(plot.index)}
+          />
+        </div>
       ))}
     </div>
   );

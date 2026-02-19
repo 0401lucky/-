@@ -282,3 +282,158 @@ body {
 .animate-pop-in {
   animation: popIn 0.5s cubic-bezier(0.26, 0.53, 0.74, 1.48) forwards;
 }
+
+/* ============================================
+   Farm Game Animations
+   ============================================ */
+
+/* 云朵飘动 */
+@keyframes farmCloudDrift {
+  0% { transform: translateX(-10%); }
+  100% { transform: translateX(110%); }
+}
+
+/* 种子埋入 */
+@keyframes farmSeedBury {
+  0% { transform: translateY(-20px) scale(0.5); opacity: 0; }
+  60% { transform: translateY(4px) scale(1.1); opacity: 1; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+/* 发芽摇晃 */
+@keyframes farmSproutWiggle {
+  0%, 100% { transform: rotate(0deg) scale(1); }
+  25% { transform: rotate(-6deg) scale(1.03); }
+  75% { transform: rotate(6deg) scale(1.03); }
+}
+
+/* 生长摇摆 */
+@keyframes farmGrowSway {
+  0%, 100% { transform: rotate(0deg); }
+  30% { transform: rotate(-3deg); }
+  70% { transform: rotate(3deg); }
+}
+
+/* 成熟闪光 */
+@keyframes farmMatureGlow {
+  0%, 100% { filter: brightness(1) drop-shadow(0 0 0px transparent); transform: scale(1); }
+  50% { filter: brightness(1.15) drop-shadow(0 0 8px rgba(251, 191, 36, 0.6)); transform: scale(1.06); }
+}
+
+/* 枯萎颤抖 */
+@keyframes farmWitherShake {
+  0%, 100% { transform: rotate(0deg); opacity: 0.7; }
+  25% { transform: rotate(-2deg); opacity: 0.6; }
+  75% { transform: rotate(2deg); opacity: 0.6; }
+}
+
+/* 浇水水滴 */
+@keyframes farmWaterDrop {
+  0% { transform: translateY(-12px) scale(1); opacity: 1; }
+  70% { transform: translateY(2px) scale(0.8); opacity: 0.8; }
+  100% { transform: translateY(4px) scale(1.4, 0.4); opacity: 0; }
+}
+
+/* 害虫抖动 */
+@keyframes farmPestJitter {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  20% { transform: translate(-2px, 1px) rotate(-8deg); }
+  40% { transform: translate(2px, -1px) rotate(8deg); }
+  60% { transform: translate(-1px, 2px) rotate(-4deg); }
+  80% { transform: translate(1px, -2px) rotate(4deg); }
+}
+
+/* 收获弹跳 */
+@keyframes farmHarvestBounce {
+  0% { transform: scale(1); }
+  20% { transform: scale(1.25); }
+  40% { transform: scale(0.9); }
+  60% { transform: scale(1.1); }
+  80% { transform: scale(0.97); }
+  100% { transform: scale(1); }
+}
+
+/* 雨滴下落 */
+@keyframes farmRainFall {
+  0% { transform: translateY(-100%) translateX(0); opacity: 0; }
+  10% { opacity: 0.7; }
+  90% { opacity: 0.7; }
+  100% { transform: translateY(100vh) translateX(-20px); opacity: 0; }
+}
+
+/* 热浪扭曲 */
+@keyframes farmHeatWave {
+  0%, 100% { transform: scaleX(1) translateY(0); opacity: 0.3; }
+  50% { transform: scaleX(1.02) translateY(-2px); opacity: 0.5; }
+}
+
+/* 阳光射线 */
+@keyframes farmSunRay {
+  0%, 100% { opacity: 0.15; transform: rotate(0deg); }
+  50% { opacity: 0.3; transform: rotate(3deg); }
+}
+
+/* 风吹粒子 */
+@keyframes farmWindParticle {
+  0% { transform: translateX(-20px) translateY(0) rotate(0deg); opacity: 0; }
+  20% { opacity: 0.6; }
+  80% { opacity: 0.6; }
+  100% { transform: translateX(100vw) translateY(-30px) rotate(720deg); opacity: 0; }
+}
+
+/* 雾气飘动 */
+@keyframes farmFogDrift {
+  0% { transform: translateX(-5%) scaleX(1); opacity: 0.3; }
+  50% { transform: translateX(2%) scaleX(1.05); opacity: 0.5; }
+  100% { transform: translateX(-5%) scaleX(1); opacity: 0.3; }
+}
+
+/* 田地入场 */
+@keyframes farmPlotEntrance {
+  0% { opacity: 0; transform: scale(0.8) translateY(10px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* 进度条闪光 */
+@keyframes farmProgressShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* 空地呼吸 */
+@keyframes farmEmptyBreath {
+  0%, 100% { border-color: rgba(148, 163, 184, 0.2); }
+  50% { border-color: rgba(74, 222, 128, 0.4); }
+}
+
+/* 商店物品入场 */
+@keyframes farmShopItemSlide {
+  0% { opacity: 0; transform: translateX(-12px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+.animate-farm-seed { animation: farmSeedBury 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+.animate-farm-sprout { animation: farmSproutWiggle 2s ease-in-out infinite; }
+.animate-farm-grow { animation: farmGrowSway 3.5s ease-in-out infinite; }
+.animate-farm-mature { animation: farmMatureGlow 2.5s ease-in-out infinite; }
+.animate-farm-wither { animation: farmWitherShake 2s ease-in-out infinite; }
+.animate-farm-pest { animation: farmPestJitter 0.4s ease-in-out infinite; }
+.animate-farm-water-drop { animation: farmWaterDrop 0.8s ease-out forwards; }
+.animate-farm-harvest { animation: farmHarvestBounce 0.6s ease-out; }
+.animate-farm-plot-enter { animation: farmPlotEntrance 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+.animate-farm-empty-breath { animation: farmEmptyBreath 3s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-farm-seed,
+  .animate-farm-sprout,
+  .animate-farm-grow,
+  .animate-farm-mature,
+  .animate-farm-wither,
+  .animate-farm-pest,
+  .animate-farm-water-drop,
+  .animate-farm-harvest,
+  .animate-farm-plot-enter,
+  .animate-farm-empty-breath {
+    animation: none !important;
+  }
+}
