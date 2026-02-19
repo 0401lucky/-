@@ -10,7 +10,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     name: '小麦',
     icon: '\uD83C\uDF3E',
     seedCost: 10,
-    baseYield: 25,
+    baseYield: 55,
     growthTime: 3 * 60 * 1000,         // 3分钟
     waterInterval: 3 * 60 * 1000,      // 3分钟
     unlockLevel: 1,
@@ -27,7 +27,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     name: '胡萝卜',
     icon: '\uD83E\uDD55',
     seedCost: 20,
-    baseYield: 50,
+    baseYield: 110,
     growthTime: 8 * 60 * 1000,         // 8分钟
     waterInterval: 6 * 60 * 1000,      // 6分钟
     unlockLevel: 1,
@@ -44,7 +44,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     name: '番茄',
     icon: '\uD83C\uDF45',
     seedCost: 35,
-    baseYield: 85,
+    baseYield: 190,
     growthTime: 15 * 60 * 1000,        // 15分钟
     waterInterval: 12 * 60 * 1000,     // 12分钟
     unlockLevel: 2,
@@ -61,7 +61,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     name: '草莓',
     icon: '\uD83C\uDF53',
     seedCost: 50,
-    baseYield: 120,
+    baseYield: 270,
     growthTime: 30 * 60 * 1000,        // 30分钟
     waterInterval: 25 * 60 * 1000,     // 25分钟
     unlockLevel: 2,
@@ -78,7 +78,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     name: '玉米',
     icon: '\uD83C\uDF3D',
     seedCost: 80,
-    baseYield: 200,
+    baseYield: 450,
     growthTime: 60 * 60 * 1000,        // 1小时
     waterInterval: 45 * 60 * 1000,     // 45分钟
     unlockLevel: 3,
@@ -95,7 +95,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     name: '南瓜',
     icon: '\uD83C\uDF83',
     seedCost: 120,
-    baseYield: 300,
+    baseYield: 680,
     growthTime: 2 * 60 * 60 * 1000,    // 2小时
     waterInterval: 75 * 60 * 1000,     // 75分钟
     unlockLevel: 3,
@@ -112,7 +112,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     name: '西瓜',
     icon: '\uD83C\uDF49',
     seedCost: 200,
-    baseYield: 480,
+    baseYield: 1080,
     growthTime: 4 * 60 * 60 * 1000,    // 4小时
     waterInterval: 2.5 * 60 * 60 * 1000, // 2.5小时
     unlockLevel: 4,
@@ -129,7 +129,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     name: '金苹果',
     icon: '\uD83C\uDF4E',
     seedCost: 350,
-    baseYield: 800,
+    baseYield: 1800,
     growthTime: 8 * 60 * 60 * 1000,    // 8小时
     waterInterval: 4 * 60 * 60 * 1000, // 4小时
     unlockLevel: 5,

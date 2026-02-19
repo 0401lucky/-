@@ -11,7 +11,7 @@ export const DEFAULT_FARM_SHOP_ITEMS: Omit<FarmShopItem, 'id' | 'createdAt' | 'u
     description: '自动浇水，12小时内无需手动浇水',
     effect: 'auto_water',
     mode: 'buff',
-    pointsCost: 80,
+    pointsCost: 180,
     durationMs: 12 * 60 * 60 * 1000, // 12h
     sortOrder: 1,
     enabled: true,
@@ -22,7 +22,7 @@ export const DEFAULT_FARM_SHOP_ITEMS: Omit<FarmShopItem, 'id' | 'createdAt' | 'u
     description: '自动收获成熟作物，12小时内成熟即收',
     effect: 'auto_harvest',
     mode: 'buff',
-    pointsCost: 120,
+    pointsCost: 260,
     durationMs: 12 * 60 * 60 * 1000, // 12h
     sortOrder: 2,
     enabled: true,
@@ -33,7 +33,7 @@ export const DEFAULT_FARM_SHOP_ITEMS: Omit<FarmShopItem, 'id' | 'createdAt' | 'u
     description: '害虫概率降低80%，24小时守护',
     effect: 'pest_shield',
     mode: 'buff',
-    pointsCost: 60,
+    pointsCost: 140,
     durationMs: 24 * 60 * 60 * 1000, // 24h
     effectValue: 0.8, // 降低80%
     sortOrder: 3,
@@ -45,7 +45,7 @@ export const DEFAULT_FARM_SHOP_ITEMS: Omit<FarmShopItem, 'id' | 'createdAt' | 'u
     description: '免疫恶劣天气减产，24小时保护',
     effect: 'weather_shield',
     mode: 'buff',
-    pointsCost: 100,
+    pointsCost: 220,
     durationMs: 24 * 60 * 60 * 1000, // 24h
     sortOrder: 4,
     enabled: true,
@@ -56,7 +56,7 @@ export const DEFAULT_FARM_SHOP_ITEMS: Omit<FarmShopItem, 'id' | 'createdAt' | 'u
     description: '收获产量+25%，12小时加成',
     effect: 'yield_bonus',
     mode: 'buff',
-    pointsCost: 150,
+    pointsCost: 320,
     durationMs: 12 * 60 * 60 * 1000, // 12h
     effectValue: 0.25, // +25%
     sortOrder: 5,
@@ -68,7 +68,7 @@ export const DEFAULT_FARM_SHOP_ITEMS: Omit<FarmShopItem, 'id' | 'createdAt' | 'u
     description: '生长速度2倍，6小时加速',
     effect: 'growth_speed',
     mode: 'buff',
-    pointsCost: 200,
+    pointsCost: 420,
     durationMs: 6 * 60 * 60 * 1000, // 6h
     effectValue: 2, // 2x
     sortOrder: 6,
@@ -82,7 +82,7 @@ export const DEFAULT_FARM_SHOP_ITEMS: Omit<FarmShopItem, 'id' | 'createdAt' | 'u
     description: '全部田地作物加速生长60分钟',
     effect: 'growth_boost',
     mode: 'instant',
-    pointsCost: 80,
+    pointsCost: 180,
     instantValue: 60 * 60 * 1000, // 60分钟
     sortOrder: 7,
     enabled: true,
@@ -93,7 +93,7 @@ export const DEFAULT_FARM_SHOP_ITEMS: Omit<FarmShopItem, 'id' | 'createdAt' | 'u
     description: '指定一块田加速生长30分钟',
     effect: 'plot_growth_boost',
     mode: 'instant',
-    pointsCost: 30,
+    pointsCost: 80,
     instantValue: 30 * 60 * 1000, // 30分钟
     sortOrder: 8,
     enabled: true,
@@ -104,7 +104,7 @@ export const DEFAULT_FARM_SHOP_ITEMS: Omit<FarmShopItem, 'id' | 'createdAt' | 'u
     description: '清除全部害虫 + 2小时害虫免疫',
     effect: 'pest_clear',
     mode: 'instant',
-    pointsCost: 40,
+    pointsCost: 100,
     instantValue: 2 * 60 * 60 * 1000, // 2h免疫
     sortOrder: 9,
     enabled: true,
@@ -115,7 +115,7 @@ export const DEFAULT_FARM_SHOP_ITEMS: Omit<FarmShopItem, 'id' | 'createdAt' | 'u
     description: '随机作物免费种在空地上',
     effect: 'random_plant',
     mode: 'instant',
-    pointsCost: 50,
+    pointsCost: 120,
     sortOrder: 10,
     enabled: true,
   },
