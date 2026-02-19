@@ -41,7 +41,7 @@ interface FarmData {
   // 道具商店
   activeBuffs: ActiveBuff[];
   inventory: Record<string, number>;
-  purchaseItem: (itemId: string) => Promise<boolean>;
+  purchaseItem: (itemId: string, quantity?: number) => Promise<boolean>;
   useItem: (itemId: string, plotIndex?: number) => Promise<boolean>;
   // 操作状态
   actionLoading: boolean;
@@ -410,13 +410,13 @@ export function useFarmState(): FarmData {
   }, [updateFromResponse]);
 
   // 道具商店操作
-  const purchaseItem = useCallback(async (itemId: string): Promise<boolean> => {
+  const purchaseItem = useCallback(async (itemId: string, quantity = 1): Promise<boolean> => {
     setActionLoading(true);
     try {
       const res = await fetch('/api/games/farm/shop/purchase', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemId }),
+        body: JSON.stringify({ itemId, quantity }),
       });
       const data = await res.json();
       if (!data.success) {

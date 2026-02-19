@@ -85,10 +85,15 @@ function parseNumericCount(value: unknown): number {
   return 0;
 }
 
-async function rollbackDailyLimit(dailyLimitKey: string | null): Promise<void> {
+async function rollbackDailyLimit(dailyLimitKey: string | null, delta = 1): Promise<void> {
   if (!dailyLimitKey) return;
+  if (!Number.isInteger(delta) || delta <= 0) return;
   try {
-    await kv.decr(dailyLimitKey);
+    if (delta === 1) {
+      await kv.decr(dailyLimitKey);
+    } else {
+      await kv.decrby(dailyLimitKey, delta);
+    }
   } catch (error) {
     console.error('Rollback farm shop daily-limit failed:', error);
   }
@@ -260,12 +265,20 @@ export async function purchaseFarmShopItem(
   userId: number,
   itemId: string,
   farmStateFromCaller?: FarmState,
+  quantity = 1,
 ): Promise<{
   success: boolean;
   message?: string;
   farmState?: FarmState;
   newBalance?: number;
 }> {
+  if (!Number.isInteger(quantity) || quantity < 1) {
+    return { success: false, message: '购买数量必须是大于 0 的整数' };
+  }
+  if (quantity > 99) {
+    return { success: false, message: '单次最多购买 99 个' };
+  }
+
   const lock = await acquireFarmActionLock(userId);
   if (!lock) {
     return { success: false, message: '操作处理中，请稍后重试' };
@@ -288,6 +301,10 @@ export async function purchaseFarmShopItem(
       return { success: false, message: `需要农场等级 ${item.unlockLevel} 才能购买` };
     }
 
+    if (item.mode === 'buff' && quantity !== 1) {
+      return { success: false, message: 'Buff 道具每次只能购买 1 个' };
+    }
+
     // 2. 检查每日限购
     const today = getTodayDateString();
     let dailyLimitKey: string | null = null;
@@ -297,20 +314,21 @@ export async function purchaseFarmShopItem(
         local key = KEYS[1]
         local limit = tonumber(ARGV[1])
         local ttl = tonumber(ARGV[2])
-        local newCount = redis.call('INCR', key)
+        local delta = tonumber(ARGV[3])
+        local newCount = redis.call('INCRBY', key, delta)
         if newCount == 1 then
           redis.call('EXPIRE', key, ttl)
         end
         if newCount > limit then
-          redis.call('DECR', key)
-          return {0, newCount - 1}
+          redis.call('DECRBY', key, delta)
+          return {0, newCount - delta}
         end
         return {1, newCount}
       `;
       const limitResult = await kv.eval(
         limitLuaScript,
         [dailyLimitKey],
-        [item.dailyLimit, 48 * 60 * 60]
+        [item.dailyLimit, 48 * 60 * 60, quantity]
       ) as [number, number];
       if (limitResult[0] !== 1) {
         return { success: false, message: `今日已达限购上限（${item.dailyLimit}次）` };
@@ -329,8 +347,8 @@ export async function purchaseFarmShopItem(
       const activeBuffs = (farmState.activeBuffs ?? []).filter(b => b.expiresAt > now);
       const activeSameCount = activeBuffs.filter(b => b.effect === item.effect).length;
       const maxStack = Math.max(1, Math.floor(item.maxStack ?? 1));
-      if (activeSameCount >= maxStack) {
-        await rollbackDailyLimit(dailyLimitKey);
+      if (activeSameCount + quantity > maxStack) {
+        await rollbackDailyLimit(dailyLimitKey, quantity);
         return {
           success: false,
           message: maxStack <= 1
@@ -341,11 +359,17 @@ export async function purchaseFarmShopItem(
     }
 
     // 4. 扣积分
+    const totalCost = item.pointsCost * quantity;
+    if (!Number.isSafeInteger(totalCost) || totalCost <= 0) {
+      await rollbackDailyLimit(dailyLimitKey, quantity);
+      return { success: false, message: '购买数量或价格配置异常' };
+    }
+
     const deductResult = await deductPoints(
-      userId, item.pointsCost, 'exchange', `农场道具: ${item.name}`
+      userId, totalCost, 'exchange', `农场道具: ${item.name} x${quantity}`
     );
     if (!deductResult.success) {
-      await rollbackDailyLimit(dailyLimitKey);
+      await rollbackDailyLimit(dailyLimitKey, quantity);
       return { success: false, message: deductResult.message ?? '积分不足' };
     }
 
@@ -361,7 +385,7 @@ export async function purchaseFarmShopItem(
       farmState.activeBuffs = [...(farmState.activeBuffs ?? []), newBuff];
     } else {
       const inventory = { ...(farmState.inventory ?? {}) };
-      inventory[itemId] = (inventory[itemId] ?? 0) + 1;
+      inventory[itemId] = (inventory[itemId] ?? 0) + quantity;
       farmState.inventory = inventory;
     }
 
@@ -370,9 +394,9 @@ export async function purchaseFarmShopItem(
       await kv.set(FARM_STATE_KEY(userId), farmState);
     } catch (saveError) {
       console.error('Farm shop purchase save failed, starting rollback:', saveError);
-      await rollbackDailyLimit(dailyLimitKey);
+      await rollbackDailyLimit(dailyLimitKey, quantity);
       try {
-        await addPoints(userId, item.pointsCost, 'exchange', `农场道具购买失败退款: ${item.name}`);
+        await addPoints(userId, totalCost, 'exchange', `农场道具购买失败退款: ${item.name} x${quantity}`);
       } catch (refundError) {
         console.error('Farm shop purchase refund failed:', refundError);
       }
@@ -388,6 +412,8 @@ export async function purchaseFarmShopItem(
         effect: item.effect,
         mode: item.mode,
         pointsCost: item.pointsCost,
+        quantity,
+        totalCost,
         createdAt: now,
       };
       await kv.lpush(FARM_SHOP_LOG_KEY(userId), log);
@@ -398,7 +424,7 @@ export async function purchaseFarmShopItem(
 
     // 7. 购买次数统计（best-effort）
     try {
-      await kv.hincrby(FARM_SHOP_PURCHASE_COUNTS_KEY, itemId, 1);
+      await kv.hincrby(FARM_SHOP_PURCHASE_COUNTS_KEY, itemId, quantity);
     } catch (countError) {
       console.error('Farm shop purchase count increment failed:', countError);
     }

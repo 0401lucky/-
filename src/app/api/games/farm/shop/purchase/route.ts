@@ -18,7 +18,7 @@ export const POST = withUserRateLimit(
       }
 
       const body = await request.json();
-      const { itemId } = body;
+      const { itemId, quantity } = body;
 
       if (typeof itemId !== 'string' || !itemId.trim()) {
         return NextResponse.json(
@@ -27,7 +27,18 @@ export const POST = withUserRateLimit(
         );
       }
 
-      const result = await purchaseFarmShopItem(user.id, itemId);
+      let parsedQuantity = 1;
+      if (quantity !== undefined) {
+        if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity < 1) {
+          return NextResponse.json(
+            { success: false, message: '购买数量必须是大于 0 的整数' },
+            { status: 400 },
+          );
+        }
+        parsedQuantity = quantity;
+      }
+
+      const result = await purchaseFarmShopItem(user.id, itemId, undefined, parsedQuantity);
 
       if (!result.success) {
         return NextResponse.json({ success: false, message: result.message });

@@ -4,13 +4,15 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import type { FarmShopItem, ActiveBuff } from '@/lib/types/farm-shop';
+import type { ComputedPlotState } from '@/lib/types/farm';
 
 interface ItemShopProps {
   balance: number;
   activeBuffs: ActiveBuff[];
   inventory: Record<string, number>;
   farmLevel: number;
-  onPurchase: (itemId: string) => Promise<boolean>;
+  plots: ComputedPlotState[];
+  onPurchase: (itemId: string, quantity?: number) => Promise<boolean>;
   onUseItem: (itemId: string, plotIndex?: number) => Promise<boolean>;
   onClose: () => void;
 }
@@ -29,6 +31,7 @@ export default function ItemShop({
   activeBuffs,
   inventory,
   farmLevel,
+  plots,
   onPurchase,
   onUseItem,
   onClose,
@@ -38,6 +41,8 @@ export default function ItemShop({
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [purchaseQuantities, setPurchaseQuantities] = useState<Record<string, number>>({});
+  const [targetItemId, setTargetItemId] = useState<string | null>(null);
 
   const fetchItems = useCallback(async () => {
     try {
@@ -57,13 +62,13 @@ export default function ItemShop({
     fetchItems();
   }, [fetchItems]);
 
-  const handlePurchase = async (itemId: string) => {
+  const handlePurchase = async (itemId: string, quantity = 1) => {
     setActionLoading(true);
     setMessage(null);
     try {
-      const ok = await onPurchase(itemId);
+      const ok = await onPurchase(itemId, quantity);
       if (ok) {
-        setMessage({ type: 'success', text: '购买成功！' });
+        setMessage({ type: 'success', text: quantity > 1 ? `购买成功 x${quantity}！` : '购买成功！' });
         await fetchItems();
       }
     } finally {
@@ -71,17 +76,23 @@ export default function ItemShop({
     }
   };
 
-  const handleUseItem = async (itemId: string) => {
+  const handleUseItem = async (itemId: string, plotIndex?: number) => {
     setActionLoading(true);
     setMessage(null);
     try {
-      const ok = await onUseItem(itemId);
+      const ok = await onUseItem(itemId, plotIndex);
       if (ok) {
         setMessage({ type: 'success', text: '使用成功！' });
+        setTargetItemId(null);
       }
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const setItemQuantity = (itemId: string, next: number) => {
+    const safe = Math.max(1, Math.min(99, Math.floor(next)));
+    setPurchaseQuantities(prev => ({ ...prev, [itemId]: safe }));
   };
 
   const now = Date.now();
@@ -99,6 +110,11 @@ export default function ItemShop({
       item: itemById.get(itemId),
     }));
   const inventoryTotalCount = inventoryItems.reduce((sum, entry) => sum + entry.count, 0);
+  const targetItem = targetItemId ? itemById.get(targetItemId) ?? null : null;
+  const targetablePlots = plots.filter(plot => {
+    if (!plot.cropId || !plot.plantedAt) return false;
+    return plot.stage !== 'withered' && plot.stage !== 'mature';
+  });
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -233,16 +249,15 @@ export default function ItemShop({
                   <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">即时道具（购买后进入背包）</h4>
                   <div className="space-y-2">
                     {instantItems.map((item, index) => {
-                      const canAfford = balance >= item.pointsCost;
+                      const quantity = purchaseQuantities[item.id] ?? 1;
+                      const canAfford = balance >= item.pointsCost * quantity;
                       const levelLocked = item.unlockLevel ? farmLevel < item.unlockLevel : false;
                       const disabled = !canAfford || levelLocked || actionLoading;
                       const ownedCount = inventory[item.id] ?? 0;
 
                       return (
-                        <button
+                        <div
                           key={item.id}
-                          onClick={() => !disabled && handlePurchase(item.id)}
-                          disabled={disabled}
                           className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left
                             ${disabled
                               ? 'opacity-50 cursor-not-allowed border-slate-100 bg-slate-50'
@@ -269,12 +284,41 @@ export default function ItemShop({
                             {levelLocked ? (
                               <div className="text-xs text-slate-400">Lv.{item.unlockLevel}</div>
                             ) : (
-                              <div className={`text-sm font-bold ${canAfford ? 'text-amber-600' : 'text-red-400'}`}>
-                                {item.pointsCost} ⭐
+                              <div className="space-y-1">
+                                <div className={`text-sm font-bold ${canAfford ? 'text-amber-600' : 'text-red-400'}`}>
+                                  {item.pointsCost * quantity} ⭐
+                                </div>
+                                <div className="flex items-center justify-end gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setItemQuantity(item.id, quantity - 1)}
+                                    disabled={actionLoading || quantity <= 1}
+                                    className="w-6 h-6 rounded-md bg-white border border-orange-200 text-orange-600 disabled:opacity-40"
+                                  >
+                                    -
+                                  </button>
+                                  <span className="w-7 text-center text-xs font-semibold text-slate-600">{quantity}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setItemQuantity(item.id, quantity + 1)}
+                                    disabled={actionLoading || quantity >= 99}
+                                    className="w-6 h-6 rounded-md bg-white border border-orange-200 text-orange-600 disabled:opacity-40"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => !disabled && handlePurchase(item.id, quantity)}
+                                  disabled={disabled}
+                                  className="w-full px-2 py-1 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 disabled:opacity-50"
+                                >
+                                  购买
+                                </button>
                               </div>
                             )}
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -297,6 +341,7 @@ export default function ItemShop({
                     const name = item?.name ?? '失效道具';
                     const description = item?.description ?? '该道具已下架或删除，无法继续使用';
                     const canUse = Boolean(item) && !actionLoading;
+                    const requiresPlotTarget = item?.effect === 'plot_growth_boost';
 
                     return (
                       <div
@@ -317,11 +362,19 @@ export default function ItemShop({
                           <div className="text-xs text-slate-500 mt-0.5">{description}</div>
                         </div>
                         <button
-                          onClick={() => item && handleUseItem(item.id)}
+                          onClick={() => {
+                            if (!item) return;
+                            if (requiresPlotTarget) {
+                              setTargetItemId(item.id);
+                              setMessage(null);
+                              return;
+                            }
+                            void handleUseItem(item.id);
+                          }}
                           disabled={!canUse}
                           className="px-3 py-1.5 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white text-xs font-medium rounded-lg transition-all disabled:opacity-50 active:scale-95 shadow-sm"
                         >
-                          {item ? '使用' : '失效'}
+                          {item ? (requiresPlotTarget ? '选田使用' : '使用') : '失效'}
                         </button>
                       </div>
                     );
@@ -332,6 +385,47 @@ export default function ItemShop({
           )}
         </div>
       </div>
+
+      {targetItem && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center p-4" onClick={() => setTargetItemId(null)}>
+          <div className="absolute inset-0 bg-black/30" />
+          <div
+            className="relative w-full max-w-sm rounded-2xl bg-white border border-slate-200 shadow-2xl p-4 space-y-3"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-bold text-slate-800">选择要使用 {targetItem.name} 的田地</div>
+              <button
+                type="button"
+                onClick={() => setTargetItemId(null)}
+                className="w-7 h-7 rounded-full hover:bg-slate-100 text-slate-500"
+              >
+                ×
+              </button>
+            </div>
+
+            {targetablePlots.length === 0 ? (
+              <div className="text-sm text-slate-500 text-center py-6">没有可加速的作物</div>
+            ) : (
+              <div className="grid grid-cols-3 gap-2">
+                {targetablePlots.map(plot => (
+                  <button
+                    key={plot.index}
+                    type="button"
+                    disabled={actionLoading}
+                    onClick={() => void handleUseItem(targetItem.id, plot.index)}
+                    className="p-2 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-left disabled:opacity-50"
+                  >
+                    <div className="text-xs font-semibold text-slate-700">#{plot.index + 1}</div>
+                    <div className="text-lg leading-none mt-1">{plot.cropId ? (plot.stage === 'growing' || plot.stage === 'sprout' || plot.stage === 'seed' ? '🌱' : '🌿') : '⬜'}</div>
+                    <div className="text-[10px] text-slate-500 mt-1 truncate">{plot.cropId ?? '空地'}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

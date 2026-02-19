@@ -447,6 +447,7 @@ export default function FarmPage() {
           activeBuffs={farm.activeBuffs}
           inventory={farm.inventory}
           farmLevel={farm.farmState.level}
+          plots={farm.computedPlots}
           onPurchase={farm.purchaseItem}
           onUseItem={farm.useItem}
           onClose={() => setItemShopOpen(false)}
