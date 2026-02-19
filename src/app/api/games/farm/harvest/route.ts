@@ -2,7 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { withUserRateLimit } from '@/lib/rate-limit';
-import { checkActionCooldown, harvestPlot } from '@/lib/farm';
+import { checkActionCooldown, harvestPlot, harvestAllPlots } from '@/lib/farm';
 
 export const POST = withUserRateLimit(
   'game:submit',
@@ -17,7 +17,27 @@ export const POST = withUserRateLimit(
       }
 
       const body = await request.json();
-      const { plotIndex } = body as { plotIndex?: number };
+      const { plotIndex, harvestAll } = body as { plotIndex?: number; harvestAll?: boolean };
+
+      // 一键收获模式
+      if (harvestAll) {
+        const result = await harvestAllPlots(user.id);
+        return NextResponse.json({
+          success: true,
+          data: {
+            farmState: result.farmState,
+            harvests: result.harvests,
+            totalPointsEarned: result.totalPointsEarned,
+            harvestedCount: result.harvestedCount,
+            newBalance: result.newBalance,
+            dailyEarned: result.dailyEarned,
+            limitReached: result.limitReached,
+            expGained: result.expGained,
+            levelUp: result.levelUp,
+            newLevel: result.newLevel,
+          },
+        });
+      }
 
       if (typeof plotIndex !== 'number' || !Number.isInteger(plotIndex) || plotIndex < 0) {
         return NextResponse.json(

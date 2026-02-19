@@ -10,13 +10,60 @@ import {
   getTodayWeather,
 } from './farm-engine';
 import { getTodayDateString } from './time';
-import { deductPoints, addGamePointsWithLimit } from './points';
+import { addGamePointsWithLimit, addPoints, deductPoints } from './points';
 import { getDailyPointsLimit } from './config';
 
 // ---- KV 键 ----
 
 const FARM_STATE_KEY = (userId: number) => `farm:state:${userId}`;
 const FARM_COOLDOWN_KEY = (userId: number) => `farm:cooldown:action:${userId}`;
+const FARM_ACTION_LOCK_KEY = (userId: number) => `farm:lock:action:${userId}`;
+
+const FARM_ACTION_LOCK_TTL_SECONDS = 15;
+const FARM_ACTION_LOCK_RETRY_MS = 80;
+const FARM_ACTION_LOCK_MAX_RETRIES = 15;
+
+interface FarmActionLock {
+  key: string;
+  token: string;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function acquireFarmActionLock(userId: number): Promise<FarmActionLock | null> {
+  const key = FARM_ACTION_LOCK_KEY(userId);
+  const token = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+  for (let attempt = 0; attempt < FARM_ACTION_LOCK_MAX_RETRIES; attempt += 1) {
+    const locked = await kv.set(key, token, { nx: true, ex: FARM_ACTION_LOCK_TTL_SECONDS });
+    if (locked === 'OK') {
+      return { key, token };
+    }
+    await sleep(FARM_ACTION_LOCK_RETRY_MS);
+  }
+
+  return null;
+}
+
+async function releaseFarmActionLock(lock: FarmActionLock): Promise<void> {
+  const releaseScript = `
+    local key = KEYS[1]
+    local expected = ARGV[1]
+    local current = redis.call('GET', key)
+    if current == expected then
+      return redis.call('DEL', key)
+    end
+    return 0
+  `;
+
+  try {
+    await kv.eval(releaseScript, [lock.key], [lock.token]);
+  } catch (error) {
+    console.error('Release farm action lock failed:', error);
+  }
+}
 
 // ---- 冷却检查 ----
 
@@ -44,8 +91,6 @@ export async function getOrCreateFarm(userId: number): Promise<FarmState> {
     // 惰性刷新状态
     const weather = getTodayWeather(getTodayDateString());
     const refreshed = refreshFarmState(normalized, Date.now(), weather);
-    // 保存刷新后的状态
-    await kv.set(key, refreshed);
     return refreshed;
   }
 
@@ -95,6 +140,12 @@ export async function plantCrop(
   plotIndex: number,
   cropId: CropId,
 ): Promise<{ success: boolean; message?: string; farmState?: FarmState; newBalance?: number }> {
+  const lock = await acquireFarmActionLock(userId);
+  if (!lock) {
+    return { success: false, message: '操作处理中，请稍后重试' };
+  }
+
+  try {
   // 获取当前状态
   const farm = await getOrCreateFarm(userId);
   const now = Date.now();
@@ -144,13 +195,26 @@ export async function plantCrop(
   farm.lastUpdatedAt = now;
 
   // 保存
-  await saveFarmState(farm);
+  try {
+    await saveFarmState(farm);
+  } catch (saveError) {
+    console.error('Farm plant save failed, refunding seed cost:', saveError);
+    try {
+      await addPoints(userId, crop.seedCost, 'exchange', `农场种植失败退款: ${crop.name}种子`);
+    } catch (refundError) {
+      console.error('Farm plant refund failed:', refundError);
+    }
+    return { success: false, message: '种植失败，请稍后重试' };
+  }
 
   return {
     success: true,
     farmState: refreshFarmState(farm, now, weather),
     newBalance: deductResult.balance,
   };
+  } finally {
+    await releaseFarmActionLock(lock);
+  }
 }
 
 // ---- 浇水 ----
@@ -447,6 +511,171 @@ export async function removeCrop(
 
   return {
     success: true,
+    farmState: refreshFarmState(farm, now, weather),
+  };
+}
+
+// ---- 一键铲除枯萎作物 ----
+
+/**
+ * 铲除所有枯萎作物
+ */
+export async function removeAllWitheredCrops(
+  userId: number,
+): Promise<{ success: boolean; removedCount: number; farmState?: FarmState }> {
+  const farm = await getOrCreateFarm(userId);
+  const now = Date.now();
+  const weather = getTodayWeather(getTodayDateString());
+
+  let removedCount = 0;
+
+  for (let i = 0; i < farm.plots.length; i++) {
+    const plot = farm.plots[i];
+    if (!plot.cropId || !plot.plantedAt) continue;
+
+    const computed = computePlotState(plot, now, weather, userId);
+    if (computed.stage !== 'withered') continue;
+
+    farm.plots[i] = createEmptyPlot(i);
+    removedCount++;
+  }
+
+  if (removedCount > 0) {
+    farm.lastUpdatedAt = now;
+    await saveFarmState(farm);
+  }
+
+  return {
+    success: true,
+    removedCount,
+    farmState: refreshFarmState(farm, now, weather),
+  };
+}
+
+// ---- 一键收获 ----
+
+/**
+ * 收获所有成熟作物
+ */
+export async function harvestAllPlots(
+  userId: number,
+): Promise<{
+  success: boolean;
+  harvests: HarvestDetail[];
+  totalPointsEarned: number;
+  harvestedCount: number;
+  newBalance: number;
+  dailyEarned: number;
+  limitReached: boolean;
+  expGained: number;
+  levelUp: boolean;
+  newLevel?: FarmLevel;
+  farmState?: FarmState;
+}> {
+  const farm = await getOrCreateFarm(userId);
+  const now = Date.now();
+  const weather = getTodayWeather(getTodayDateString());
+  const dailyLimit = await getDailyPointsLimit();
+
+  const harvests: HarvestDetail[] = [];
+  let totalPointsEarned = 0;
+  let totalExpGained = 0;
+  let latestBalance = 0;
+  let latestDailyEarned = 0;
+  let limitReached = false;
+
+  for (let i = 0; i < farm.plots.length; i++) {
+    const plot = farm.plots[i];
+    if (!plot.cropId || !plot.plantedAt) continue;
+
+    const computed = computePlotState(plot, now, weather, userId);
+    if (computed.stage !== 'mature') continue;
+
+    const crop = CROPS[plot.cropId];
+    const { yield: harvestYield } = computeHarvestYield(
+      { ...plot, stage: computed.stage, hasPest: computed.hasPest, pestAppearedAt: computed.pestAppearedAt },
+      now, weather,
+    );
+
+    const missedWaterCycles = computeMissedWaterCycles(
+      plot.lastWateredAt,
+      plot.plantedAt,
+      now,
+      plot.cropId,
+    );
+    const waterMultiplier = computeWaterYieldMultiplier(missedWaterCycles);
+
+    // 发放积分
+    const pointsResult = await addGamePointsWithLimit(
+      userId, harvestYield, dailyLimit, 'game_play', `农场收获: ${crop.name}`,
+    );
+
+    // 经验
+    const expGained = crop.expReward;
+    farm.exp += expGained;
+    farm.totalHarvests += 1;
+    farm.totalEarnings += pointsResult.pointsEarned;
+
+    totalPointsEarned += pointsResult.pointsEarned;
+    totalExpGained += expGained;
+    latestBalance = pointsResult.balance;
+    latestDailyEarned = pointsResult.dailyEarned;
+    if (pointsResult.limitReached) limitReached = true;
+
+    // 清空田地
+    farm.plots[i] = createEmptyPlot(i);
+
+    // 构建收获详情
+    const weatherConfig = WEATHERS[weather];
+    harvests.push({
+      cropId: plot.cropId,
+      cropName: crop.name,
+      cropIcon: crop.icon,
+      baseYield: crop.baseYield,
+      weatherBonus: Math.round((weatherConfig.yieldModifier - 1) * 100),
+      waterBonus: Math.round((waterMultiplier - 1) * 100),
+      pestPenalty: computed.hasPest ? Math.round((1 - computePestYieldMultiplier(computed.pestAppearedAt, now)) * 100) : 0,
+      finalYield: harvestYield,
+      expGained,
+    });
+  }
+
+  if (harvests.length > 0) {
+    farm.lastUpdatedAt = now;
+
+    // 检查升级
+    const levelResult = checkLevelUp(farm);
+    if (levelResult.leveledUp) {
+      Object.assign(farm, levelResult.newState);
+    }
+
+    await saveFarmState(farm);
+
+    return {
+      success: true,
+      harvests,
+      totalPointsEarned,
+      harvestedCount: harvests.length,
+      newBalance: latestBalance,
+      dailyEarned: latestDailyEarned,
+      limitReached,
+      expGained: totalExpGained,
+      levelUp: levelResult.leveledUp,
+      newLevel: levelResult.leveledUp ? levelResult.newLevel : undefined,
+      farmState: refreshFarmState(farm, now, weather),
+    };
+  }
+
+  return {
+    success: true,
+    harvests: [],
+    totalPointsEarned: 0,
+    harvestedCount: 0,
+    newBalance: 0,
+    dailyEarned: 0,
+    limitReached: false,
+    expGained: 0,
+    levelUp: false,
     farmState: refreshFarmState(farm, now, weather),
   };
 }

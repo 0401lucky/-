@@ -222,11 +222,20 @@ export default function FarmPage() {
 
   const handleCloseHarvest = useCallback(() => {
     farm.clearLastHarvest();
+    farm.clearLastBatchHarvest();
     farm.clearLevelUp();
   }, [farm]);
 
   const handleWaterAll = useCallback(async () => {
     await farm.waterAll();
+  }, [farm]);
+
+  const handleHarvestAll = useCallback(async () => {
+    await farm.harvestAll();
+  }, [farm]);
+
+  const handleRemoveAllWithered = useCallback(async () => {
+    await farm.removeAllWithered();
   }, [farm]);
 
   const currentWeather = farm.weather ?? 'sunny';
@@ -274,6 +283,7 @@ export default function FarmPage() {
 
   const hasWaterNeeded = farm.computedPlots.some(p => p.needsWater && p.stage !== 'withered' && p.stage !== 'mature');
   const hasMature = farm.computedPlots.some(p => p.stage === 'mature');
+  const hasWithered = farm.computedPlots.some(p => p.stage === 'withered');
   const hasPest = farm.computedPlots.some(p => p.hasPest);
 
   return (
@@ -324,10 +334,24 @@ export default function FarmPage() {
               </button>
             )}
             {hasMature && (
-              <div className="flex items-center gap-1.5 px-3 py-2 bg-amber-100/80 backdrop-blur-sm text-amber-700 text-sm font-medium rounded-xl border border-amber-200/60 animate-farm-plot-enter">
+              <button
+                onClick={handleHarvestAll}
+                disabled={farm.actionLoading}
+                className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-sm font-medium rounded-xl transition-all disabled:opacity-50 shadow-lg shadow-amber-500/25 active:scale-95"
+              >
                 <span className="animate-farm-mature inline-block">🌾</span>
-                有作物可收获！
-              </div>
+                一键收获
+              </button>
+            )}
+            {hasWithered && (
+              <button
+                onClick={handleRemoveAllWithered}
+                disabled={farm.actionLoading}
+                className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-red-500 to-rose-500 hover:from-red-600 hover:to-rose-600 text-white text-sm font-medium rounded-xl transition-all disabled:opacity-50 shadow-lg shadow-red-500/25 active:scale-95"
+              >
+                <span>🗑️</span>
+                一键铲除
+              </button>
             )}
             {hasPest && (
               <div className="flex items-center gap-1.5 px-3 py-2 bg-red-100/80 backdrop-blur-sm text-red-600 text-sm font-medium rounded-xl border border-red-200/60 animate-farm-plot-enter">
@@ -386,9 +410,10 @@ export default function FarmPage() {
         />
       )}
 
-      {farm.lastHarvest && (
+      {(farm.lastHarvest || farm.lastBatchHarvest) && (
         <HarvestModal
           result={farm.lastHarvest}
+          batchResult={farm.lastBatchHarvest}
           levelUp={farm.levelUpInfo}
           onClose={handleCloseHarvest}
         />

@@ -7,6 +7,16 @@ import type { FarmState, WeatherType, HarvestDetail, FarmLevel } from '@/lib/typ
 import { computePlotState, getTodayWeather } from '@/lib/farm-engine';
 import type { ComputedPlotState } from '@/lib/types/farm';
 
+export interface BatchHarvestResult {
+  harvests: HarvestDetail[];
+  totalPointsEarned: number;
+  harvestedCount: number;
+  newBalance: number;
+  dailyEarned: number;
+  limitReached: boolean;
+  expGained: number;
+}
+
 interface FarmData {
   farmState: FarmState | null;
   weather: WeatherType;
@@ -23,12 +33,16 @@ interface FarmData {
   water: (plotIndex: number) => Promise<boolean>;
   waterAll: () => Promise<number>;
   harvest: (plotIndex: number) => Promise<HarvestResult | null>;
+  harvestAll: () => Promise<BatchHarvestResult | null>;
   removePest: (plotIndex: number) => Promise<boolean>;
   removeCrop: (plotIndex: number) => Promise<boolean>;
+  removeAllWithered: () => Promise<number>;
   // 操作状态
   actionLoading: boolean;
   lastHarvest: HarvestResult | null;
   clearLastHarvest: () => void;
+  lastBatchHarvest: BatchHarvestResult | null;
+  clearLastBatchHarvest: () => void;
   levelUpInfo: LevelUpInfo | null;
   clearLevelUp: () => void;
 }
@@ -68,6 +82,7 @@ export function useFarmState(): FarmData {
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [lastHarvest, setLastHarvest] = useState<HarvestResult | null>(null);
+  const [lastBatchHarvest, setLastBatchHarvest] = useState<BatchHarvestResult | null>(null);
   const [levelUpInfo, setLevelUpInfo] = useState<LevelUpInfo | null>(null);
   const [computedPlots, setComputedPlots] = useState<ComputedPlotState[]>([]);
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -264,6 +279,75 @@ export function useFarmState(): FarmData {
     }
   }, [updateFromResponse]);
 
+  const harvestAllAction = useCallback(async (): Promise<BatchHarvestResult | null> => {
+    setActionLoading(true);
+    try {
+      const res = await fetch('/api/games/farm/harvest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ harvestAll: true }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.message);
+        return null;
+      }
+      updateFromResponse(data.data);
+      setError(null);
+
+      const result: BatchHarvestResult = {
+        harvests: data.data.harvests,
+        totalPointsEarned: data.data.totalPointsEarned,
+        harvestedCount: data.data.harvestedCount,
+        newBalance: data.data.newBalance,
+        dailyEarned: data.data.dailyEarned,
+        limitReached: data.data.limitReached,
+        expGained: data.data.expGained,
+      };
+      setLastBatchHarvest(result);
+
+      // 检查升级
+      if (data.data.levelUp && data.data.newLevel) {
+        const TITLES: Record<number, string> = { 1: '新手农夫', 2: '勤劳农夫', 3: '资深农夫', 4: '农场主', 5: '农业大亨' };
+        setLevelUpInfo({
+          newLevel: data.data.newLevel,
+          title: TITLES[data.data.newLevel] || '',
+        });
+      }
+
+      return result;
+    } catch {
+      setError('网络错误');
+      return null;
+    } finally {
+      setActionLoading(false);
+    }
+  }, [updateFromResponse]);
+
+  const removeAllWitheredAction = useCallback(async (): Promise<number> => {
+    setActionLoading(true);
+    try {
+      const res = await fetch('/api/games/farm/remove-crop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ removeAllWithered: true }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.message);
+        return 0;
+      }
+      updateFromResponse(data.data);
+      setError(null);
+      return data.data.removedCount ?? 0;
+    } catch {
+      setError('网络错误');
+      return 0;
+    } finally {
+      setActionLoading(false);
+    }
+  }, [updateFromResponse]);
+
   const removePestAction = useCallback(async (plotIndex: number): Promise<boolean> => {
     setActionLoading(true);
     try {
@@ -332,11 +416,15 @@ export function useFarmState(): FarmData {
     water,
     waterAll,
     harvest,
+    harvestAll: harvestAllAction,
     removePest: removePestAction,
     removeCrop: removeCropAction,
+    removeAllWithered: removeAllWitheredAction,
     actionLoading,
     lastHarvest,
     clearLastHarvest: () => setLastHarvest(null),
+    lastBatchHarvest,
+    clearLastBatchHarvest: () => setLastBatchHarvest(null),
     levelUpInfo,
     clearLevelUp: () => setLevelUpInfo(null),
   };

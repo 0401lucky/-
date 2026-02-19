@@ -2,7 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { withUserRateLimit } from '@/lib/rate-limit';
-import { checkActionCooldown, removeCrop } from '@/lib/farm';
+import { checkActionCooldown, removeCrop, removeAllWitheredCrops } from '@/lib/farm';
 
 export const POST = withUserRateLimit(
   'game:submit',
@@ -17,7 +17,19 @@ export const POST = withUserRateLimit(
       }
 
       const body = await request.json();
-      const { plotIndex } = body as { plotIndex?: number };
+      const { plotIndex, removeAllWithered } = body as { plotIndex?: number; removeAllWithered?: boolean };
+
+      // 一键铲除枯萎作物模式
+      if (removeAllWithered) {
+        const result = await removeAllWitheredCrops(user.id);
+        return NextResponse.json({
+          success: true,
+          data: {
+            farmState: result.farmState,
+            removedCount: result.removedCount,
+          },
+        });
+      }
 
       if (typeof plotIndex !== 'number' || !Number.isInteger(plotIndex) || plotIndex < 0) {
         return NextResponse.json(
