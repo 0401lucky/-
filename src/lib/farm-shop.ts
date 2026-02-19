@@ -25,12 +25,35 @@ const FARM_SHOP_LOG_KEY = (userId: number) => `farm:shop:log:${userId}`;
 const FARM_SHOP_PURCHASE_COUNTS_KEY = 'farm:shop:purchase_counts';
 const FARM_STATE_KEY = (userId: number) => `farm:state:${userId}`;
 const FARM_SHOP_INIT_LOCK_KEY = 'farm:shop:init:lock';
+const FARM_SHOP_MIGRATE_LOCK_KEY = 'farm:shop:migrate:lock';
+const FARM_SHOP_DEFAULTS_VERSION_KEY = 'farm:shop:defaults:version';
 const FARM_ACTION_LOCK_KEY = (userId: number) => `farm:lock:action:${userId}`;
 
 const FARM_ACTION_LOCK_TTL_SECONDS = 15;
 const FARM_ACTION_LOCK_RETRY_MS = 80;
 const FARM_ACTION_LOCK_MAX_RETRIES = 15;
 const FARM_SHOP_INIT_LOCK_TTL_SECONDS = 10;
+const FARM_SHOP_MIGRATE_LOCK_TTL_SECONDS = 10;
+const FARM_SHOP_DEFAULTS_TARGET_VERSION = 2;
+
+const LEGACY_DEFAULT_PRICE_UPDATES: Array<{
+  name: string;
+  effect: FarmShopItem['effect'];
+  mode: FarmShopItem['mode'];
+  from: number;
+  to: number;
+}> = [
+  { name: '小猫助手', effect: 'auto_water', mode: 'buff', from: 80, to: 180 },
+  { name: '自动收割机', effect: 'auto_harvest', mode: 'buff', from: 120, to: 260 },
+  { name: '稻草人', effect: 'pest_shield', mode: 'buff', from: 60, to: 140 },
+  { name: '天气穹顶', effect: 'weather_shield', mode: 'buff', from: 100, to: 220 },
+  { name: '丰收之星', effect: 'yield_bonus', mode: 'buff', from: 150, to: 320 },
+  { name: '时光沙漏', effect: 'growth_speed', mode: 'buff', from: 200, to: 420 },
+  { name: '时光加速器', effect: 'growth_boost', mode: 'instant', from: 80, to: 180 },
+  { name: '高级肥料', effect: 'plot_growth_boost', mode: 'instant', from: 30, to: 80 },
+  { name: '速效驱虫剂', effect: 'pest_clear', mode: 'instant', from: 40, to: 100 },
+  { name: '神秘种子袋', effect: 'random_plant', mode: 'instant', from: 50, to: 120 },
+];
 
 interface FarmActionLock {
   key: string;
@@ -99,6 +122,69 @@ async function rollbackDailyLimit(dailyLimitKey: string | null, delta = 1): Prom
   }
 }
 
+async function migrateDefaultFarmShopPricesIfNeeded(): Promise<void> {
+  const currentVersion = parseNumericCount(await kv.get(FARM_SHOP_DEFAULTS_VERSION_KEY));
+  if (currentVersion >= FARM_SHOP_DEFAULTS_TARGET_VERSION) return;
+
+  const token = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const lockResult = await kv.set(FARM_SHOP_MIGRATE_LOCK_KEY, token, {
+    nx: true,
+    ex: FARM_SHOP_MIGRATE_LOCK_TTL_SECONDS,
+  });
+  if (lockResult !== 'OK') return;
+
+  const releaseScript = `
+    local key = KEYS[1]
+    local expected = ARGV[1]
+    local current = redis.call('GET', key)
+    if current == expected then
+      return redis.call('DEL', key)
+    end
+    return 0
+  `;
+
+  try {
+    const recheckVersion = parseNumericCount(await kv.get(FARM_SHOP_DEFAULTS_VERSION_KEY));
+    if (recheckVersion >= FARM_SHOP_DEFAULTS_TARGET_VERSION) return;
+
+    const items = await kv.hgetall<Record<string, FarmShopItem>>(FARM_SHOP_ITEMS_KEY);
+    if (!items || Object.keys(items).length === 0) {
+      await kv.set(FARM_SHOP_DEFAULTS_VERSION_KEY, FARM_SHOP_DEFAULTS_TARGET_VERSION);
+      return;
+    }
+
+    const now = Date.now();
+    const updates: Record<string, FarmShopItem> = {};
+    for (const item of Object.values(items)) {
+      const priceUpdate = LEGACY_DEFAULT_PRICE_UPDATES.find(update =>
+        update.name === item.name &&
+        update.effect === item.effect &&
+        update.mode === item.mode &&
+        item.pointsCost === update.from
+      );
+      if (!priceUpdate) continue;
+      updates[item.id] = {
+        ...item,
+        pointsCost: priceUpdate.to,
+        updatedAt: now,
+      };
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await kv.hset(FARM_SHOP_ITEMS_KEY, updates);
+    }
+    await kv.set(FARM_SHOP_DEFAULTS_VERSION_KEY, FARM_SHOP_DEFAULTS_TARGET_VERSION);
+  } catch (error) {
+    console.error('Farm shop default price migration failed:', error);
+  } finally {
+    try {
+      await kv.eval(releaseScript, [FARM_SHOP_MIGRATE_LOCK_KEY], [token]);
+    } catch (error) {
+      console.error('Release farm shop migrate lock failed:', error);
+    }
+  }
+}
+
 // ---- 管理 CRUD ----
 
 /**
@@ -106,7 +192,10 @@ async function rollbackDailyLimit(dailyLimitKey: string | null, delta = 1): Prom
  */
 export async function initDefaultFarmShopItems(): Promise<void> {
   const existing = await kv.hgetall<Record<string, FarmShopItem>>(FARM_SHOP_ITEMS_KEY);
-  if (existing && Object.keys(existing).length > 0) return;
+  if (existing && Object.keys(existing).length > 0) {
+    await migrateDefaultFarmShopPricesIfNeeded();
+    return;
+  }
 
   const initToken = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   const lockResult = await kv.set(FARM_SHOP_INIT_LOCK_KEY, initToken, {
@@ -119,7 +208,10 @@ export async function initDefaultFarmShopItems(): Promise<void> {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await sleep(80);
       const synced = await kv.hgetall<Record<string, FarmShopItem>>(FARM_SHOP_ITEMS_KEY);
-      if (synced && Object.keys(synced).length > 0) return;
+      if (synced && Object.keys(synced).length > 0) {
+        await migrateDefaultFarmShopPricesIfNeeded();
+        return;
+      }
     }
     return;
   }
@@ -156,6 +248,8 @@ export async function initDefaultFarmShopItems(): Promise<void> {
       console.error('Release farm shop init lock failed:', error);
     }
   }
+
+  await migrateDefaultFarmShopPricesIfNeeded();
 }
 
 /**
@@ -184,6 +278,7 @@ export async function getActiveFarmShopItems(): Promise<FarmShopItem[]> {
  * 获取单个道具
  */
 export async function getFarmShopItem(itemId: string): Promise<FarmShopItem | null> {
+  await initDefaultFarmShopItems();
   const item = await kv.hget<FarmShopItem>(FARM_SHOP_ITEMS_KEY, itemId);
   return item;
 }
