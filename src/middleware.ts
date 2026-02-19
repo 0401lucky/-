@@ -9,13 +9,22 @@ const SECURITY_HEADERS = {
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
 };
 
-function getAllowedOrigins(): string[] {
+function getAllowedOrigins(request: NextRequest): string[] {
   const origins: string[] = [];
   if (process.env.NEXT_PUBLIC_BASE_URL) {
-    origins.push(process.env.NEXT_PUBLIC_BASE_URL);
+    origins.push(process.env.NEXT_PUBLIC_BASE_URL.replace(/\/+$/, ''));
   }
   if (process.env.VERCEL_URL) {
     origins.push(`https://${process.env.VERCEL_URL}`);
+  }
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    origins.push(`https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`);
+  }
+  // 从请求的 Host 头推断 Origin（Vercel 反向代理后 Host 可信）
+  const host = request.headers.get('host');
+  if (host) {
+    origins.push(`https://${host}`);
+    origins.push(`http://${host}`);
   }
   // 本地开发
   origins.push('http://localhost:3000');
@@ -36,7 +45,7 @@ export function middleware(request: NextRequest) {
     const origin = request.headers.get('origin');
     // 内部 Cron 调用可能没有 Origin header，跳过检查
     if (origin) {
-      const allowedOrigins = getAllowedOrigins();
+      const allowedOrigins = getAllowedOrigins(request);
       if (!allowedOrigins.some(allowed => origin === allowed)) {
         return NextResponse.json(
           { success: false, message: '请求来源不合法' },
