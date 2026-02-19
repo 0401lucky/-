@@ -2,7 +2,13 @@
 
 'use client';
 
-import { CROPS, FARM_LEVELS, WEATHERS } from '@/lib/farm-config';
+import {
+  CROPS,
+  FARM_LEVELS,
+  WATER_MISS_PENALTY,
+  WATER_MISS_WITHER_THRESHOLD,
+  WEATHERS,
+} from '@/lib/farm-config';
 import type { FarmLevel, CropId } from '@/lib/types/farm';
 
 interface RulesPanelProps {
@@ -19,6 +25,8 @@ function formatDuration(ms: number): string {
 
 export default function RulesPanel({ onClose }: RulesPanelProps) {
   const cropList: CropId[] = ['wheat', 'carrot', 'tomato', 'strawberry', 'corn', 'pumpkin', 'watermelon', 'golden_apple'];
+  const oneCycleYield = Math.max(0, Math.round((1 - WATER_MISS_PENALTY) * 100));
+  const twoCycleYield = Math.max(0, Math.round((1 - WATER_MISS_PENALTY * 2) * 100));
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-12 overflow-y-auto" onClick={onClose}>
@@ -52,7 +60,7 @@ export default function RulesPanel({ onClose }: RulesPanelProps) {
               <p><b>种植：</b>点击空田地 → 打开种子商店 → 花积分购买种子种植</p>
               <p><b>生长：</b>作物在真实时间中生长，关掉页面也会继续。经历 <span className="text-green-700 font-medium">种子 → 幼苗 → 生长中 → 成熟</span> 四个阶段</p>
               <p><b>浇水：</b>生长过程中需要按时浇水，否则会减产甚至枯萎</p>
-              <p><b>收获：</b>作物成熟后点击收获，积分入账</p>
+              <p><b>收获：</b>作物成熟后点击收获，积分入账。有多块成熟田地时可用<b>「一键收获」</b>批量收取</p>
             </div>
           </section>
 
@@ -127,11 +135,11 @@ export default function RulesPanel({ onClose }: RulesPanelProps) {
               <p>种植时自动算一次浇水，之后需要手动浇水或等雨天</p>
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-1">
                 <p className="text-blue-800"><b>超时惩罚：</b></p>
-                <p className="text-blue-700">错过 1 个周期 → 产量 <b>80%</b></p>
-                <p className="text-blue-700">错过 2 个周期 → 产量 <b>60%</b></p>
-                <p className="text-red-600 font-medium">错过 3 个周期 → 作物枯萎！只能铲除</p>
+                <p className="text-blue-700">错过 1 个周期 → 产量 <b>{oneCycleYield}%</b></p>
+                <p className="text-blue-700">错过 2 个周期 → 产量 <b>{twoCycleYield}%</b></p>
+                <p className="text-red-600 font-medium">错过 {WATER_MISS_WITHER_THRESHOLD} 个周期 → 作物枯萎！只能铲除</p>
               </div>
-              <p>提示：可以用<b>「一键浇水」</b>按钮快速给所有田地浇水</p>
+              <p>提示：可以用<b>「一键浇水」</b>按钮快速给所有田地浇水，枯萎作物可用<b>「一键铲除」</b>批量清理</p>
             </div>
           </section>
 
@@ -224,7 +232,7 @@ export default function RulesPanel({ onClose }: RulesPanelProps) {
               其他说明
             </h3>
             <div className="space-y-2 pl-8">
-              <p><b>铲除：</b>可以随时铲除田地上的作物（包括枯萎的），但<b>不退还</b>种子费用</p>
+              <p><b>铲除：</b>可以随时铲除田地上的作物（包括枯萎的），但<b>不退还</b>种子费用。有枯萎作物时可用<b>「一键铲除」</b>批量清理</p>
               <p><b>离线生长：</b>关闭页面后作物继续生长，回来时自动计算进度。但离线期间浇水超时也会正常计算减产或枯萎</p>
               <p><b>收获举例：</b>种一株草莓（成本 50），雨天 (+15% 产量)、浇水正常、无害虫 → 收获 120 × 1.15 = <b>138 积分</b>，净赚 88</p>
             </div>
