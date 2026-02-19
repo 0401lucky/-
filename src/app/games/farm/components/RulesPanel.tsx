@@ -225,6 +225,36 @@ export default function RulesPanel({ onClose }: RulesPanelProps) {
             </div>
           </section>
 
+          {/* ===== 道具系统 ===== */}
+          <section>
+            <h3 className="font-bold text-slate-900 text-base mb-3 flex items-center gap-2">
+              <span className="w-6 h-6 rounded-full bg-violet-100 text-violet-700 flex items-center justify-center text-xs font-bold">!</span>
+              道具系统
+            </h3>
+            <div className="space-y-2 pl-8">
+              <p><b>道具商店：</b>点击快捷栏的<b>「🏪 道具商店」</b>按钮打开商店，花积分购买增益道具</p>
+              <p><b>Buff 道具：</b>购买后立即激活，持续一段时间自动生效，同类 buff 不可叠加</p>
+              <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 space-y-1 text-xs">
+                <p className="text-violet-800 font-medium">可用 Buff：</p>
+                <p className="text-violet-700">🐱 小猫助手 — 自动浇水 12h</p>
+                <p className="text-violet-700">🤖 自动收割机 — 自动收获成熟作物 12h</p>
+                <p className="text-violet-700">🛡️ 稻草人 — 害虫概率降低 80%，24h</p>
+                <p className="text-violet-700">☂️ 天气穹顶 — 免疫恶劣天气减产 24h</p>
+                <p className="text-violet-700">⭐ 丰收之星 — 收获产量 +25%，12h</p>
+                <p className="text-violet-700">⏩ 时光沙漏 — 生长速度 2x，6h</p>
+              </div>
+              <p><b>即时道具：</b>购买后进入背包，在背包中手动使用，一次性消耗</p>
+              <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 space-y-1 text-xs">
+                <p className="text-orange-800 font-medium">即时道具：</p>
+                <p className="text-orange-700">🧪 时光加速器 — 全部田地加速 60 分钟</p>
+                <p className="text-orange-700">💊 高级肥料 — 指定一块田加速 30 分钟</p>
+                <p className="text-orange-700">🔫 速效驱虫剂 — 清除全部害虫 + 2h 免疫</p>
+                <p className="text-orange-700">🎲 神秘种子袋 — 随机作物免费种在空地</p>
+              </div>
+              <p className="text-slate-500">提示：激活的 buff 会显示在天气栏下方，可以看到倒计时</p>
+            </div>
+          </section>
+
           {/* ===== 其他说明 ===== */}
           <section>
             <h3 className="font-bold text-slate-900 text-base mb-3 flex items-center gap-2">

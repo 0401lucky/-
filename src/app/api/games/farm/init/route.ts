@@ -7,12 +7,13 @@ import { getTodayWeather } from '@/lib/farm-engine';
 import { getUserPoints, getDailyEarnedPoints } from '@/lib/points';
 import { getDailyPointsLimit } from '@/lib/config';
 import { getTodayDateString } from '@/lib/time';
+import { applyAutoHarvest } from '@/lib/farm-shop';
 
 export const POST = withUserRateLimit(
   'game:start',
   async (_request, user) => {
     try {
-      const [farmState, balance, dailyEarned, dailyLimit] = await Promise.all([
+      let [farmState, balance, dailyEarned, dailyLimit] = await Promise.all([
         getOrCreateFarm(user.id),
         getUserPoints(user.id),
         getDailyEarnedPoints(user.id),
@@ -20,6 +21,14 @@ export const POST = withUserRateLimit(
       ]);
 
       const weather = getTodayWeather(getTodayDateString());
+
+      // 自动收获
+      const autoResult = await applyAutoHarvest(farmState, user.id, weather, Date.now());
+      farmState = autoResult.farmState;
+      if (autoResult.autoHarvestPoints > 0) {
+        balance = await getUserPoints(user.id);
+        dailyEarned = await getDailyEarnedPoints(user.id);
+      }
 
       return NextResponse.json({
         success: true,

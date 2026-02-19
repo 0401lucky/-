@@ -1,5 +1,7 @@
 // src/lib/types/farm.ts - 农场游戏类型定义
 
+import type { ActiveBuff } from './farm-shop';
+
 /** 作物ID */
 export type CropId = 'wheat' | 'carrot' | 'tomato' | 'strawberry' | 'corn' | 'pumpkin' | 'watermelon' | 'golden_apple';
 
@@ -37,6 +39,8 @@ export interface FarmState {
   totalEarnings: number;
   lastUpdatedAt: number;
   createdAt: number;
+  activeBuffs?: ActiveBuff[];           // 当前激活的buff
+  inventory?: Record<string, number>;   // itemId → 数量（即时道具库存）
 }
 
 /** 作物配置 */

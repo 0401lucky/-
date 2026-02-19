@@ -10,6 +10,8 @@ import FarmGrid from './components/FarmGrid';
 import CropShop from './components/CropShop';
 import HarvestModal from './components/HarvestModal';
 import RulesPanel from './components/RulesPanel';
+import ItemShop from './components/ItemShop';
+import ActiveBuffsBar from './components/ActiveBuffsBar';
 import type { CropId, WeatherType } from '@/lib/types/farm';
 
 /* ---------- 天气背景配置 ---------- */
@@ -205,6 +207,7 @@ export default function FarmPage() {
   const [shopOpen, setShopOpen] = useState(false);
   const [plantingPlot, setPlantingPlot] = useState<number | null>(null);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [itemShopOpen, setItemShopOpen] = useState(false);
 
   const handlePlant = useCallback((plotIndex: number) => {
     setPlantingPlot(plotIndex);
@@ -308,6 +311,11 @@ export default function FarmPage() {
 
           <WeatherBanner weather={farm.weather} />
 
+          {/* Buff 状态条 */}
+          {farm.activeBuffs.length > 0 && (
+            <ActiveBuffsBar activeBuffs={farm.activeBuffs} />
+          )}
+
           {farm.error && (
             <div className="bg-red-50/90 backdrop-blur-sm border border-red-200 text-red-600 text-sm px-4 py-2 rounded-xl animate-farm-plot-enter">
               {farm.error}
@@ -322,6 +330,18 @@ export default function FarmPage() {
             >
               <span>📖</span>
               规则说明
+            </button>
+            <button
+              onClick={() => setItemShopOpen(true)}
+              className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-violet-500 to-purple-500 hover:from-violet-600 hover:to-purple-600 text-white text-sm font-medium rounded-xl transition-all shadow-lg shadow-violet-500/25 active:scale-95 relative"
+            >
+              <span>🏪</span>
+              道具商店
+              {Object.values(farm.inventory).reduce((s, n) => s + n, 0) > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center shadow-sm">
+                  {Object.values(farm.inventory).reduce((s, n) => s + n, 0)}
+                </span>
+              )}
             </button>
             {hasWaterNeeded && (
               <button
@@ -420,6 +440,18 @@ export default function FarmPage() {
       )}
 
       {rulesOpen && <RulesPanel onClose={() => setRulesOpen(false)} />}
+
+      {itemShopOpen && farm.farmState && (
+        <ItemShop
+          balance={farm.balance}
+          activeBuffs={farm.activeBuffs}
+          inventory={farm.inventory}
+          farmLevel={farm.farmState.level}
+          onPurchase={farm.purchaseItem}
+          onUseItem={farm.useItem}
+          onClose={() => setItemShopOpen(false)}
+        />
+      )}
     </div>
   );
 }

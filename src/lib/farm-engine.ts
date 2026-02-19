@@ -2,6 +2,7 @@
 
 import seedrandom from 'seedrandom';
 import type { CropId, CropStage, WeatherType, PlotState, ComputedPlotState, FarmState, FarmLevel } from './types/farm';
+import type { ActiveBuff, BuffContext } from './types/farm-shop';
 import {
   CROPS, WEATHERS, FARM_LEVELS,
   PEST_BASE_CHANCE, PEST_CHECK_WINDOW, PEST_YIELD_PENALTY_PER_WINDOW, PEST_MIN_YIELD,
@@ -46,6 +47,55 @@ function sumDailySegments(
   return sum;
 }
 
+// ---- Buff 辅助 ----
+
+/**
+ * 从 ActiveBuff[] 构建 BuffContext
+ */
+export function buildBuffContext(activeBuffs: ActiveBuff[] | undefined, now: number): BuffContext | undefined {
+  if (!activeBuffs || activeBuffs.length === 0) return undefined;
+
+  const ctx: BuffContext = {};
+
+  for (const buff of activeBuffs) {
+    if (buff.expiresAt <= now) continue; // 已过期
+
+    switch (buff.effect) {
+      case 'auto_water':
+        ctx.autoWater = { activatedAt: buff.activatedAt, expiresAt: buff.expiresAt };
+        break;
+      case 'pest_shield':
+        ctx.pestShield = {
+          activatedAt: buff.activatedAt,
+          expiresAt: buff.expiresAt,
+          reduction: buff.effectValue ?? 0.8,
+        };
+        break;
+      case 'growth_speed':
+        ctx.growthSpeed = {
+          activatedAt: buff.activatedAt,
+          expiresAt: buff.expiresAt,
+          multiplier: buff.effectValue ?? 2,
+        };
+        break;
+      case 'yield_bonus':
+        ctx.yieldBonus = { multiplier: 1 + (buff.effectValue ?? 0.25) };
+        break;
+      case 'weather_shield':
+        ctx.weatherShield = { active: true };
+        break;
+      case 'auto_harvest':
+        ctx.autoHarvest = { active: true };
+        break;
+    }
+  }
+
+  // 如果没有任何活跃 buff，返回 undefined
+  const hasAny = ctx.autoWater || ctx.pestShield || ctx.growthSpeed ||
+    ctx.yieldBonus || ctx.weatherShield || ctx.autoHarvest;
+  return hasAny ? ctx : undefined;
+}
+
 // ---- 天气系统 ----
 
 /**
@@ -78,19 +128,34 @@ export function getTodayWeather(todayDateString: string): WeatherType {
 
 /**
  * 计算作物当前生长进度（0~1）
- * 考虑天气对生长速度的影响
+ * 考虑天气对生长速度的影响 + growth_speed buff
  */
 export function computeGrowthProgress(
   plantedAt: number,
   now: number,
   cropId: CropId,
+  buffCtx?: BuffContext,
 ): number {
   const crop = CROPS[cropId];
   if (!crop) return 0;
 
   const growthUnits = sumDailySegments(plantedAt, now, (segmentStart, segmentEnd, weather) => {
     const weatherConfig = WEATHERS[weather];
-    return (segmentEnd - segmentStart) * weatherConfig.growthModifier;
+    let modifier = weatherConfig.growthModifier;
+
+    // growth_speed buff：在 buff 活跃期间额外乘以 multiplier
+    if (buffCtx?.growthSpeed) {
+      const overlapStart = Math.max(segmentStart, buffCtx.growthSpeed.activatedAt);
+      const overlapEnd = Math.min(segmentEnd, buffCtx.growthSpeed.expiresAt);
+      if (overlapStart < overlapEnd) {
+        // 拆分为 buff 活跃和非活跃两段
+        const buffedTime = overlapEnd - overlapStart;
+        const unbuffedTime = (segmentEnd - segmentStart) - buffedTime;
+        return unbuffedTime * modifier + buffedTime * modifier * buffCtx.growthSpeed.multiplier;
+      }
+    }
+
+    return (segmentEnd - segmentStart) * modifier;
   });
   const progress = Math.min(1, Math.max(0, growthUnits / crop.growthTime));
   return progress;
@@ -121,13 +186,27 @@ export function computeMissedWaterCycles(
   plantedAt: number,
   now: number,
   cropId: CropId,
+  buffCtx?: BuffContext,
 ): number {
   const crop = CROPS[cropId];
   if (!crop) return 0;
 
   const referenceTime = lastWateredAt ?? plantedAt;
   const nonAutoWaterElapsed = sumDailySegments(referenceTime, now, (segmentStart, segmentEnd, weather) => {
-    return WEATHERS[weather].autoWater ? 0 : (segmentEnd - segmentStart);
+    // 天气自动浇水时段不计入
+    if (WEATHERS[weather].autoWater) return 0;
+
+    // auto_water buff 活跃时段不计入
+    if (buffCtx?.autoWater) {
+      const overlapStart = Math.max(segmentStart, buffCtx.autoWater.activatedAt);
+      const overlapEnd = Math.min(segmentEnd, buffCtx.autoWater.expiresAt);
+      if (overlapStart < overlapEnd) {
+        const buffedTime = overlapEnd - overlapStart;
+        return (segmentEnd - segmentStart) - buffedTime;
+      }
+    }
+
+    return segmentEnd - segmentStart;
   });
 
   if (nonAutoWaterElapsed <= crop.waterInterval) return 0;
@@ -154,15 +233,33 @@ export function needsWater(
   now: number,
   cropId: CropId,
   weather: WeatherType,
+  buffCtx?: BuffContext,
 ): boolean {
   if (WEATHERS[weather].autoWater) return false;
+
+  // auto_water buff 活跃时不需要浇水
+  if (buffCtx?.autoWater && now < buffCtx.autoWater.expiresAt && now >= buffCtx.autoWater.activatedAt) {
+    return false;
+  }
 
   const crop = CROPS[cropId];
   if (!crop) return false;
 
   const referenceTime = lastWateredAt ?? plantedAt;
   const nonAutoWaterElapsed = sumDailySegments(referenceTime, now, (segmentStart, segmentEnd, segmentWeather) => {
-    return WEATHERS[segmentWeather].autoWater ? 0 : (segmentEnd - segmentStart);
+    if (WEATHERS[segmentWeather].autoWater) return 0;
+
+    // auto_water buff 活跃时段不计入
+    if (buffCtx?.autoWater) {
+      const overlapStart = Math.max(segmentStart, buffCtx.autoWater.activatedAt);
+      const overlapEnd = Math.min(segmentEnd, buffCtx.autoWater.expiresAt);
+      if (overlapStart < overlapEnd) {
+        const buffedTime = overlapEnd - overlapStart;
+        return (segmentEnd - segmentStart) - buffedTime;
+      }
+    }
+
+    return segmentEnd - segmentStart;
   });
   return nonAutoWaterElapsed >= crop.waterInterval;
 }
@@ -180,6 +277,7 @@ export function shouldPestAppear(
   now: number,
   _weather: WeatherType,
   pestClearedAt: number | null = null,
+  buffCtx?: BuffContext,
 ): boolean {
   const elapsed = now - plantedAt;
   const maxWindow = Math.floor(elapsed / PEST_CHECK_WINDOW);
@@ -192,7 +290,13 @@ export function shouldPestAppear(
   for (let w = startWindow; w <= maxWindow; w++) {
     const windowTime = plantedAt + w * PEST_CHECK_WINDOW;
     const windowWeather = getWeatherForDate(getChinaDateStringByTimestamp(windowTime));
-    const effectiveChance = PEST_BASE_CHANCE * WEATHERS[windowWeather].pestModifier;
+    let effectiveChance = PEST_BASE_CHANCE * WEATHERS[windowWeather].pestModifier;
+
+    // pest_shield buff：在 buff 活跃期间降低概率
+    if (buffCtx?.pestShield && windowTime >= buffCtx.pestShield.activatedAt && windowTime < buffCtx.pestShield.expiresAt) {
+      effectiveChance *= (1 - buffCtx.pestShield.reduction);
+    }
+
     const seed = `pest-${userId}-${plotIndex}-${plantedAt}-${w}`;
     const rng = seedrandom(seed);
     if (rng() < effectiveChance) {
@@ -212,6 +316,7 @@ export function getPestAppearTime(
   now: number,
   _weather: WeatherType,
   pestClearedAt: number | null = null,
+  buffCtx?: BuffContext,
 ): number | null {
   const elapsed = now - plantedAt;
   const maxWindow = Math.floor(elapsed / PEST_CHECK_WINDOW);
@@ -224,7 +329,13 @@ export function getPestAppearTime(
   for (let w = startWindow; w <= maxWindow; w++) {
     const windowTime = plantedAt + w * PEST_CHECK_WINDOW;
     const windowWeather = getWeatherForDate(getChinaDateStringByTimestamp(windowTime));
-    const effectiveChance = PEST_BASE_CHANCE * WEATHERS[windowWeather].pestModifier;
+    let effectiveChance = PEST_BASE_CHANCE * WEATHERS[windowWeather].pestModifier;
+
+    // pest_shield buff
+    if (buffCtx?.pestShield && windowTime >= buffCtx.pestShield.activatedAt && windowTime < buffCtx.pestShield.expiresAt) {
+      effectiveChance *= (1 - buffCtx.pestShield.reduction);
+    }
+
     const seed = `pest-${userId}-${plotIndex}-${plantedAt}-${w}`;
     const rng = seedrandom(seed);
     if (rng() < effectiveChance) {
@@ -259,6 +370,7 @@ export function computePlotState(
   now: number,
   weather: WeatherType,
   userId: number,
+  buffCtx?: BuffContext,
 ): ComputedPlotState {
   // 空地
   if (!plot.cropId || !plot.plantedAt) {
@@ -289,13 +401,13 @@ export function computePlotState(
   const crop = CROPS[plot.cropId];
   const weatherConfig = WEATHERS[weather];
 
-  // 生长进度
-  const growthProgress = computeGrowthProgress(plot.plantedAt, now, plot.cropId);
+  // 生长进度（传入 buffCtx）
+  const growthProgress = computeGrowthProgress(plot.plantedAt, now, plot.cropId, buffCtx);
   const currentStage = getStageFromProgress(plot.cropId, growthProgress);
 
-  // 浇水状态
+  // 浇水状态（传入 buffCtx）
   const missedCycles = computeMissedWaterCycles(
-    plot.lastWateredAt, plot.plantedAt, now, plot.cropId
+    plot.lastWateredAt, plot.plantedAt, now, plot.cropId, buffCtx
   );
 
   // 检查枯萎（成熟作物免疫枯萎，只会减产不会枯死）
@@ -314,10 +426,10 @@ export function computePlotState(
     };
   }
 
-  // 害虫检测
+  // 害虫检测（传入 buffCtx）
   const hasPest = plot.hasPest || (
     currentStage !== 'mature' &&
-    shouldPestAppear(userId, plot.index, plot.plantedAt, now, weather, plot.pestClearedAt ?? null)
+    shouldPestAppear(userId, plot.index, plot.plantedAt, now, weather, plot.pestClearedAt ?? null, buffCtx)
   );
   const pestTime = hasPest
     ? (plot.pestAppearedAt ?? getPestAppearTime(
@@ -327,28 +439,46 @@ export function computePlotState(
       now,
       weather,
       plot.pestClearedAt ?? null,
+      buffCtx,
     ))
     : null;
 
   // 产量计算
   const waterMultiplier = computeWaterYieldMultiplier(missedCycles);
   const pestMultiplier = computePestYieldMultiplier(pestTime, now);
-  const totalYieldMultiplier = waterMultiplier * pestMultiplier * weatherConfig.yieldModifier;
+
+  // weather_shield buff：负面天气产量倍率归1
+  let weatherYieldMod = weatherConfig.yieldModifier;
+  if (buffCtx?.weatherShield?.active && weatherYieldMod < 1) {
+    weatherYieldMod = 1;
+  }
+
+  let totalYieldMultiplier = waterMultiplier * pestMultiplier * weatherYieldMod;
+
+  // yield_bonus buff
+  if (buffCtx?.yieldBonus) {
+    totalYieldMultiplier *= buffCtx.yieldBonus.multiplier;
+  }
+
   const estimatedYieldRaw = Math.floor(crop.baseYield * totalYieldMultiplier);
   const estimatedYield = currentStage === 'mature'
     ? Math.max(1, estimatedYieldRaw)
     : Math.max(0, estimatedYieldRaw);
 
   const waterNeed = !weatherConfig.autoWater && needsWater(
-    plot.lastWateredAt, plot.plantedAt, now, plot.cropId, weather
+    plot.lastWateredAt, plot.plantedAt, now, plot.cropId, weather, buffCtx
   );
 
-  // 时间估算
+  // 时间估算（考虑 growth_speed buff 当前效果）
   const currentGrowthUnits = growthProgress * crop.growthTime;
   const remainingGrowthUnits = Math.max(0, crop.growthTime - currentGrowthUnits);
+  let effectiveGrowthMod = weatherConfig.growthModifier;
+  if (buffCtx?.growthSpeed && now < buffCtx.growthSpeed.expiresAt && now >= buffCtx.growthSpeed.activatedAt) {
+    effectiveGrowthMod *= buffCtx.growthSpeed.multiplier;
+  }
   const timeToMature = currentStage === 'mature'
     ? 0
-    : Math.max(0, remainingGrowthUnits / weatherConfig.growthModifier);
+    : Math.max(0, remainingGrowthUnits / effectiveGrowthMod);
 
   // 找下一阶段
   let timeToNextStage = 0;
@@ -357,7 +487,7 @@ export function computePlotState(
     const nextStageProgress = crop.stages[stageIndex + 1].progressStart;
     const nextStageGrowthUnits = nextStageProgress * crop.growthTime;
     const deltaGrowthUnits = Math.max(0, nextStageGrowthUnits - currentGrowthUnits);
-    timeToNextStage = Math.max(0, deltaGrowthUnits / weatherConfig.growthModifier);
+    timeToNextStage = Math.max(0, deltaGrowthUnits / effectiveGrowthMod);
   }
 
   return {
@@ -382,6 +512,7 @@ export function computeHarvestYield(
   plot: PlotState,
   now: number,
   weather: WeatherType,
+  buffCtx?: BuffContext,
 ): { yield: number; yieldMultiplier: number } {
   if (!plot.cropId || plot.stage !== 'mature') {
     return { yield: 0, yieldMultiplier: 0 };
@@ -391,7 +522,7 @@ export function computeHarvestYield(
   const weatherConfig = WEATHERS[weather];
 
   const missedCycles = computeMissedWaterCycles(
-    plot.lastWateredAt, plot.plantedAt!, now, plot.cropId
+    plot.lastWateredAt, plot.plantedAt!, now, plot.cropId, buffCtx
   );
   const waterMultiplier = computeWaterYieldMultiplier(missedCycles);
 
@@ -399,7 +530,19 @@ export function computeHarvestYield(
     ? computePestYieldMultiplier(plot.pestAppearedAt, now)
     : 1.0;
 
-  const totalMultiplier = waterMultiplier * pestMultiplier * weatherConfig.yieldModifier;
+  // weather_shield buff：负面天气产量倍率归1
+  let weatherYieldMod = weatherConfig.yieldModifier;
+  if (buffCtx?.weatherShield?.active && weatherYieldMod < 1) {
+    weatherYieldMod = 1;
+  }
+
+  let totalMultiplier = waterMultiplier * pestMultiplier * weatherYieldMod;
+
+  // yield_bonus buff
+  if (buffCtx?.yieldBonus) {
+    totalMultiplier *= buffCtx.yieldBonus.multiplier;
+  }
+
   const finalYield = Math.max(1, Math.floor(crop.baseYield * totalMultiplier));
 
   return { yield: finalYield, yieldMultiplier: totalMultiplier };
@@ -416,10 +559,16 @@ export function refreshFarmState(
   now: number,
   weather: WeatherType,
 ): FarmState {
+  // 构建 buff 上下文
+  const buffCtx = buildBuffContext(farmState.activeBuffs, now);
+
+  // 清理过期 buff
+  const cleanedBuffs = (farmState.activeBuffs ?? []).filter(b => b.expiresAt > now);
+
   const updatedPlots = farmState.plots.map(plot => {
     if (!plot.cropId || !plot.plantedAt) return plot;
 
-    const computed = computePlotState(plot, now, weather, farmState.userId);
+    const computed = computePlotState(plot, now, weather, farmState.userId, buffCtx);
 
     return {
       ...plot,
@@ -433,6 +582,7 @@ export function refreshFarmState(
   return {
     ...farmState,
     plots: updatedPlots,
+    activeBuffs: cleanedBuffs,
     lastUpdatedAt: now,
   };
 }

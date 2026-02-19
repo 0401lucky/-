@@ -4,7 +4,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { FarmState, WeatherType, HarvestDetail, FarmLevel } from '@/lib/types/farm';
-import { computePlotState, getTodayWeather } from '@/lib/farm-engine';
+import type { ActiveBuff } from '@/lib/types/farm-shop';
+import { computePlotState, getTodayWeather, buildBuffContext } from '@/lib/farm-engine';
 import type { ComputedPlotState } from '@/lib/types/farm';
 
 export interface BatchHarvestResult {
@@ -37,6 +38,11 @@ interface FarmData {
   removePest: (plotIndex: number) => Promise<boolean>;
   removeCrop: (plotIndex: number) => Promise<boolean>;
   removeAllWithered: () => Promise<number>;
+  // 道具商店
+  activeBuffs: ActiveBuff[];
+  inventory: Record<string, number>;
+  purchaseItem: (itemId: string) => Promise<boolean>;
+  useItem: (itemId: string, plotIndex?: number) => Promise<boolean>;
   // 操作状态
   actionLoading: boolean;
   lastHarvest: HarvestResult | null;
@@ -97,8 +103,9 @@ export function useFarmState(): FarmData {
       if (latestWeather !== weather) {
         setWeather(latestWeather);
       }
+      const buffCtx = buildBuffContext(farmState.activeBuffs, now);
       const plots = farmState.plots.map(plot =>
-        computePlotState(plot, now, latestWeather, farmState.userId)
+        computePlotState(plot, now, latestWeather, farmState.userId, buffCtx)
       );
       setComputedPlots(plots);
     };
@@ -402,6 +409,57 @@ export function useFarmState(): FarmData {
     }
   }, [updateFromResponse]);
 
+  // 道具商店操作
+  const purchaseItem = useCallback(async (itemId: string): Promise<boolean> => {
+    setActionLoading(true);
+    try {
+      const res = await fetch('/api/games/farm/shop/purchase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.message);
+        return false;
+      }
+      updateFromResponse(data.data);
+      setError(null);
+      return true;
+    } catch {
+      setError('网络错误');
+      return false;
+    } finally {
+      setActionLoading(false);
+    }
+  }, [updateFromResponse]);
+
+  const useItemAction = useCallback(async (itemId: string, plotIndex?: number): Promise<boolean> => {
+    setActionLoading(true);
+    try {
+      const body: Record<string, unknown> = { itemId };
+      if (plotIndex !== undefined) body.plotIndex = plotIndex;
+      const res = await fetch('/api/games/farm/shop/use-item', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.message);
+        return false;
+      }
+      updateFromResponse(data.data);
+      setError(null);
+      return true;
+    } catch {
+      setError('网络错误');
+      return false;
+    } finally {
+      setActionLoading(false);
+    }
+  }, [updateFromResponse]);
+
   // 初始加载
   useEffect(() => {
     void initFarm();
@@ -426,6 +484,11 @@ export function useFarmState(): FarmData {
     removePest: removePestAction,
     removeCrop: removeCropAction,
     removeAllWithered: removeAllWitheredAction,
+    // 道具商店
+    activeBuffs: farmState?.activeBuffs ?? [],
+    inventory: farmState?.inventory ?? {},
+    purchaseItem,
+    useItem: useItemAction,
     actionLoading,
     lastHarvest,
     clearLastHarvest: () => setLastHarvest(null),

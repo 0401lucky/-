@@ -90,7 +90,11 @@ export async function getOrCreateFarm(userId: number): Promise<FarmState> {
     const normalized = normalizeFarmState(existing);
     // 惰性刷新状态
     const weather = getTodayWeather(getTodayDateString());
-    const refreshed = refreshFarmState(normalized, Date.now(), weather);
+    const now = Date.now();
+    // 清理过期buff
+    const cleanedBuffs = (normalized.activeBuffs ?? []).filter(b => b.expiresAt > now);
+    const cleaned = { ...normalized, activeBuffs: cleanedBuffs };
+    const refreshed = refreshFarmState(cleaned, now, weather);
     return refreshed;
   }
 
@@ -122,6 +126,8 @@ function isValidPlotIndex(plotIndex: number, plotCount: number): boolean {
 function normalizeFarmState(farmState: FarmState): FarmState {
   return {
     ...farmState,
+    activeBuffs: farmState.activeBuffs ?? [],
+    inventory: farmState.inventory ?? {},
     plots: farmState.plots.map((plot, index) => ({
       ...plot,
       index: Number.isInteger(plot.index) ? plot.index : index,
