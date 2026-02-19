@@ -93,8 +93,12 @@ export function useFarmState(): FarmData {
 
     const updateComputed = () => {
       const now = Date.now();
+      const latestWeather = getTodayWeather(getTodayDateStr());
+      if (latestWeather !== weather) {
+        setWeather(latestWeather);
+      }
       const plots = farmState.plots.map(plot =>
-        computePlotState(plot, now, weather, farmState.userId)
+        computePlotState(plot, now, latestWeather, farmState.userId)
       );
       setComputedPlots(plots);
     };
@@ -114,6 +118,7 @@ export function useFarmState(): FarmData {
     dailyEarned?: number;
     dailyLimit?: number;
     pointsLimitReached?: boolean;
+    limitReached?: boolean;
     weather?: WeatherType;
   }) => {
     if (data.farmState) setFarmState(data.farmState);
@@ -122,6 +127,7 @@ export function useFarmState(): FarmData {
     if (data.dailyEarned !== undefined) setDailyEarned(data.dailyEarned);
     if (data.dailyLimit !== undefined) setDailyLimit(data.dailyLimit);
     if (data.pointsLimitReached !== undefined) setPointsLimitReached(data.pointsLimitReached);
+    if (data.limitReached !== undefined) setPointsLimitReached(data.limitReached);
     if (data.weather) setWeather(data.weather);
   }, []);
 

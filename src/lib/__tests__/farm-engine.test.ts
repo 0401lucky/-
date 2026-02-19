@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PEST_CHECK_WINDOW } from '../farm-config';
+import { CROPS, PEST_CHECK_WINDOW, WATER_MISS_WITHER_THRESHOLD } from '../farm-config';
 import {
   computeGrowthProgress,
   computeMissedWaterCycles,
@@ -113,5 +113,66 @@ describe('farm-engine', () => {
     );
 
     expect(state.hasPest).toBe(false);
+  });
+
+  it('mature crops do not wither even when missing many water cycles', () => {
+    const crop = CROPS['corn'];
+    // 种植时间足够久，确保作物已成熟且错过足够多浇水周期
+    const plantedAt = Date.UTC(2026, 0, 1, 0, 0, 0);
+    // 需要超过 growthTime（1小时成熟）且超过 waterInterval * WITHER_THRESHOLD（45分*5=3.75小时）
+    const now = plantedAt + 5 * 60 * 60 * 1000; // 5小时后
+    // lastWateredAt 设为很久以前，确保错过浇水周期远超阈值
+    const missedCycles = computeMissedWaterCycles(plantedAt, plantedAt, now, 'corn');
+    expect(missedCycles).toBeGreaterThanOrEqual(WATER_MISS_WITHER_THRESHOLD);
+
+    const state = computePlotState(
+      {
+        index: 0,
+        cropId: 'corn',
+        plantedAt,
+        lastWateredAt: plantedAt,
+        waterCount: 1,
+        hasPest: false,
+        pestAppearedAt: null,
+        pestClearedAt: null,
+        stage: 'growing',
+        yieldMultiplier: 1,
+      },
+      now,
+      'sunny',
+      1,
+    );
+
+    // 成熟作物不应该枯萎
+    expect(state.stage).toBe('mature');
+    // 但产量应该受到减产惩罚
+    expect(state.estimatedYield).toBeGreaterThan(0);
+    expect(state.estimatedYield).toBeLessThan(crop.baseYield);
+  });
+
+  it('mature estimated yield is at least 1 to match harvest settlement floor', () => {
+    const plantedAt = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const now = plantedAt + 24 * 60 * 60 * 1000;
+
+    const state = computePlotState(
+      {
+        index: 0,
+        cropId: 'wheat',
+        plantedAt,
+        lastWateredAt: plantedAt,
+        waterCount: 1,
+        hasPest: true,
+        pestAppearedAt: plantedAt,
+        pestClearedAt: null,
+        stage: 'growing',
+        yieldMultiplier: 1,
+      },
+      now,
+      'drought',
+      1,
+    );
+
+    expect(state.stage).toBe('mature');
+    expect(state.estimatedYield).toBe(1);
   });
 });

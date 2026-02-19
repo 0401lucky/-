@@ -140,7 +140,7 @@ export function computeMissedWaterCycles(
  */
 export function computeWaterYieldMultiplier(missedCycles: number): number {
   if (missedCycles <= 0) return 1.0;
-  // 每个错过周期减产20%
+  // 每个错过周期按配置比例减产
   const penalty = 1 - (missedCycles * WATER_MISS_PENALTY);
   return Math.max(0, penalty);
 }
@@ -298,8 +298,8 @@ export function computePlotState(
     plot.lastWateredAt, plot.plantedAt, now, plot.cropId
   );
 
-  // 检查枯萎
-  const isWithered = missedCycles >= WATER_MISS_WITHER_THRESHOLD;
+  // 检查枯萎（成熟作物免疫枯萎，只会减产不会枯死）
+  const isWithered = currentStage !== 'mature' && missedCycles >= WATER_MISS_WITHER_THRESHOLD;
   if (isWithered) {
     return {
       ...plot,
@@ -334,6 +334,10 @@ export function computePlotState(
   const waterMultiplier = computeWaterYieldMultiplier(missedCycles);
   const pestMultiplier = computePestYieldMultiplier(pestTime, now);
   const totalYieldMultiplier = waterMultiplier * pestMultiplier * weatherConfig.yieldModifier;
+  const estimatedYieldRaw = Math.floor(crop.baseYield * totalYieldMultiplier);
+  const estimatedYield = currentStage === 'mature'
+    ? Math.max(1, estimatedYieldRaw)
+    : Math.max(0, estimatedYieldRaw);
 
   const waterNeed = !weatherConfig.autoWater && needsWater(
     plot.lastWateredAt, plot.plantedAt, now, plot.cropId, weather
@@ -366,7 +370,7 @@ export function computePlotState(
     missedWaterCycles: missedCycles,
     timeToNextStage,
     timeToMature,
-    estimatedYield: Math.floor(crop.baseYield * totalYieldMultiplier),
+    estimatedYield,
     yieldMultiplier: totalYieldMultiplier,
   };
 }

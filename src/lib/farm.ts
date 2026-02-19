@@ -226,6 +226,12 @@ export async function waterPlot(
   userId: number,
   plotIndex: number,
 ): Promise<{ success: boolean; message?: string; farmState?: FarmState }> {
+  const lock = await acquireFarmActionLock(userId);
+  if (!lock) {
+    return { success: false, message: '操作处理中，请稍后重试' };
+  }
+
+  try {
   const farm = await getOrCreateFarm(userId);
   const now = Date.now();
   const weather = getTodayWeather(getTodayDateString());
@@ -249,6 +255,10 @@ export async function waterPlot(
     return { success: false, message: '作物已成熟，无需浇水' };
   }
 
+  if (!computed.needsWater) {
+    return { success: false, message: '当前无需浇水' };
+  }
+
   // 更新浇水时间
   farm.plots[plotIndex] = {
     ...plot,
@@ -267,6 +277,9 @@ export async function waterPlot(
     success: true,
     farmState: refreshFarmState(farm, now, weather),
   };
+  } finally {
+    await releaseFarmActionLock(lock);
+  }
 }
 
 /**
@@ -274,7 +287,13 @@ export async function waterPlot(
  */
 export async function waterAllPlots(
   userId: number,
-): Promise<{ success: boolean; wateredCount: number; farmState?: FarmState }> {
+): Promise<{ success: boolean; wateredCount: number; message?: string; farmState?: FarmState }> {
+  const lock = await acquireFarmActionLock(userId);
+  if (!lock) {
+    return { success: false, wateredCount: 0, message: '操作处理中，请稍后重试' };
+  }
+
+  try {
   const farm = await getOrCreateFarm(userId);
   const now = Date.now();
   const weather = getTodayWeather(getTodayDateString());
@@ -311,6 +330,9 @@ export async function waterAllPlots(
     wateredCount,
     farmState: refreshFarmState(farm, now, weather),
   };
+  } finally {
+    await releaseFarmActionLock(lock);
+  }
 }
 
 // ---- 收获 ----
@@ -334,7 +356,14 @@ export async function harvestPlot(
   levelUp?: boolean;
   newLevel?: FarmLevel;
 }> {
+  const lock = await acquireFarmActionLock(userId);
+  if (!lock) {
+    return { success: false, message: '操作处理中，请稍后重试' };
+  }
+
+  try {
   const farm = await getOrCreateFarm(userId);
+  const farmBeforeHarvest = JSON.parse(JSON.stringify(farm)) as FarmState;
   const now = Date.now();
   const weather = getTodayWeather(getTodayDateString());
 
@@ -370,17 +399,10 @@ export async function harvestPlot(
   );
   const waterMultiplier = computeWaterYieldMultiplier(missedWaterCycles);
 
-  // 发放积分（受每日上限约束）
-  const dailyLimit = await getDailyPointsLimit();
-  const pointsResult = await addGamePointsWithLimit(
-    userId, harvestYield, dailyLimit, 'game_play', `农场收获: ${crop.name}`,
-  );
-
   // 经验奖励
   const expGained = crop.expReward;
   farm.exp += expGained;
   farm.totalHarvests += 1;
-  farm.totalEarnings += pointsResult.pointsEarned;
 
   // 清空田地
   farm.plots[plotIndex] = createEmptyPlot(plotIndex);
@@ -392,7 +414,33 @@ export async function harvestPlot(
     Object.assign(farm, levelResult.newState);
   }
 
+  // 先持久化田地与经验状态，避免发分成功但田地未清空导致重复领取
   await saveFarmState(farm);
+
+  // 发放积分（受每日上限约束）
+  const dailyLimit = await getDailyPointsLimit();
+  let pointsResult: Awaited<ReturnType<typeof addGamePointsWithLimit>>;
+  try {
+    pointsResult = await addGamePointsWithLimit(
+      userId, harvestYield, dailyLimit, 'game_play', `农场收获: ${crop.name}`,
+    );
+  } catch (pointsError) {
+    console.error('Farm harvest points settlement failed, rolling back farm state:', pointsError);
+    try {
+      await saveFarmState(farmBeforeHarvest);
+    } catch (rollbackError) {
+      console.error('Farm harvest rollback failed:', rollbackError);
+    }
+    return { success: false, message: '积分结算失败，请稍后重试' };
+  }
+
+  farm.totalEarnings += pointsResult.pointsEarned;
+  // totalEarnings 仅用于展示统计，写回失败不影响主流程
+  try {
+    await saveFarmState(farm);
+  } catch (statsSaveError) {
+    console.error('Farm harvest save totalEarnings failed:', statsSaveError);
+  }
 
   // 构建收获详情
   const weatherConfig = WEATHERS[weather];
@@ -420,6 +468,9 @@ export async function harvestPlot(
     levelUp: levelResult.leveledUp,
     newLevel: levelResult.leveledUp ? levelResult.newLevel : undefined,
   };
+  } finally {
+    await releaseFarmActionLock(lock);
+  }
 }
 
 // ---- 除虫 ----
@@ -431,6 +482,12 @@ export async function removePest(
   userId: number,
   plotIndex: number,
 ): Promise<{ success: boolean; message?: string; farmState?: FarmState }> {
+  const lock = await acquireFarmActionLock(userId);
+  if (!lock) {
+    return { success: false, message: '操作处理中，请稍后重试' };
+  }
+
+  try {
   const farm = await getOrCreateFarm(userId);
   const now = Date.now();
   const weather = getTodayWeather(getTodayDateString());
@@ -479,6 +536,9 @@ export async function removePest(
     success: true,
     farmState: refreshFarmState(farm, now, weather),
   };
+  } finally {
+    await releaseFarmActionLock(lock);
+  }
 }
 
 // ---- 铲除枯萎作物 ----
@@ -490,6 +550,12 @@ export async function removeCrop(
   userId: number,
   plotIndex: number,
 ): Promise<{ success: boolean; message?: string; farmState?: FarmState }> {
+  const lock = await acquireFarmActionLock(userId);
+  if (!lock) {
+    return { success: false, message: '操作处理中，请稍后重试' };
+  }
+
+  try {
   const farm = await getOrCreateFarm(userId);
   const now = Date.now();
   const weather = getTodayWeather(getTodayDateString());
@@ -513,6 +579,9 @@ export async function removeCrop(
     success: true,
     farmState: refreshFarmState(farm, now, weather),
   };
+  } finally {
+    await releaseFarmActionLock(lock);
+  }
 }
 
 // ---- 一键铲除枯萎作物 ----
@@ -523,6 +592,12 @@ export async function removeCrop(
 export async function removeAllWitheredCrops(
   userId: number,
 ): Promise<{ success: boolean; removedCount: number; farmState?: FarmState }> {
+  const lock = await acquireFarmActionLock(userId);
+  if (!lock) {
+    return { success: false, removedCount: 0 };
+  }
+
+  try {
   const farm = await getOrCreateFarm(userId);
   const now = Date.now();
   const weather = getTodayWeather(getTodayDateString());
@@ -550,6 +625,9 @@ export async function removeAllWitheredCrops(
     removedCount,
     farmState: refreshFarmState(farm, now, weather),
   };
+  } finally {
+    await releaseFarmActionLock(lock);
+  }
 }
 
 // ---- 一键收获 ----
@@ -561,6 +639,7 @@ export async function harvestAllPlots(
   userId: number,
 ): Promise<{
   success: boolean;
+  message?: string;
   harvests: HarvestDetail[];
   totalPointsEarned: number;
   harvestedCount: number;
@@ -572,17 +651,32 @@ export async function harvestAllPlots(
   newLevel?: FarmLevel;
   farmState?: FarmState;
 }> {
+  const lock = await acquireFarmActionLock(userId);
+  if (!lock) {
+    return {
+      success: false,
+      message: '操作处理中，请稍后重试',
+      harvests: [],
+      totalPointsEarned: 0,
+      harvestedCount: 0,
+      newBalance: 0,
+      dailyEarned: 0,
+      limitReached: false,
+      expGained: 0,
+      levelUp: false,
+    };
+  }
+
+  try {
   const farm = await getOrCreateFarm(userId);
+  const farmBeforeHarvest = JSON.parse(JSON.stringify(farm)) as FarmState;
   const now = Date.now();
   const weather = getTodayWeather(getTodayDateString());
-  const dailyLimit = await getDailyPointsLimit();
+  const weatherConfig = WEATHERS[weather];
 
   const harvests: HarvestDetail[] = [];
-  let totalPointsEarned = 0;
+  let totalExpectedYield = 0;
   let totalExpGained = 0;
-  let latestBalance = 0;
-  let latestDailyEarned = 0;
-  let limitReached = false;
 
   for (let i = 0; i < farm.plots.length; i++) {
     const plot = farm.plots[i];
@@ -605,28 +699,17 @@ export async function harvestAllPlots(
     );
     const waterMultiplier = computeWaterYieldMultiplier(missedWaterCycles);
 
-    // 发放积分
-    const pointsResult = await addGamePointsWithLimit(
-      userId, harvestYield, dailyLimit, 'game_play', `农场收获: ${crop.name}`,
-    );
-
     // 经验
     const expGained = crop.expReward;
     farm.exp += expGained;
     farm.totalHarvests += 1;
-    farm.totalEarnings += pointsResult.pointsEarned;
-
-    totalPointsEarned += pointsResult.pointsEarned;
+    totalExpectedYield += harvestYield;
     totalExpGained += expGained;
-    latestBalance = pointsResult.balance;
-    latestDailyEarned = pointsResult.dailyEarned;
-    if (pointsResult.limitReached) limitReached = true;
 
     // 清空田地
     farm.plots[i] = createEmptyPlot(i);
 
     // 构建收获详情
-    const weatherConfig = WEATHERS[weather];
     harvests.push({
       cropId: plot.cropId,
       cropName: crop.name,
@@ -649,16 +732,56 @@ export async function harvestAllPlots(
       Object.assign(farm, levelResult.newState);
     }
 
+    // 先持久化田地与经验状态，避免发分成功但田地未清空导致重复领取
     await saveFarmState(farm);
+
+    const dailyLimit = await getDailyPointsLimit();
+    let pointsResult: Awaited<ReturnType<typeof addGamePointsWithLimit>>;
+    try {
+      pointsResult = await addGamePointsWithLimit(
+        userId,
+        totalExpectedYield,
+        dailyLimit,
+        'game_play',
+        `农场一键收获: ${harvests.length}块田地`,
+      );
+    } catch (pointsError) {
+      console.error('Farm harvest-all points settlement failed, rolling back farm state:', pointsError);
+      try {
+        await saveFarmState(farmBeforeHarvest);
+      } catch (rollbackError) {
+        console.error('Farm harvest-all rollback failed:', rollbackError);
+      }
+      return {
+        success: false,
+        message: '积分结算失败，请稍后重试',
+        harvests: [],
+        totalPointsEarned: 0,
+        harvestedCount: 0,
+        newBalance: 0,
+        dailyEarned: 0,
+        limitReached: false,
+        expGained: 0,
+        levelUp: false,
+        farmState: refreshFarmState(farmBeforeHarvest, now, weather),
+      };
+    }
+
+    farm.totalEarnings += pointsResult.pointsEarned;
+    try {
+      await saveFarmState(farm);
+    } catch (statsSaveError) {
+      console.error('Farm harvest-all save totalEarnings failed:', statsSaveError);
+    }
 
     return {
       success: true,
       harvests,
-      totalPointsEarned,
+      totalPointsEarned: pointsResult.pointsEarned,
       harvestedCount: harvests.length,
-      newBalance: latestBalance,
-      dailyEarned: latestDailyEarned,
-      limitReached,
+      newBalance: pointsResult.balance,
+      dailyEarned: pointsResult.dailyEarned,
+      limitReached: pointsResult.limitReached,
       expGained: totalExpGained,
       levelUp: levelResult.leveledUp,
       newLevel: levelResult.leveledUp ? levelResult.newLevel : undefined,
@@ -678,4 +801,7 @@ export async function harvestAllPlots(
     levelUp: false,
     farmState: refreshFarmState(farm, now, weather),
   };
+  } finally {
+    await releaseFarmActionLock(lock);
+  }
 }

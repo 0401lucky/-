@@ -12,7 +12,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     seedCost: 10,
     baseYield: 25,
     growthTime: 3 * 60 * 1000,         // 3分钟
-    waterInterval: 1.5 * 60 * 1000,    // 1.5分钟
+    waterInterval: 3 * 60 * 1000,      // 3分钟
     unlockLevel: 1,
     expReward: 5,
     stages: [
@@ -29,7 +29,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     seedCost: 20,
     baseYield: 50,
     growthTime: 8 * 60 * 1000,         // 8分钟
-    waterInterval: 3 * 60 * 1000,      // 3分钟
+    waterInterval: 6 * 60 * 1000,      // 6分钟
     unlockLevel: 1,
     expReward: 10,
     stages: [
@@ -46,7 +46,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     seedCost: 35,
     baseYield: 85,
     growthTime: 15 * 60 * 1000,        // 15分钟
-    waterInterval: 5 * 60 * 1000,      // 5分钟
+    waterInterval: 12 * 60 * 1000,     // 12分钟
     unlockLevel: 2,
     expReward: 18,
     stages: [
@@ -63,7 +63,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     seedCost: 50,
     baseYield: 120,
     growthTime: 30 * 60 * 1000,        // 30分钟
-    waterInterval: 10 * 60 * 1000,     // 10分钟
+    waterInterval: 25 * 60 * 1000,     // 25分钟
     unlockLevel: 2,
     expReward: 25,
     stages: [
@@ -80,7 +80,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     seedCost: 80,
     baseYield: 200,
     growthTime: 60 * 60 * 1000,        // 1小时
-    waterInterval: 20 * 60 * 1000,     // 20分钟
+    waterInterval: 45 * 60 * 1000,     // 45分钟
     unlockLevel: 3,
     expReward: 40,
     stages: [
@@ -97,7 +97,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     seedCost: 120,
     baseYield: 300,
     growthTime: 2 * 60 * 60 * 1000,    // 2小时
-    waterInterval: 30 * 60 * 1000,     // 30分钟
+    waterInterval: 75 * 60 * 1000,     // 75分钟
     unlockLevel: 3,
     expReward: 60,
     stages: [
@@ -114,7 +114,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     seedCost: 200,
     baseYield: 480,
     growthTime: 4 * 60 * 60 * 1000,    // 4小时
-    waterInterval: 60 * 60 * 1000,     // 1小时
+    waterInterval: 2.5 * 60 * 60 * 1000, // 2.5小时
     unlockLevel: 4,
     expReward: 90,
     stages: [
@@ -131,7 +131,7 @@ export const CROPS: Record<CropId, CropConfig> = {
     seedCost: 350,
     baseYield: 800,
     growthTime: 8 * 60 * 60 * 1000,    // 8小时
-    waterInterval: 2 * 60 * 60 * 1000, // 2小时
+    waterInterval: 4 * 60 * 60 * 1000, // 4小时
     unlockLevel: 5,
     expReward: 150,
     stages: [
@@ -253,10 +253,10 @@ export const PEST_YIELD_PENALTY_PER_WINDOW = 0.15;
 export const PEST_MIN_YIELD = 0.30;
 
 /** 浇水超时后每周期减产比例 */
-export const WATER_MISS_PENALTY = 0.20;
+export const WATER_MISS_PENALTY = 0.12;
 
 /** 连续错过浇水导致枯萎的周期数 */
-export const WATER_MISS_WITHER_THRESHOLD = 3;
+export const WATER_MISS_WITHER_THRESHOLD = 5;
 
 /** 操作冷却时间（秒） */
 export const ACTION_COOLDOWN_SECONDS = 2;

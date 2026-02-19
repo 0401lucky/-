@@ -3,6 +3,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withUserRateLimit } from '@/lib/rate-limit';
 import { checkActionCooldown, waterPlot, waterAllPlots } from '@/lib/farm';
+import { getTodayWeather } from '@/lib/farm-engine';
+import { getTodayDateString } from '@/lib/time';
 
 export const POST = withUserRateLimit(
   'game:submit',
@@ -16,17 +18,32 @@ export const POST = withUserRateLimit(
         );
       }
 
-      const body = await request.json();
-      const { plotIndex, waterAll } = body as { plotIndex?: number; waterAll?: boolean };
+      const body = (await request.json().catch(() => null)) as { plotIndex?: number; waterAll?: boolean } | null;
+      if (!body || typeof body !== 'object') {
+        return NextResponse.json(
+          { success: false, message: '请求体格式错误' },
+          { status: 400 },
+        );
+      }
+
+      const { plotIndex, waterAll } = body;
 
       if (waterAll) {
         // 一键浇水
         const result = await waterAllPlots(user.id);
+        if (!result.success) {
+          return NextResponse.json(
+            { success: false, message: result.message ?? '操作失败' },
+            { status: 400 },
+          );
+        }
+        const weather = getTodayWeather(getTodayDateString());
         return NextResponse.json({
           success: true,
           data: {
             farmState: result.farmState,
             wateredCount: result.wateredCount,
+            weather,
           },
         });
       }
@@ -47,10 +64,13 @@ export const POST = withUserRateLimit(
         );
       }
 
+      const weather = getTodayWeather(getTodayDateString());
+
       return NextResponse.json({
         success: true,
         data: {
           farmState: result.farmState,
+          weather,
         },
       });
     } catch (error) {

@@ -3,7 +3,7 @@
 'use client';
 
 import type { ComputedPlotState } from '@/lib/types/farm';
-import { CROPS } from '@/lib/farm-config';
+import { CROPS, WATER_MISS_PENALTY } from '@/lib/farm-config';
 
 interface PlotCardProps {
   plot: ComputedPlotState;
@@ -67,6 +67,7 @@ export default function PlotCard({
   };
 
   const progressPercent = Math.min(100, Math.floor(plot.growthProgress * 100));
+  const waterPenaltyPercent = Math.round(plot.missedWaterCycles * WATER_MISS_PENALTY * 100);
 
   return (
     <div className={`aspect-square rounded-2xl border-2 bg-gradient-to-br backdrop-blur-sm ${stageBg[plot.stage]} relative overflow-hidden flex flex-col items-center justify-center p-2 transition-all shadow-sm hover:shadow-md`}>
@@ -163,7 +164,7 @@ export default function PlotCard({
       {/* 减产警告 */}
       {plot.missedWaterCycles > 0 && plot.stage !== 'withered' && (
         <div className="absolute top-1 left-1 text-[10px] bg-red-100/90 text-red-600 px-1.5 py-0.5 rounded-full font-bold shadow-sm">
-          -{plot.missedWaterCycles * 20}%
+          -{waterPenaltyPercent}%
         </div>
       )}
     </div>

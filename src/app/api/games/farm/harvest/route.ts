@@ -3,6 +3,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withUserRateLimit } from '@/lib/rate-limit';
 import { checkActionCooldown, harvestPlot, harvestAllPlots } from '@/lib/farm';
+import { getTodayWeather } from '@/lib/farm-engine';
+import { getTodayDateString } from '@/lib/time';
 
 export const POST = withUserRateLimit(
   'game:submit',
@@ -16,12 +18,25 @@ export const POST = withUserRateLimit(
         );
       }
 
-      const body = await request.json();
-      const { plotIndex, harvestAll } = body as { plotIndex?: number; harvestAll?: boolean };
+      const body = (await request.json().catch(() => null)) as { plotIndex?: number; harvestAll?: boolean } | null;
+      if (!body || typeof body !== 'object') {
+        return NextResponse.json(
+          { success: false, message: '请求体格式错误' },
+          { status: 400 },
+        );
+      }
+      const { plotIndex, harvestAll } = body;
+      const weather = getTodayWeather(getTodayDateString());
 
       // 一键收获模式
       if (harvestAll) {
         const result = await harvestAllPlots(user.id);
+        if (!result.success) {
+          return NextResponse.json(
+            { success: false, message: '操作失败，请稍后重试' },
+            { status: 400 },
+          );
+        }
         return NextResponse.json({
           success: true,
           data: {
@@ -32,9 +47,11 @@ export const POST = withUserRateLimit(
             newBalance: result.newBalance,
             dailyEarned: result.dailyEarned,
             limitReached: result.limitReached,
+            pointsLimitReached: result.limitReached,
             expGained: result.expGained,
             levelUp: result.levelUp,
             newLevel: result.newLevel,
+            weather,
           },
         });
       }
@@ -64,9 +81,11 @@ export const POST = withUserRateLimit(
           newBalance: result.newBalance,
           dailyEarned: result.dailyEarned,
           limitReached: result.limitReached,
+          pointsLimitReached: result.limitReached,
           expGained: result.expGained,
           levelUp: result.levelUp,
           newLevel: result.newLevel,
+          weather,
         },
       });
     } catch (error) {

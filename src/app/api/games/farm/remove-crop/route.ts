@@ -3,6 +3,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withUserRateLimit } from '@/lib/rate-limit';
 import { checkActionCooldown, removeCrop, removeAllWitheredCrops } from '@/lib/farm';
+import { getTodayWeather } from '@/lib/farm-engine';
+import { getTodayDateString } from '@/lib/time';
 
 export const POST = withUserRateLimit(
   'game:submit',
@@ -16,17 +18,31 @@ export const POST = withUserRateLimit(
         );
       }
 
-      const body = await request.json();
-      const { plotIndex, removeAllWithered } = body as { plotIndex?: number; removeAllWithered?: boolean };
+      const body = (await request.json().catch(() => null)) as { plotIndex?: number; removeAllWithered?: boolean } | null;
+      if (!body || typeof body !== 'object') {
+        return NextResponse.json(
+          { success: false, message: '请求体格式错误' },
+          { status: 400 },
+        );
+      }
+      const { plotIndex, removeAllWithered } = body;
+      const weather = getTodayWeather(getTodayDateString());
 
       // 一键铲除枯萎作物模式
       if (removeAllWithered) {
         const result = await removeAllWitheredCrops(user.id);
+        if (!result.success) {
+          return NextResponse.json(
+            { success: false, message: '操作失败，请稍后重试' },
+            { status: 400 },
+          );
+        }
         return NextResponse.json({
           success: true,
           data: {
             farmState: result.farmState,
             removedCount: result.removedCount,
+            weather,
           },
         });
       }
@@ -51,6 +67,7 @@ export const POST = withUserRateLimit(
         success: true,
         data: {
           farmState: result.farmState,
+          weather,
         },
       });
     } catch (error) {
