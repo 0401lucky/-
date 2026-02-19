@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthUser, isAdmin } from '@/lib/auth';
+import { withAdmin } from '@/lib/api-guards';
 import { getSlotConfig, updateSlotConfig } from '@/lib/slot-config';
 import { SLOT_BET_OPTIONS } from '@/lib/slot-constants';
 
@@ -10,23 +10,7 @@ function jsonResponse(
   return NextResponse.json(data, { status });
 }
 
-async function checkAdmin() {
-  const user = await getAuthUser();
-  if (!user) {
-    return { authorized: false, response: jsonResponse({ success: false, message: '未登录' }, 401) };
-  }
-  if (!isAdmin(user)) {
-    return { authorized: false, response: jsonResponse({ success: false, message: '无管理员权限' }, 403) };
-  }
-  return { authorized: true, user };
-}
-
-export async function GET() {
-  const auth = await checkAdmin();
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
+export const GET = withAdmin(async () => {
   try {
     const config = await getSlotConfig();
     return jsonResponse({ success: true, data: { config } });
@@ -34,14 +18,9 @@ export async function GET() {
     console.error('Get slot config error:', error);
     return jsonResponse({ success: false, message: '获取老虎机配置失败' }, 500);
   }
-}
+});
 
-export async function PUT(request: NextRequest) {
-  const auth = await checkAdmin();
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
+export const PUT = withAdmin(async (request: NextRequest, user) => {
   try {
     const body = await request.json();
 
@@ -69,11 +48,10 @@ export async function PUT(request: NextRequest) {
       return jsonResponse({ success: false, message: '没有可更新的配置' }, 400);
     }
 
-    const user = auth.user!;
     const config = await updateSlotConfig(updates, user.username);
     return jsonResponse({ success: true, data: { config }, message: '配置已更新' });
   } catch (error) {
     console.error('Update slot config error:', error);
     return jsonResponse({ success: false, message: '更新老虎机配置失败' }, 500);
   }
-}
+});

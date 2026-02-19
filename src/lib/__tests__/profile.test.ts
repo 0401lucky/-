@@ -3,7 +3,7 @@ import { kv } from '@vercel/kv';
 import { getProfileOverview } from '../profile';
 import { getUserCardData } from '../cards/draw';
 import { getUserPoints, getPointsLogs } from '../points';
-import { getCheckinStreak } from '../rankings';
+import { getCheckinStreak, getTotalCheckinDays } from '../rankings';
 import { listUserNotifications } from '../notifications';
 
 vi.mock('@vercel/kv', () => ({
@@ -23,6 +23,7 @@ vi.mock('../points', () => ({
 
 vi.mock('../rankings', () => ({
   getCheckinStreak: vi.fn(),
+  getTotalCheckinDays: vi.fn(),
 }));
 
 vi.mock('../notifications', () => ({
@@ -35,6 +36,7 @@ describe('profile overview', () => {
   const mockGetUserPoints = vi.mocked(getUserPoints);
   const mockGetPointsLogs = vi.mocked(getPointsLogs);
   const mockGetCheckinStreak = vi.mocked(getCheckinStreak);
+  const mockGetTotalCheckinDays = vi.mocked(getTotalCheckinDays);
   const mockListUserNotifications = vi.mocked(listUserNotifications);
 
   beforeEach(() => {
@@ -58,6 +60,7 @@ describe('profile overview', () => {
       { id: 'l2', amount: -5, source: 'exchange', description: 'test2', balance: 883, createdAt: 900 },
     ]);
     mockGetCheckinStreak.mockResolvedValue(7);
+    mockGetTotalCheckinDays.mockResolvedValue(30);
     mockListUserNotifications.mockResolvedValue({
       unreadCount: 1,
       pagination: {

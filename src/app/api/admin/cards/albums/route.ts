@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kv } from '@vercel/kv';
-import { getAuthUser, isAdmin } from '@/lib/auth';
+import { withAdmin } from '@/lib/api-guards';
 import { ALBUMS } from '@/lib/cards/config';
 import { COLLECTION_REWARDS } from '@/lib/cards/constants';
 import { getAllTierRewards, setTierReward, RewardTier } from '@/lib/cards/albumRewards';
@@ -19,12 +19,7 @@ const TIER_NAMES: Record<RewardTier, string> = {
 };
 
 // GET: 获取所有卡册及其奖励，以及稀有度奖励
-export async function GET() {
-  const user = await getAuthUser();
-  if (!isAdmin(user)) {
-    return NextResponse.json({ success: false, message: '无权限' }, { status: 403 });
-  }
-
+export const GET = withAdmin(async () => {
   try {
     // 从Redis获取自定义卡册奖励
     const customRewards = await kv.get<Record<string, number>>(ALBUM_REWARDS_KEY) || {};
@@ -53,15 +48,10 @@ export async function GET() {
     console.error('Get albums error:', error);
     return NextResponse.json({ success: false, message: '获取失败' }, { status: 500 });
   }
-}
+});
 
 // POST: 更新卡册奖励或稀有度奖励
-export async function POST(request: NextRequest) {
-  const user = await getAuthUser();
-  if (!isAdmin(user)) {
-    return NextResponse.json({ success: false, message: '无权限' }, { status: 403 });
-  }
-
+export const POST = withAdmin(async (request: NextRequest) => {
   try {
     const { albumId, tierId, reward } = await request.json();
 
@@ -107,4 +97,4 @@ export async function POST(request: NextRequest) {
     console.error('Update reward error:', error);
     return NextResponse.json({ success: false, message: '更新失败' }, { status: 500 });
   }
-}
+});

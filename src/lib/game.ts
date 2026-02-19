@@ -9,13 +9,13 @@ import type {
   GameSession,
   GameRecord,
   GameResultSubmit,
-  DailyGameStats,
   BallLaunch,
 } from './types/game';
 
 // 常量配置
 import { getDailyPointsLimit } from './config';
-import { incrementSharedDailyStats } from './daily-stats';
+import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
+export { getDailyStats };
 const SESSION_TTL = 5 * 60; // 5分钟
 const COOLDOWN_TTL = 5; // 5秒
 const MIN_GAME_DURATION = 10000; // 10秒
@@ -33,7 +33,6 @@ const MAX_SUSPICIOUS_SUBMITS_PER_DAY = 5;
 // Key 格式
 const SESSION_KEY = (sessionId: string) => `game:session:${sessionId}`;
 const ACTIVE_SESSION_KEY = (userId: number) => `game:active:${userId}`;
-const DAILY_STATS_KEY = (userId: number, date: string) => `game:daily:${userId}:${date}`;
 const RECORDS_KEY = (userId: number) => `game:records:${userId}`;
 const COOLDOWN_KEY = (userId: number) => `game:cooldown:${userId}`;
 const SUBMIT_LOCK_KEY = (sessionId: string) => `game:submit:${sessionId}`;
@@ -230,28 +229,6 @@ function detectPachinkoAnomaly(result: GameResultSubmit): string | null {
   }
 
   return null;
-}
-
-/**
- * 获取用户今日游戏统计
- */
-export async function getDailyStats(userId: number): Promise<DailyGameStats> {
-  const date = getTodayDateString();
-  const stats = await kv.get<DailyGameStats>(DAILY_STATS_KEY(userId, date));
-
-  if (stats) {
-    return stats;
-  }
-
-  // 返回默认统计
-  return {
-    userId,
-    date,
-    gamesPlayed: 0,
-    totalScore: 0,
-    pointsEarned: 0,
-    lastGameAt: 0,
-  };
 }
 
 /**

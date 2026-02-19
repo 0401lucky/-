@@ -1,19 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUser, isAdmin } from "@/lib/auth";
+import { withAdmin } from "@/lib/api-guards";
 import { migrateNewUserEligibilityFromHistory } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(request: NextRequest) {
+export const POST = withAdmin(async (request: NextRequest) => {
   try {
-    const user = await getAuthUser();
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限操作" },
-        { status: 403 }
-      );
-    }
-
     const body = (await request.json().catch(() => null)) as {
       dryRun?: unknown;
     } | null;
@@ -39,4 +31,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+});

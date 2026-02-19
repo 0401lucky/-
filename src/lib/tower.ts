@@ -4,12 +4,12 @@ import { randomBytes } from 'crypto';
 import { kv } from '@vercel/kv';
 import { nanoid } from 'nanoid';
 import { addGamePointsWithLimit } from './points';
-import { getTodayDateString } from './time';
 import { getDailyPointsLimit } from './config';
-import { incrementSharedDailyStats } from './daily-stats';
+import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
+export { getDailyStats };
 import { simulateTowerGame, calculateTowerScore } from './tower-engine';
 import type { TowerDifficulty } from './tower-engine';
-import type { DailyGameStats, GameSessionStatus } from './types/game';
+import type { GameSessionStatus } from './types/game';
 
 const GAME_TYPE = 'tower' as const;
 
@@ -24,7 +24,6 @@ const VALID_DIFFICULTIES: TowerDifficulty[] = ['normal', 'hard', 'hell'];
 // Key 格式
 const SESSION_KEY = (sessionId: string) => `tower:session:${sessionId}`;
 const ACTIVE_SESSION_KEY = (userId: number) => `tower:active:${userId}`;
-const DAILY_STATS_KEY = (userId: number, date: string) => `game:daily:${userId}:${date}`;
 const RECORDS_KEY = (userId: number) => `tower:records:${userId}`;
 const COOLDOWN_KEY = (userId: number) => `tower:cooldown:${userId}`;
 const SUBMIT_LOCK_KEY = (sessionId: string) => `tower:submit:${sessionId}`;
@@ -79,22 +78,6 @@ export async function isInCooldown(userId: number): Promise<boolean> {
 export async function getCooldownRemaining(userId: number): Promise<number> {
   const ttl = await kv.ttl(COOLDOWN_KEY(userId));
   return ttl > 0 ? ttl : 0;
-}
-
-export async function getDailyStats(userId: number): Promise<DailyGameStats> {
-  const date = getTodayDateString();
-  const stats = await kv.get<DailyGameStats>(DAILY_STATS_KEY(userId, date));
-
-  if (stats) return stats;
-
-  return {
-    userId,
-    date,
-    gamesPlayed: 0,
-    totalScore: 0,
-    pointsEarned: 0,
-    lastGameAt: 0,
-  };
 }
 
 export async function getTowerRecords(userId: number, limit: number = 20): Promise<TowerGameRecord[]> {

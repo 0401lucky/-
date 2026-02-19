@@ -2,7 +2,7 @@
 // 管理员积分调整 API
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthUser, isAdmin } from '@/lib/auth';
+import { withAdmin } from '@/lib/api-guards';
 import { addPoints, deductPoints, getUserPoints, getPointsLogs } from '@/lib/points';
 
 // 统一响应格式
@@ -13,28 +13,11 @@ function jsonResponse(
   return NextResponse.json(data, { status });
 }
 
-// 验证管理员权限
-async function checkAdmin() {
-  const user = await getAuthUser();
-  if (!user) {
-    return { authorized: false, response: jsonResponse({ success: false, message: '未登录' }, 401) };
-  }
-  if (!isAdmin(user)) {
-    return { authorized: false, response: jsonResponse({ success: false, message: '无管理员权限' }, 403) };
-  }
-  return { authorized: true, user };
-}
-
 /**
  * GET - 查询用户积分和流水
  * Query params: userId
  */
-export async function GET(request: NextRequest) {
-  const auth = await checkAdmin();
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
+export const GET = withAdmin(async (request: NextRequest) => {
   const { searchParams } = new URL(request.url);
   const userIdStr = searchParams.get('userId');
 
@@ -62,19 +45,14 @@ export async function GET(request: NextRequest) {
     console.error('Get user points error:', error);
     return jsonResponse({ success: false, message: '获取积分信息失败' }, 500);
   }
-}
+});
 
 /**
  * POST - 调整用户积分
  * Body: { userId: number, amount: number, description: string }
  * amount 为正数时增加，为负数时扣除
  */
-export async function POST(request: NextRequest) {
-  const auth = await checkAdmin();
-  if (!auth.authorized) {
-    return auth.response;
-  }
-
+export const POST = withAdmin(async (request: NextRequest, user) => {
   try {
     const body = await request.json();
     const { amount, description } = body;
@@ -107,8 +85,7 @@ export async function POST(request: NextRequest) {
     }
 
     const trimmedDesc = description.trim();
-    const adminUser = auth.user!;
-    const fullDescription = `[管理员:${adminUser.username}] ${trimmedDesc}`;
+    const fullDescription = `[管理员:${user.username}] ${trimmedDesc}`;
 
     let result: { success: boolean; balance: number; message?: string };
 
@@ -138,4 +115,4 @@ export async function POST(request: NextRequest) {
     console.error('Adjust points error:', error);
     return jsonResponse({ success: false, message: '积分调整失败' }, 500);
   }
-}
+});

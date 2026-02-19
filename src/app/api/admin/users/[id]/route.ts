@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUser, isAdmin } from "@/lib/auth";
+import { withAdmin } from "@/lib/api-guards";
 import { getUserAllClaims, getAllProjects } from "@/lib/kv";
 import { kv } from "@vercel/kv";
 
@@ -13,21 +13,13 @@ interface LotteryRecord {
   wonAt: number;
 }
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const GET = withAdmin(async (
+  _request: NextRequest,
+  _user,
+  context: { params: Promise<{ id: string }> }
+) => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限访问" },
-        { status: 403 }
-      );
-    }
-
-    const { id } = await params;
+    const { id } = await context.params;
     const userId = parseInt(id);
 
     if (isNaN(userId)) {
@@ -40,7 +32,7 @@ export async function GET(
     // 获取兑换码领取记录
     const claims = await getUserAllClaims(userId);
     const projects = await getAllProjects();
-    
+
     // 为领取记录添加项目名称
     const claimsWithProject = claims.map(claim => {
       const project = projects.find(p => p.id === claim.projectId);
@@ -65,4 +57,4 @@ export async function GET(
       { status: 500 }
     );
   }
-}
+});

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUser, isAdmin } from "@/lib/auth";
+import { withAdmin } from "@/lib/api-guards";
 import {
   addFeedbackMessage,
   getFeedbackById,
@@ -9,19 +9,12 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 const MAX_MESSAGE_LENGTH = 1000;
 
-export async function POST(
+export const POST = withAdmin(async (
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+  user,
+  context: { params: Promise<{ id: string }> }
+) => {
   try {
-    const user = await getAuthUser();
-    if (!user || !isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限访问" },
-        { status: 403 }
-      );
-    }
-
     const rateLimitResult = await checkRateLimit(user.id.toString(), {
       prefix: "ratelimit:admin:feedback:message",
       windowSeconds: 60,
@@ -31,7 +24,7 @@ export async function POST(
       return rateLimitResponse(rateLimitResult);
     }
 
-    const { id } = await params;
+    const { id } = await context.params;
     const feedback = await getFeedbackById(id);
     if (!feedback) {
       return NextResponse.json(
@@ -94,4 +87,4 @@ export async function POST(
       { status: 400 }
     );
   }
-}
+});

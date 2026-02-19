@@ -34,7 +34,7 @@ describe('auth security hardening', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.SESSION_SECRET = 'test-secret-with-at-least-32-characters';
-    process.env.NODE_ENV = 'test';
+    vi.stubEnv('NODE_ENV', 'test');
     mockKvGet.mockResolvedValue(null);
     mockKvSet.mockResolvedValue('OK');
     mockKvDel.mockResolvedValue(1);

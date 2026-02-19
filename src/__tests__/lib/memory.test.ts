@@ -44,8 +44,8 @@ describe('memory anti-cheat flow', () => {
     vi.clearAllMocks();
     mockKvSet.mockResolvedValue('OK');
     mockKvDel.mockResolvedValue(1);
-    mockKvLpush.mockResolvedValue(1);
-    mockKvLtrim.mockResolvedValue(1);
+    mockKvLpush.mockResolvedValue(1 as any);
+    mockKvLtrim.mockResolvedValue(1 as any);
   });
 
   it('does not expose full card layout before flip', async () => {
@@ -96,7 +96,7 @@ describe('memory anti-cheat flow', () => {
     )?.[1] as MemoryGameSession | undefined;
 
     expect(storedAfterFlip).toBeTruthy();
-    expect(storedAfterFlip.moveLog).toHaveLength(1);
+    expect(storedAfterFlip!.moveLog).toHaveLength(1);
 
     mockKvGet.mockResolvedValueOnce(storedAfterFlip);
 

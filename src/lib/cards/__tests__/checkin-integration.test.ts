@@ -40,7 +40,8 @@ vi.mock('@/lib/rate-limit', () => ({
   withRateLimit: vi.fn(),
   withUserRateLimit: vi.fn((_: string, handler: (request: Request, user: unknown, context: unknown) => Promise<Response>, options?: { unauthorizedMessage?: string }) => {
     return async (request: Request, context?: unknown) => {
-      const user = await (getAuthUser as unknown as ReturnType<typeof vi.fn>)();
+      const { getAuthUser: getAuth } = await import('@/lib/auth');
+      const user = await (getAuth as any)();
       if (!user) {
         return NextResponse.json(
           { success: false, message: options?.unauthorizedMessage ?? '未登录' },
@@ -78,18 +79,18 @@ describe('Checkin and Card Draw Integration', () => {
   describe('Checkin awarding draws', () => {
     it('should award 1 card draw on successful checkin', async () => {
       // Setup: Not checked in yet
-      mockKvGet.mockImplementation((key: string) => {
+      mockKvGet.mockImplementation(async (key: string) => {
         if (key.includes('user:checkin')) return null;
         return null;
       });
-      mockCheckinToNewApi.mockResolvedValue({ success: true, quotaAwarded: 500000 });
+      mockCheckinToNewApi.mockResolvedValue({ success: true, message: '签到成功', quotaAwarded: 500000 });
       mockKvEval.mockResolvedValue([1, 1, 6, 'ok']);
 
-      const response = await checkinPOST();
+      const response = await checkinPOST(createMockRequest(), undefined as any);
       const data = await response.json();
 
       expect(data.success).toBe(true);
-      
+
       // Verify local rewards were granted via atomic Lua script
       expect(kv.eval).toHaveBeenCalled();
       const evalKeys = mockKvEval.mock.calls[0][1];
@@ -103,12 +104,12 @@ describe('Checkin and Card Draw Integration', () => {
 
     it('should not award extra draws if already checked in', async () => {
       // Setup: Already checked in
-      mockKvGet.mockImplementation((key: string) => {
+      mockKvGet.mockImplementation(async (key: string) => {
         if (key.includes('user:checkin')) return true;
         return null;
       });
 
-      const response = await checkinPOST();
+      const response = await checkinPOST(createMockRequest(), undefined as any);
       const data = await response.json();
 
       expect(data.success).toBe(false);

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUser, isAdmin } from "@/lib/auth";
+import { withAdmin } from "@/lib/api-guards";
 import {
   archiveClosedFeedback,
   listAllFeedback,
@@ -41,16 +41,8 @@ function parseBoolean(value: string | null): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
-export async function GET(request: NextRequest) {
+export const GET = withAdmin(async (request: NextRequest) => {
   try {
-    const user = await getAuthUser();
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限访问" },
-        { status: 403 }
-      );
-    }
-
     const { searchParams } = new URL(request.url);
     const page = parsePage(searchParams.get("page"));
     const limit = parseLimit(searchParams.get("limit"));
@@ -106,4 +98,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+});

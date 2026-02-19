@@ -6,6 +6,7 @@ import type {
   LinkGameMove,
   LinkGameMatchMove,
   LinkGameShuffleMove,
+  LinkGameHintMove,
   LinkGameSession,
   LinkGameResultSubmit,
   LinkGameRecord,
@@ -56,7 +57,7 @@ describe('LinkGame Types', () => {
   });
 
   it('should have LinkGameMove as union of match and shuffle', () => {
-    expectTypeOf<LinkGameMove>().toEqualTypeOf<LinkGameMatchMove | LinkGameShuffleMove>();
+    expectTypeOf<LinkGameMove>().toEqualTypeOf<LinkGameMatchMove | LinkGameShuffleMove | LinkGameHintMove>();
   });
 
   it('should have correct LinkGameSession interface', () => {
@@ -101,6 +102,6 @@ describe('LinkGame Types', () => {
   });
 
   it('should include linkgame in GameType', () => {
-    expectTypeOf<GameType>().toMatchTypeOf<'pachinko' | 'memory' | 'slot' | 'match3' | 'linkgame' | 'tower'>();
+    expectTypeOf<GameType>().toMatchTypeOf<'pachinko' | 'memory' | 'slot' | 'match3' | 'linkgame' | 'tower' | 'farm'>();
   });
 });

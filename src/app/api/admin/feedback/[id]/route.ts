@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUser, isAdmin } from "@/lib/auth";
+import { withAdmin } from "@/lib/api-guards";
 import {
   getFeedbackById,
   getFeedbackMessages,
@@ -16,20 +16,13 @@ const FEEDBACK_STATUSES = new Set<FeedbackStatus>([
   "closed",
 ]);
 
-export async function GET(
+export const GET = withAdmin(async (
   _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+  _user,
+  context: { params: Promise<{ id: string }> }
+) => {
   try {
-    const user = await getAuthUser();
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限访问" },
-        { status: 403 }
-      );
-    }
-
-    const { id } = await params;
+    const { id } = await context.params;
     const feedback = await getFeedbackById(id);
 
     if (!feedback) {
@@ -53,21 +46,14 @@ export async function GET(
       { status: 500 }
     );
   }
-}
+});
 
-export async function PATCH(
+export const PATCH = withAdmin(async (
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+  _user,
+  context: { params: Promise<{ id: string }> }
+) => {
   try {
-    const user = await getAuthUser();
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限访问" },
-        { status: 403 }
-      );
-    }
-
     const body = (await request.json().catch(() => null)) as {
       status?: unknown;
     } | null;
@@ -80,7 +66,7 @@ export async function PATCH(
       );
     }
 
-    const { id } = await params;
+    const { id } = await context.params;
     const updated = await updateFeedbackStatus(id, status as FeedbackStatus);
 
     if (!updated) {
@@ -102,4 +88,4 @@ export async function PATCH(
       { status: 500 }
     );
   }
-}
+});

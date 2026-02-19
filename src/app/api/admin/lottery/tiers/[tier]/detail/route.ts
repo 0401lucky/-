@@ -1,37 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUser, isAdmin } from "@/lib/auth";
+import { withAdmin } from "@/lib/api-guards";
 import { kv } from "@vercel/kv";
 
 export const dynamic = "force-dynamic";
 
 // GET - 获取档位的所有兑换码（分已使用和未使用）
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ tier: string }> }
-) {
+export const GET = withAdmin(async (
+  _request: NextRequest,
+  _user,
+  context: { params: Promise<{ tier: string }> }
+) => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限访问" },
-        { status: 403 }
-      );
-    }
-
-    const { tier: tierId } = await params;
+    const { tier: tierId } = await context.params;
 
     // 获取该档位的所有码
     const allCodes = await kv.smembers(`lottery:codes:${tierId}`) as string[];
     // 获取已使用的码
     const usedCodes = await kv.smembers(`lottery:used:${tierId}`) as string[];
-    
+
     const usedSet = new Set(usedCodes);
-    
+
     // 分类
     const used: string[] = [];
     const available: string[] = [];
-    
+
     for (const code of allCodes) {
       if (usedSet.has(code)) {
         used.push(code);
@@ -39,7 +31,7 @@ export async function GET(
         available.push(code);
       }
     }
-    
+
     // 排序
     used.sort();
     available.sort();
@@ -60,4 +52,4 @@ export async function GET(
       { status: 500 }
     );
   }
-}
+});

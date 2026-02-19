@@ -128,8 +128,8 @@ describe('rankings', () => {
   });
 
   it('calculates checkin streak and leaderboard', async () => {
-    mockKvMget.mockImplementation(async (...keys: string[]) => {
-      const firstKey = keys[0] ?? '';
+    (mockKvMget as any).mockImplementation(async (...keys: any[]) => {
+      const firstKey = (Array.isArray(keys[0]) ? keys[0][0] : keys[0]) ?? '';
       if (firstKey.includes('user:checkin:1001:')) {
         return [true, true, true, null];
       }
@@ -148,8 +148,8 @@ describe('rankings', () => {
   });
 
   it('counts streak from yesterday when today not checked in', async () => {
-    mockKvMget.mockImplementation(async (...keys: string[]) => {
-      const firstKey = keys[0] ?? '';
+    (mockKvMget as any).mockImplementation(async (...keys: any[]) => {
+      const firstKey = (Array.isArray(keys[0]) ? keys[0][0] : keys[0]) ?? '';
       if (firstKey.includes('user:checkin:1001:')) {
         return [null, true, true, null];
       }

@@ -3,23 +3,16 @@
  */
 
 import { NextResponse } from "next/server";
-import { checkRaffleAdmin } from "../../admin-auth";
+import { withAdmin } from "@/lib/api-guards";
 import { executeRaffleDraw, getRaffle, processQueuedRaffleDeliveries } from "@/lib/raffle";
 
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const authResult = await checkRaffleAdmin();
-  if ("error" in authResult) {
-    return NextResponse.json(
-      { success: false, message: authResult.error },
-      { status: authResult.status }
-    );
-  }
-
+export const POST = withAdmin(async (
+  _request: Request,
+  _user,
+  context: { params: Promise<{ id: string }> }
+) => {
   try {
-    const { id } = await params;
+    const { id } = await context.params;
 
     // 检查活动是否存在
     const raffle = await getRaffle(id);
@@ -47,7 +40,7 @@ export async function POST(
       );
     }
 
-    // 管理端触发开奖后，顺带处理一个队列任务，提升“已开奖后立即到账”体验
+    // 管理端触发开奖后，顺带处理一个队列任务，提升"已开奖后立即到账"体验
     const queueResult = await processQueuedRaffleDeliveries(1);
 
     return NextResponse.json({
@@ -64,4 +57,4 @@ export async function POST(
       { status: 500 }
     );
   }
-}
+});

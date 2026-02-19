@@ -1,21 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUser, isAdmin } from "@/lib/auth";
+import { withAdmin } from "@/lib/api-guards";
 import { createProject, getAllProjects, addCodesToProject, type Project } from "@/lib/kv";
 import { generateId } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export const GET = withAdmin(async () => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限访问" },
-        { status: 403 }
-      );
-    }
-
     const projects = await getAllProjects();
     const sortedProjects = [...projects].sort((a, b) => {
       const aPinned = a.pinned ? 1 : 0;
@@ -40,19 +31,10 @@ export async function GET() {
       { status: 500 }
     );
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withAdmin(async (request: NextRequest, user) => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限操作" },
-        { status: 403 }
-      );
-    }
-
     const formData = await request.formData();
     const name = formData.get("name") as string;
     const description = formData.get("description") as string || "";
@@ -106,7 +88,7 @@ export async function POST(request: NextRequest) {
       codesCount: rewardType === "direct" ? maxClaims : 0,  // 直充项目用作名额总量；兑换码项目由 addCodesToProject 统一处理计数
       status: "active",
       createdAt: Date.now(),
-      createdBy: user!.username,
+      createdBy: user.username,
       rewardType,
       directDollars: rewardType === "direct" ? (directDollars as number) : undefined,
       newUserOnly,
@@ -131,4 +113,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+});

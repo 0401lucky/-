@@ -1,21 +1,12 @@
 import { NextResponse } from "next/server";
-import { getAuthUser, isAdmin } from "@/lib/auth";
+import { withAdmin } from "@/lib/api-guards";
 import { recalculateStats } from "@/lib/lottery";
 
 export const dynamic = "force-dynamic";
 
 // POST - 重新统计：根据已发放记录检索真实档位
-export async function POST() {
+export const POST = withAdmin(async () => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限操作" },
-        { status: 403 }
-      );
-    }
-
     const result = await recalculateStats();
 
     return NextResponse.json({
@@ -30,4 +21,4 @@ export async function POST() {
       { status: 500 }
     );
   }
-}
+});

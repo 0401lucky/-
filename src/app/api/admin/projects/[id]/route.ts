@@ -1,22 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUser, isAdmin } from "@/lib/auth";
+import { withAdmin } from "@/lib/api-guards";
 import { getProject, updateProject, deleteProject, addCodesToProject, getProjectRecords } from "@/lib/kv";
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const GET = withAdmin(async (
+  _request: NextRequest,
+  _user,
+  context: { params: Promise<{ id: string }> }
+) => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限访问" },
-        { status: 403 }
-      );
-    }
-
-    const { id } = await params;
+    const { id } = await context.params;
     const project = await getProject(id);
 
     if (!project) {
@@ -40,23 +32,15 @@ export async function GET(
       { status: 500 }
     );
   }
-}
+});
 
-export async function PATCH(
+export const PATCH = withAdmin(async (
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+  _user,
+  context: { params: Promise<{ id: string }> }
+) => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限操作" },
-        { status: 403 }
-      );
-    }
-
-    const { id } = await params;
+    const { id } = await context.params;
     const project = await getProject(id);
 
     if (!project) {
@@ -113,23 +97,15 @@ export async function PATCH(
       { status: 500 }
     );
   }
-}
+});
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const DELETE = withAdmin(async (
+  _request: NextRequest,
+  _user,
+  context: { params: Promise<{ id: string }> }
+) => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限操作" },
-        { status: 403 }
-      );
-    }
-
-    const { id } = await params;
+    const { id } = await context.params;
     await deleteProject(id);
 
     return NextResponse.json({
@@ -143,24 +119,16 @@ export async function DELETE(
       { status: 500 }
     );
   }
-}
+});
 
 // 追加兑换码
-export async function POST(
+export const POST = withAdmin(async (
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+  _user,
+  context: { params: Promise<{ id: string }> }
+) => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限操作" },
-        { status: 403 }
-      );
-    }
-
-    const { id } = await params;
+    const { id } = await context.params;
     const project = await getProject(id);
 
     if (!project) {
@@ -239,4 +207,4 @@ export async function POST(
       { status: 500 }
     );
   }
-}
+});

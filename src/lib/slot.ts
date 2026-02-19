@@ -5,8 +5,7 @@ import { addGamePointsWithLimit, applyPointsDelta, getUserPoints } from './point
 import { getSlotConfig } from './slot-config';
 import { getTodayDateString } from './time';
 import { getDailyPointsLimit } from './config';
-import { incrementSharedDailyStats } from './daily-stats';
-import type { DailyGameStats } from './types/game';
+import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
 import {
   SLOT_BET_OPTIONS,
   SLOT_EARN_BASE,
@@ -63,7 +62,6 @@ const SLOT_LAST_SPIN_AT_KEY = (userId: number) => `slot:last_spin_at:${userId}`;
 const SLOT_SPIN_LOCK_KEY = (userId: number) => `slot:spin_lock:${userId}`;
 const SLOT_RECORDS_KEY = (userId: number) => `slot:records:${userId}`;
 
-const DAILY_STATS_KEY = (userId: number, date: string) => `game:daily:${userId}:${date}`;
 const DAILY_STATS_TTL = 48 * 60 * 60; // 48小时
 
 const SLOT_RANK_DAILY_KEY = (date: string) => `slot:rank:daily:${date}`;
@@ -169,22 +167,6 @@ function resolveBetCost(configBetCost: unknown, requestedBetCost?: unknown): num
   return SLOT_BET_OPTIONS[0];
 }
 
-async function getSharedDailyStats(userId: number): Promise<DailyGameStats> {
-  const date = getTodayDateString();
-  const stats = await kv.get<DailyGameStats>(DAILY_STATS_KEY(userId, date));
-
-  if (stats) return stats;
-
-  return {
-    userId,
-    date,
-    gamesPlayed: 0,
-    totalScore: 0,
-    pointsEarned: 0,
-    lastGameAt: 0,
-  };
-}
-
 export async function getCooldownRemainingMs(userId: number): Promise<number> {
   const lastSpinAt = await kv.get<number>(SLOT_LAST_SPIN_AT_KEY(userId));
   if (!lastSpinAt) return 0;
@@ -203,7 +185,7 @@ export async function getSlotRecords(userId: number, limit: number = SLOT_STATUS
 export async function getSlotStatus(userId: number): Promise<SlotStatus> {
   const [balance, dailyStats, dailyLimit, slotConfig, records, cooldownRemaining] = await Promise.all([
     getUserPoints(userId),
-    getSharedDailyStats(userId),
+    getDailyStats(userId),
     getDailyPointsLimit(),
     getSlotConfig(),
     getSlotRecords(userId, SLOT_STATUS_RECORD_LIMIT),
@@ -272,7 +254,7 @@ export async function spinSlot(
     const dailyLimit = await getDailyPointsLimit();
 
     const date = getTodayDateString();
-    const dailyStats = await getSharedDailyStats(userId);
+    const dailyStats = await getDailyStats(userId);
 
     if (mode === 'bet') {
       const slotConfig = await getSlotConfig();

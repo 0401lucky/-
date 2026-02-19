@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthUser, isAdmin } from "@/lib/auth";
+import { withAdmin } from "@/lib/api-guards";
 import { kv } from "@vercel/kv";
 import { getLotteryRecords } from "@/lib/lottery";
 
@@ -25,21 +25,12 @@ type TierSample = {
 };
 
 // GET - 调试：查看已发放记录中的码是否存在于各档位
-export async function GET() {
+export const GET = withAdmin(async () => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限操作" },
-        { status: 403 }
-      );
-    }
-
     const records = await getLotteryRecords(50);
-    
+
     const debugInfo: DebugCodeInfo[] = [];
-    
+
     for (const record of records.slice(0, 10)) {
       const codeInfo: DebugCodeInfo = {
         code: record.code,
@@ -47,7 +38,7 @@ export async function GET() {
         recordedTier: record.tierName,
         foundIn: null,
       };
-      
+
       // 检查这个码存在于哪个档位
       for (const tierId of TIERS) {
         const exists = await kv.sismember(`lottery:codes:${tierId}`, record.code);
@@ -56,7 +47,7 @@ export async function GET() {
           break;
         }
       }
-      
+
       // 也检查 trim 后的码
       const trimmedCode = record.code.trim();
       if (trimmedCode !== record.code) {
@@ -70,10 +61,10 @@ export async function GET() {
           }
         }
       }
-      
+
       debugInfo.push(codeInfo);
     }
-    
+
     // 获取各档位的一些样本码
     const tierSamples = {} as Record<TierId, TierSample>;
     for (const tierId of TIERS) {
@@ -99,4 +90,4 @@ export async function GET() {
       { status: 500 }
     );
   }
-}
+});

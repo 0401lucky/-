@@ -306,10 +306,6 @@ function getBaseDifficulty(floor: number): DifficultyRange {
   };
 }
 
-/** 向后兼容别名 */
-function getDifficulty(floor: number): DifficultyRange {
-  return getBaseDifficulty(floor);
-}
 
 /** 应用难度修正到基础配置 */
 function applyDifficultyMod(base: DifficultyRange, mod: DifficultyModifier): DifficultyRange {
@@ -441,7 +437,7 @@ function generateGamblingFloor(rng: Rng, floor: number, power: number, diff: Dif
   for (let i = 0; i < 3; i++) {
     const r1 = rng();
     const r2 = rng();
-    const r3 = rng();
+    rng(); // r3 对齐
     const r4 = rng();
 
     let hidden: ResolvedLaneContent;
@@ -475,12 +471,12 @@ function generateGamblingFloor(rng: Rng, floor: number, power: number, diff: Dif
   return { floor, lanes, theme: 'gambling' };
 }
 
-function generateTreasureFloor(rng: Rng, floor: number, power: number, diff: DifficultyRange): TowerFloor {
+function generateTreasureFloor(rng: Rng, floor: number, _power: number, diff: DifficultyRange): TowerFloor {
   const lanes: TowerLaneContent[] = [];
 
   for (let i = 0; i < 3; i++) {
     const r1 = rng();
-    const r2 = rng();
+    rng(); // r2 对齐
     rng(); // r3 对齐
     const r4 = rng();
 
@@ -599,7 +595,7 @@ function generateNormalFloor(
   floor: number,
   currentPower: number,
   diff: DifficultyRange,
-  ownedBuffs: BuffType[],
+  _ownedBuffs: BuffType[],
 ): TowerFloor {
   const laneCount = randInt(rng, diff.laneCount[0], diff.laneCount[1]);
 

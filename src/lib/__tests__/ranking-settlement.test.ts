@@ -77,7 +77,8 @@ describe('ranking-settlement', () => {
       return removed;
     });
 
-    mockKvZadd.mockImplementation(async (key: string, item: { score: number; member: string }) => {
+    mockKvZadd.mockImplementation(async (key: string, ...args: any[]) => {
+      const item = args[0] as { score: number; member: string };
       const arr = zsetStore.get(key) ?? [];
       const existingIndex = arr.findIndex((entry) => entry.member === item.member);
       if (existingIndex >= 0) {
@@ -92,15 +93,16 @@ describe('ranking-settlement', () => {
       return (zsetStore.get(key) ?? []).length;
     });
 
-    mockKvZrange.mockImplementation(async (key: string, start: number, end: number, options?: { rev?: boolean }) => {
+    (mockKvZrange as any).mockImplementation(async (key: string, start: number, end: number, options?: any) => {
       const arr = [...(zsetStore.get(key) ?? [])];
       arr.sort((a, b) => (options?.rev ? b.score - a.score : a.score - b.score));
       const finalEnd = end < 0 ? arr.length - 1 : end;
       return arr.slice(start, finalEnd + 1).map((item) => item.member);
     });
 
-    mockKvMget.mockImplementation(async (...keys: string[]) => {
-      return keys.map((key) => (kvStore.get(key) as unknown) ?? null);
+    (mockKvMget as any).mockImplementation(async (...keys: any[]) => {
+      const flatKeys = Array.isArray(keys[0]) ? keys[0] : keys;
+      return flatKeys.map((key: string) => (kvStore.get(key) as unknown) ?? null);
     });
 
     mockGetAllGamesLeaderboardByRange.mockResolvedValue({

@@ -72,10 +72,10 @@ describe('spinLotteryAuto hybrid mode', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    mockTryUseExtraSpin.mockResolvedValue({ success: true } as { success: boolean });
+    mockTryUseExtraSpin.mockResolvedValue({ success: true, remaining: 0 } as any);
     mockTryClaimDailyFree.mockResolvedValue(false);
-    mockRollbackExtraSpin.mockResolvedValue({ success: true } as { success: boolean });
-    mockReleaseDailyFree.mockResolvedValue({ success: true } as { success: boolean });
+    mockRollbackExtraSpin.mockResolvedValue(undefined as any);
+    mockReleaseDailyFree.mockResolvedValue(undefined as any);
 
     mockKvGet.mockImplementation(async (key: string) => {
       if (key === 'lottery:config') {

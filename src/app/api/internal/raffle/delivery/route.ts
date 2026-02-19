@@ -3,6 +3,7 @@
  * 处理发奖队列（建议通过 Vercel Cron 调用）
  */
 
+import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { processQueuedRaffleDeliveries } from "@/lib/raffle";
 
@@ -53,7 +54,14 @@ function isAuthorized(request: NextRequest): boolean {
     return false;
   }
   const token = getAccessToken(request);
-  return token === secret;
+  if (!token || token.length !== secret.length) {
+    return false;
+  }
+  try {
+    return timingSafeEqual(Buffer.from(token), Buffer.from(secret));
+  } catch {
+    return false;
+  }
 }
 
 async function handle(request: NextRequest): Promise<NextResponse> {

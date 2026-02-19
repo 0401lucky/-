@@ -120,6 +120,15 @@ export default function GamesPage() {
       href: '/games/tower',
       available: true,
     },
+    {
+      id: 'farm',
+      name: '开心农场',
+      description: '种植作物、浇水养护、收获卖出，经营你的专属农场！',
+      icon: '🌻',
+      color: 'from-green-600 to-lime-500',
+      href: '/games/farm',
+      available: true,
+    },
   ];
 
   return (

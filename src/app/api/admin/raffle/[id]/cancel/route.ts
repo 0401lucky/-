@@ -3,23 +3,16 @@
  */
 
 import { NextResponse } from "next/server";
-import { checkRaffleAdmin } from "../../admin-auth";
+import { withAdmin } from "@/lib/api-guards";
 import { cancelRaffle } from "@/lib/raffle";
 
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const authResult = await checkRaffleAdmin();
-  if ("error" in authResult) {
-    return NextResponse.json(
-      { success: false, message: authResult.error },
-      { status: authResult.status }
-    );
-  }
-
+export const POST = withAdmin(async (
+  _request: Request,
+  _user,
+  context: { params: Promise<{ id: string }> }
+) => {
   try {
-    const { id } = await params;
+    const { id } = await context.params;
 
     const raffle = await cancelRaffle(id);
     if (!raffle) {
@@ -42,4 +35,4 @@ export async function POST(
       { status: 400 }
     );
   }
-}
+});

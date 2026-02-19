@@ -16,6 +16,22 @@ function normalizeStats(raw: Record<string, unknown>, fallback: DailyGameStats):
   };
 }
 
+export async function getDailyStats(userId: number): Promise<DailyGameStats> {
+  const date = getTodayDateString();
+  const stats = await kv.get<DailyGameStats>(DAILY_STATS_KEY(userId, date));
+
+  if (stats) return stats;
+
+  return {
+    userId,
+    date,
+    gamesPlayed: 0,
+    totalScore: 0,
+    pointsEarned: 0,
+    lastGameAt: 0,
+  };
+}
+
 export async function incrementSharedDailyStats(
   userId: number,
   scoreDelta: number,

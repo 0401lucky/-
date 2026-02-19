@@ -5,7 +5,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { checkRaffleAdmin } from "../admin-auth";
+import { withAdmin } from "@/lib/api-guards";
 import {
   getRaffle,
   updateRaffle,
@@ -15,20 +15,13 @@ import {
 } from "@/lib/raffle";
 import type { UpdateRaffleInput } from "@/lib/types/raffle";
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const authResult = await checkRaffleAdmin();
-  if ("error" in authResult) {
-    return NextResponse.json(
-      { success: false, message: authResult.error },
-      { status: authResult.status }
-    );
-  }
-
+export const GET = withAdmin(async (
+  _request: Request,
+  _user,
+  context: { params: Promise<{ id: string }> }
+) => {
   try {
-    const { id } = await params;
+    const { id } = await context.params;
 
     // Hobby 计划下 Cron 触发频率有限，管理端详情访问时顺带推进一轮队列。
     try {
@@ -60,22 +53,15 @@ export async function GET(
       { status: 500 }
     );
   }
-}
+});
 
-export async function PUT(
+export const PUT = withAdmin(async (
   request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const authResult = await checkRaffleAdmin();
-  if ("error" in authResult) {
-    return NextResponse.json(
-      { success: false, message: authResult.error },
-      { status: authResult.status }
-    );
-  }
-
+  _user,
+  context: { params: Promise<{ id: string }> }
+) => {
   try {
-    const { id } = await params;
+    const { id } = await context.params;
     const body = await request.json() as UpdateRaffleInput;
 
     const raffle = await updateRaffle(id, body);
@@ -99,22 +85,15 @@ export async function PUT(
       { status: 400 }
     );
   }
-}
+});
 
-export async function DELETE(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const authResult = await checkRaffleAdmin();
-  if ("error" in authResult) {
-    return NextResponse.json(
-      { success: false, message: authResult.error },
-      { status: authResult.status }
-    );
-  }
-
+export const DELETE = withAdmin(async (
+  _request: Request,
+  _user,
+  context: { params: Promise<{ id: string }> }
+) => {
   try {
-    const { id } = await params;
+    const { id } = await context.params;
 
     const success = await deleteRaffle(id);
     if (!success) {
@@ -136,4 +115,4 @@ export async function DELETE(
       { status: 400 }
     );
   }
-}
+});

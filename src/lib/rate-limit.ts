@@ -283,7 +283,15 @@ export function withUserRateLimit<TRequest extends Request = Request, TContext =
       return limitedResponse;
     }
 
-    return handler(request, user, context);
+    try {
+      return await handler(request, user, context);
+    } catch (error) {
+      console.error('API handler error:', error);
+      return NextResponse.json(
+        { success: false, message: '服务器错误' },
+        { status: 500 }
+      );
+    }
   };
 }
 

@@ -4,19 +4,11 @@
  */
 
 import { NextResponse } from "next/server";
-import { checkRaffleAdmin } from "./admin-auth";
+import { withAdmin } from "@/lib/api-guards";
 import { getRaffleList, createRaffle, processQueuedRaffleDeliveries } from "@/lib/raffle";
 import type { CreateRaffleInput } from "@/lib/types/raffle";
 
-export async function GET(request: Request) {
-  const authResult = await checkRaffleAdmin();
-  if ("error" in authResult) {
-    return NextResponse.json(
-      { success: false, message: authResult.error },
-      { status: authResult.status }
-    );
-  }
-
+export const GET = withAdmin(async (request: Request) => {
   try {
     // Hobby 计划下 Cron 触发频率有限，管理端访问时顺带推进一轮队列。
     try {
@@ -43,17 +35,9 @@ export async function GET(request: Request) {
       { status: 500 }
     );
   }
-}
+});
 
-export async function POST(request: Request) {
-  const authResult = await checkRaffleAdmin();
-  if ("error" in authResult) {
-    return NextResponse.json(
-      { success: false, message: authResult.error },
-      { status: authResult.status }
-    );
-  }
-
+export const POST = withAdmin(async (request: Request, user) => {
   try {
     const body = await request.json() as CreateRaffleInput;
 
@@ -108,7 +92,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const raffle = await createRaffle(body, authResult.userId);
+    const raffle = await createRaffle(body, user.id);
 
     return NextResponse.json({
       success: true,
@@ -122,4 +106,4 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
-}
+});

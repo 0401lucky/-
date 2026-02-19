@@ -20,13 +20,13 @@ export type AuthGuardHandler<TRequest extends Request = Request, TContext = unkn
 export function withAuth<TRequest extends Request = Request, TContext = unknown>(
   handler: AuthGuardHandler<TRequest, TContext>,
   options: AuthGuardOptions = {}
-): (request: TRequest, context: TContext) => Promise<NextResponse> {
+): (request: TRequest, context?: TContext) => Promise<NextResponse> {
   const {
     unauthorizedMessage = "未登录",
     unauthorizedStatus = 401,
   } = options;
 
-  return async (request: TRequest, context: TContext): Promise<NextResponse> => {
+  return async (request: TRequest, context?: TContext): Promise<NextResponse> => {
     const user = await getAuthUser();
     if (!user) {
       return NextResponse.json(
@@ -35,14 +35,22 @@ export function withAuth<TRequest extends Request = Request, TContext = unknown>
       );
     }
 
-    return handler(request, user, context);
+    try {
+      return await handler(request, user, context as TContext);
+    } catch (error) {
+      console.error('API handler error:', error);
+      return NextResponse.json(
+        { success: false, message: '服务器错误' },
+        { status: 500 }
+      );
+    }
   };
 }
 
 export function withAdmin<TRequest extends Request = Request, TContext = unknown>(
   handler: AuthGuardHandler<TRequest, TContext>,
   options: AdminGuardOptions = {}
-): (request: TRequest, context: TContext) => Promise<NextResponse> {
+): (request: TRequest, context?: TContext) => Promise<NextResponse> {
   const {
     unauthorizedMessage = "请先登录",
     unauthorizedStatus = 401,

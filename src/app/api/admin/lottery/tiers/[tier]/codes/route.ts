@@ -1,24 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUser, isAdmin } from "@/lib/auth";
+import { withAdmin } from "@/lib/api-guards";
 import { addCodesToTier, getLotteryConfig, getTierAvailableCodesCount, clearTierCodes } from "@/lib/lottery";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(
+export const POST = withAdmin(async (
   request: NextRequest,
-  { params }: { params: Promise<{ tier: string }> }
-) {
+  _user,
+  context: { params: Promise<{ tier: string }> }
+) => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限操作" },
-        { status: 403 }
-      );
-    }
-
-    const { tier: tierId } = await params;
+    const { tier: tierId } = await context.params;
 
     // 验证档位是否存在
     const config = await getLotteryConfig();
@@ -70,23 +62,15 @@ export async function POST(
       { status: 500 }
     );
   }
-}
+});
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ tier: string }> }
-) {
+export const GET = withAdmin(async (
+  _request: NextRequest,
+  _user,
+  context: { params: Promise<{ tier: string }> }
+) => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限访问" },
-        { status: 403 }
-      );
-    }
-
-    const { tier: tierId } = await params;
+    const { tier: tierId } = await context.params;
 
     // 验证档位是否存在
     const config = await getLotteryConfig();
@@ -114,24 +98,16 @@ export async function GET(
       { status: 500 }
     );
   }
-}
+});
 
 // DELETE - 清空档位库存
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ tier: string }> }
-) {
+export const DELETE = withAdmin(async (
+  _request: NextRequest,
+  _user,
+  context: { params: Promise<{ tier: string }> }
+) => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限操作" },
-        { status: 403 }
-      );
-    }
-
-    const { tier: tierId } = await params;
+    const { tier: tierId } = await context.params;
 
     // 验证档位是否存在
     const config = await getLotteryConfig();
@@ -157,4 +133,4 @@ export async function DELETE(
       { status: 500 }
     );
   }
-}
+});

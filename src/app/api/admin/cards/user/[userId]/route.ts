@@ -1,23 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUser, isAdmin } from "@/lib/auth";
+import { withAdmin } from "@/lib/api-guards";
 import { getUserCardData } from "@/lib/cards/draw";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(
+export const GET = withAdmin(async (
   request: NextRequest,
-  { params }: { params: Promise<{ userId: string }> }
-) {
+  _user,
+  context: { params: Promise<{ userId: string }> }
+) => {
   try {
-    const user = await getAuthUser();
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限访问" },
-        { status: 403 }
-      );
-    }
-    
-    const { userId } = await params;
+    const { userId } = await context.params;
     if (!userId) {
       return NextResponse.json(
          { success: false, message: "User ID required" },
@@ -34,4 +27,4 @@ export async function GET(
       { status: 500 }
     );
   }
-}
+});

@@ -1,20 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUser, isAdmin } from "@/lib/auth";
+import { withAdmin } from "@/lib/api-guards";
 import { updateTiersProbability, updateLotteryConfig, getLotteryConfig } from "@/lib/lottery";
 
 export const dynamic = "force-dynamic";
 
-export async function PATCH(request: NextRequest) {
+export const PATCH = withAdmin(async (request: NextRequest) => {
   try {
-    const user = await getAuthUser();
-
-    if (!isAdmin(user)) {
-      return NextResponse.json(
-        { success: false, message: "无权限操作" },
-        { status: 403 }
-      );
-    }
-
     const body = await request.json();
 
     // 更新启用状态
@@ -38,7 +29,7 @@ export async function PATCH(request: NextRequest) {
       const currentConfig = await getLotteryConfig();
       const requiredTierIds = new Set(currentConfig.tiers.map(t => t.id));
       const submittedTierIds = new Set(body.tiers.map((t: { id: string }) => t.id));
-      
+
       // 检查是否提交了所有必需的档位
       const missingTiers = [...requiredTierIds].filter(id => !submittedTierIds.has(id));
       if (missingTiers.length > 0) {
@@ -47,7 +38,7 @@ export async function PATCH(request: NextRequest) {
           { status: 400 }
         );
       }
-      
+
       // 验证概率总和
       const totalProbability = body.tiers.reduce(
         (sum: number, t: { probability: number }) => sum + (t.probability || 0),
@@ -104,4 +95,4 @@ export async function PATCH(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+});

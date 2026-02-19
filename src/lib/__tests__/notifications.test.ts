@@ -141,9 +141,9 @@ describe('notifications', () => {
 
   it('fans out announcement notification to all users once', async () => {
     mockGetAllUsers.mockResolvedValue([
-      { id: 1001, username: 'alice' },
-      { id: 1002, username: 'bob' },
-    ] as Array<{ id: number; username: string }>);
+      { id: 1001, username: 'alice', firstSeen: 1 },
+      { id: 1002, username: 'bob', firstSeen: 1 },
+    ] as Array<{ id: number; username: string; firstSeen: number }>);
 
     mockNanoid
       .mockReturnValueOnce('notification_a')

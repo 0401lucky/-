@@ -4,9 +4,9 @@ import { randomBytes } from 'crypto';
 import { kv } from '@vercel/kv';
 import { nanoid } from 'nanoid';
 import { addGamePointsWithLimit } from './points';
-import { getTodayDateString } from './time';
 import { getDailyPointsLimit } from './config';
-import { incrementSharedDailyStats } from './daily-stats';
+import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
+export { getDailyStats };
 import {
   generateTileLayout,
   LINKGAME_DIFFICULTY_CONFIG,
@@ -25,7 +25,6 @@ import type {
   LinkGameResultSubmit,
   LinkGameRecord,
   LinkGamePosition,
-  DailyGameStats,
 } from './types/game';
 
 // ============ 常量配置 ============
@@ -38,7 +37,6 @@ const MAX_RECORD_ENTRIES = 50;
 // Key 格式
 const SESSION_KEY = (sessionId: string) => `linkgame:session:${sessionId}`;
 const ACTIVE_SESSION_KEY = (userId: number) => `linkgame:active:${userId}`;
-const DAILY_STATS_KEY = (userId: number, date: string) => `game:daily:${userId}:${date}`;
 const RECORDS_KEY = (userId: number) => `linkgame:records:${userId}`;
 const COOLDOWN_KEY = (userId: number) => `linkgame:cooldown:${userId}`;
 const SUBMIT_LOCK_KEY = (sessionId: string) => `linkgame:submit:${sessionId}`;
@@ -66,27 +64,6 @@ export async function isInCooldown(userId: number): Promise<boolean> {
 export async function getCooldownRemaining(userId: number): Promise<number> {
   const ttl = await kv.ttl(COOLDOWN_KEY(userId));
   return ttl > 0 ? ttl : 0;
-}
-
-/**
- * 获取用户今日游戏统计（共享）
- */
-export async function getDailyStats(userId: number): Promise<DailyGameStats> {
-  const date = getTodayDateString();
-  const stats = await kv.get<DailyGameStats>(DAILY_STATS_KEY(userId, date));
-
-  if (stats) {
-    return stats;
-  }
-
-  return {
-    userId,
-    date,
-    gamesPlayed: 0,
-    totalScore: 0,
-    pointsEarned: 0,
-    lastGameAt: 0,
-  };
 }
 
 // ============ 纯验证函数（可单独测试） ============

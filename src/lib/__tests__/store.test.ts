@@ -78,12 +78,12 @@ describe('exchangeItem store safety', () => {
     mockKvEval.mockResolvedValue([1, 1]);
     mockKvDecr.mockResolvedValue(0);
     mockKvLpush.mockResolvedValue(1);
-    mockKvLtrim.mockResolvedValue(1);
+    mockKvLtrim.mockResolvedValue('OK');
     mockKvHincrby.mockResolvedValue(1);
 
     mockDeductPoints.mockResolvedValue({ success: true, balance: 9999 });
     mockApplyPointsDelta.mockResolvedValue({ success: true, balance: 9999 });
-    mockAddCardDraws.mockResolvedValue({ success: true, message: 'ok' });
+    mockAddCardDraws.mockResolvedValue({ success: true, drawsAvailable: 1 });
     mockCreditQuotaToUser.mockResolvedValue({ success: true, message: '充值成功' });
   });
 
@@ -103,7 +103,7 @@ describe('exchangeItem store safety', () => {
       success: false,
       message: '充值结果不确定',
       uncertain: true,
-    });
+    } as any);
 
     const result = await exchangeItem(1002, 'item-1');
 
@@ -125,7 +125,7 @@ describe('exchangeItem store safety', () => {
       value: 1,
     };
     mockKvHget.mockResolvedValue(cardDrawItem);
-    mockAddCardDraws.mockResolvedValue({ success: false, message: '发放失败' });
+    mockAddCardDraws.mockResolvedValue({ success: false, drawsAvailable: 0 } as any);
 
     const result = await exchangeItem(1003, 'item-2');
 
