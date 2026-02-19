@@ -33,7 +33,7 @@ export const POST = withUserRateLimit(
         const result = await harvestAllPlots(user.id);
         if (!result.success) {
           return NextResponse.json(
-            { success: false, message: '操作失败，请稍后重试' },
+            { success: false, message: result.message ?? '操作失败，请稍后重试' },
             { status: 400 },
           );
         }

@@ -317,6 +317,10 @@ export function useFarmState(): FarmData {
         limitReached: data.data.limitReached,
         expGained: data.data.expGained,
       };
+      if (result.harvestedCount <= 0) {
+        setError('当前没有成熟作物可收获');
+        return null;
+      }
       setLastBatchHarvest(result);
 
       // 检查升级

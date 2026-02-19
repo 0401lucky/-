@@ -796,7 +796,8 @@ export async function harvestAllPlots(
   }
 
   return {
-    success: true,
+    success: false,
+    message: '当前没有成熟作物可收获',
     harvests: [],
     totalPointsEarned: 0,
     harvestedCount: 0,
