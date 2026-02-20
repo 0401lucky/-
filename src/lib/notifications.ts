@@ -121,7 +121,7 @@ async function getNotificationsByIds(ids: string[]): Promise<NotificationItem[]>
   if (ids.length === 0) return [];
 
   const keys = ids.map((id) => NOTIFICATION_ITEM_KEY(id));
-  const raw = await kv.mget<(NotificationItem | null)[]>(...keys);
+  const raw = await kv.mget<NotificationItem>(...keys);
   const map = new Map<string, NotificationItem>();
 
   for (const item of raw ?? []) {
@@ -152,7 +152,7 @@ export async function listUserNotifications(
   const page = normalizePage(options.page);
   const limit = normalizeLimit(options.limit);
 
-  const allIds = await kv.zrange<string[]>(
+  const allIds = await kv.zrange<string>(
     USER_NOTIFICATION_INDEX_KEY(userId),
     0,
     1000,
@@ -204,7 +204,7 @@ export async function markUserNotificationsRead(
   let targetIds = uniqueIds;
 
   if (params.markAll) {
-    targetIds = await kv.smembers<string[]>(USER_NOTIFICATION_UNREAD_KEY(userId));
+    targetIds = await kv.smembers<string>(USER_NOTIFICATION_UNREAD_KEY(userId));
   }
 
   if (!Array.isArray(targetIds) || targetIds.length === 0) {

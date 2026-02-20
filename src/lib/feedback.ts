@@ -93,7 +93,7 @@ async function getFeedbackByIds(ids: string[]): Promise<FeedbackItem[]> {
   if (ids.length === 0) return [];
 
   const keys = ids.map((id) => FEEDBACK_ITEM_KEY(id));
-  const items = await kv.mget<(FeedbackItem | null)[]>(...keys);
+  const items = await kv.mget<FeedbackItem>(...keys);
   return (items ?? []).filter((item): item is FeedbackItem => item !== null);
 }
 
@@ -196,7 +196,7 @@ async function listFeedbackByIndex(
 
   const start = (page - 1) * limit;
   const end = start + limit - 1;
-  const ids = await kv.zrange<string[]>(key, start, end, { rev: true });
+  const ids = await kv.zrange<string>(key, start, end, { rev: true });
 
   return {
     ids: ids ?? [],
@@ -396,7 +396,7 @@ export async function archiveClosedFeedback(
   const limit = normalizeArchiveLimit(options.limit);
   const thresholdTime = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
 
-  const candidateIds = await kv.zrange<string[]>(
+  const candidateIds = await kv.zrange<string>(
     FEEDBACK_INDEX_STATUS_KEY('closed'),
     '-inf',
     thresholdTime,
@@ -437,7 +437,7 @@ export async function archiveClosedFeedback(
 
   const remainingCount = await kv.zcount(
     FEEDBACK_INDEX_STATUS_KEY('closed'),
-    '-inf',
+    -Infinity,
     thresholdTime
   );
 

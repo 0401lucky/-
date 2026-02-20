@@ -91,7 +91,7 @@ async function getAnnouncementsByIds(ids: string[]): Promise<AnnouncementItem[]>
   if (ids.length === 0) return [];
 
   const keys = ids.map((id) => ANNOUNCEMENT_ITEM_KEY(id));
-  const raw = await kv.mget<(AnnouncementItem | null)[]>(...keys);
+  const raw = await kv.mget<AnnouncementItem>(...keys);
   const map = new Map<string, AnnouncementItem>();
 
   for (const item of raw ?? []) {
@@ -275,7 +275,7 @@ export async function listAnnouncementsForAdmin(
   const limit = normalizeLimit(options.limit);
   const status = options.status ?? 'all';
 
-  const ids = await kv.zrange<string[]>(ANNOUNCEMENT_ALL_INDEX_KEY, 0, 1000, { rev: true });
+  const ids = await kv.zrange<string>(ANNOUNCEMENT_ALL_INDEX_KEY, 0, 1000, { rev: true });
   const allItems = await getAnnouncementsByIds(ids ?? []);
   const filtered =
     status === 'all' ? allItems : allItems.filter((item) => item.status === status);
@@ -302,7 +302,7 @@ export async function listPublishedAnnouncements(
   const start = (page - 1) * limit;
   const end = start + limit - 1;
 
-  const ids = await kv.zrange<string[]>(
+  const ids = await kv.zrange<string>(
     ANNOUNCEMENT_PUBLISHED_INDEX_KEY,
     start,
     end,

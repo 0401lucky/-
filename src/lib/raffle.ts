@@ -225,7 +225,7 @@ export async function getRaffleList(options?: {
 
   // 批量获取
   const keys = ids.map((id) => `${RAFFLE_PREFIX}${id}`);
-  const raffles = await kv.mget<(Raffle | null)[]>(...keys);
+  const raffles = await kv.mget<Raffle>(...keys);
 
   let result = raffles.filter((r): r is Raffle => r !== null);
 
@@ -262,11 +262,11 @@ export async function getRaffleList(options?: {
  * 获取进行中的活动列表
  */
 export async function getActiveRaffles(): Promise<RaffleListItem[]> {
-  const ids = await kv.smembers<string[]>(RAFFLE_ACTIVE_KEY);
+  const ids = await kv.smembers<string>(RAFFLE_ACTIVE_KEY);
   if (!ids || ids.length === 0) return [];
 
   const keys = ids.map((id) => `${RAFFLE_PREFIX}${id}`);
-  const raffles = await kv.mget<(Raffle | null)[]>(...keys);
+  const raffles = await kv.mget<Raffle>(...keys);
 
   return raffles
     .filter((r): r is Raffle => r !== null && r.status === "active")

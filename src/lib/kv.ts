@@ -345,7 +345,7 @@ export async function getAllProjects(): Promise<Project[]> {
 
   // [Perf] 使用 mget 批量获取，避免 N+1 查询
   const keys = projectIds.map(id => `projects:${id}`);
-  const results = await kv.mget<(Project | null)[]>(...keys);
+  const results = await kv.mget<Project>(...keys);
 
   return (results ?? []).filter((p): p is Project => p !== null);
 }
@@ -606,7 +606,7 @@ export async function hasUserClaimedAny(userId: number): Promise<boolean> {
     const claimedProjectIds = await kv.smembers(userClaimedKey) as string[];
     if (claimedProjectIds.length > 0) {
       const claimKeys = claimedProjectIds.map((projectId) => `claimed:${projectId}:${userId}`);
-      const records = await kv.mget<(ClaimRecord | null)[]>(...claimKeys);
+      const records = await kv.mget<ClaimRecord>(...claimKeys);
 
       const staleProjectIds = claimedProjectIds.filter((_, index) => records?.[index] == null);
       if (staleProjectIds.length > 0) {
@@ -636,11 +636,12 @@ export async function getNewUserEligibilityMap(
   if (userIds.length === 0) return {};
 
   const keys = userIds.map((userId) => NEW_USER_BENEFIT_KEY(userId));
-  const markers = await kv.mget<(string | null)[]>(...keys);
+  const markers = await kv.mget<string>(...keys);
 
   const result: Record<number, boolean> = {};
   userIds.forEach((userId, index) => {
-    const marker = markers?.[index] ?? null;
+    const raw = markers?.[index] ?? null;
+    const marker = typeof raw === 'string' ? raw : null;
     const eligibility = parseNewUserEligibilityMarker(marker);
     result[userId] = eligibility.eligible;
   });
@@ -790,7 +791,7 @@ export async function migrateNewUserEligibilityFromHistory(
   }
 
   const markerKeys = candidateUsers.map((userId) => NEW_USER_BENEFIT_KEY(userId));
-  const markers = await kv.mget<(string | null)[]>(...markerKeys);
+  const markers = await kv.mget<string>(...markerKeys);
 
   let migratedUsers = 0;
   let skippedClaimedUsers = 0;
@@ -868,7 +869,7 @@ export async function getAllUsers(): Promise<User[]> {
 
   // [Perf] 使用 mget 批量获取，避免 N+1 查询
   const keys = userIds.map(id => `user:${id}`);
-  const results = await kv.mget<(User | null)[]>(...keys);
+  const results = await kv.mget<User>(...keys);
 
   return (results ?? []).filter((u): u is User => u !== null);
 }
@@ -880,7 +881,7 @@ export async function getUserAllClaims(userId: number): Promise<ClaimRecord[]> {
 
   // [Perf] 使用 mget 批量获取，避免 N+1 查询
   const keys = projects.map(project => `claimed:${project.id}:${userId}`);
-  const results = await kv.mget<(ClaimRecord | null)[]>(...keys);
+  const results = await kv.mget<ClaimRecord>(...keys);
 
   return (results ?? []).filter((r): r is ClaimRecord => r !== null);
 }

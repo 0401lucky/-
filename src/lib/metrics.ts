@@ -193,12 +193,12 @@ export async function getDailyStats(
     if (keys.length === 0) return {};
 
     // 批量获取值
-    const values = await kv.mget<number[]>(...keys);
+    const values = await kv.mget<number>(...keys);
     const stats: Record<string, number> = {};
 
     keys.forEach((key, index) => {
       const name = key.replace(`${DAILY_STATS_PREFIX}${targetDate}:`, '');
-      stats[name] = values[index] || 0;
+      stats[name] = Number(values[index]) || 0;
     });
 
     return stats;

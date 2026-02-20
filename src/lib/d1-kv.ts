@@ -3,9 +3,27 @@
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
-let _db: D1Database | null = null;
+// Minimal D1 type definitions (subset used by this adapter)
+interface D1Result<T = unknown> {
+  results: T[];
+  meta?: { changes?: number };
+}
 
-function getD1(): D1Database {
+interface D1PreparedStatement {
+  bind(...values: unknown[]): D1PreparedStatement;
+  first<T = unknown>(): Promise<T | null>;
+  all<T = unknown>(): Promise<D1Result<T>>;
+  run(): Promise<D1Result>;
+}
+
+interface D1DatabaseLike {
+  prepare(query: string): D1PreparedStatement;
+  batch(statements: D1PreparedStatement[]): Promise<D1Result[]>;
+}
+
+let _db: D1DatabaseLike | null = null;
+
+function getD1(): D1DatabaseLike {
   if (_db) return _db;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ctx = (getCloudflareContext as any)?.();
@@ -13,7 +31,7 @@ function getD1(): D1Database {
   if (!env?.KV_DB) {
     throw new Error("D1 binding KV_DB not available");
   }
-  _db = env.KV_DB;
+  _db = env.KV_DB as unknown as D1DatabaseLike;
   return _db;
 }
 
@@ -283,7 +301,7 @@ export const kv = {
       .bind(key, limit, s)
       .all<{ value: string }>();
 
-    return rows.results.map((r) => deserialize<T>(r.value)!);
+    return rows.results.map((r: { value: string }) => deserialize<T>(r.value)!);
   },
 
   async llen(key: string): Promise<number> {
@@ -315,8 +333,8 @@ export const kv = {
       return;
     }
 
-    const keepIds = new Set(rows.results.slice(s, e + 1).map((r) => r.id));
-    const deleteIds = rows.results.filter((r) => !keepIds.has(r.id)).map((r) => r.id);
+    const keepIds = new Set(rows.results.slice(s, e + 1).map((r: { id: number }) => r.id));
+    const deleteIds = rows.results.filter((r: { id: number }) => !keepIds.has(r.id)).map((r: { id: number }) => r.id);
 
     if (deleteIds.length > 0) {
       const placeholders = deleteIds.map(() => "?").join(",");
@@ -351,7 +369,7 @@ export const kv = {
 
     if (rows.results.length === 0) return 0;
 
-    const ids = rows.results.map((r) => r.id);
+    const ids = rows.results.map((r: { id: number }) => r.id);
     const placeholders = ids.map(() => "?").join(",");
     await db
       .prepare(`DELETE FROM kv_lists WHERE id IN (${placeholders})`)
@@ -405,7 +423,7 @@ export const kv = {
       .prepare("SELECT member FROM kv_sets WHERE key = ?")
       .bind(key)
       .all<{ member: string }>();
-    return rows.results.map((r) => r.member as unknown as T);
+    return rows.results.map((r: { member: string }) => r.member as unknown as T);
   },
 
   async sismember(key: string, member: unknown): Promise<number> {
@@ -415,6 +433,15 @@ export const kv = {
       .bind(key, String(member))
       .first<{ ok: number }>();
     return row ? 1 : 0;
+  },
+
+  async srandmember(key: string): Promise<string | null> {
+    const db = getD1();
+    const row = await db
+      .prepare("SELECT member FROM kv_sets WHERE key = ? ORDER BY RANDOM() LIMIT 1")
+      .bind(key)
+      .first<{ member: string }>();
+    return row?.member ?? null;
   },
 
   // ==================== Sorted Set commands ====================
@@ -438,11 +465,30 @@ export const kv = {
 
   async zrange<T = string>(
     key: string,
-    start: number,
-    stop: number,
-    options?: { rev?: boolean },
+    start: number | string,
+    stop: number | string,
+    options?: { rev?: boolean; withScores?: boolean; byScore?: boolean; offset?: number; count?: number },
   ): Promise<T[]> {
     const db = getD1();
+
+    // byScore mode: range by score values
+    if (options?.byScore) {
+      const minScore = start === '-inf' ? -1e308 : Number(start);
+      const maxScore = stop === '+inf' ? 1e308 : Number(stop);
+      const order = options.rev ? "DESC" : "ASC";
+      const limit = options.count ?? 1000;
+      const offset = options.offset ?? 0;
+
+      const rows = await db
+        .prepare(
+          `SELECT member, score FROM kv_zsets WHERE key = ? AND score >= ? AND score <= ? ORDER BY score ${order}, member ${order} LIMIT ? OFFSET ?`,
+        )
+        .bind(key, minScore, maxScore, limit, offset)
+        .all<{ member: string; score: number }>();
+
+      return rows.results.map((r: { member: string; score: number }) => r.member as unknown as T);
+    }
+
     const countRow = await db
       .prepare("SELECT COUNT(*) AS cnt FROM kv_zsets WHERE key = ?")
       .bind(key)
@@ -450,8 +496,10 @@ export const kv = {
     const total = countRow?.cnt ?? 0;
     if (total === 0) return [];
 
-    let s = start < 0 ? Math.max(0, total + start) : start;
-    let e = stop < 0 ? total + stop : stop;
+    const numStart = Number(start);
+    const numStop = Number(stop);
+    let s = numStart < 0 ? Math.max(0, total + numStart) : numStart;
+    let e = numStop < 0 ? total + numStop : numStop;
     if (e >= total) e = total - 1;
     if (s > e) return [];
 
@@ -460,12 +508,21 @@ export const kv = {
 
     const rows = await db
       .prepare(
-        `SELECT member FROM kv_zsets WHERE key = ? ORDER BY score ${order}, member ${order} LIMIT ? OFFSET ?`,
+        `SELECT member, score FROM kv_zsets WHERE key = ? ORDER BY score ${order}, member ${order} LIMIT ? OFFSET ?`,
       )
       .bind(key, limit, s)
-      .all<{ member: string }>();
+      .all<{ member: string; score: number }>();
 
-    return rows.results.map((r) => r.member as unknown as T);
+    if (options?.withScores) {
+      // Return [member, score, member, score, ...] like Redis
+      const result: unknown[] = [];
+      for (const r of rows.results) {
+        result.push(r.member, r.score);
+      }
+      return result as T[];
+    }
+
+    return rows.results.map((r: { member: string; score: number }) => r.member as unknown as T);
   },
 
   async zcount(key: string, min: number, max: number): Promise<number> {
@@ -486,6 +543,65 @@ export const kv = {
       .bind(key, member)
       .first<{ score: number }>();
     return row?.score ?? null;
+  },
+
+  async zrem(key: string, ...members: string[]): Promise<number> {
+    if (members.length === 0) return 0;
+    const db = getD1();
+    const placeholders = members.map(() => "?").join(",");
+    const result = await db
+      .prepare(`DELETE FROM kv_zsets WHERE key = ? AND member IN (${placeholders})`)
+      .bind(key, ...members)
+      .run();
+    return result.meta?.changes ?? 0;
+  },
+
+  async zcard(key: string): Promise<number> {
+    const db = getD1();
+    const row = await db
+      .prepare("SELECT COUNT(*) AS cnt FROM kv_zsets WHERE key = ?")
+      .bind(key)
+      .first<{ cnt: number }>();
+    return row?.cnt ?? 0;
+  },
+
+  async zincrby(key: string, increment: number, member: string): Promise<number> {
+    const db = getD1();
+    const result = await db
+      .prepare(
+        `INSERT INTO kv_zsets (key, member, score) VALUES (?, ?, ?)
+         ON CONFLICT(key, member) DO UPDATE SET score = score + ?
+         RETURNING score`,
+      )
+      .bind(key, member, increment, increment)
+      .first<{ score: number }>();
+    return result?.score ?? increment;
+  },
+
+  async scan(
+    cursor: number,
+    options?: { match?: string; count?: number },
+  ): Promise<[number, string[]]> {
+    void cursor; // D1 returns all results at once, cursor is ignored
+    const db = getD1();
+    const match = options?.match;
+    const limit = options?.count ?? 1000;
+
+    if (!match) {
+      const rows = await db
+        .prepare("SELECT key FROM kv_data LIMIT ?")
+        .bind(limit)
+        .all<{ key: string }>();
+      return [0, rows.results.map((r: { key: string }) => r.key)];
+    }
+
+    // Convert Redis glob pattern to SQL LIKE pattern
+    const likePattern = match.replace(/\*/g, "%").replace(/\?/g, "_");
+    const rows = await db
+      .prepare("SELECT key FROM kv_data WHERE key LIKE ? LIMIT ?")
+      .bind(likePattern, limit)
+      .all<{ key: string }>();
+    return [0, rows.results.map((r: { key: string }) => r.key)];
   },
 
   // ==================== Hash commands ====================

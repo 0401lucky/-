@@ -53,7 +53,7 @@ export async function incrementSharedDailyStats(
   try {
     const current = await kv.get<DailyGameStats>(key);
     const stats: DailyGameStats = current
-      ? normalizeStats(current as Record<string, unknown>, fallback)
+      ? normalizeStats(current as unknown as Record<string, unknown>, fallback)
       : { userId, date, gamesPlayed: 0, totalScore: 0, pointsEarned: 0, lastGameAt: now };
 
     stats.userId = userId;

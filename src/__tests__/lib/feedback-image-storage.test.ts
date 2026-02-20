@@ -12,7 +12,7 @@ const mockGetCloudflareContext = vi.fn(() => ({
 }));
 
 vi.mock('@opennextjs/cloudflare', () => ({
-  getCloudflareContext: (...args: unknown[]) => mockGetCloudflareContext(...args),
+  getCloudflareContext: (...args: unknown[]) => mockGetCloudflareContext(...(args as [])),
 }));
 
 describe('externalizeFeedbackImages', () => {
@@ -79,7 +79,7 @@ describe('externalizeFeedbackImages', () => {
 
   it('缺少 R2 binding 时会报错', async () => {
     // Temporarily override the mock to return no binding
-    mockGetCloudflareContext.mockReturnValueOnce({ env: {} });
+    mockGetCloudflareContext.mockReturnValueOnce({ env: {} } as ReturnType<typeof mockGetCloudflareContext>);
 
     await expect(
       externalizeFeedbackImages(

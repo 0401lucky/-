@@ -61,7 +61,8 @@ export async function externalizeFeedbackImages(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ctx = (getCloudflareContext as any)?.();
-  const env = ctx?.env as { FEEDBACK_IMAGES?: R2Bucket } | undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const env = ctx?.env as { FEEDBACK_IMAGES?: any } | undefined;
   const r2 = env?.FEEDBACK_IMAGES;
   if (!r2) {
     throw new Error('R2 binding FEEDBACK_IMAGES not available');

@@ -64,13 +64,17 @@ export async function GET() {
   try {
     const items = await getAllStoreItems();
 
-    let purchaseCounts: Record<string, unknown> | null = null;
+    let purchaseCounts: Record<string, unknown> = {};
     try {
       if (items.length > 0) {
-        purchaseCounts = await kv.hmget<Record<string, unknown>>(
+        const fields = items.map(item => item.id);
+        const values = await kv.hmget<unknown>(
           STORE_ITEM_PURCHASE_COUNTS_KEY,
-          ...items.map(item => item.id)
+          ...fields
         );
+        for (let i = 0; i < fields.length; i++) {
+          purchaseCounts[fields[i]] = values[i];
+        }
       }
     } catch (error) {
       console.error('Get store item purchase counts error:', error);
@@ -78,7 +82,7 @@ export async function GET() {
 
     const itemsWithStats = items.map(item => ({
       ...item,
-      purchaseCount: normalizePurchaseCount(purchaseCounts?.[item.id]),
+      purchaseCount: normalizePurchaseCount(purchaseCounts[item.id]),
     }));
 
     return jsonResponse({ success: true, data: { items: itemsWithStats } });

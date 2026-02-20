@@ -539,10 +539,10 @@ export async function listRankingSettlementHistory(
   const start = (page - 1) * limit;
   const end = start + limit - 1;
 
-  const ids = await kv.zrange<string[]>(indexKey, start, end, { rev: true });
+  const ids = await kv.zrange<string>(indexKey, start, end, { rev: true });
   const records =
     Array.isArray(ids) && ids.length > 0
-      ? await kv.mget<(RankingSettlementRecord | null)[]>(
+      ? await kv.mget<RankingSettlementRecord>(
           ...ids.map((id) => {
             const parts = id.split(':');
             if (parts.length >= 3) {
