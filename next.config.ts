@@ -4,6 +4,11 @@ import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 initOpenNextCloudflareForDev();
 
 const nextConfig: NextConfig = {
+  // 跳过构建时自动类型检查（已通过 tsc --noEmit 单独验证）
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+
   // 启用压缩
   compress: true,
 

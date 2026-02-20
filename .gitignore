@@ -49,6 +49,10 @@ next-env.d.ts
 # OpenNext
 .open-next
 .opennext-tmp
+.images-tmp
+
+# Wrangler
+.wrangler
 
 # local tooling artifacts
 .serena

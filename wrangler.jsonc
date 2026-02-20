@@ -29,6 +29,10 @@
 		{
 			"binding": "FEEDBACK_IMAGES",
 			"bucket_name": "feedback-images"
+		},
+		{
+			"binding": "CARD_IMAGES",
+			"bucket_name": "card-images"
 		}
 	],
 	"d1_databases": [

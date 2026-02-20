@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "next build",
+    "build": "next build --webpack",
     "dev": "next dev",
     "start": "next start",
     "lint": "eslint .",
@@ -12,9 +12,9 @@
     "migrate:feedback-images": "node scripts/migrate-feedback-images-to-blob.mjs",
     "migrate:feedback-images:execute": "node scripts/migrate-feedback-images-to-blob.mjs --execute",
     "opennext:patch": "node scripts/patch-opennext-windows.mjs",
-    "preview": "npm run opennext:patch && opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "deploy": "npm run opennext:patch && opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "upload": "npm run opennext:patch && opennextjs-cloudflare build && opennextjs-cloudflare upload",
+    "preview": "npm run opennext:patch && node scripts/build-cloudflare.mjs && opennextjs-cloudflare preview",
+    "deploy": "npm run opennext:patch && node scripts/build-cloudflare.mjs && opennextjs-cloudflare deploy",
+    "upload": "npm run opennext:patch && node scripts/build-cloudflare.mjs && opennextjs-cloudflare upload",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
