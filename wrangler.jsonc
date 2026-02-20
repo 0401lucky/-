@@ -35,7 +35,7 @@
 		{
 			"binding": "KV_DB",
 			"database_name": "kv-store",
-			"database_id": "PLACEHOLDER_RUN_wrangler_d1_create"
+			"database_id": "54580731-9fe2-4044-99b2-f0f356748040"
 		}
 	],
 	"images": {
