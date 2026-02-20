@@ -2,7 +2,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { put } from '@vercel/blob';
 import { nanoid } from 'nanoid';
 

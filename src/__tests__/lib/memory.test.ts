@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import {
   MEMORY_REVEALED_SENTINEL,
   buildMemorySessionView,
@@ -9,7 +9,7 @@ import {
 } from '@/lib/memory';
 import type { MemoryGameSession } from '@/lib/types/game';
 
-vi.mock('@vercel/kv', () => ({
+vi.mock('@/lib/d1-kv', () => ({
   kv: {
     set: vi.fn(),
     get: vi.fn(),

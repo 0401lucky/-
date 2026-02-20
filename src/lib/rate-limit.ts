@@ -1,4 +1,4 @@
-import { kv } from "@vercel/kv";
+import { kv } from '@/lib/d1-kv';
 import { NextResponse } from "next/server";
 import { getAuthUser, type AuthUser } from "./auth";
 
@@ -146,65 +146,24 @@ export async function checkRateLimit(
 
   const key = `${prefix}:${userId}`;
   const now = Math.floor(Date.now() / 1000);
-  const windowStart = now - windowSeconds;
 
-  // Lua 脚本：原子性地清理过期记录、检查限制、添加新记录
-  const luaScript = `
-    local key = KEYS[1]
-    local now = tonumber(ARGV[1])
-    local windowStart = tonumber(ARGV[2])
-    local maxRequests = tonumber(ARGV[3])
-    local windowSeconds = tonumber(ARGV[4])
-
-    -- 清理过期的请求记录
-    redis.call('ZREMRANGEBYSCORE', key, '-inf', windowStart)
-
-    -- 获取当前窗口内的请求数
-    local currentCount = redis.call('ZCARD', key)
-
-    if currentCount >= maxRequests then
-      -- 超过限制，返回失败
-      local oldestScore = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
-      local resetAt = now + windowSeconds
-      if #oldestScore >= 2 then
-        resetAt = tonumber(oldestScore[2]) + windowSeconds
-      end
-      return {0, maxRequests - currentCount, resetAt}
-    end
-
-    -- 添加新请求记录
-    redis.call('ZADD', key, now, now .. ':' .. math.random(1000000))
-    
-    -- 设置过期时间（窗口时间 + 1秒缓冲）
-    redis.call('EXPIRE', key, windowSeconds + 1)
-
-    return {1, maxRequests - currentCount - 1, now + windowSeconds}
-  `;
-
+  // D1-compatible: simple counter approach with TTL
   try {
-    const raw = await kv.eval(
-      luaScript,
-      [key],
-      [now, windowStart, maxRequests, windowSeconds]
-    );
+    const currentCount = await kv.get<number>(key) ?? 0;
 
-    if (!Array.isArray(raw) || raw.length < 3) {
-      throw new Error("Invalid rate limit response");
+    if (currentCount >= maxRequests) {
+      return { success: false, remaining: 0, resetAt: now + windowSeconds };
     }
 
-    const [successRaw, remainingRaw, resetAtRaw] = raw as unknown[];
-    const success = Number(successRaw);
-    const remaining = Number(remainingRaw);
-    const resetAt = Number(resetAtRaw);
-
-    if (!Number.isFinite(success) || !Number.isFinite(remaining) || !Number.isFinite(resetAt)) {
-      throw new Error("Invalid rate limit response");
+    const newCount = await kv.incrby(key, 1);
+    if (newCount === 1) {
+      await kv.expire(key, windowSeconds);
     }
 
     return {
-      success: success === 1,
-      remaining: Math.max(0, Math.floor(remaining)),
-      resetAt: Math.floor(resetAt),
+      success: true,
+      remaining: Math.max(0, maxRequests - newCount),
+      resetAt: now + windowSeconds,
     };
   } catch (error) {
     console.error("Rate limit check error, fallback to in-memory limiter:", error);

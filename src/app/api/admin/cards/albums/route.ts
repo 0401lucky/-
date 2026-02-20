@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { withAdmin } from '@/lib/api-guards';
 import { ALBUMS } from '@/lib/cards/config';
 import { COLLECTION_REWARDS } from '@/lib/cards/constants';

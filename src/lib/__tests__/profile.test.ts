@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { getProfileOverview } from '../profile';
 import { getUserCardData } from '../cards/draw';
 import { getUserPoints, getPointsLogs } from '../points';
 import { getCheckinStreak, getTotalCheckinDays } from '../rankings';
 import { listUserNotifications } from '../notifications';
 
-vi.mock('@vercel/kv', () => ({
+vi.mock('@/lib/d1-kv', () => ({
   kv: {
     lrange: vi.fn(),
   },

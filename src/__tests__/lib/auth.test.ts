@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import {
   clearLoginFailures,
   createSessionToken,
@@ -12,7 +12,7 @@ import {
   verifySessionWithRevocation,
 } from '@/lib/auth';
 
-vi.mock('@vercel/kv', () => ({
+vi.mock('@/lib/d1-kv', () => ({
   kv: {
     get: vi.fn(),
     set: vi.fn(),

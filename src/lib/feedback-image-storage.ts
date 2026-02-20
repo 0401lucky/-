@@ -1,4 +1,4 @@
-import { put } from '@vercel/blob';
+import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { nanoid } from 'nanoid';
 import type { FeedbackImage } from '@/lib/feedback-image';
 
@@ -10,25 +10,6 @@ const FEEDBACK_IMAGE_EXTENSION_MAP: Record<string, string> = {
   'image/webp': 'webp',
   'image/gif': 'gif',
 };
-
-function sanitizeEnvValue(value: string | undefined): string {
-  if (!value) {
-    return '';
-  }
-
-  return value
-    .replace(/\\r\\n|\\n|\\r/g, '')
-    .replace(/[\r\n]/g, '')
-    .trim();
-}
-
-function getBlobToken(): string {
-  const token = sanitizeEnvValue(process.env.BLOB_READ_WRITE_TOKEN);
-  if (!token) {
-    throw new Error('未配置 BLOB_READ_WRITE_TOKEN，无法上传反馈图片');
-  }
-  return token;
-}
 
 function decodeDataUrl(dataUrl: string): { mimeType: string; bytes: Buffer } {
   const matched = dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/i);
@@ -62,7 +43,7 @@ function buildBlobPath(role: FeedbackImageRole, mimeType: string): string {
   const ext = FEEDBACK_IMAGE_EXTENSION_MAP[mimeType] ?? 'bin';
   const dateBucket = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
-  // Vercel Blob 当前仅支持 public 访问，使用高熵随机路径减少可枚举性与敏感信息暴露
+  // R2 使用高熵随机路径减少可枚举性与敏感信息暴露
   return `feedback/${dateBucket}/${role}/${nanoid(24)}.${ext}`;
 }
 
@@ -78,7 +59,15 @@ export async function externalizeFeedbackImages(
     return [];
   }
 
-  const token = getBlobToken();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ctx = (getCloudflareContext as any)?.();
+  const env = ctx?.env as { FEEDBACK_IMAGES?: R2Bucket } | undefined;
+  const r2 = env?.FEEDBACK_IMAGES;
+  if (!r2) {
+    throw new Error('R2 binding FEEDBACK_IMAGES not available');
+  }
+
+  const publicBaseUrl = (process.env.R2_PUBLIC_URL ?? '').replace(/\/+$/, '');
 
   return Promise.all(
     images.map(async (image) => {
@@ -90,16 +79,15 @@ export async function externalizeFeedbackImages(
       const { mimeType, bytes } = decodeDataUrl(data);
       const pathname = buildBlobPath(options.role, mimeType);
 
-      const result = await put(pathname, bytes, {
-        access: 'public',
-        contentType: mimeType,
-        token,
-        addRandomSuffix: true,
+      await r2.put(pathname, bytes, {
+        httpMetadata: { contentType: mimeType },
       });
+
+      const url = publicBaseUrl ? `${publicBaseUrl}/${pathname}` : pathname;
 
       return {
         ...image,
-        dataUrl: result.url,
+        dataUrl: url,
         mimeType,
         size: bytes.byteLength,
         name: sanitizeFileName(image.name),

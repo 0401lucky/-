@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
 import { getUserAllClaims, getAllProjects } from "@/lib/kv";
-import { kv } from "@vercel/kv";
+import { kv } from '@/lib/d1-kv';
 
 export const dynamic = "force-dynamic";
 

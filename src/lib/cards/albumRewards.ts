@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { ALBUMS } from './config';
 import { COLLECTION_REWARDS } from './constants';
 import { Rarity } from './types';

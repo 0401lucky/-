@@ -1,7 +1,7 @@
 // src/lib/metrics.ts
 // 监控指标和告警系统
 
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { getTodayDateString } from './time';
 
 /**

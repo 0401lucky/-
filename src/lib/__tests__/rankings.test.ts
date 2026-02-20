@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import {
   getAllGamesLeaderboard,
   getCheckinStreak,
@@ -9,7 +9,7 @@ import {
 } from '../rankings';
 import { getAllUsers } from '../kv';
 
-vi.mock('@vercel/kv', () => ({
+vi.mock('@/lib/d1-kv', () => ({
   kv: {
     lrange: vi.fn(),
     get: vi.fn(),

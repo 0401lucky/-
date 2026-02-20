@@ -1,27 +1,6 @@
-import { kv } from "@vercel/kv";
+import { kv } from "@/lib/d1-kv";
 import { getTodayDateString, getSecondsUntilMidnight } from "./time";
 
-const VERCEL_KV_REQUIRED_URL_ENV_KEY = "KV_REST_API_URL";
-const VERCEL_KV_TOKEN_ENV_KEYS = ["KV_REST_API_TOKEN", "KV_REST_API_READ_ONLY_TOKEN"] as const;
-
-const KV_ENV_GROUPS = [
-  {
-    provider: "upstash",
-    keys: ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"] as const,
-  },
-] as const;
-
-const KV_ENV_MISSING_PATTERNS = [
-  "missing required environment variables",
-  "missing environment variable",
-  "kv_rest_api_url",
-  "kv_rest_api_token",
-  "kv_rest_api_read_only_token",
-  "upstash_redis_rest_url",
-  "upstash_redis_rest_token",
-];
-
-const KV_AUTH_PATTERNS = ["unauthorized", "forbidden", "invalid token", "authentication"];
 const KV_TIMEOUT_PATTERNS = ["timeout", "timed out", "deadline exceeded", "etimedout", "econnaborted"];
 const KV_NETWORK_PATTERNS = [
   "network",
@@ -32,26 +11,23 @@ const KV_NETWORK_PATTERNS = [
   "fetch failed",
   "connect",
 ];
-const KV_RATE_LIMIT_PATTERNS = ["too many requests", "rate limit", "429"];
 
 export const KV_UNAVAILABLE_RETRY_AFTER_SECONDS = 30;
 
-export type KvAvailabilityReason = "ok" | "missing_env";
+export type KvAvailabilityReason = "ok" | "missing_binding";
 
 export interface KvAvailabilityStatus {
   available: boolean;
   reason: KvAvailabilityReason;
-  provider: "vercel" | "upstash" | null;
+  provider: "d1" | null;
   missingEnvKeys: string[];
 }
 
 export type KvErrorCode =
-  | "KV_ENV_MISSING"
-  | "KV_AUTH"
+  | "KV_BINDING_MISSING"
   | "KV_TIMEOUT"
   | "KV_NETWORK"
-  | "KV_RATE_LIMITED"
-  | "KV_UPSTREAM"
+  | "KV_D1_ERROR"
   | "KV_UNKNOWN"
   | "NON_KV_ERROR";
 
@@ -64,9 +40,16 @@ export interface KvErrorInsight {
   message: string;
 }
 
-function hasEnvValue(name: string): boolean {
-  const value = process.env[name];
-  return typeof value === "string" && value.trim().length > 0;
+function hasD1Binding(): boolean {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getCloudflareContext } = require("@opennextjs/cloudflare");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ctx = (getCloudflareContext as any)?.();
+    return !!ctx?.env?.KV_DB;
+  } catch {
+    return false;
+  }
 }
 
 function includesAnyPattern(text: string, patterns: readonly string[]): boolean {
@@ -115,39 +98,20 @@ function getErrorMessage(error: unknown): string {
 }
 
 export function getKvAvailabilityStatus(): KvAvailabilityStatus {
-  const vercelUrlReady = hasEnvValue(VERCEL_KV_REQUIRED_URL_ENV_KEY);
-  const vercelTokenReady = VERCEL_KV_TOKEN_ENV_KEYS.some((key) => hasEnvValue(key));
-
-  if (vercelUrlReady && vercelTokenReady) {
+  if (hasD1Binding()) {
     return {
       available: true,
       reason: "ok",
-      provider: "vercel",
+      provider: "d1",
       missingEnvKeys: [],
     };
   }
-
-  const matchedGroup = KV_ENV_GROUPS.find((group) => group.keys.every((key) => hasEnvValue(key)));
-
-  if (matchedGroup) {
-    return {
-      available: true,
-      reason: "ok",
-      provider: matchedGroup.provider,
-      missingEnvKeys: [],
-    };
-  }
-
-  const missingEnvKeys = [
-    ...(vercelUrlReady ? [] : [VERCEL_KV_REQUIRED_URL_ENV_KEY]),
-    ...(vercelTokenReady ? [] : [...VERCEL_KV_TOKEN_ENV_KEYS]),
-  ];
 
   return {
     available: false,
-    reason: "missing_env",
+    reason: "missing_binding",
     provider: null,
-    missingEnvKeys,
+    missingEnvKeys: ["KV_DB (D1 binding)"],
   };
 }
 
@@ -168,30 +132,18 @@ export function getKvErrorInsight(error: unknown): KvErrorInsight {
   const normalizedMeta = `${name} ${code}`.toLowerCase();
   const fingerprint = `${normalizedMessage} ${normalizedMeta}`;
 
-  const hasKvFingerprint =
-    fingerprint.includes("@vercel/kv")
-    || fingerprint.includes("vercel kv")
-    || fingerprint.includes("upstash")
-    || fingerprint.includes("redis")
-    || fingerprint.includes("kv_rest_api");
+  const hasD1Fingerprint =
+    fingerprint.includes("d1")
+    || fingerprint.includes("kv_db")
+    || fingerprint.includes("d1 binding")
+    || fingerprint.includes("sqlite");
 
-  if (includesAnyPattern(normalizedMessage, KV_ENV_MISSING_PATTERNS)) {
+  if (fingerprint.includes("d1 binding") || fingerprint.includes("kv_db not available")) {
     return {
       isKvError: true,
       isUnavailable: true,
       retryable: false,
-      code: "KV_ENV_MISSING",
-      status,
-      message,
-    };
-  }
-
-  if (status === 401 || status === 403 || includesAnyPattern(fingerprint, KV_AUTH_PATTERNS)) {
-    return {
-      isKvError: true,
-      isUnavailable: true,
-      retryable: false,
-      code: "KV_AUTH",
+      code: "KV_BINDING_MISSING",
       status,
       message,
     };
@@ -203,17 +155,6 @@ export function getKvErrorInsight(error: unknown): KvErrorInsight {
       isUnavailable: true,
       retryable: true,
       code: "KV_TIMEOUT",
-      status,
-      message,
-    };
-  }
-
-  if (status === 429 || includesAnyPattern(fingerprint, KV_RATE_LIMIT_PATTERNS)) {
-    return {
-      isKvError: true,
-      isUnavailable: true,
-      retryable: true,
-      code: "KV_RATE_LIMITED",
       status,
       message,
     };
@@ -235,13 +176,13 @@ export function getKvErrorInsight(error: unknown): KvErrorInsight {
       isKvError: true,
       isUnavailable: true,
       retryable: true,
-      code: "KV_UPSTREAM",
+      code: "KV_D1_ERROR",
       status,
       message,
     };
   }
 
-  if (hasKvFingerprint) {
+  if (hasD1Fingerprint) {
     return {
       isKvError: true,
       isUnavailable: true,
@@ -422,42 +363,17 @@ export async function addCodesToProject(projectId: string, codes: string[]): Pro
   const projectKey = `projects:${projectId}`;
   const codesKey = `codes:available:${projectId}`;
 
-  const luaScript = `
-    local projectKey = KEYS[1]
-    local codesKey = KEYS[2]
+  // Push all codes to the list
+  const newLength = await kv.lpush(codesKey, ...codes);
 
-    local codeCount = tonumber(ARGV[1]) or 0
-    if codeCount <= 0 then
-      return 0
-    end
+  // Update project codesCount
+  const project = await kv.get<Project>(projectKey);
+  if (project) {
+    project.codesCount = (project.codesCount ?? 0) + codes.length;
+    await kv.set(projectKey, project);
+  }
 
-    local lpushArgs = { codesKey }
-    for i = 1, codeCount do
-      lpushArgs[#lpushArgs + 1] = ARGV[i + 1]
-    end
-
-    local listLength = redis.call('LPUSH', unpack(lpushArgs))
-
-    local projectJson = redis.call('GET', projectKey)
-    if projectJson then
-      local okP, project = pcall(cjson.decode, projectJson)
-      if okP and project then
-        local currentCodesCount = tonumber(project.codesCount) or 0
-        project.codesCount = currentCodesCount + codeCount
-        redis.call('SET', projectKey, cjson.encode(project))
-      end
-    end
-
-    return listLength
-  `;
-
-  const newLength = await kv.eval(
-    luaScript,
-    [projectKey, codesKey],
-    [codes.length, ...codes]
-  );
-
-  return Number(newLength) || 0;
+  return newLength;
 }
 
 export async function getAvailableCodesCount(projectId: string): Promise<number> {
@@ -472,88 +388,60 @@ export async function claimCode(projectId: string, userId: number, username: str
   const codesKey = `codes:available:${projectId}`;
   const claimKey = `claimed:${projectId}:${userId}`;
   const recordsKey = `records:${projectId}`;
-  const userClaimedKey = `claimed:user:${userId}`;  // [Perf] 用户领取索引
+  const userClaimedKey = `claimed:user:${userId}`;
 
-  const luaScript = `
-    local projectKey = KEYS[1]
-    local codesKey = KEYS[2]
-    local claimKey = KEYS[3]
-    local recordsKey = KEYS[4]
-    local userClaimedKey = KEYS[5]
-
-    local now = tonumber(ARGV[1])
-    local recordId = ARGV[2]
-    local projectId = ARGV[3]
-    local userIdRaw = ARGV[4]
-    local username = ARGV[5]
-
-    local existingJson = redis.call('GET', claimKey)
-    if existingJson then
-      local ok, existing = pcall(cjson.decode, existingJson)
-      if ok and existing and existing.code then
-        return {1, existing.code, '你已经领取过了'}
-      end
-      return {0, '', '领取记录异常，请联系管理员'}
-    end
-
-    local projectJson = redis.call('GET', projectKey)
-    if not projectJson then
-      return {0, '', '项目不存在'}
-    end
-
-    local okP, project = pcall(cjson.decode, projectJson)
-    if not okP or not project then
-      return {0, '', '项目数据异常，请联系管理员'}
-    end
-
-    if project.status == 'paused' then
-      return {0, '', '该项目已暂停领取'}
-    end
-
-    local claimedCount = tonumber(project.claimedCount) or 0
-    local maxClaims = tonumber(project.maxClaims) or 0
-
-    if project.status == 'exhausted' or (maxClaims > 0 and claimedCount >= maxClaims) then
-      return {0, '', '已达到领取上限'}
-    end
-
-    local code = redis.call('RPOP', codesKey)
-    if not code then
-      project.status = 'exhausted'
-      redis.call('SET', projectKey, cjson.encode(project))
-      return {0, '', '兑换码已领完'}
-    end
-
-    project.claimedCount = claimedCount + 1
-    if maxClaims > 0 and project.claimedCount >= maxClaims then
-      project.status = 'exhausted'
-    end
-
-    local userIdNum = tonumber(userIdRaw) or userIdRaw
-    local record = { id = recordId, projectId = projectId, userId = userIdNum, username = username, code = code, claimedAt = now }
-    local recordJson = cjson.encode(record)
-
-    redis.call('SET', claimKey, recordJson)
-    redis.call('LPUSH', recordsKey, recordJson)
-    redis.call('SET', projectKey, cjson.encode(project))
-    redis.call('SADD', userClaimedKey, projectId)
-
-    return {1, code, '领取成功'}
-  `;
-
-  const result = await kv.eval(
-    luaScript,
-    [projectKey, codesKey, claimKey, recordsKey, userClaimedKey],
-    [now, recordId, projectId, userId, username]
-  ) as [number, string, string];
-
-  const [ok, code, message] = result;
-
-  if (ok === 1) {
-    return { success: true, code: code || undefined, message };
+  // Check existing claim
+  const existing = await kv.get<ClaimRecord>(claimKey);
+  if (existing) {
+    if (existing.code) {
+      return { success: true, code: existing.code, message: '你已经领取过了' };
+    }
+    return { success: false, message: '领取记录异常，请联系管理员' };
   }
 
-  return { success: false, message };
+  // Check project
+  const project = await kv.get<Project>(projectKey);
+  if (!project) return { success: false, message: '项目不存在' };
+
+  if (project.status === 'paused') return { success: false, message: '该项目已暂停领取' };
+
+  const claimedCount = project.claimedCount ?? 0;
+  const maxClaims = project.maxClaims ?? 0;
+
+  if (project.status === 'exhausted' || (maxClaims > 0 && claimedCount >= maxClaims)) {
+    return { success: false, message: '已达到领取上限' };
+  }
+
+  // Pop a code
+  const code = await kv.rpop(codesKey);
+  if (!code) {
+    project.status = 'exhausted';
+    await kv.set(projectKey, project);
+    return { success: false, message: '兑换码已领完' };
+  }
+
+  // Update project
+  project.claimedCount = claimedCount + 1;
+  if (maxClaims > 0 && project.claimedCount >= maxClaims) {
+    project.status = 'exhausted';
+  }
+
+  const record: ClaimRecord = {
+    id: recordId,
+    projectId,
+    userId,
+    username,
+    code: String(code),
+    claimedAt: now,
+  };
+
+  // Atomic writes
+  await kv.set(claimKey, record);
+  await kv.lpush(recordsKey, record);
+  await kv.set(projectKey, project);
+  await kv.sadd(userClaimedKey, projectId);
+
+  return { success: true, code: String(code), message: '领取成功' };
 }
 
 /**
@@ -570,88 +458,58 @@ export async function reserveDirectClaim(
   const projectKey = `projects:${projectId}`;
   const claimKey = `claimed:${projectId}:${userId}`;
   const recordsKey = `records:${projectId}`;
-  const userClaimedKey = `claimed:user:${userId}`;  // [Perf] 用户领取索引
+  const userClaimedKey = `claimed:user:${userId}`;
 
-  const luaScript = `
-    local projectKey = KEYS[1]
-    local claimKey = KEYS[2]
-    local recordsKey = KEYS[3]
-    local userClaimedKey = KEYS[4]
-
-    local now = tonumber(ARGV[1])
-    local recordId = ARGV[2]
-    local projectId = ARGV[3]
-    local userIdRaw = ARGV[4]
-    local username = ARGV[5]
-
-    local existingJson = redis.call('GET', claimKey)
-    if existingJson then
-      local okE, existing = pcall(cjson.decode, existingJson)
-      if okE and existing and existing.creditStatus == 'pending' then
-        return {2, existingJson, '领取处理中，请稍后刷新'}
-      end
-      return {2, existingJson, '你已经领取过了'}
-    end
-
-    local projectJson = redis.call('GET', projectKey)
-    if not projectJson then
-      return {0, '', '项目不存在'}
-    end
-
-    local okP, project = pcall(cjson.decode, projectJson)
-    if not okP or not project then
-      return {0, '', '项目数据异常，请联系管理员'}
-    end
-
-    if project.status == 'paused' then
-      return {0, '', '该项目已暂停领取'}
-    end
-
-    local dollars = tonumber(project.directDollars) or 0
-    if dollars <= 0 then
-      return {0, '', '项目直充金额配置异常，请联系管理员'}
-    end
-
-    local claimedCount = tonumber(project.claimedCount) or 0
-    local maxClaims = tonumber(project.maxClaims) or 0
-
-    if project.status == 'exhausted' or (maxClaims > 0 and claimedCount >= maxClaims) then
-      return {0, '', '已达到领取上限'}
-    end
-
-    project.claimedCount = claimedCount + 1
-    if maxClaims > 0 and project.claimedCount >= maxClaims then
-      project.status = 'exhausted'
-    end
-
-    local userIdNum = tonumber(userIdRaw) or userIdRaw
-    local record = { id = recordId, projectId = projectId, userId = userIdNum, username = username, code = '', claimedAt = now, directCredit = true, creditedDollars = dollars, creditStatus = 'pending' }
-    local recordJson = cjson.encode(record)
-
-    redis.call('SET', claimKey, recordJson)
-    redis.call('LPUSH', recordsKey, recordJson)
-    redis.call('SET', projectKey, cjson.encode(project))
-    redis.call('SADD', userClaimedKey, projectId)
-
-    return {1, recordJson, 'ok'}
-  `;
-
-  const result = await kv.eval(
-    luaScript,
-    [projectKey, claimKey, recordsKey, userClaimedKey],
-    [now, recordId, projectId, userId, username]
-  ) as [number, string, string];
-
-  const [ok, recordJson, message] = result;
-  if (ok === 1 || ok === 2) {
-    try {
-      const record = JSON.parse(recordJson) as ClaimRecord;
-      return { success: true, message, record };
-    } catch {
-      return { success: true, message };
+  // Check existing claim
+  const existing = await kv.get<ClaimRecord>(claimKey);
+  if (existing) {
+    if (existing.creditStatus === 'pending') {
+      return { success: true, message: '领取处理中，请稍后刷新', record: existing };
     }
+    return { success: true, message: '你已经领取过了', record: existing };
   }
-  return { success: false, message };
+
+  // Check project
+  const project = await kv.get<Project>(projectKey);
+  if (!project) return { success: false, message: '项目不存在' };
+
+  if (project.status === 'paused') return { success: false, message: '该项目已暂停领取' };
+
+  const dollars = project.directDollars ?? 0;
+  if (dollars <= 0) return { success: false, message: '项目直充金额配置异常，请联系管理员' };
+
+  const claimedCount = project.claimedCount ?? 0;
+  const maxClaims = project.maxClaims ?? 0;
+
+  if (project.status === 'exhausted' || (maxClaims > 0 && claimedCount >= maxClaims)) {
+    return { success: false, message: '已达到领取上限' };
+  }
+
+  // Update project
+  project.claimedCount = claimedCount + 1;
+  if (maxClaims > 0 && project.claimedCount >= maxClaims) {
+    project.status = 'exhausted';
+  }
+
+  const record: ClaimRecord = {
+    id: recordId,
+    projectId,
+    userId,
+    username,
+    code: '',
+    claimedAt: now,
+    directCredit: true,
+    creditedDollars: dollars,
+    creditStatus: 'pending',
+  };
+
+  // Atomic writes
+  await kv.set(claimKey, record);
+  await kv.lpush(recordsKey, record);
+  await kv.set(projectKey, project);
+  await kv.sadd(userClaimedKey, projectId);
+
+  return { success: true, message: 'ok', record };
 }
 
 /**
@@ -664,60 +522,25 @@ export async function finalizeDirectClaim(
   creditMessage: string
 ): Promise<{ success: boolean; message: string; record?: ClaimRecord }> {
   const now = Date.now();
-
   const claimKey = `claimed:${projectId}:${userId}`;
   const recordsKey = `records:${projectId}`;
 
-  const luaScript = `
-    local claimKey = KEYS[1]
-    local recordsKey = KEYS[2]
+  const record = await kv.get<ClaimRecord>(claimKey);
+  if (!record) return { success: false, message: '领取记录不存在' };
 
-    local status = ARGV[1]
-    local creditMessage = ARGV[2]
-    local creditedAt = tonumber(ARGV[3])
-
-    local existingJson = redis.call('GET', claimKey)
-    if not existingJson then
-      return {0, '', '领取记录不存在'}
-    end
-
-    local okR, record = pcall(cjson.decode, existingJson)
-    if not okR or not record then
-      return {0, '', '领取记录异常，请联系管理员'}
-    end
-
-    if record.creditStatus == 'success' or record.creditStatus == 'uncertain' then
-      return {2, existingJson, 'ok'}
-    end
-
-    record.creditStatus = status
-    record.creditMessage = creditMessage
-    record.creditedAt = creditedAt
-
-    local recordJson = cjson.encode(record)
-    redis.call('SET', claimKey, recordJson)
-    redis.call('LPUSH', recordsKey, recordJson)
-
-    return {1, recordJson, 'ok'}
-  `;
-
-  const result = await kv.eval(
-    luaScript,
-    [claimKey, recordsKey],
-    [status, creditMessage, now]
-  ) as [number, string, string];
-
-  const [ok, recordJson, message] = result;
-  if (ok === 1 || ok === 2) {
-    try {
-      const record = JSON.parse(recordJson) as ClaimRecord;
-      return { success: true, message, record };
-    } catch {
-      return { success: true, message };
-    }
+  // Already finalized
+  if (record.creditStatus === 'success' || record.creditStatus === 'uncertain') {
+    return { success: true, message: 'ok', record };
   }
 
-  return { success: false, message };
+  record.creditStatus = status;
+  record.creditMessage = creditMessage;
+  record.creditedAt = now;
+
+  await kv.set(claimKey, record);
+  await kv.lpush(recordsKey, record);
+
+  return { success: true, message: 'ok', record };
 }
 
 /**
@@ -731,65 +554,36 @@ export async function rollbackDirectClaim(
   const claimKey = `claimed:${projectId}:${userId}`;
   const userClaimedKey = `claimed:user:${userId}`;
 
-  const luaScript = `
-    local projectKey = KEYS[1]
-    local claimKey = KEYS[2]
-    local userClaimedKey = KEYS[3]
+  // Check existing claim
+  const record = await kv.get<ClaimRecord>(claimKey);
+  if (!record) return { success: true, message: 'ok' };
 
-    local projectId = ARGV[1]
+  // Only rollback pending status
+  if (record.creditStatus && record.creditStatus !== 'pending') {
+    return { success: true, message: 'ok' };
+  }
 
-    local existingJson = redis.call('GET', claimKey)
-    if not existingJson then
-      return {2, 'ok'}
-    end
+  // Delete claim record and user index
+  await kv.del(claimKey);
+  await kv.srem(userClaimedKey, projectId);
 
-    local okR, record = pcall(cjson.decode, existingJson)
-    if okR and record and record.creditStatus and record.creditStatus ~= 'pending' then
-      return {2, 'ok'}
-    end
+  // Restore project counter
+  const project = await kv.get<Project>(projectKey);
+  if (project) {
+    const claimedCount = project.claimedCount ?? 0;
+    const maxClaims = project.maxClaims ?? 0;
 
-    redis.call('DEL', claimKey)
-    redis.call('SREM', userClaimedKey, projectId)
+    project.claimedCount = Math.max(0, claimedCount - 1);
 
-    local projectJson = redis.call('GET', projectKey)
-    if not projectJson then
-      return {1, 'ok'}
-    end
+    // Restore status if it was exhausted due to reaching max
+    if (project.status === 'exhausted' && maxClaims > 0 && project.claimedCount < maxClaims) {
+      project.status = 'active';
+    }
 
-    local okP, project = pcall(cjson.decode, projectJson)
-    if not okP or not project then
-      return {1, 'ok'}
-    end
+    await kv.set(projectKey, project);
+  }
 
-    local claimedCount = tonumber(project.claimedCount) or 0
-    local maxClaims = tonumber(project.maxClaims) or 0
-
-    if claimedCount > 0 then
-      project.claimedCount = claimedCount - 1
-    else
-      project.claimedCount = 0
-    end
-
-    -- 如果之前因为达到上限变为 exhausted，回滚后可能恢复 active（paused 不变）
-    if project.status == 'exhausted' then
-      if maxClaims > 0 and project.claimedCount < maxClaims then
-        project.status = 'active'
-      end
-    end
-
-    redis.call('SET', projectKey, cjson.encode(project))
-
-    return {1, 'ok'}
-  `;
-
-  const result = await kv.eval(
-    luaScript,
-    [projectKey, claimKey, userClaimedKey],
-    [projectId]
-  ) as [number, string];
-
-  const [ok, message] = result;
-  return { success: ok === 1 || ok === 2, message };
+  return { success: true, message: 'ok' };
 }
 
 export async function getClaimRecord(projectId: string, userId: number): Promise<ClaimRecord | null> {
@@ -860,59 +654,33 @@ export async function reserveNewUserBenefit(
 ): Promise<NewUserReserveResult> {
   const markerKey = NEW_USER_BENEFIT_KEY(userId);
 
-  const result = await kv.eval(
-    `
-      local markerKey = KEYS[1]
-      local projectId = ARGV[1]
-      local ttl = tonumber(ARGV[2])
+  const marker = await kv.get<string>(markerKey);
 
-      local marker = redis.call('GET', markerKey)
-      if not marker then
-        redis.call('SET', markerKey, 'pending:' .. projectId, 'EX', ttl)
-        return {1, 'reserved'}
-      end
+  if (!marker) {
+    // No marker exists — reserve it
+    const setResult = await kv.set(
+      markerKey,
+      `${NEW_USER_PENDING_PREFIX}${projectId}`,
+      { ex: NEW_USER_PENDING_TTL_SECONDS, nx: true }
+    );
 
-      if string.sub(marker, 1, 8) == 'claimed:' then
-        return {0, 'claimed'}
-      end
+    if (setResult === "OK") {
+      return { success: true, status: "reserved", message: "ok" };
+    }
 
-      if string.sub(marker, 1, 8) == 'pending:' then
-        return {0, 'pending'}
-      end
-
-      return {0, 'pending'}
-    `,
-    [markerKey],
-    [projectId, NEW_USER_PENDING_TTL_SECONDS]
-  ) as [number, string];
-
-  const [ok, statusRaw] = result;
-  const status =
-    statusRaw === "claimed" || statusRaw === "pending"
-      ? statusRaw
-      : "reserved";
-
-  if (ok === 1) {
-    return {
-      success: true,
-      status: "reserved",
-      message: "ok",
-    };
+    // Race condition: another request set it first
+    return { success: false, status: "pending", message: "新人资格校验处理中，请稍后重试" };
   }
 
-  if (status === "pending") {
-    return {
-      success: false,
-      status,
-      message: "新人资格校验处理中，请稍后重试",
-    };
+  if (typeof marker === "string" && marker.startsWith(NEW_USER_CLAIMED_PREFIX)) {
+    return { success: false, status: "claimed", message: "该福利仅限新用户领取" };
   }
 
-  return {
-    success: false,
-    status: "claimed",
-    message: "该福利仅限新用户领取",
-  };
+  if (typeof marker === "string" && marker.startsWith(NEW_USER_PENDING_PREFIX)) {
+    return { success: false, status: "pending", message: "新人资格校验处理中，请稍后重试" };
+  }
+
+  return { success: false, status: "pending", message: "新人资格校验处理中，请稍后重试" };
 }
 
 export async function confirmNewUserBenefit(
@@ -922,23 +690,12 @@ export async function confirmNewUserBenefit(
   const markerKey = NEW_USER_BENEFIT_KEY(userId);
   const now = Date.now();
 
-  await kv.eval(
-    `
-      local markerKey = KEYS[1]
-      local projectId = ARGV[1]
-      local claimedAt = ARGV[2]
+  const marker = await kv.get<string>(markerKey);
+  if (typeof marker === "string" && marker.startsWith(NEW_USER_CLAIMED_PREFIX)) {
+    return; // Already claimed
+  }
 
-      local marker = redis.call('GET', markerKey)
-      if marker and string.sub(marker, 1, 8) == 'claimed:' then
-        return 2
-      end
-
-      redis.call('SET', markerKey, 'claimed:' .. projectId .. ':' .. claimedAt)
-      return 1
-    `,
-    [markerKey],
-    [projectId, now]
-  );
+  await kv.set(markerKey, `${NEW_USER_CLAIMED_PREFIX}${projectId}:${now}`);
 }
 
 export async function rollbackNewUserBenefit(
@@ -947,29 +704,15 @@ export async function rollbackNewUserBenefit(
 ): Promise<void> {
   const markerKey = NEW_USER_BENEFIT_KEY(userId);
 
-  await kv.eval(
-    `
-      local markerKey = KEYS[1]
-      local projectId = ARGV[1]
+  const marker = await kv.get<string>(markerKey);
+  if (!marker) return;
 
-      local marker = redis.call('GET', markerKey)
-      if not marker then
-        return 2
-      end
-
-      if string.sub(marker, 1, 8) == 'pending:' then
-        local pendingProject = string.sub(marker, 9)
-        if pendingProject == projectId then
-          redis.call('DEL', markerKey)
-          return 1
-        end
-      end
-
-      return 2
-    `,
-    [markerKey],
-    [projectId]
-  );
+  if (typeof marker === "string" && marker.startsWith(NEW_USER_PENDING_PREFIX)) {
+    const pendingProject = marker.slice(NEW_USER_PENDING_PREFIX.length);
+    if (pendingProject === projectId) {
+      await kv.del(markerKey);
+    }
+  }
 }
 
 export interface NewUserEligibilityMigrationResult {
@@ -1101,44 +844,22 @@ export async function recordUser(userId: number, username: string): Promise<void
   const usersAllKey = 'users:all';
   const now = Date.now();
 
-  const luaScript = `
-    local userKey = KEYS[1]
-    local usersAllKey = KEYS[2]
-    local userId = tonumber(ARGV[1])
-    local username = ARGV[2]
-    local now = tonumber(ARGV[3])
+  const existing = await kv.get<User>(userKey);
 
-    local existingJson = redis.call('GET', userKey)
-    local user
-
-    if existingJson then
-      local ok, parsed = pcall(cjson.decode, existingJson)
-      if ok and parsed then
-        user = parsed
-      end
-    end
-
-    if not user then
-      user = {
-        id = userId,
-        username = username,
-        firstSeen = now,
+  const user: User = existing
+    ? {
+        id: existing.id ?? userId,
+        username,
+        firstSeen: existing.firstSeen ?? now,
       }
-    else
-      user.id = tonumber(user.id) or userId
-      user.firstSeen = tonumber(user.firstSeen) or now
-      if user.username ~= username then
-        user.username = username
-      end
-    end
+    : {
+        id: userId,
+        username,
+        firstSeen: now,
+      };
 
-    redis.call('SET', userKey, cjson.encode(user))
-    redis.call('SADD', usersAllKey, userId)
-
-    return 1
-  `;
-
-  await kv.eval(luaScript, [userKey, usersAllKey], [userId, username, now]);
+  await kv.set(userKey, user);
+  await kv.sadd(usersAllKey, userId);
 }
 // 获取所有用户
 export async function getAllUsers(): Promise<User[]> {
@@ -1179,7 +900,7 @@ export async function tryClaimDailyFree(userId: number): Promise<boolean> {
   const ttl = getSecondsUntilMidnight();
   
   // SET key value NX EX ttl - 仅当key不存在时设置
-  // Vercel KV 返回 "OK" 表示成功设置，null 表示 key 已存在
+  // D1 adapter returns "OK" for successful set, null when key already exists
   const result = await kv.set(key, "1", { nx: true, ex: ttl });
   return result === "OK";
 }
@@ -1217,26 +938,15 @@ export async function addExtraSpinCount(userId: number, count: number): Promise<
 export async function tryUseExtraSpin(userId: number): Promise<{ success: boolean; remaining: number }> {
   const key = `user:extra_spins:${userId}`;
 
-  const luaScript = `
-    local key = KEYS[1]
-    local current = tonumber(redis.call('GET', key) or '0')
+  const current = await kv.get<number>(key);
+  const currentCount = current ?? 0;
 
-    if current <= 0 then
-      return {0, current}
-    end
-
-    local remaining = redis.call('DECRBY', key, 1)
-    return {1, remaining}
-  `;
-
-  const result = await kv.eval(luaScript, [key], []) as [number, number];
-  const [successFlag, remaining] = result;
-
-  if (successFlag !== 1) {
-    return { success: false, remaining: Math.max(0, remaining || 0) };
+  if (currentCount <= 0) {
+    return { success: false, remaining: Math.max(0, currentCount) };
   }
 
-  return { success: true, remaining: Math.max(0, remaining || 0) };
+  const remaining = await kv.decrby(key, 1);
+  return { success: true, remaining: Math.max(0, remaining) };
 }
 
 // [C3修复] 回滚额外次数（失败补偿用）
@@ -1276,83 +986,66 @@ export async function grantCheckinLocalRewards(
   const extraSpinsKey = `user:extra_spins:${userId}`;
   const cardsKey = `cards:user:${userId}`;
 
-  const luaScript = `
-    local checkinKey = KEYS[1]
-    local extraSpinsKey = KEYS[2]
-    local cardsKey = KEYS[3]
-
-    local ttl = tonumber(ARGV[1])
-    local spinsAward = tonumber(ARGV[2])
-    local drawsAward = tonumber(ARGV[3])
-
-    -- Mark check-in (atomic, once per day)
-    local ok = redis.call('SET', checkinKey, '1', 'NX', 'EX', ttl)
-    if not ok then
-      local currentSpins = tonumber(redis.call('GET', extraSpinsKey) or '0')
-      local drawsAvailable = 1
-      local cardDataJson = redis.call('GET', cardsKey)
-      if cardDataJson then
-        local okDecode, cardData = pcall(cjson.decode, cardDataJson)
-        if okDecode and cardData then
-          drawsAvailable = tonumber(cardData.drawsAvailable) or 0
-        end
-      end
-      return {0, currentSpins, drawsAvailable, 'already'}
-    end
-
-    -- Load & validate card data (avoid overwriting on corrupt JSON)
-    local cardDataJson = redis.call('GET', cardsKey)
-    local cardData
-    if cardDataJson then
-      local okDecode, decoded = pcall(cjson.decode, cardDataJson)
-      if okDecode and decoded then
-        cardData = decoded
-      else
-        redis.call('DEL', checkinKey)
-        return {0, 0, 0, 'card_data_corrupt'}
-      end
-    else
-      cardData = {
-        inventory = {},
-        fragments = 0,
-        pityCounter = 0,
-        drawsAvailable = 1,
-        collectionRewards = {}
-      }
-    end
-
-    -- Award extra spins
-    local newSpins = redis.call('INCRBY', extraSpinsKey, spinsAward)
-
-    -- Award card draws (preserve existing state)
-    if not cardData.inventory then cardData.inventory = {} end
-    if not cardData.fragments then cardData.fragments = 0 end
-    if not cardData.pityCounter then cardData.pityCounter = 0 end
-    if not cardData.collectionRewards then cardData.collectionRewards = {} end
-    cardData.drawsAvailable = (tonumber(cardData.drawsAvailable) or 0) + drawsAward
-    if cardData.drawsAvailable < 0 then cardData.drawsAvailable = 0 end
-
-    redis.call('SET', cardsKey, cjson.encode(cardData))
-
-    return {1, newSpins, cardData.drawsAvailable, 'ok'}
-  `;
-
-  const raw = await kv.eval(luaScript, [checkinKey, extraSpinsKey, cardsKey], [ttl, extraSpins, cardDraws]);
-  if (!Array.isArray(raw) || raw.length < 4) {
-    throw new Error("Invalid checkin reward response");
+  // Try to mark check-in (atomic, once per day)
+  const setResult = await kv.set(checkinKey, '1', { nx: true, ex: ttl });
+  if (setResult !== 'OK') {
+    // Already checked in
+    const currentSpins = await kv.get<number>(extraSpinsKey);
+    const cardData = await kv.get<{ drawsAvailable?: number }>(cardsKey);
+    return {
+      granted: false,
+      alreadyCheckedIn: true,
+      extraSpins: currentSpins ?? 0,
+      drawsAvailable: cardData?.drawsAvailable ?? 1,
+    };
   }
 
-  const [ok, spinsRaw, drawsRaw, statusRaw] = raw as unknown[];
-  const granted = Number(ok) === 1;
-  const alreadyCheckedIn = String(statusRaw) === "already";
-  const currentSpins = Number(spinsRaw);
-  const drawsAvailable = Number(drawsRaw);
+  // Load & validate card data
+  const cardData = await kv.get<{
+    inventory?: string[];
+    fragments?: number;
+    pityCounter?: number;
+    drawsAvailable?: number;
+    collectionRewards?: Record<string, unknown>;
+  }>(cardsKey);
+
+  if (cardData === null) {
+    // No card data yet — initialize
+    const newCardData = {
+      inventory: [],
+      fragments: 0,
+      pityCounter: 0,
+      drawsAvailable: 1 + cardDraws,
+      collectionRewards: {},
+    };
+    await kv.set(cardsKey, newCardData);
+    const newSpins = await kv.incrby(extraSpinsKey, extraSpins);
+
+    return {
+      granted: true,
+      alreadyCheckedIn: false,
+      extraSpins: newSpins,
+      drawsAvailable: newCardData.drawsAvailable,
+    };
+  }
+
+  // Award card draws
+  if (!cardData.inventory) cardData.inventory = [];
+  if (!cardData.fragments) cardData.fragments = 0;
+  if (!cardData.pityCounter) cardData.pityCounter = 0;
+  if (!cardData.collectionRewards) cardData.collectionRewards = {};
+  cardData.drawsAvailable = Math.max(0, (cardData.drawsAvailable ?? 0) + cardDraws);
+
+  await kv.set(cardsKey, cardData);
+
+  // Award extra spins
+  const newSpins = await kv.incrby(extraSpinsKey, extraSpins);
 
   return {
-    granted,
-    alreadyCheckedIn,
-    extraSpins: Number.isFinite(currentSpins) ? currentSpins : 0,
-    drawsAvailable: Number.isFinite(drawsAvailable) ? drawsAvailable : 0,
+    granted: true,
+    alreadyCheckedIn: false,
+    extraSpins: newSpins,
+    drawsAvailable: cardData.drawsAvailable,
   };
 }
 
@@ -1365,49 +1058,35 @@ export async function addCardDraws(
 ): Promise<{ success: boolean; drawsAvailable: number }> {
   const cardsKey = `cards:user:${userId}`;
 
-  const luaScript = `
-    local cardsKey = KEYS[1]
-    local amount = tonumber(ARGV[1])
+  const cardData = await kv.get<{
+    inventory?: string[];
+    fragments?: number;
+    pityCounter?: number;
+    drawsAvailable?: number;
+    collectionRewards?: Record<string, unknown>;
+  }>(cardsKey);
 
-    local cardDataJson = redis.call('GET', cardsKey)
-    local cardData
-    if cardDataJson then
-      local okDecode, decoded = pcall(cjson.decode, cardDataJson)
-      if okDecode and decoded then
-        cardData = decoded
-      else
-        return {0, 0, 'card_data_corrupt'}
-      end
-    else
-      cardData = {
-        inventory = {},
-        fragments = 0,
-        pityCounter = 0,
-        drawsAvailable = 1,
-        collectionRewards = {}
-      }
-    end
-
-    if not cardData.inventory then cardData.inventory = {} end
-    if not cardData.fragments then cardData.fragments = 0 end
-    if not cardData.pityCounter then cardData.pityCounter = 0 end
-    if not cardData.collectionRewards then cardData.collectionRewards = {} end
-    cardData.drawsAvailable = (tonumber(cardData.drawsAvailable) or 0) + amount
-    if cardData.drawsAvailable < 0 then cardData.drawsAvailable = 0 end
-
-    redis.call('SET', cardsKey, cjson.encode(cardData))
-    return {1, cardData.drawsAvailable, 'ok'}
-  `;
-
-  const raw = await kv.eval(luaScript, [cardsKey], [amount]);
-  if (!Array.isArray(raw) || raw.length < 3) {
-    return { success: false, drawsAvailable: 0 };
+  if (!cardData) {
+    // Initialize card data
+    const newCardData = {
+      inventory: [],
+      fragments: 0,
+      pityCounter: 0,
+      drawsAvailable: Math.max(0, 1 + amount),
+      collectionRewards: {},
+    };
+    await kv.set(cardsKey, newCardData);
+    return { success: true, drawsAvailable: newCardData.drawsAvailable };
   }
 
-  const [ok, drawsRaw] = raw as unknown[];
-  return {
-    success: Number(ok) === 1,
-    drawsAvailable: Number(drawsRaw) || 0,
-  };
+  // Preserve existing state
+  if (!cardData.inventory) cardData.inventory = [];
+  if (!cardData.fragments) cardData.fragments = 0;
+  if (!cardData.pityCounter) cardData.pityCounter = 0;
+  if (!cardData.collectionRewards) cardData.collectionRewards = {};
+  cardData.drawsAvailable = Math.max(0, (cardData.drawsAvailable ?? 0) + amount);
+
+  await kv.set(cardsKey, cardData);
+  return { success: true, drawsAvailable: cardData.drawsAvailable };
 }
 

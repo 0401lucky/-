@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { getAllUsers } from '../kv';
 import { getUserPoints } from '../points';
 import {
@@ -14,7 +14,7 @@ import {
   runAnomalyDetection,
 } from '../anomaly-detector';
 
-vi.mock('@vercel/kv', () => ({
+vi.mock('@/lib/d1-kv', () => ({
   kv: {
     get: vi.fn(),
     set: vi.fn(),

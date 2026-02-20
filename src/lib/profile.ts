@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { ALBUMS, CARDS } from './cards/config';
 import { getUserCardData } from './cards/draw';
 import { getPointsLogs, getUserPoints } from './points';

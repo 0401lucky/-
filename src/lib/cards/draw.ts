@@ -1,4 +1,4 @@
-import { kv } from "@vercel/kv";
+import { kv } from '@/lib/d1-kv';
 import { CARDS } from "./config";
 import { CardConfig, Rarity } from "./types";
 import { RARITY_PROBABILITIES, RARITY_LEVELS, FRAGMENT_VALUES } from "./constants";
@@ -140,184 +140,116 @@ function selectCardForDraw(counters: PityCounters): CardConfig {
 }
 
 /**
- * Lua script for Phase 1: Reserve draw
- * Atomically checks drawsAvailable, decrements it, increments pity counters.
- * Returns [success, pityRare, pityEpic, pityLegendary, pityLegendaryRare, status]
+ * Phase 1: Reserve draw.
+ * Reads user data, checks drawsAvailable, decrements it, increments pity counters.
  */
-const RESERVE_DRAW_SCRIPT = `
-  local userKey = KEYS[1]
-  
-  local data = redis.call('GET', userKey)
-  local userData
-  if data then
-    userData = cjson.decode(data)
-  else
-    userData = {
-      inventory = {},
-      fragments = 0,
-      pityCounter = 0,
-      pityRare = 0,
-      pityEpic = 0,
-      pityLegendary = 0,
-      pityLegendaryRare = 0,
-      drawsAvailable = 1,
-      collectionRewards = {}
-    }
-  end
+async function reserveDraw(userKey: string): Promise<{
+  success: boolean;
+  pityCounters?: PityCounters;
+  status: string;
+}> {
+  const data = await kv.get<UserCards>(userKey);
+  const userData = normalizeUserCards(data);
 
-  -- Migrate legacy field -> new structure
-  if userData.pityLegendaryRare == nil then
-    userData.pityLegendaryRare = tonumber(userData.pityCounter) or 0
-  end
-  if userData.pityRare == nil then userData.pityRare = 0 end
-  if userData.pityEpic == nil then userData.pityEpic = 0 end
-  if userData.pityLegendary == nil then userData.pityLegendary = 0 end
-  userData.pityCounter = tonumber(userData.pityLegendaryRare) or 0
+  if (userData.drawsAvailable <= 0) {
+    return { success: false, status: "no_draws" };
+  }
 
-  -- Check draws available
-  if (userData.drawsAvailable or 0) <= 0 then
-    return {0, 0, 0, 0, 0, 'no_draws'}
-  end
+  userData.drawsAvailable -= 1;
+  userData.pityRare = (userData.pityRare ?? 0) + 1;
+  userData.pityEpic = (userData.pityEpic ?? 0) + 1;
+  userData.pityLegendary = (userData.pityLegendary ?? 0) + 1;
+  userData.pityLegendaryRare = (userData.pityLegendaryRare ?? 0) + 1;
+  userData.pityCounter = userData.pityLegendaryRare;
 
-  -- Decrement draws available and increment pity counters
-  userData.drawsAvailable = userData.drawsAvailable - 1
-  userData.pityRare = (tonumber(userData.pityRare) or 0) + 1
-  userData.pityEpic = (tonumber(userData.pityEpic) or 0) + 1
-  userData.pityLegendary = (tonumber(userData.pityLegendary) or 0) + 1
-  userData.pityLegendaryRare = (tonumber(userData.pityLegendaryRare) or 0) + 1
-  userData.pityCounter = tonumber(userData.pityLegendaryRare) or 0
-  
-  redis.call('SET', userKey, cjson.encode(userData))
-  
-  return {1, userData.pityRare, userData.pityEpic, userData.pityLegendary, userData.pityLegendaryRare, 'ok'}
-`;
+  await kv.set(userKey, userData);
+
+  return {
+    success: true,
+    pityCounters: {
+      rare: userData.pityRare,
+      epic: userData.pityEpic,
+      legendary: userData.pityLegendary,
+      legendary_rare: userData.pityLegendaryRare,
+    },
+    status: "ok",
+  };
+}
 
 /**
- * Lua script for Phase 2: Finalize draw
- * Adds card to inventory (or converts to fragments if duplicate), resets pity tiers if needed.
- * Returns [success, status, fragmentsAdded]
+ * Phase 2: Finalize draw.
+ * Adds card to inventory (or converts to fragments if duplicate), resets pity tiers.
  */
-const FINALIZE_DRAW_SCRIPT = `
-  local userKey = KEYS[1]
-  local cardId = ARGV[1]
-  local rarity = ARGV[2]
-  local fragmentValue = tonumber(ARGV[3])
+async function finalizeDraw(
+  userKey: string,
+  cardId: string,
+  rarity: string,
+  fragmentValue: number,
+): Promise<{ success: boolean; status: string; fragmentsAdded: number }> {
+  const data = await kv.get<UserCards>(userKey);
+  const userData = normalizeUserCards(data);
 
-  local data = redis.call('GET', userKey)
-  local userData = cjson.decode(data)
+  const isDuplicate = userData.inventory.includes(cardId);
 
-  -- Check if card is duplicate
-  local isDuplicate = false
-  for _, id in ipairs(userData.inventory or {}) do
-    if id == cardId then
-      isDuplicate = true
-      break
-    end
-  end
+  let fragmentsAdded = 0;
+  if (isDuplicate) {
+    userData.fragments += fragmentValue;
+    fragmentsAdded = fragmentValue;
+  } else {
+    userData.inventory.push(cardId);
+  }
 
-  local fragmentsAdded = 0
-  if isDuplicate then
-    userData.fragments = (userData.fragments or 0) + fragmentValue
-    fragmentsAdded = fragmentValue
-  else
-    if not userData.inventory then
-      userData.inventory = {}
-    end
-    table.insert(userData.inventory, cardId)
-  end
+  // Reset pity tiers based on drawn rarity (tiered cyclic pity)
+  if (rarity === "legendary_rare") {
+    userData.pityRare = 0;
+    userData.pityEpic = 0;
+    userData.pityLegendary = 0;
+    userData.pityLegendaryRare = 0;
+  } else if (rarity === "legendary") {
+    userData.pityRare = 0;
+    userData.pityEpic = 0;
+    userData.pityLegendary = 0;
+  } else if (rarity === "epic") {
+    userData.pityRare = 0;
+    userData.pityEpic = 0;
+  } else if (rarity === "rare") {
+    userData.pityRare = 0;
+  }
+  userData.pityCounter = userData.pityLegendaryRare ?? 0;
 
-  -- Ensure pity counters exist & migrate legacy field
-  if userData.pityLegendaryRare == nil then
-    userData.pityLegendaryRare = tonumber(userData.pityCounter) or 0
-  end
-  local pityRare = tonumber(userData.pityRare) or 0
-  local pityEpic = tonumber(userData.pityEpic) or 0
-  local pityLegendary = tonumber(userData.pityLegendary) or 0
-  local pityLegendaryRare = tonumber(userData.pityLegendaryRare) or 0
+  await kv.set(userKey, userData);
 
-  -- Reset pity tiers based on drawn rarity (tiered cyclic pity)
-  if rarity == 'legendary_rare' then
-    pityRare = 0
-    pityEpic = 0
-    pityLegendary = 0
-    pityLegendaryRare = 0
-  elseif rarity == 'legendary' then
-    pityRare = 0
-    pityEpic = 0
-    pityLegendary = 0
-  elseif rarity == 'epic' then
-    pityRare = 0
-    pityEpic = 0
-  elseif rarity == 'rare' then
-    pityRare = 0
-  end
-
-  userData.pityRare = pityRare
-  userData.pityEpic = pityEpic
-  userData.pityLegendary = pityLegendary
-  userData.pityLegendaryRare = pityLegendaryRare
-  userData.pityCounter = pityLegendaryRare
-
-  redis.call('SET', userKey, cjson.encode(userData))
-
-  if isDuplicate then
-    return {1, 'duplicate', fragmentsAdded}
-  else
-    return {1, 'ok', 0}
-  end
-`;
+  return {
+    success: true,
+    status: isDuplicate ? "duplicate" : "ok",
+    fragmentsAdded,
+  };
+}
 
 /**
- * Lua script for rollback when Phase 2 fails.
+ * Rollback reserved draw.
  * Restores one draw and reverts pity increments from Phase 1.
  */
-const ROLLBACK_RESERVE_DRAW_SCRIPT = `
-  local userKey = KEYS[1]
-  local data = redis.call('GET', userKey)
-  if not data then
-    return {0, 'missing_user_data'}
-  end
-
-  local ok, userData = pcall(cjson.decode, data)
-  if not ok or not userData then
-    return {0, 'invalid_user_data'}
-  end
-
-  local drawsAvailable = tonumber(userData.drawsAvailable) or 0
-  userData.drawsAvailable = drawsAvailable + 1
-
-  local pityRare = (tonumber(userData.pityRare) or 0) - 1
-  if pityRare < 0 then pityRare = 0 end
-
-  local pityEpic = (tonumber(userData.pityEpic) or 0) - 1
-  if pityEpic < 0 then pityEpic = 0 end
-
-  local pityLegendary = (tonumber(userData.pityLegendary) or 0) - 1
-  if pityLegendary < 0 then pityLegendary = 0 end
-
-  local pityLegendaryRare = (tonumber(userData.pityLegendaryRare) or tonumber(userData.pityCounter) or 0) - 1
-  if pityLegendaryRare < 0 then pityLegendaryRare = 0 end
-
-  userData.pityRare = pityRare
-  userData.pityEpic = pityEpic
-  userData.pityLegendary = pityLegendary
-  userData.pityLegendaryRare = pityLegendaryRare
-  userData.pityCounter = pityLegendaryRare
-
-  redis.call('SET', userKey, cjson.encode(userData))
-  return {1, 'ok'}
-`;
-
 async function rollbackReservedDraw(userKey: string): Promise<void> {
-  const rollbackResult = await kv.eval(ROLLBACK_RESERVE_DRAW_SCRIPT, [userKey], []);
-  if (!Array.isArray(rollbackResult) || Number(rollbackResult[0]) !== 1) {
-    throw new Error("Rollback reserve draw failed");
+  const data = await kv.get<UserCards>(userKey);
+  if (!data) {
+    throw new Error("Rollback reserve draw failed: missing user data");
   }
+  const userData = normalizeUserCards(data);
+
+  userData.drawsAvailable += 1;
+  userData.pityRare = Math.max(0, (userData.pityRare ?? 0) - 1);
+  userData.pityEpic = Math.max(0, (userData.pityEpic ?? 0) - 1);
+  userData.pityLegendary = Math.max(0, (userData.pityLegendary ?? 0) - 1);
+  userData.pityLegendaryRare = Math.max(0, (userData.pityLegendaryRare ?? 0) - 1);
+  userData.pityCounter = userData.pityLegendaryRare ?? 0;
+
+  await kv.set(userKey, userData);
 }
 
 /**
  * Main draw function.
- * Uses two-phase Lua scripts for atomic operations to prevent race conditions.
+ * Two-phase approach to prevent race conditions:
  * Phase 1: Reserve draw (check & decrement drawsAvailable, increment pityCounter)
  * Phase 2: Finalize draw (add card, handle duplicates, reset pity)
  * Card selection happens between phases (requires randomness).
@@ -331,46 +263,31 @@ export async function drawCard(userId: string): Promise<{
 }> {
   const userKey = `cards:user:${userId}`;
 
-  // Phase 1: Atomically reserve the draw and get actual pity counters
-  const reserveResult = (await kv.eval(RESERVE_DRAW_SCRIPT, [userKey], [])) as unknown;
-  if (!Array.isArray(reserveResult) || reserveResult.length < 6) {
-    throw new Error("Invalid reserve draw response");
-  }
+  // Phase 1: Reserve the draw and get actual pity counters
+  const reserve = await reserveDraw(userKey);
 
-  const [reserveSuccessRaw, pityRareRaw, pityEpicRaw, pityLegendaryRaw, pityLegendaryRareRaw] = reserveResult as unknown[];
-  const reserveSuccess = Number(reserveSuccessRaw);
-
-  if (reserveSuccess !== 1) {
+  if (!reserve.success) {
     return { success: false, message: "抽卡次数不足" };
   }
 
-  const pityCounters = normalizePityCounters({
-    rare: Number(pityRareRaw),
-    epic: Number(pityEpicRaw),
-    legendary: Number(pityLegendaryRaw),
-    legendary_rare: Number(pityLegendaryRareRaw),
-  });
+  const pityCounters = normalizePityCounters(reserve.pityCounters!);
 
-  // Card selection based on ACTUAL pity counters (outside Lua, uses randomness)
+  // Card selection based on ACTUAL pity counters
   const card = selectCardForDraw(pityCounters);
 
   // Get fragment value for duplicate handling
   const fragmentValue = FRAGMENT_VALUES[card.rarity];
 
   // Phase 2: Finalize the draw
-  let finalizeResult: [number, string, number];
   try {
-    const finalizeResultRaw = await kv.eval(FINALIZE_DRAW_SCRIPT, [userKey], [
-      card.id,
-      card.rarity,
-      fragmentValue,
-    ]);
+    const result = await finalizeDraw(userKey, card.id, card.rarity, fragmentValue);
 
-    if (!Array.isArray(finalizeResultRaw) || finalizeResultRaw.length < 3) {
-      throw new Error("Invalid finalize draw response");
-    }
-
-    finalizeResult = finalizeResultRaw as [number, string, number];
+    return {
+      success: true,
+      card,
+      isDuplicate: result.status === "duplicate",
+      fragmentsAdded: result.fragmentsAdded > 0 ? result.fragmentsAdded : undefined,
+    };
   } catch (error) {
     try {
       await rollbackReservedDraw(userKey);
@@ -380,13 +297,4 @@ export async function drawCard(userId: string): Promise<{
     console.error("Finalize draw failed:", error);
     return { success: false, message: "抽卡异常，请重试" };
   }
-
-  const [, status, fragmentsAdded] = finalizeResult;
-
-  return {
-    success: true,
-    card,
-    isDuplicate: status === "duplicate",
-    fragmentsAdded: fragmentsAdded > 0 ? fragmentsAdded : undefined,
-  };
 }

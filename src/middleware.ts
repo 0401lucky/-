@@ -14,13 +14,7 @@ function getAllowedOrigins(request: NextRequest): string[] {
   if (process.env.NEXT_PUBLIC_BASE_URL) {
     origins.push(process.env.NEXT_PUBLIC_BASE_URL.replace(/\/+$/, ''));
   }
-  if (process.env.VERCEL_URL) {
-    origins.push(`https://${process.env.VERCEL_URL}`);
-  }
-  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
-    origins.push(`https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`);
-  }
-  // 从请求的 Host 头推断 Origin（Vercel 反向代理后 Host 可信）
+  // 从请求的 Host 头推断 Origin
   const host = request.headers.get('host');
   if (host) {
     origins.push(`https://${host}`);

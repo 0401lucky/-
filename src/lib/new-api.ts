@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { maskUserId, maskUsername } from './logging';
 
 let _newApiUrl: string | null = null;
@@ -33,18 +33,11 @@ async function acquireUserQuotaLock(userId: number): Promise<UserQuotaLock | nul
 }
 
 async function releaseUserQuotaLock(lock: UserQuotaLock): Promise<void> {
-  const luaScript = `
-    local key = KEYS[1]
-    local expected = ARGV[1]
-    local current = redis.call('GET', key)
-    if current == expected then
-      return redis.call('DEL', key)
-    end
-    return 0
-  `;
-
   try {
-    await kv.eval(luaScript, [lock.key], [lock.token]);
+    const current = await kv.get<string>(lock.key);
+    if (current === lock.token) {
+      await kv.del(lock.key);
+    }
   } catch (error) {
     console.error('Release quota lock failed:', error);
   }

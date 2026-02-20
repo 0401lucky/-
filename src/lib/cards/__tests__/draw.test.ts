@@ -1,19 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { drawCard, getUserCardData, updateUserCardData, selectCardByProbability } from '../draw';
-import { kv } from '@vercel/kv';
+import { drawCard, getUserCardData, updateUserCardData, selectCardByProbability, UserCards } from '../draw';
+import { kv } from '@/lib/d1-kv';
 import { CARDS } from '../config';
+import { FRAGMENT_VALUES } from '../constants';
 
-vi.mock('@vercel/kv', () => ({
+vi.mock('@/lib/d1-kv', () => ({
   kv: {
     get: vi.fn(),
     set: vi.fn(),
-    eval: vi.fn(),
   },
 }));
 
 describe('Card Draw System', () => {
   const userId = 'user_123';
-  const getFreshMockData = () => ({
+  const getFreshMockData = (): UserCards => ({
     inventory: [],
     fragments: 0,
     pityCounter: 0,
@@ -26,10 +26,11 @@ describe('Card Draw System', () => {
   });
 
   const mockKvGet = vi.mocked(kv.get);
-  const mockKvEval = vi.mocked(kv.eval);
+  const mockKvSet = vi.mocked(kv.set);
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockKvSet.mockResolvedValue('OK');
   });
 
   describe('getUserCardData', () => {
@@ -99,18 +100,30 @@ describe('Card Draw System', () => {
 
   describe('drawCard', () => {
     it('should return null and message if user has no draws available', async () => {
-      // Phase 1 returns failure (no draws)
-      mockKvEval.mockResolvedValueOnce([0, 0, 0, 0, 0, 'no_draws']);
-      
+      // Phase 1: reserveDraw reads user data with 0 draws
+      mockKvGet.mockResolvedValueOnce({ ...getFreshMockData(), drawsAvailable: 0 });
+
       const result = await drawCard(userId);
       expect(result).toEqual({ success: false, message: '抽卡次数不足' });
+      // Only kv.get should be called (no kv.set since reserve fails early)
+      expect(kv.get).toHaveBeenCalledTimes(1);
+      expect(kv.set).not.toHaveBeenCalled();
     });
 
     it('should return a card and update user data on success', async () => {
-      // Phase 1: Reserve draw success, returns pityCounter = 1
-      mockKvEval.mockResolvedValueOnce([1, 1, 1, 1, 1, 'ok']);
-      // Phase 2: Finalize draw success, new card
-      mockKvEval.mockResolvedValueOnce([1, 'ok', 0]);
+      const userData = getFreshMockData();
+      // Phase 1: reserveDraw reads user data (has 1 draw available)
+      mockKvGet.mockResolvedValueOnce({ ...userData });
+      // Phase 2: finalizeDraw reads user data (after reserve decremented draws)
+      mockKvGet.mockResolvedValueOnce({
+        ...userData,
+        drawsAvailable: 0,
+        pityRare: 1,
+        pityEpic: 1,
+        pityLegendary: 1,
+        pityLegendaryRare: 1,
+        pityCounter: 1,
+      });
 
       const result = await drawCard(userId);
 
@@ -118,23 +131,41 @@ describe('Card Draw System', () => {
       expect(result.card).toBeDefined();
       expect(CARDS).toContain(result.card);
       expect(result.isDuplicate).toBe(false);
-      
-      // Verify kv.eval was called twice (two phases)
-      expect(kv.eval).toHaveBeenCalledTimes(2);
+
+      // Verify kv.get called twice (phase 1 + phase 2) and kv.set called twice
+      expect(kv.get).toHaveBeenCalledTimes(2);
+      expect(kv.set).toHaveBeenCalledTimes(2);
     });
 
     it('should handle duplicate cards and return fragments', async () => {
-      // Phase 1: Reserve draw success
-      mockKvEval.mockResolvedValueOnce([1, 1, 1, 1, 1, 'ok']);
-      // Phase 2: Finalize draw - duplicate card, returns fragments
-      mockKvEval.mockResolvedValueOnce([1, 'duplicate', 5]);
+      // Pick a known card to force into inventory for duplication
+      const knownCard = CARDS[0];
+      const fragmentValue = FRAGMENT_VALUES[knownCard.rarity];
+
+      const userData: UserCards = {
+        ...getFreshMockData(),
+        inventory: CARDS.map(c => c.id), // all cards in inventory = guaranteed duplicate
+      };
+
+      // Phase 1: reserveDraw reads user data
+      mockKvGet.mockResolvedValueOnce({ ...userData });
+      // Phase 2: finalizeDraw reads user data (after reserve)
+      mockKvGet.mockResolvedValueOnce({
+        ...userData,
+        drawsAvailable: 0,
+        pityRare: 1,
+        pityEpic: 1,
+        pityLegendary: 1,
+        pityLegendaryRare: 1,
+        pityCounter: 1,
+      });
 
       const result = await drawCard(userId);
 
       expect(result.success).toBe(true);
       expect(result.card).toBeDefined();
       expect(result.isDuplicate).toBe(true);
-      expect(result.fragmentsAdded).toBe(5);
+      expect(result.fragmentsAdded).toBe(FRAGMENT_VALUES[result.card!.rarity]);
     });
   });
 });

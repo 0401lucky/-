@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { getAuthUser } from '@/lib/auth';
 import { CARD_DRAW_PRICE } from '@/lib/cards/constants';
 import { nanoid } from 'nanoid';
@@ -26,58 +26,33 @@ export async function POST() {
   const amount = CARD_DRAW_PRICE;
   const drawAward = 1;
 
-  // Lua script to atomically deduct points and increment drawsAvailable
-  const luaScript = `
-    local pointsKey = KEYS[1]
-    local cardsKey = KEYS[2]
-    local amount = tonumber(ARGV[1])
-    local drawAward = tonumber(ARGV[2])
-
-    -- 1. Check points balance
-    local currentPoints = tonumber(redis.call('GET', pointsKey) or '0')
-    if currentPoints < amount then
-      return {0, currentPoints}
-    end
-
-    -- 2. Deduct points
-    local newBalance = redis.call('DECRBY', pointsKey, amount)
-
-    -- 3. Award draws
-    -- Get current card data or initialize
-    local cardDataJson = redis.call('GET', cardsKey)
-    local cardData = {}
-    
-    if cardDataJson then
-      cardData = cjson.decode(cardDataJson)
-    else
-      cardData = {
-        inventory = {},
-        fragments = 0,
-        pityCounter = 0,
-        drawsAvailable = 1, -- Default initial draws
-        collectionRewards = {}
-      }
-    end
-
-    cardData.drawsAvailable = (cardData.drawsAvailable or 0) + drawAward
-    
-    local newCardDataJson = cjson.encode(cardData)
-    redis.call('SET', cardsKey, newCardDataJson)
-
-    return {1, newBalance, cardData.drawsAvailable}
-  `;
-
   try {
-    const result = await kv.eval(luaScript, [pointsKey, cardsKey], [amount, drawAward]) as [number, number, number];
-    const [success, balance, drawsAvailable] = result;
-
-    if (success === 0) {
-      return NextResponse.json({ 
-        success: false, 
-        message: '积分不足', 
-        balance 
+    // 1. Check points balance
+    const currentPoints = Number(await kv.get<number>(pointsKey)) || 0;
+    if (currentPoints < amount) {
+      return NextResponse.json({
+        success: false,
+        message: '积分不足',
+        balance: currentPoints,
       });
     }
+
+    // 2. Deduct points
+    const newBalance = await kv.decrby(pointsKey, amount);
+
+    // 3. Award draws - get current card data or initialize
+    const cardData = await kv.get<Record<string, unknown>>(cardsKey) ?? {
+      inventory: [],
+      fragments: 0,
+      pityCounter: 0,
+      drawsAvailable: 1,
+      collectionRewards: [],
+    };
+    const currentDraws = Number(cardData.drawsAvailable) || 0;
+    cardData.drawsAvailable = currentDraws + drawAward;
+    await kv.set(cardsKey, cardData);
+
+    const drawsAvailable = cardData.drawsAvailable;
 
     // Record points log
     const log: PointsLog = {
@@ -85,7 +60,7 @@ export async function POST() {
       amount: -amount,
       source: 'exchange',
       description: `购买动物卡抽卡次数 x${drawAward}`,
-      balance,
+      balance: newBalance,
       createdAt: Date.now(),
     };
 
@@ -96,7 +71,7 @@ export async function POST() {
     return NextResponse.json({
       success: true,
       message: `成功购买 ${drawAward} 次抽卡机会`,
-      newBalance: balance,
+      newBalance,
       drawsAvailable
     });
   } catch (error) {

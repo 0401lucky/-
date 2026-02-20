@@ -2,7 +2,7 @@
  * 多人抽奖功能 - 核心业务逻辑
  */
 
-import { kv } from "@vercel/kv";
+import { kv } from '@/lib/d1-kv';
 import { randomInt } from "crypto";
 import { nanoid } from "nanoid";
 import { creditQuotaToUser } from "./new-api";
@@ -307,107 +307,53 @@ export async function joinRaffle(
   const now = Date.now();
   const entryId = `entry_${now}_${nanoid(8)}`;
 
-  const luaScript = `
-    local raffleKey = KEYS[1]
-    local entriesKey = KEYS[2]
-    local participantsKey = KEYS[3]
-    local entryCountKey = KEYS[4]
-    local userRafflesKey = KEYS[5]
-    local drawLockKey = KEYS[6]
+  // 1. Read raffle
+  const raffle = await kv.get<Raffle>(raffleKey);
+  if (!raffle) return { success: false, message: "活动不存在" };
 
-    local now = tonumber(ARGV[1])
-    local entryId = ARGV[2]
-    local raffleId = ARGV[3]
-    local userId = tonumber(ARGV[4])
-    local username = ARGV[5]
+  // 2. Check draw lock
+  const drawLockExists = await kv.exists(drawLockKey);
+  if (drawLockExists) return { success: false, message: "活动正在开奖，请稍后再试" };
 
-    -- 1. 获取活动信息
-    local raffleJson = redis.call('GET', raffleKey)
-    if not raffleJson then
-      return {0, '', '活动不存在'}
-    end
-
-    local ok, raffle = pcall(cjson.decode, raffleJson)
-    if not ok or not raffle then
-      return {0, '', '活动数据异常'}
-    end
-
-    -- 2. 检查开奖锁（开奖期间禁止新参与，避免漏抽/数据覆盖）
-    if redis.call('EXISTS', drawLockKey) == 1 then
-      return {0, '', '活动正在开奖，请稍后再试'}
-    end
-
-    -- 3. 检查活动状态
-    if raffle.status ~= 'active' then
-      if raffle.status == 'draft' then
-        return {0, '', '活动尚未开始'}
-      elseif raffle.status == 'ended' then
-        return {0, '', '活动已结束'}
-      elseif raffle.status == 'cancelled' then
-        return {0, '', '活动已取消'}
-      end
-      return {0, '', '活动状态异常'}
-    end
-
-    -- 4. 检查是否已参与
-    local alreadyJoined = redis.call('SISMEMBER', participantsKey, userId)
-    if alreadyJoined == 1 then
-      return {0, '', '您已经参与过了'}
-    end
-
-    -- 5. 分配抽奖号码
-    local entryNumber = redis.call('INCR', entryCountKey)
-
-    -- 6. 创建参与记录
-    local entry = {
-      id = entryId,
-      raffleId = raffleId,
-      userId = userId,
-      username = username,
-      entryNumber = entryNumber,
-      createdAt = now
-    }
-    local entryJson = cjson.encode(entry)
-
-    -- 7. 原子写入
-    redis.call('LPUSH', entriesKey, entryJson)
-    redis.call('SADD', participantsKey, userId)
-    redis.call('SADD', userRafflesKey, raffleId)
-
-    -- 8. 更新活动参与人数
-    raffle.participantsCount = (raffle.participantsCount or 0) + 1
-    raffle.updatedAt = now
-    redis.call('SET', raffleKey, cjson.encode(raffle))
-
-    -- 9. 检查是否触发自动开奖
-    local shouldDraw = 0
-    if raffle.triggerType == 'threshold' and raffle.participantsCount >= raffle.threshold then
-      shouldDraw = 1
-    end
-
-    return {1, entryJson, 'ok', shouldDraw}
-  `;
-
-  const result = (await kv.eval(
-    luaScript,
-    [raffleKey, entriesKey, participantsKey, entryCountKey, userRafflesKey, drawLockKey],
-    [now, entryId, raffleId, userId, username]
-  )) as [number, string, string, number?];
-
-  const [success, entryJson, message, shouldDraw] = result;
-
-  if (success !== 1) {
-    return { success: false, message };
+  // 3. Check status
+  if (raffle.status !== "active") {
+    if (raffle.status === "draft") return { success: false, message: "活动尚未开始" };
+    if (raffle.status === "ended") return { success: false, message: "活动已结束" };
+    if (raffle.status === "cancelled") return { success: false, message: "活动已取消" };
+    return { success: false, message: "活动状态异常" };
   }
 
-  const entry: RaffleEntry = JSON.parse(entryJson);
+  // 4. Check if already joined
+  const alreadyJoined = await kv.sismember(participantsKey, userId);
+  if (alreadyJoined === 1) return { success: false, message: "您已经参与过了" };
 
-  return {
-    success: true,
-    message: "参与成功",
-    entry,
-    shouldDraw: shouldDraw === 1,
+  // 5. Assign entry number
+  const entryNumber = await kv.incr(entryCountKey);
+
+  // 6. Create entry
+  const entry: RaffleEntry = {
+    id: entryId,
+    raffleId,
+    userId,
+    username,
+    entryNumber,
+    createdAt: now,
   };
+
+  // 7. Atomic writes
+  await kv.lpush(entriesKey, entry);
+  await kv.sadd(participantsKey, userId);
+  await kv.sadd(userRafflesKey, raffleId);
+
+  // 8. Update raffle
+  raffle.participantsCount = (raffle.participantsCount ?? 0) + 1;
+  raffle.updatedAt = now;
+  await kv.set(raffleKey, raffle);
+
+  // 9. Check auto-draw
+  const shouldDraw = raffle.triggerType === "threshold" && raffle.participantsCount >= (raffle.threshold ?? Infinity);
+
+  return { success: true, message: "参与成功", entry, shouldDraw };
 }
 
 /**
@@ -528,46 +474,34 @@ function buildRetryDeliveryJob(job: DeliveryQueueJob, now = Date.now()): Deliver
 async function popDeliveryJobToProcessingQueue(): Promise<string | null> {
   const now = Date.now();
   const processingToken = nanoid(10);
-  const popAndMoveScript = `
-    local raw = redis.call('RPOP', KEYS[1])
-    if not raw then
-      return nil
-    end
 
-    local ok, decoded = pcall(cjson.decode, raw)
-    if ok and type(decoded) == 'table' then
-      decoded.processingStartedAt = tonumber(ARGV[1])
-      decoded.processingToken = ARGV[2]
-      local encoded = cjson.encode(decoded)
-      redis.call('LPUSH', KEYS[2], encoded)
-      return encoded
-    end
+  const raw = await kv.rpop(RAFFLE_DELIVERY_QUEUE_KEY);
+  if (!raw) return null;
 
-    redis.call('LPUSH', KEYS[2], raw)
-    return raw
-  `;
-
-  const raw = await kv.eval(
-    popAndMoveScript,
-    [RAFFLE_DELIVERY_QUEUE_KEY, RAFFLE_DELIVERY_PROCESSING_QUEUE_KEY],
-    [now, processingToken]
-  );
-
+  let rawStr: string;
   if (typeof raw === "string") {
-    return raw;
-  }
-
-  // @vercel/kv 在部分场景会自动把 JSON 字符串反序列化为对象。
-  // 这里统一转回字符串，确保后续 JSON.parse 与 LREM 精确匹配都能工作。
-  if (raw && typeof raw === "object") {
+    rawStr = raw;
+  } else if (typeof raw === "object") {
     try {
-      return JSON.stringify(raw);
+      rawStr = JSON.stringify(raw);
     } catch {
       return null;
     }
+  } else {
+    return null;
   }
 
-  return null;
+  try {
+    const decoded = JSON.parse(rawStr) as DeliveryQueueJob;
+    decoded.processingStartedAt = now;
+    decoded.processingToken = processingToken;
+    const encoded = JSON.stringify(decoded);
+    await kv.lpush(RAFFLE_DELIVERY_PROCESSING_QUEUE_KEY, encoded);
+    return encoded;
+  } catch {
+    await kv.lpush(RAFFLE_DELIVERY_PROCESSING_QUEUE_KEY, rawStr);
+    return rawStr;
+  }
 }
 
 async function ackProcessingDeliveryJob(rawProcessingJob: string): Promise<boolean> {
@@ -579,22 +513,12 @@ async function requeueProcessingDeliveryJob(
   rawProcessingJob: string,
   jobToRequeue: DeliveryQueueJob
 ): Promise<boolean> {
-  const requeueScript = `
-    local removed = redis.call('LREM', KEYS[1], 1, ARGV[1])
-    if removed > 0 then
-      redis.call('LPUSH', KEYS[2], ARGV[2])
-      return 1
-    end
-    return 0
-  `;
-
-  const moved = await kv.eval(
-    requeueScript,
-    [RAFFLE_DELIVERY_PROCESSING_QUEUE_KEY, RAFFLE_DELIVERY_QUEUE_KEY],
-    [rawProcessingJob, JSON.stringify(jobToRequeue)]
-  );
-
-  return Number(moved) > 0;
+  const removed = await kv.lrem(RAFFLE_DELIVERY_PROCESSING_QUEUE_KEY, 1, rawProcessingJob);
+  if (Number(removed) > 0) {
+    await kv.lpush(RAFFLE_DELIVERY_QUEUE_KEY, JSON.stringify(jobToRequeue));
+    return true;
+  }
+  return false;
 }
 
 async function recoverTimedOutProcessingDeliveryJobs(now = Date.now()): Promise<number> {
@@ -791,13 +715,10 @@ async function acquireDrawLock(raffleId: string): Promise<string | null> {
  */
 async function releaseDrawLock(raffleId: string, lockToken: string): Promise<void> {
   const lockKey = `${RAFFLE_DRAW_LOCK_PREFIX}${raffleId}`;
-  const releaseScript = `
-    if redis.call('GET', KEYS[1]) == ARGV[1] then
-      return redis.call('DEL', KEYS[1])
-    end
-    return 0
-  `;
-  await kv.eval(releaseScript, [lockKey], [lockToken]);
+  const current = await kv.get<string>(lockKey);
+  if (current === lockToken) {
+    await kv.del(lockKey);
+  }
 }
 
 /**

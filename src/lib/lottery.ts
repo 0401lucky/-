@@ -1,4 +1,4 @@
-import { kv } from "@vercel/kv";
+import { kv } from '@/lib/d1-kv';
 import { getKvErrorInsight, tryUseExtraSpin, tryClaimDailyFree, releaseDailyFree, rollbackExtraSpin } from "./kv";
 import { getTodayDateString, getSecondsUntilMidnight } from "./time";
 
@@ -551,65 +551,40 @@ export async function spinLottery(
       return { success: false, message: "抽奖配置异常，请联系管理员" };
     }
 
-    // [Perf] 使用 Lua 脚本在 Redis 端原子性随机选取并标记已使用
-    // 避免全量 smembers 数据传输和内存过滤
+    // Select a random unused code from the tier
     const allCodesKey = `${LOTTERY_CODES_PREFIX}${selectedTier.id}`;
     const usedCodesKey = `${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`;
 
-    const luaScript = `
-      local allKey = KEYS[1]
-      local usedKey = KEYS[2]
-      local maxAttempts = tonumber(ARGV[1]) or 100
+    // D1-compatible: read sets, filter available codes, pick random, mark used
+    const allCodes = await kv.smembers<string>(allCodesKey);
+    let ok: number;
+    let selectedCode: string;
+    let status: string;
 
-      -- 获取所有码的数量
-      local total = redis.call('SCARD', allKey)
-      if total == 0 then
-        return {0, '', 'empty'}
-      end
+    if (allCodes.length === 0) {
+      ok = 0; selectedCode = ''; status = 'empty';
+    } else {
+      const usedCodes = await kv.smembers<string>(usedCodesKey);
+      const usedSet = new Set(usedCodes);
 
-      -- 获取已使用码的数量
-      local usedCount = redis.call('SCARD', usedKey)
-      if usedCount >= total then
-        return {0, '', 'exhausted'}
-      end
-
-      -- 随机尝试获取一个未使用的码
-      for i = 1, maxAttempts do
-        local code = redis.call('SRANDMEMBER', allKey)
-        if code and redis.call('SISMEMBER', usedKey, code) == 0 then
-          -- 原子性标记为已使用
-          local added = redis.call('SADD', usedKey, code)
-          if added == 1 then
-            return {1, code, 'ok'}
-          end
-          -- 如果 SADD 返回 0，说明刚被别人抢了，继续尝试
-        end
-      end
-
-      -- 随机尝试失败，使用 SDIFF 获取精确可用集合（降级方案）
-      local available = redis.call('SDIFF', allKey, usedKey)
-      if #available == 0 then
-        return {0, '', 'exhausted'}
-      end
-
-      -- 随机选一个
-      local idx = math.random(1, #available)
-      local code = available[idx]
-      local added = redis.call('SADD', usedKey, code)
-      if added == 1 then
-        return {1, code, 'ok'}
-      end
-
-      return {0, '', 'conflict'}
-    `;
-
-    const result = await kv.eval(
-      luaScript,
-      [allCodesKey, usedCodesKey],
-      [100]  // maxAttempts
-    ) as [number, string, string];
-
-    const [ok, selectedCode, status] = result;
+      if (usedCodes.length >= allCodes.length) {
+        ok = 0; selectedCode = ''; status = 'exhausted';
+      } else {
+        const availableCodes = allCodes.filter(code => !usedSet.has(code));
+        if (availableCodes.length === 0) {
+          ok = 0; selectedCode = ''; status = 'exhausted';
+        } else {
+          const randomIndex = Math.floor(Math.random() * availableCodes.length);
+          const pickedCode = availableCodes[randomIndex];
+          const added = await kv.sadd(usedCodesKey, pickedCode);
+          if (added > 0) {
+            ok = 1; selectedCode = pickedCode; status = 'ok';
+          } else {
+            ok = 0; selectedCode = ''; status = 'conflict';
+          }
+        }
+      }
+    }
 
     if (ok !== 1 || !selectedCode) {
       await rollbackSpinCount();
@@ -756,39 +731,22 @@ export async function reserveDailyDirectQuota(dollars: number): Promise<{ succes
     return { success: false, newTotal: await getTodayDirectTotal() };
   }
 
-  // Lua 脚本：原子性预占额度
-  const luaScript = `
-    local key = KEYS[1]
-    local cents = tonumber(ARGV[1])
-    local limit = tonumber(ARGV[2])
-    local ttl = tonumber(ARGV[3])
+  // D1-compatible: increment counter, check limit, rollback if exceeded
+  const newTotalCents = await kv.incrby(key, cents);
 
-    -- 原子性增加
-    local newTotal = redis.call('INCRBY', key, cents)
+  // Set TTL if this is a new key (no existing expiry)
+  const currentTtl = await kv.ttl(key);
+  if (currentTtl === -1) {
+    await kv.expire(key, ttl);
+  }
 
-    -- 设置 TTL（仅当 key 没有过期时间时）
-    if redis.call('TTL', key) == -1 then
-      redis.call('EXPIRE', key, ttl)
-    end
+  if (newTotalCents > limitCents) {
+    // Exceeded limit, rollback
+    await kv.decrby(key, cents);
+    return { success: false, newTotal: (newTotalCents - cents) / DIRECT_AMOUNT_SCALE };
+  }
 
-    -- 检查是否超限
-    if newTotal > limit then
-      -- 超限，回滚
-      redis.call('DECRBY', key, cents)
-      return {0, newTotal - cents}
-    end
-
-    return {1, newTotal}
-  `;
-
-  const result = await kv.eval(
-    luaScript,
-    [key],
-    [cents, limitCents, ttl]
-  ) as [number, number];
-
-  const [success, newTotalCents] = result;
-  return { success: success === 1, newTotal: (newTotalCents || 0) / DIRECT_AMOUNT_SCALE };
+  return { success: true, newTotal: (newTotalCents || 0) / DIRECT_AMOUNT_SCALE };
 }
 
 /**

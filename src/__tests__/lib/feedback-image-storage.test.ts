@@ -1,28 +1,34 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { put } from '@vercel/blob';
 import { externalizeFeedbackImages } from '@/lib/feedback-image-storage';
 
-vi.mock('@vercel/blob', () => ({
-  put: vi.fn(),
+// Mock getCloudflareContext to provide a fake R2 binding
+const mockR2Put = vi.fn();
+const mockGetCloudflareContext = vi.fn(() => ({
+  env: {
+    FEEDBACK_IMAGES: {
+      put: mockR2Put,
+    },
+  },
+}));
+
+vi.mock('@opennextjs/cloudflare', () => ({
+  getCloudflareContext: (...args: unknown[]) => mockGetCloudflareContext(...args),
 }));
 
 describe('externalizeFeedbackImages', () => {
-  const mockPut = vi.mocked(put);
-  const originalToken = process.env.BLOB_READ_WRITE_TOKEN;
+  const originalR2Url = process.env.R2_PUBLIC_URL;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.BLOB_READ_WRITE_TOKEN = 'blob-test-token';
+    process.env.R2_PUBLIC_URL = 'https://r2.example.com';
   });
 
   afterAll(() => {
-    process.env.BLOB_READ_WRITE_TOKEN = originalToken;
+    process.env.R2_PUBLIC_URL = originalR2Url;
   });
 
   it('会把 base64 图片上传并替换为外链 URL', async () => {
-    mockPut.mockResolvedValue({
-      url: 'https://blob.vercel-storage.com/feedback/abc.png',
-    } as Awaited<ReturnType<typeof put>>);
+    mockR2Put.mockResolvedValue(undefined);
 
     const result = await externalizeFeedbackImages(
       [
@@ -40,18 +46,16 @@ describe('externalizeFeedbackImages', () => {
       }
     );
 
-    expect(mockPut).toHaveBeenCalledTimes(1);
-    expect(mockPut).toHaveBeenCalledWith(
-      expect.stringMatching(/^feedback\/\d{8}\/user\//),
-      expect.any(Buffer),
+    expect(mockR2Put).toHaveBeenCalledTimes(1);
+    const [pathname, body, opts] = mockR2Put.mock.calls[0];
+    expect(pathname).toMatch(/^feedback\/\d{8}\/user\//);
+    expect(Buffer.isBuffer(body)).toBe(true);
+    expect(opts).toEqual(
       expect.objectContaining({
-        access: 'public',
-        addRandomSuffix: true,
-        contentType: 'image/png',
-        token: 'blob-test-token',
+        httpMetadata: { contentType: 'image/png' },
       })
     );
-    expect(result[0].dataUrl).toBe('https://blob.vercel-storage.com/feedback/abc.png');
+    expect(result[0].dataUrl).toMatch(/^https:\/\/r2\.example\.com\/feedback\//);
     expect(result[0].size).toBe(5);
   });
 
@@ -69,12 +73,13 @@ describe('externalizeFeedbackImages', () => {
       role: 'admin',
     });
 
-    expect(mockPut).not.toHaveBeenCalled();
+    expect(mockR2Put).not.toHaveBeenCalled();
     expect(result[0]).toEqual(image);
   });
 
-  it('缺少 token 时会报错', async () => {
-    delete process.env.BLOB_READ_WRITE_TOKEN;
+  it('缺少 R2 binding 时会报错', async () => {
+    // Temporarily override the mock to return no binding
+    mockGetCloudflareContext.mockReturnValueOnce({ env: {} });
 
     await expect(
       externalizeFeedbackImages(
@@ -91,6 +96,6 @@ describe('externalizeFeedbackImages', () => {
           role: 'user',
         }
       )
-    ).rejects.toThrow('未配置 BLOB_READ_WRITE_TOKEN');
+    ).rejects.toThrow('R2 binding FEEDBACK_IMAGES not available');
   });
 });

@@ -1,6 +1,6 @@
 // src/lib/farm-shop.ts - 农场道具商店后端逻辑
 
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import seedrandom from 'seedrandom';
 import type { FarmShopItem, ActiveBuff } from './types/farm-shop';
@@ -78,18 +78,11 @@ async function acquireFarmActionLock(userId: number): Promise<FarmActionLock | n
 }
 
 async function releaseFarmActionLock(lock: FarmActionLock): Promise<void> {
-  const releaseScript = `
-    local key = KEYS[1]
-    local expected = ARGV[1]
-    local current = redis.call('GET', key)
-    if current == expected then
-      return redis.call('DEL', key)
-    end
-    return 0
-  `;
-
   try {
-    await kv.eval(releaseScript, [lock.key], [lock.token]);
+    const current = await kv.get<string>(lock.key);
+    if (current === lock.token) {
+      await kv.del(lock.key);
+    }
   } catch (error) {
     console.error('Release farm-shop action lock failed:', error);
   }
@@ -133,16 +126,6 @@ async function migrateDefaultFarmShopPricesIfNeeded(): Promise<void> {
   });
   if (lockResult !== 'OK') return;
 
-  const releaseScript = `
-    local key = KEYS[1]
-    local expected = ARGV[1]
-    local current = redis.call('GET', key)
-    if current == expected then
-      return redis.call('DEL', key)
-    end
-    return 0
-  `;
-
   try {
     const recheckVersion = parseNumericCount(await kv.get(FARM_SHOP_DEFAULTS_VERSION_KEY));
     if (recheckVersion >= FARM_SHOP_DEFAULTS_TARGET_VERSION) return;
@@ -178,7 +161,10 @@ async function migrateDefaultFarmShopPricesIfNeeded(): Promise<void> {
     console.error('Farm shop default price migration failed:', error);
   } finally {
     try {
-      await kv.eval(releaseScript, [FARM_SHOP_MIGRATE_LOCK_KEY], [token]);
+      const current = await kv.get<string>(FARM_SHOP_MIGRATE_LOCK_KEY);
+      if (current === token) {
+        await kv.del(FARM_SHOP_MIGRATE_LOCK_KEY);
+      }
     } catch (error) {
       console.error('Release farm shop migrate lock failed:', error);
     }
@@ -216,16 +202,6 @@ export async function initDefaultFarmShopItems(): Promise<void> {
     return;
   }
 
-  const releaseScript = `
-    local key = KEYS[1]
-    local expected = ARGV[1]
-    local current = redis.call('GET', key)
-    if current == expected then
-      return redis.call('DEL', key)
-    end
-    return 0
-  `;
-
   try {
     const recheck = await kv.hgetall<Record<string, FarmShopItem>>(FARM_SHOP_ITEMS_KEY);
     if (recheck && Object.keys(recheck).length > 0) return;
@@ -243,7 +219,10 @@ export async function initDefaultFarmShopItems(): Promise<void> {
     }
   } finally {
     try {
-      await kv.eval(releaseScript, [FARM_SHOP_INIT_LOCK_KEY], [initToken]);
+      const current = await kv.get<string>(FARM_SHOP_INIT_LOCK_KEY);
+      if (current === initToken) {
+        await kv.del(FARM_SHOP_INIT_LOCK_KEY);
+      }
     } catch (error) {
       console.error('Release farm shop init lock failed:', error);
     }
@@ -405,27 +384,14 @@ export async function purchaseFarmShopItem(
     let dailyLimitKey: string | null = null;
     if (item.dailyLimit && item.dailyLimit > 0) {
       dailyLimitKey = FARM_SHOP_DAILY_KEY(userId, today, itemId);
-      const limitLuaScript = `
-        local key = KEYS[1]
-        local limit = tonumber(ARGV[1])
-        local ttl = tonumber(ARGV[2])
-        local delta = tonumber(ARGV[3])
-        local newCount = redis.call('INCRBY', key, delta)
-        if newCount == 1 then
-          redis.call('EXPIRE', key, ttl)
-        end
-        if newCount > limit then
-          redis.call('DECRBY', key, delta)
-          return {0, newCount - delta}
-        end
-        return {1, newCount}
-      `;
-      const limitResult = await kv.eval(
-        limitLuaScript,
-        [dailyLimitKey],
-        [item.dailyLimit, 48 * 60 * 60, quantity]
-      ) as [number, number];
-      if (limitResult[0] !== 1) {
+      const newCount = await kv.incrby(dailyLimitKey, quantity);
+      // Set TTL only on first increment (when count equals what we just added)
+      if (newCount === quantity) {
+        await kv.expire(dailyLimitKey, 48 * 60 * 60);
+      }
+      if (newCount > item.dailyLimit) {
+        // Rollback the increment
+        await kv.decrby(dailyLimitKey, quantity);
         return { success: false, message: `今日已达限购上限（${item.dailyLimit}次）` };
       }
     }

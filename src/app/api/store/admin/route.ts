@@ -2,7 +2,7 @@
 // 商品管理 API（管理员）
 
 import { NextRequest, NextResponse } from 'next/server';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { getAuthUser, isAdmin } from '@/lib/auth';
 import {
   getAllStoreItems,

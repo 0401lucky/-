@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { getAllUsers } from './kv';
 import type { GameType } from './types/game';
 

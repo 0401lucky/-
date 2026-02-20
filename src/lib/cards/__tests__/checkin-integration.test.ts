@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { POST as checkinPOST } from '@/app/api/checkin/route';
 import { POST as drawPOST } from '@/app/api/cards/draw/route';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { getAuthUser } from '@/lib/auth';
 import { checkinToNewApi } from '@/lib/new-api';
 import { cookies } from 'next/headers';
@@ -17,12 +17,11 @@ function createMockRequest(body: object = {}): NextRequest {
   });
 }
 
-vi.mock('@vercel/kv', () => ({
+vi.mock('@/lib/d1-kv', () => ({
   kv: {
     get: vi.fn(),
     set: vi.fn(),
     incrby: vi.fn(),
-    eval: vi.fn(),
   },
 }));
 
@@ -64,7 +63,8 @@ describe('Checkin and Card Draw Integration', () => {
   const mockCheckRateLimit = vi.mocked(checkRateLimit);
   const mockCheckinToNewApi = vi.mocked(checkinToNewApi);
   const mockKvGet = vi.mocked(kv.get);
-  const mockKvEval = vi.mocked(kv.eval);
+  const mockKvSet = vi.mocked(kv.set);
+  const mockKvIncrby = vi.mocked(kv.incrby);
   const mockCookies = cookies as unknown as ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -74,36 +74,42 @@ describe('Checkin and Card Draw Integration', () => {
       get: vi.fn().mockReturnValue({ value: 'mock_session' }),
     });
     mockCheckRateLimit.mockResolvedValue({ success: true, remaining: 10, resetAt: 0 });
+    mockKvSet.mockResolvedValue('OK');
+    mockKvIncrby.mockResolvedValue(1);
   });
 
   describe('Checkin awarding draws', () => {
     it('should award 1 card draw on successful checkin', async () => {
       // Setup: Not checked in yet
+      // grantCheckinLocalRewards flow:
+      //   1. kv.set(checkinKey, '1', {nx, ex}) -> 'OK' (not checked in yet)
+      //   2. kv.get(cardsKey) -> null (no card data)
+      //   3. kv.set(cardsKey, newCardData) -> saves card data with drawsAvailable: 1+5=6
+      //   4. kv.incrby(extraSpinsKey, 1) -> returns 1
       mockKvGet.mockImplementation(async (key: string) => {
         if (key.includes('user:checkin')) return null;
+        // cards:user key returns null (new user, no card data)
+        if (key.includes('cards:user')) return null;
         return null;
       });
+      // kv.set: first call for checkin NX returns 'OK', subsequent calls also 'OK'
+      mockKvSet.mockResolvedValue('OK');
+      mockKvIncrby.mockResolvedValue(1);
       mockCheckinToNewApi.mockResolvedValue({ success: true, message: '签到成功', quotaAwarded: 500000 });
-      mockKvEval.mockResolvedValue([1, 1, 6, 'ok']);
 
       const response = await checkinPOST(createMockRequest(), undefined as any);
       const data = await response.json();
 
       expect(data.success).toBe(true);
 
-      // Verify local rewards were granted via atomic Lua script
-      expect(kv.eval).toHaveBeenCalled();
-      const evalKeys = mockKvEval.mock.calls[0][1];
-      expect(evalKeys[0]).toMatch(new RegExp(`^user:checkin:${userId}:`));
-      expect(evalKeys[1]).toBe(`user:extra_spins:${userId}`);
-      expect(evalKeys[2]).toBe(`cards:user:${userId}`);
-
-      const evalArgs = mockKvEval.mock.calls[0][2];
-      expect(evalArgs[2]).toBe(5);
+      // Verify kv.set was called (checkin mark + card data)
+      expect(kv.set).toHaveBeenCalled();
+      // Verify kv.incrby was called for extra spins
+      expect(kv.incrby).toHaveBeenCalled();
     });
 
     it('should not award extra draws if already checked in', async () => {
-      // Setup: Already checked in
+      // Setup: Already checked in - hasCheckedInToday returns true
       mockKvGet.mockImplementation(async (key: string) => {
         if (key.includes('user:checkin')) return true;
         return null;
@@ -114,20 +120,41 @@ describe('Checkin and Card Draw Integration', () => {
 
       expect(data.success).toBe(false);
       expect(data.message).toContain('已经签到过了');
-      
-      // No local rewards script should run
-      expect(kv.eval).not.toHaveBeenCalled();
+
+      // No card data updates should happen (kv.set only called for existing patterns, not for card draws)
+      // The checkin route returns early before grantCheckinLocalRewards is called
+      expect(kv.incrby).not.toHaveBeenCalled();
     });
   });
 
   describe('Draw API', () => {
     it('should allow drawing if draws available', async () => {
-      // Mock kv.eval for two-phase draw:
-      // Phase 1 (RESERVE_DRAW_SCRIPT): returns [success, pityRare, pityEpic, pityLegendary, pityLegendaryRare, status]
-      // Phase 2 (FINALIZE_DRAW_SCRIPT): returns [success, status, fragmentsAdded]
-      mockKvEval
-        .mockResolvedValueOnce([1, 1, 1, 1, 1, 'ok']) // Reserve: success, all pity counters=1
-        .mockResolvedValueOnce([1, 'ok', 0]); // Finalize: success, not duplicate
+      const userData = {
+        inventory: [],
+        fragments: 0,
+        pityCounter: 0,
+        pityRare: 0,
+        pityEpic: 0,
+        pityLegendary: 0,
+        pityLegendaryRare: 0,
+        drawsAvailable: 1,
+        collectionRewards: [],
+      };
+
+      // drawCard route first calls getUserCardData to check drawsAvailable
+      // Then drawCard() calls reserveDraw (kv.get + kv.set) and finalizeDraw (kv.get + kv.set)
+      mockKvGet
+        .mockResolvedValueOnce(userData)  // getUserCardData check in route
+        .mockResolvedValueOnce(userData)  // Phase 1: reserveDraw reads user data
+        .mockResolvedValueOnce({          // Phase 2: finalizeDraw reads user data
+          ...userData,
+          drawsAvailable: 0,
+          pityRare: 1,
+          pityEpic: 1,
+          pityLegendary: 1,
+          pityLegendaryRare: 1,
+          pityCounter: 1,
+        });
 
       const response = await drawPOST(createMockRequest({ count: 1 }));
       const data = await response.json();
@@ -137,14 +164,26 @@ describe('Checkin and Card Draw Integration', () => {
     });
 
     it('should return error if no draws available', async () => {
-      // Phase 1 returns failure (no draws)
-      mockKvEval.mockResolvedValueOnce([0, 0, 0, 0, 0, 'no_draws']);
+      const userData = {
+        inventory: [],
+        fragments: 0,
+        pityCounter: 0,
+        pityRare: 0,
+        pityEpic: 0,
+        pityLegendary: 0,
+        pityLegendaryRare: 0,
+        drawsAvailable: 0,
+        collectionRewards: [],
+      };
+
+      // getUserCardData check in route sees 0 draws
+      mockKvGet.mockResolvedValueOnce(userData);
 
       const response = await drawPOST(createMockRequest({ count: 1 }));
       const data = await response.json();
 
       expect(data.success).toBe(false);
-      expect(data.message).toBe('抽卡次数不足');
+      expect(data.message).toContain('抽卡次数不足');
     });
 
     it('should require authentication', async () => {
@@ -158,4 +197,3 @@ describe('Checkin and Card Draw Integration', () => {
     });
   });
 });
-

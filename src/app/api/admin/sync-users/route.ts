@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAllProjects, getProjectRecords, type User } from "@/lib/kv";
 import { loginToNewApi, getNewApiUrl, type NewApiUser } from "@/lib/new-api";
 import type { LotteryRecord } from "@/lib/lottery";
-import { kv } from "@vercel/kv";
+import { kv } from '@/lib/d1-kv';
 import { withAdmin } from "@/lib/api-guards";
 import { maskUserId } from "@/lib/logging";
 

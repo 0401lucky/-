@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import { fanoutAnnouncementNotification } from './notifications';
 

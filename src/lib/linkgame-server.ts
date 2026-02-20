@@ -1,7 +1,7 @@
 // src/lib/linkgame-server.ts - 连连看游戏后端逻辑
 
 import { randomBytes } from 'crypto';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import { addGamePointsWithLimit } from './points';
 import { getDailyPointsLimit } from './config';

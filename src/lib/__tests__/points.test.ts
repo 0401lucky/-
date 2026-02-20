@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 
-vi.mock('@vercel/kv', () => ({
+vi.mock('@/lib/d1-kv', () => ({
   kv: {
     get: vi.fn(),
     incrby: vi.fn(),
-    eval: vi.fn(),
+    decrby: vi.fn(),
+    expire: vi.fn(),
     lpush: vi.fn(),
     ltrim: vi.fn(),
     lrange: vi.fn(),
@@ -35,7 +36,8 @@ import {
 
 const mockGet = vi.mocked(kv.get);
 const mockIncrby = vi.mocked(kv.incrby);
-const mockEval = vi.mocked(kv.eval);
+const mockDecrby = vi.mocked(kv.decrby);
+const mockExpire = vi.mocked(kv.expire);
 const mockLpush = vi.mocked(kv.lpush);
 const mockLtrim = vi.mocked(kv.ltrim);
 const mockLrange = vi.mocked(kv.lrange);
@@ -90,8 +92,12 @@ describe('addPoints', () => {
 // ---------- addGamePointsWithLimit ----------
 describe('addGamePointsWithLimit', () => {
   it('grants full score when under daily limit', async () => {
-    // Lua returns [pointsEarned, balance, dailyEarned, limitReached]
-    mockEval.mockResolvedValue([10, 110, 10, 0]);
+    // D1-compatible: kv.get returns current daily earned (0), then incrby for points & daily earned
+    mockGet.mockResolvedValueOnce(0); // dailyEarned = 0
+    mockIncrby
+      .mockResolvedValueOnce(110) // points balance after incrby
+      .mockResolvedValueOnce(10); // dailyEarned after incrby
+    mockExpire.mockResolvedValue(1);
     mockLpush.mockResolvedValue(1);
     mockLtrim.mockResolvedValue('OK' as any);
 
@@ -104,7 +110,7 @@ describe('addGamePointsWithLimit', () => {
       dailyEarned: 10,
       limitReached: false,
     });
-    expect(mockEval).toHaveBeenCalledTimes(1);
+    expect(mockIncrby).toHaveBeenCalledTimes(2);
     expect(mockLpush).toHaveBeenCalledWith('points_log:1', expect.objectContaining({
       amount: 10,
       source: 'game_play',
@@ -113,8 +119,10 @@ describe('addGamePointsWithLimit', () => {
   });
 
   it('returns 0 earned when daily limit already reached', async () => {
-    // grant=0, balance stays, dailyEarned at limit, limitReached=1
-    mockEval.mockResolvedValue([0, 100, 100, 1]);
+    // D1-compatible: kv.get returns dailyEarned = 100 (at limit), remaining=0, grant=0
+    mockGet
+      .mockResolvedValueOnce(100) // dailyEarned = 100 (already at limit)
+      .mockResolvedValueOnce(100); // points balance (no change, just read)
 
     const result = await addGamePointsWithLimit(1, 10, 100, 'game_play', 'played');
 
@@ -130,8 +138,12 @@ describe('addGamePointsWithLimit', () => {
   });
 
   it('truncates score when remaining daily allowance is less than score', async () => {
-    // Only 5 remaining out of 100 limit, score is 10 => grant=5
-    mockEval.mockResolvedValue([5, 105, 100, 1]);
+    // D1-compatible: dailyEarned=95, limit=100, score=10 => grant=5
+    mockGet.mockResolvedValueOnce(95); // dailyEarned = 95
+    mockIncrby
+      .mockResolvedValueOnce(105) // points balance after +5
+      .mockResolvedValueOnce(100); // dailyEarned after +5 = 100
+    mockExpire.mockResolvedValue(1);
     mockLpush.mockResolvedValue(1);
     mockLtrim.mockResolvedValue('OK' as any);
 
@@ -157,7 +169,7 @@ describe('addGamePointsWithLimit', () => {
       dailyEarned: 30,
       limitReached: false,
     });
-    expect(mockEval).not.toHaveBeenCalled();
+    expect(mockIncrby).not.toHaveBeenCalled();
     expect(mockLpush).not.toHaveBeenCalled();
   });
 
@@ -165,21 +177,24 @@ describe('addGamePointsWithLimit', () => {
     await expect(
       addGamePointsWithLimit(1, -1, 100, 'game_play', 'test')
     ).rejects.toThrow('Score must be non-negative');
-    expect(mockEval).not.toHaveBeenCalled();
+    expect(mockIncrby).not.toHaveBeenCalled();
   });
 });
 
 // ---------- deductPoints ----------
 describe('deductPoints', () => {
   it('deducts points and returns new balance', async () => {
-    mockEval.mockResolvedValue([1, 50]);
+    // D1-compatible: kv.get returns current balance, kv.decrby deducts
+    mockGet.mockResolvedValueOnce(100); // current balance = 100
+    mockDecrby.mockResolvedValue(50); // new balance after deducting 50
     mockLpush.mockResolvedValue(1);
     mockLtrim.mockResolvedValue('OK' as any);
 
     const result = await deductPoints(1, 50, 'exchange', 'bought item');
 
     expect(result).toEqual({ success: true, balance: 50 });
-    expect(mockEval).toHaveBeenCalledTimes(1);
+    expect(mockGet).toHaveBeenCalledWith('points:1');
+    expect(mockDecrby).toHaveBeenCalledWith('points:1', 50);
     expect(mockLpush).toHaveBeenCalledWith('points_log:1', expect.objectContaining({
       amount: -50,
       source: 'exchange',
@@ -190,7 +205,8 @@ describe('deductPoints', () => {
   });
 
   it('returns failure when balance is insufficient', async () => {
-    mockEval.mockResolvedValue([0, 30]);
+    // D1-compatible: kv.get returns current balance < amount
+    mockGet.mockResolvedValueOnce(30); // current balance = 30, less than 50
 
     const result = await deductPoints(1, 50, 'exchange', 'bought item');
 
@@ -200,28 +216,37 @@ describe('deductPoints', () => {
       message: '积分不足',
     });
     expect(mockLpush).not.toHaveBeenCalled();
+    expect(mockDecrby).not.toHaveBeenCalled();
   });
 
   it('throws when amount <= 0', async () => {
     await expect(deductPoints(1, 0, 'exchange', 'test')).rejects.toThrow('Amount must be positive');
     await expect(deductPoints(1, -10, 'exchange', 'test')).rejects.toThrow('Amount must be positive');
-    expect(mockEval).not.toHaveBeenCalled();
+    expect(mockGet).not.toHaveBeenCalled();
   });
 });
 
 // ---------- applyPointsDelta ----------
 describe('applyPointsDelta', () => {
   it('applies positive delta successfully', async () => {
-    mockEval.mockResolvedValue([1, 200]);
+    // D1-compatible: kv.get returns current balance, kv.incrby adds delta
+    mockGet.mockResolvedValueOnce(150); // current balance
+    mockIncrby.mockResolvedValue(200); // new balance after +50
+    mockLpush.mockResolvedValue(1);
+    mockLtrim.mockResolvedValue('OK' as any);
 
     const result = await applyPointsDelta(1, 50, 'admin_adjust', 'bonus');
 
     expect(result).toEqual({ success: true, balance: 200 });
-    expect(mockEval).toHaveBeenCalledTimes(1);
+    expect(mockIncrby).toHaveBeenCalledWith('points:1', 50);
   });
 
   it('applies negative delta when balance is sufficient', async () => {
-    mockEval.mockResolvedValue([1, 50]);
+    // D1-compatible: kv.get returns current balance (100), delta=-50 => ok
+    mockGet.mockResolvedValueOnce(100); // current balance
+    mockIncrby.mockResolvedValue(50); // new balance after -50
+    mockLpush.mockResolvedValue(1);
+    mockLtrim.mockResolvedValue('OK' as any);
 
     const result = await applyPointsDelta(1, -50, 'admin_adjust', 'penalty');
 
@@ -229,11 +254,13 @@ describe('applyPointsDelta', () => {
   });
 
   it('returns failure when negative delta exceeds balance', async () => {
-    mockEval.mockResolvedValue([0, 30]);
+    // D1-compatible: kv.get returns current balance (30), delta=-100 => insufficient
+    mockGet.mockResolvedValueOnce(30); // current balance = 30
 
     const result = await applyPointsDelta(1, -100, 'admin_adjust', 'penalty');
 
     expect(result).toEqual({ success: false, balance: 30, message: '积分不足' });
+    expect(mockIncrby).not.toHaveBeenCalled();
   });
 
   it('returns current balance immediately when delta is 0', async () => {
@@ -242,20 +269,20 @@ describe('applyPointsDelta', () => {
     const result = await applyPointsDelta(1, 0, 'admin_adjust', 'no change');
 
     expect(result).toEqual({ success: true, balance: 300 });
-    expect(mockEval).not.toHaveBeenCalled();
+    expect(mockIncrby).not.toHaveBeenCalled();
   });
 
   it('throws when description is empty', async () => {
     await expect(applyPointsDelta(1, 10, 'admin_adjust', '')).rejects.toThrow('Description is required');
     await expect(applyPointsDelta(1, 10, 'admin_adjust', '   ')).rejects.toThrow('Description is required');
-    expect(mockEval).not.toHaveBeenCalled();
+    expect(mockIncrby).not.toHaveBeenCalled();
   });
 
   it('throws when delta is not an integer', async () => {
     await expect(applyPointsDelta(1, 1.5, 'admin_adjust', 'test')).rejects.toThrow('Delta must be an integer');
     await expect(applyPointsDelta(1, NaN, 'admin_adjust', 'test')).rejects.toThrow('Delta must be an integer');
     await expect(applyPointsDelta(1, Infinity, 'admin_adjust', 'test')).rejects.toThrow('Delta must be an integer');
-    expect(mockEval).not.toHaveBeenCalled();
+    expect(mockIncrby).not.toHaveBeenCalled();
   });
 });
 

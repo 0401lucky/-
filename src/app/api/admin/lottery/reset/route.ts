@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
-import { kv } from "@vercel/kv";
+import { kv } from '@/lib/d1-kv';
 import type { LotteryConfig } from "@/lib/lottery";
 
 export const dynamic = "force-dynamic";

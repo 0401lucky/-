@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { addGamePointsWithLimit, addPoints, deductPoints } from '../points';
 import { getDailyPointsLimit } from '../config';
 import { getOrCreateFarm, harvestPlot, waterPlot } from '../farm';
 import type { FarmState } from '../types/farm';
 
-vi.mock('@vercel/kv', () => ({
+vi.mock('@/lib/d1-kv', () => ({
   kv: {
     get: vi.fn(),
     set: vi.fn(),
-    eval: vi.fn(),
+    del: vi.fn(),
   },
 }));
 
@@ -57,7 +57,7 @@ function createBaseFarmState(now: number): FarmState {
 describe('farm business consistency', () => {
   const mockKvGet = vi.mocked(kv.get);
   const mockKvSet = vi.mocked(kv.set);
-  const mockKvEval = vi.mocked(kv.eval);
+  const mockKvDel = vi.mocked(kv.del);
   const mockDeductPoints = vi.mocked(deductPoints);
   const mockAddPoints = vi.mocked(addPoints);
   const mockAddGamePointsWithLimit = vi.mocked(addGamePointsWithLimit);
@@ -66,8 +66,11 @@ describe('farm business consistency', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // acquireFarmActionLock: kv.set with nx returns 'OK'
     mockKvSet.mockResolvedValue('OK');
-    mockKvEval.mockResolvedValue(1);
+    // releaseFarmActionLock: kv.get returns the lock token, kv.del succeeds
+    mockKvGet.mockResolvedValue(null);
+    mockKvDel.mockResolvedValue(1);
     mockDeductPoints.mockResolvedValue({ success: true, balance: 1000 });
     mockAddPoints.mockResolvedValue({ success: true, balance: 1000 });
     mockAddGamePointsWithLimit.mockResolvedValue({
@@ -113,7 +116,15 @@ describe('farm business consistency', () => {
       yieldMultiplier: 1,
     };
 
-    mockKvGet.mockResolvedValueOnce(farm);
+    // acquireFarmActionLock: kv.set returns 'OK'
+    mockKvSet.mockResolvedValue('OK');
+    // getOrCreateFarm: kv.get returns the farm state
+    mockKvGet.mockImplementation(async (key: string) => {
+      if (key === 'farm:state:1') return farm;
+      // releaseFarmActionLock: kv.get for the lock key returns the token
+      if (key === 'farm:lock:action:1') return expect.any(String);
+      return null;
+    });
 
     const result = await waterPlot(1, 0);
 
@@ -141,7 +152,15 @@ describe('farm business consistency', () => {
       yieldMultiplier: 1,
     };
 
-    mockKvGet.mockResolvedValueOnce(farm);
+    // acquireFarmActionLock: kv.set returns 'OK'
+    mockKvSet.mockResolvedValue('OK');
+    // getOrCreateFarm: kv.get returns the farm state
+    mockKvGet.mockImplementation(async (key: string) => {
+      if (key === 'farm:state:1') return farm;
+      // releaseFarmActionLock: kv.get for the lock key returns the token
+      if (key === 'farm:lock:action:1') return expect.any(String);
+      return null;
+    });
     mockAddGamePointsWithLimit.mockRejectedValueOnce(new Error('points failed'));
 
     const result = await harvestPlot(1, 0);

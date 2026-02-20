@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 
 const SLOT_CONFIG_KEY = 'slot:config';
 

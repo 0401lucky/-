@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import type { StoreItem } from '../types/store';
 import { exchangeItem } from '../store';
 import { deductPoints, applyPointsDelta } from '../points';
 import { addCardDraws } from '../kv';
 import { creditQuotaToUser } from '../new-api';
 
-vi.mock('@vercel/kv', () => ({
+vi.mock('@/lib/d1-kv', () => ({
   kv: {
     hget: vi.fn(),
-    eval: vi.fn(),
+    incrby: vi.fn(),
+    expire: vi.fn(),
+    decrby: vi.fn(),
     decr: vi.fn(),
     lpush: vi.fn(),
     ltrim: vi.fn(),
@@ -45,7 +47,9 @@ vi.mock('../time', async (importOriginal) => {
 
 describe('exchangeItem store safety', () => {
   const mockKvHget = vi.mocked(kv.hget);
-  const mockKvEval = vi.mocked(kv.eval);
+  const mockKvIncrby = vi.mocked(kv.incrby);
+  const mockKvExpire = vi.mocked(kv.expire);
+  const mockKvDecrby = vi.mocked(kv.decrby);
   const mockKvDecr = vi.mocked(kv.decr);
   const mockKvLpush = vi.mocked(kv.lpush);
   const mockKvLtrim = vi.mocked(kv.ltrim);
@@ -75,10 +79,13 @@ describe('exchangeItem store safety', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
     mockKvHget.mockResolvedValue(baseItem);
-    mockKvEval.mockResolvedValue([1, 1]);
+    // D1-compatible daily limit check: incrby returns newCount=1 (first purchase), within limit
+    mockKvIncrby.mockResolvedValue(1);
+    mockKvExpire.mockResolvedValue(1);
+    mockKvDecrby.mockResolvedValue(0);
     mockKvDecr.mockResolvedValue(0);
     mockKvLpush.mockResolvedValue(1);
-    mockKvLtrim.mockResolvedValue('OK');
+    mockKvLtrim.mockResolvedValue('OK' as any);
     mockKvHincrby.mockResolvedValue(1);
 
     mockDeductPoints.mockResolvedValue({ success: true, balance: 9999 });
@@ -88,14 +95,15 @@ describe('exchangeItem store safety', () => {
   });
 
   it('returns limit exceeded before deducting points', async () => {
-    mockKvEval.mockResolvedValue([0, 1]);
+    // D1-compatible: incrby returns 2 which exceeds dailyLimit of 1, so decrby is called to rollback
+    mockKvIncrby.mockResolvedValue(2);
 
     const result = await exchangeItem(1001, 'item-1');
 
     expect(result.success).toBe(false);
     expect(result.message).toContain('今日已达限购上限');
     expect(mockDeductPoints).not.toHaveBeenCalled();
-    expect(mockKvDecr).not.toHaveBeenCalled();
+    expect(mockKvDecrby).toHaveBeenCalledTimes(1); // rollback the incrby
   });
 
   it('does not rollback points or daily limit when direct credit is uncertain', async () => {

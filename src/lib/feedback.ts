@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import { type FeedbackImage } from '@/lib/feedback-image';
 import { externalizeFeedbackImages } from '@/lib/feedback-image-storage';

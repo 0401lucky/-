@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import { addGamePointsWithLimit, applyPointsDelta, getUserPoints } from './points';
 import { getSlotConfig } from './slot-config';

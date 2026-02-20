@@ -2,7 +2,7 @@
 // 临时 API：重置商店商品为默认配置
 
 import { NextResponse } from 'next/server';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { withAdmin } from '@/lib/api-guards';
 
 const STORE_ITEMS_KEY = 'store:items';

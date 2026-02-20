@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import {
   archiveAnnouncement,
@@ -10,7 +10,7 @@ import {
 } from '../announcements';
 import { fanoutAnnouncementNotification } from '../notifications';
 
-vi.mock('@vercel/kv', () => ({
+vi.mock('@/lib/d1-kv', () => ({
   kv: {
     set: vi.fn(),
     get: vi.fn(),

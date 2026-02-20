@@ -1,22 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import { creditQuotaToUser } from '../new-api';
 import { executeRaffleDraw, joinRaffle, retryFailedRewards } from '../raffle';
 import { getTodayDirectTotal, reserveDailyDirectQuota, rollbackDailyDirectQuota } from '../lottery';
 import { getTodayDateString } from '../time';
 
-vi.mock('@vercel/kv', () => ({
+vi.mock('@/lib/d1-kv', () => ({
   kv: {
     set: vi.fn(),
     get: vi.fn(),
     lrange: vi.fn(),
     srem: vi.fn(),
-    eval: vi.fn(),
     lpush: vi.fn(),
     rpop: vi.fn(),
     del: vi.fn(),
     decrby: vi.fn(),
+    incrby: vi.fn(),
+    ttl: vi.fn(),
+    expire: vi.fn(),
+    exists: vi.fn(),
+    sismember: vi.fn(),
+    incr: vi.fn(),
+    sadd: vi.fn(),
+    lrem: vi.fn(),
   },
 }));
 
@@ -59,9 +66,17 @@ describe('raffle robustness', () => {
   const mockKvGet = vi.mocked(kv.get);
   const mockKvLrange = vi.mocked(kv.lrange);
   const mockKvSrem = vi.mocked(kv.srem);
-  const mockKvEval = vi.mocked(kv.eval);
   const mockKvLpush = vi.mocked(kv.lpush);
   const mockKvDecrby = vi.mocked(kv.decrby);
+  const mockKvDel = vi.mocked(kv.del);
+  const mockKvExists = vi.mocked(kv.exists);
+  const mockKvSismember = vi.mocked(kv.sismember);
+  const mockKvIncr = vi.mocked(kv.incr);
+  const mockKvSadd = vi.mocked(kv.sadd);
+  const mockKvIncrby = vi.mocked(kv.incrby);
+  const mockKvTtl = vi.mocked(kv.ttl);
+  const mockKvExpire = vi.mocked(kv.expire);
+  const mockKvLrem = vi.mocked(kv.lrem);
   const mockGetTodayDateString = vi.mocked(getTodayDateString);
   const mockNanoid = vi.mocked(nanoid);
   const mockCreditQuotaToUser = vi.mocked(creditQuotaToUser);
@@ -78,36 +93,36 @@ describe('raffle robustness', () => {
   });
 
   it('blocks join when draw lock exists', async () => {
-    mockKvEval.mockResolvedValue([0, '', '活动正在开奖，请稍后再试', 0]);
+    // D1-compatible joinRaffle: kv.get reads raffle, kv.exists checks draw lock
+    const raffle = {
+      id: 'raffle-1',
+      title: 'Test',
+      status: 'active',
+      prizes: [],
+      participantsCount: 0,
+    };
+    mockKvGet.mockResolvedValueOnce(raffle); // read raffle
+    mockKvExists.mockResolvedValueOnce(1); // draw lock exists
 
     const result = await joinRaffle('raffle-1', 1001, 'alice');
 
     expect(result).toEqual({ success: false, message: '活动正在开奖，请稍后再试' });
-    expect(mockKvEval).toHaveBeenCalledWith(
-      expect.any(String),
-      [
-        'raffle:raffle-1',
-        'raffle:entries:raffle-1',
-        'raffle:participants:raffle-1',
-        'raffle:entry_count:raffle-1',
-        'user:raffles:1001',
-        'raffle:draw_lock:raffle-1',
-      ],
-      expect.any(Array)
-    );
+    expect(mockKvExists).toHaveBeenCalledWith('raffle:draw_lock:raffle-1');
   });
 
   it('always releases draw lock when retry read fails', async () => {
+    // acquireDrawLock: kv.set returns 'OK'
     mockKvSet.mockResolvedValue('OK');
+    // getRaffle: kv.get throws
     mockKvGet.mockRejectedValueOnce(new Error('kv get failed'));
-    mockKvEval.mockResolvedValue(1);
+    // releaseDrawLock: kv.get returns the token, kv.del deletes it
+    mockKvGet.mockResolvedValueOnce('mock-token');
+    mockKvDel.mockResolvedValue(1);
 
     await expect(retryFailedRewards('raffle-2')).rejects.toThrow('kv get failed');
-    expect(mockKvEval).toHaveBeenCalledWith(
-      expect.any(String),
-      ['raffle:draw_lock:raffle-2'],
-      ['mock-token']
-    );
+    // Verify releaseDrawLock was called: kv.get for lock key, then kv.del
+    expect(mockKvGet).toHaveBeenCalledWith('raffle:draw_lock:raffle-2');
+    expect(mockKvDel).toHaveBeenCalledWith('raffle:draw_lock:raffle-2');
   });
 
   it('keeps delivered status when user-win logging fails', async () => {
@@ -145,10 +160,14 @@ describe('raffle robustness', () => {
       ],
     };
 
+    // acquireDrawLock: kv.set returns 'OK'
     mockKvSet.mockResolvedValue('OK');
     mockKvGet
-      .mockResolvedValueOnce(raffleBeforeDraw)
-      .mockResolvedValueOnce(endedRaffleForDelivery);
+      .mockResolvedValueOnce(raffleBeforeDraw) // executeRaffleDraw: getRaffle
+      .mockResolvedValueOnce(endedRaffleForDelivery) // deliverRewards: getRaffle
+      .mockResolvedValueOnce(null) // getDeliveryIdempotencyState: returns null (no previous state)
+      .mockResolvedValueOnce(null) // getDeliveryIdempotencyState: finally block check
+      .mockResolvedValueOnce('mock-token'); // releaseDrawLock: kv.get for lock token
     mockKvLrange.mockResolvedValue([
       {
         id: 'entry-1',
@@ -161,7 +180,7 @@ describe('raffle robustness', () => {
     ]);
     mockKvSrem.mockResolvedValue(1);
     mockKvLpush.mockRejectedValue(new Error('log write failed'));
-    mockKvEval.mockResolvedValue(1);
+    mockKvDel.mockResolvedValue(1);
     mockCreditQuotaToUser.mockResolvedValue({
       success: true,
       message: '充值成功',
@@ -203,7 +222,9 @@ describe('raffle robustness', () => {
     };
 
     mockKvSet.mockResolvedValue('OK');
-    mockKvGet.mockResolvedValueOnce(raffleBeforeDraw);
+    mockKvGet
+      .mockResolvedValueOnce(raffleBeforeDraw) // executeRaffleDraw: getRaffle
+      .mockResolvedValueOnce('mock-token'); // releaseDrawLock: kv.get for lock token
     mockKvLrange.mockResolvedValue([
       {
         id: 'entry-1',
@@ -216,7 +237,7 @@ describe('raffle robustness', () => {
     ]);
     mockKvSrem.mockResolvedValue(1);
     mockKvLpush.mockResolvedValue(1);
-    mockKvEval.mockResolvedValue(1);
+    mockKvDel.mockResolvedValue(1);
     mockCreditQuotaToUser.mockResolvedValue({ success: true, message: '充值成功' });
 
     const drawPromise = executeRaffleDraw('raffle-4', { waitForDelivery: false });
@@ -269,9 +290,12 @@ describe('raffle robustness', () => {
 
     mockKvSet.mockResolvedValue('OK');
     mockKvGet
-      .mockResolvedValueOnce(raffleWithStalePending)
-      .mockResolvedValueOnce(raffleWithStalePending);
-    mockKvEval.mockResolvedValue(1);
+      .mockResolvedValueOnce(raffleWithStalePending) // retryFailedRewards: getRaffle
+      .mockResolvedValueOnce(raffleWithStalePending) // deliverRewards: getRaffle
+      .mockResolvedValueOnce(null) // getDeliveryIdempotencyState: no previous state
+      .mockResolvedValueOnce(null) // getDeliveryIdempotencyState: finally block
+      .mockResolvedValueOnce('mock-token'); // releaseDrawLock: kv.get for lock token
+    mockKvDel.mockResolvedValue(1);
     mockKvLpush.mockResolvedValue(1);
     mockCreditQuotaToUser.mockResolvedValue({
       success: true,
@@ -300,16 +324,23 @@ describe('raffle robustness', () => {
     expect(total).toBe(123.45);
   });
 
-  it('reserves fractional daily direct quota via scaled cents', async () => {
-    mockKvEval.mockResolvedValue([1, 123]);
+  it('reserves fractional daily direct quota via D1-compatible increment', async () => {
+    // D1-compatible: kv.incrby increments cents, kv.ttl checks expiry, kv.expire sets TTL
+    mockKvIncrby.mockResolvedValue(123); // new total in cents
+    mockKvTtl.mockResolvedValue(-1); // no existing expiry
+    mockKvExpire.mockResolvedValue(1);
 
     const result = await reserveDailyDirectQuota(1.23);
 
     expect(result).toEqual({ success: true, newTotal: 1.23 });
-    expect(mockKvEval).toHaveBeenCalledWith(
-      expect.any(String),
-      ['lottery:daily_direct:2026-02-10'],
-      [123, 200000, expect.any(Number)]
+    expect(mockKvIncrby).toHaveBeenCalledWith(
+      'lottery:daily_direct:2026-02-10',
+      123
+    );
+    expect(mockKvTtl).toHaveBeenCalledWith('lottery:daily_direct:2026-02-10');
+    expect(mockKvExpire).toHaveBeenCalledWith(
+      'lottery:daily_direct:2026-02-10',
+      expect.any(Number)
     );
   });
 
@@ -321,4 +352,3 @@ describe('raffle robustness', () => {
     expect(mockKvDecrby).toHaveBeenCalledWith('lottery:daily_direct:2026-02-10', 275);
   });
 });
-

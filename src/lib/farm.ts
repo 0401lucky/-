@@ -1,6 +1,6 @@
 // src/lib/farm.ts - 农场后端业务逻辑（KV操作 + Lua脚本）
 
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import type { CropId, FarmState, FarmLevel, HarvestDetail } from './types/farm';
 import { CROPS, WEATHERS, ACTION_COOLDOWN_SECONDS } from './farm-config';
 import {
@@ -48,18 +48,11 @@ async function acquireFarmActionLock(userId: number): Promise<FarmActionLock | n
 }
 
 async function releaseFarmActionLock(lock: FarmActionLock): Promise<void> {
-  const releaseScript = `
-    local key = KEYS[1]
-    local expected = ARGV[1]
-    local current = redis.call('GET', key)
-    if current == expected then
-      return redis.call('DEL', key)
-    end
-    return 0
-  `;
-
   try {
-    await kv.eval(releaseScript, [lock.key], [lock.token]);
+    const current = await kv.get<string>(lock.key);
+    if (current === lock.token) {
+      await kv.del(lock.key);
+    }
   } catch (error) {
     console.error('Release farm action lock failed:', error);
   }

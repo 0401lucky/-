@@ -1,6 +1,6 @@
 // src/lib/config.ts - 系统配置管理
 
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 
 // 配置 Key
 const SYSTEM_CONFIG_KEY = 'system:config';

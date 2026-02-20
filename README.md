@@ -16,7 +16,7 @@
 - **框架**: Next.js 16 (App Router)
 - **样式**: Tailwind CSS
 - **数据库**: Vercel KV (Redis)
-- **部署**: Vercel
+- **部署**: Vercel / Cloudflare Workers
 
 ## 部署到 Vercel
 
@@ -62,6 +62,59 @@ git push -u origin main
 ### 5. 部署
 
 点击 "Deploy"，等待部署完成即可。
+
+## 部署到 Cloudflare Workers
+
+> 当前项目已接入 OpenNext Cloudflare 适配器（`@opennextjs/cloudflare` + `wrangler`）。
+
+### 1. 前置准备
+
+1. 安装 Node.js LTS（推荐 20 或 22）。
+2. 安装依赖：`npm install`
+3. 登录 Cloudflare：`npx wrangler login`
+
+### 2. 准备缓存 Bucket（与 `wrangler.jsonc` 对齐）
+
+```bash
+npx wrangler r2 bucket create cache
+```
+
+### 3. 配置生产环境变量
+
+在 Cloudflare Worker 的 Variables/Secrets 中配置（名称保持和项目代码一致）：
+
+- `KV_REST_API_URL`
+- `KV_REST_API_TOKEN`
+- `KV_REST_API_READ_ONLY_TOKEN`（可选）
+- `NEW_API_URL`
+- `ADMIN_USERNAMES`
+- `SESSION_SECRET`
+- `NEW_API_ADMIN_USERNAME`（可选）
+- `NEW_API_ADMIN_PASSWORD`（可选）
+- `CRON_SECRET`
+- `BLOB_READ_WRITE_TOKEN`（可选）
+
+> 说明：项目当前使用的是 Redis REST 接口（`@vercel/kv`）。  
+> 迁移到 Cloudflare 后，数据层仍需可用的 Upstash Redis（或兼容 REST 的 Redis 服务），不是 Cloudflare KV。
+
+### 4. 部署
+
+```bash
+npm run deploy
+```
+
+### 5. 本地预览（可选）
+
+```bash
+npm run preview
+```
+
+> OpenNext 在 Windows 原生环境可能不稳定，建议在 WSL 中执行 `preview/build/deploy`。
+
+### 6. 定时任务说明
+
+`vercel.json` 里的 Cron 在 Cloudflare 不生效。  
+如果你要继续使用多人抽奖发奖任务（`/api/internal/raffle/delivery`），需要改成 Cloudflare Cron Trigger 或外部定时调用。
 
 ## 本地开发
 

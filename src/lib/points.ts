@@ -1,6 +1,6 @@
 // src/lib/points.ts
 
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import { getTodayDateString } from './time';
 import type { PointsLog, PointsSource } from './types/store';
@@ -95,56 +95,33 @@ export async function addGamePointsWithLimit(
   const pointsKey = POINTS_KEY(userId);
   const dailyEarnedKey = DAILY_EARNED_KEY(userId, date);
 
-  // Lua 脚本：原子化计算并发放积分
-  const luaScript = `
-    local pointsKey = KEYS[1]
-    local dailyEarnedKey = KEYS[2]
-    local score = tonumber(ARGV[1])
-    local dailyLimit = tonumber(ARGV[2])
-    local ttl = tonumber(ARGV[3])
-    
-    -- 获取今日已得积分
-    local dailyEarned = tonumber(redis.call('GET', dailyEarnedKey) or '0')
-    
-    -- 计算可发放积分
-    local remaining = dailyLimit - dailyEarned
-    if remaining < 0 then remaining = 0 end
-    local grant = score
-    if grant > remaining then grant = remaining end
-    
-    local newBalance = 0
-    local newDailyEarned = dailyEarned
-    
-    if grant > 0 then
-      -- 增加用户余额
-      newBalance = redis.call('INCRBY', pointsKey, grant)
-      -- 增加今日已得
-      newDailyEarned = redis.call('INCRBY', dailyEarnedKey, grant)
-      -- 设置 TTL（如果是新 key）
-      redis.call('EXPIRE', dailyEarnedKey, ttl)
-    else
-      newBalance = tonumber(redis.call('GET', pointsKey) or '0')
-    end
-    
-    local limitReached = 0
-    if newDailyEarned >= dailyLimit then limitReached = 1 end
-    
-    return {grant, newBalance, newDailyEarned, limitReached}
-  `;
+  // Read current daily earned
+  const dailyEarnedRaw = await kv.get<number>(dailyEarnedKey);
+  const dailyEarned = dailyEarnedRaw ?? 0;
 
-  const result = await kv.eval(
-    luaScript, 
-    [pointsKey, dailyEarnedKey], 
-    [score, dailyLimit, DAILY_EARNED_TTL]
-  ) as [number, number, number, number];
-  
-  const [pointsEarned, balance, dailyEarned, limitReachedFlag] = result;
+  // Calculate grantable amount
+  const remaining = Math.max(0, dailyLimit - dailyEarned);
+  const grant = Math.min(score, remaining);
+
+  let balance: number;
+  let newDailyEarned = dailyEarned;
+
+  if (grant > 0) {
+    balance = await kv.incrby(pointsKey, grant);
+    newDailyEarned = await kv.incrby(dailyEarnedKey, grant);
+    await kv.expire(dailyEarnedKey, DAILY_EARNED_TTL);
+  } else {
+    const currentBalance = await kv.get<number>(pointsKey);
+    balance = currentBalance ?? 0;
+  }
+
+  const limitReached = newDailyEarned >= dailyLimit;
 
   // 如果实际发放了积分，记录流水
-  if (pointsEarned > 0) {
+  if (grant > 0) {
     const log: PointsLog = {
       id: nanoid(),
-      amount: pointsEarned,
+      amount: grant,
       source,
       description,
       balance,
@@ -157,10 +134,10 @@ export async function addGamePointsWithLimit(
 
   return {
     success: true,
-    pointsEarned,
+    pointsEarned: grant,
     balance,
-    dailyEarned,
-    limitReached: limitReachedFlag === 1,
+    dailyEarned: newDailyEarned,
+    limitReached,
   };
 }
 
@@ -187,28 +164,14 @@ export async function deductPoints(
   }
 
   const pointsKey = POINTS_KEY(userId);
+  const currentRaw = await kv.get<number>(pointsKey);
+  const current = currentRaw ?? 0;
 
-  // 使用 Lua 脚本保证原子性：检查余额并扣除
-  const luaScript = `
-    local current = tonumber(redis.call('GET', KEYS[1]) or '0')
-    local amount = tonumber(ARGV[1])
-    if current < amount then
-      return {0, current}
-    end
-    local newBalance = redis.call('DECRBY', KEYS[1], amount)
-    return {1, newBalance}
-  `;
-
-  const result = await kv.eval(luaScript, [pointsKey], [amount]) as [number, number];
-  const [success, balance] = result;
-
-  if (success === 0) {
-    return {
-      success: false,
-      balance,
-      message: '积分不足',
-    };
+  if (current < amount) {
+    return { success: false, balance: current, message: '积分不足' };
   }
+
+  const newBalance = await kv.decrby(pointsKey, amount);
 
   // 记录流水（扣除用负数）
   const log: PointsLog = {
@@ -216,14 +179,14 @@ export async function deductPoints(
     amount: -amount,
     source,
     description,
-    balance,
+    balance: newBalance,
     createdAt: Date.now(),
   };
 
   await kv.lpush(POINTS_LOG_KEY(userId), log);
   await kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1);
 
-  return { success: true, balance };
+  return { success: true, balance: newBalance };
 }
 
 /**
@@ -254,42 +217,27 @@ export async function applyPointsDelta(
   const now = Date.now();
   const logId = nanoid();
 
-  const luaScript = `
-    local pointsKey = KEYS[1]
-    local logKey = KEYS[2]
-    local delta = tonumber(ARGV[1])
-    local logId = ARGV[2]
-    local source = ARGV[3]
-    local description = ARGV[4]
-    local now = tonumber(ARGV[5])
-    local maxLogs = tonumber(ARGV[6])
+  const currentRaw = await kv.get<number>(pointsKey);
+  const current = currentRaw ?? 0;
 
-    local current = tonumber(redis.call('GET', pointsKey) or '0')
-    if delta < 0 and current < (-delta) then
-      return {0, current}
-    end
-
-    local newBalance = redis.call('INCRBY', pointsKey, delta)
-
-    local log = {id = logId, amount = delta, source = source, description = description, balance = newBalance, createdAt = now}
-    redis.call('LPUSH', logKey, cjson.encode(log))
-    redis.call('LTRIM', logKey, 0, maxLogs - 1)
-
-    return {1, newBalance}
-  `;
-
-  const result = await kv.eval(
-    luaScript,
-    [pointsKey, logKey],
-    [delta, logId, source, description.trim(), now, MAX_LOG_ENTRIES]
-  ) as [number, number];
-
-  const [ok, balance] = result;
-  if (ok === 0) {
-    return { success: false, balance, message: '积分不足' };
+  if (delta < 0 && current < (-delta)) {
+    return { success: false, balance: current, message: '积分不足' };
   }
 
-  return { success: true, balance };
+  const newBalance = await kv.incrby(pointsKey, delta);
+
+  const log: PointsLog = {
+    id: logId,
+    amount: delta,
+    source,
+    description: description.trim(),
+    balance: newBalance,
+    createdAt: now,
+  };
+  await kv.lpush(logKey, log);
+  await kv.ltrim(logKey, 0, MAX_LOG_ENTRIES - 1);
+
+  return { success: true, balance: newBalance };
 }
 
 /**

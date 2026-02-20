@@ -1,7 +1,7 @@
 // src/lib/match3.ts - 消消乐（Match-3）后端逻辑
 
 import { randomBytes } from 'crypto';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import { addGamePointsWithLimit } from './points';
 import { getDailyPointsLimit } from './config';

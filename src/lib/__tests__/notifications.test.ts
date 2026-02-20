@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import {
   createUserNotification,
@@ -10,7 +10,7 @@ import {
 } from '../notifications';
 import { getAllUsers } from '../kv';
 
-vi.mock('@vercel/kv', () => ({
+vi.mock('@/lib/d1-kv', () => ({
   kv: {
     set: vi.fn(),
     zadd: vi.fn(),

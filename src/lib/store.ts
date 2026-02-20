@@ -1,6 +1,6 @@
 // src/lib/store.ts
 
-import { kv } from '@vercel/kv';
+import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import { StoreItem, ExchangeLog } from './types/store';
 import { deductPoints, applyPointsDelta } from './points';
@@ -274,30 +274,20 @@ export async function exchangeItem(
   let dailyLimitKey: string | null = null;
   if (hasDailyLimit) {
     dailyLimitKey = `exchange:daily:${userId}:${today}:${itemId}`;
-    const limitLuaScript = `
-      local key = KEYS[1]
-      local limit = tonumber(ARGV[1])
-      local ttl = tonumber(ARGV[2])
 
-      local newCount = redis.call('INCR', key)
-      if newCount == 1 then
-        redis.call('EXPIRE', key, ttl)
-      end
+    // D1-compatible: increment counter, check limit, rollback if exceeded
+    const newCount = await kv.incrby(dailyLimitKey, 1);
+    if (newCount === 1) {
+      await kv.expire(dailyLimitKey, 48 * 60 * 60);
+    }
 
-      if newCount > limit then
-        redis.call('DECR', key)
-        return {0, newCount - 1}
-      end
-
-      return {1, newCount}
-    `;
-
-    const limitResult = await kv.eval(
-      limitLuaScript,
-      [dailyLimitKey],
-      [item.dailyLimit as number, 48 * 60 * 60]
-    ) as [number, number];
-    const [limitOk] = limitResult;
+    let limitOk: number;
+    if (newCount > (item.dailyLimit as number)) {
+      await kv.decrby(dailyLimitKey, 1);
+      limitOk = 0;
+    } else {
+      limitOk = 1;
+    }
 
     if (limitOk !== 1) {
       return { success: false, message: `今日已达限购上限（${item.dailyLimit}次）` };
