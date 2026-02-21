@@ -19,6 +19,24 @@ export const GET = withUserRateLimit(
       });
     } catch (error) {
       console.error('Get profile overview error:', error);
+
+      const message =
+        error instanceof Error ? error.message.toLowerCase() : String(error ?? '').toLowerCase();
+
+      if (message.includes('d1 binding kv_db not available')) {
+        return NextResponse.json(
+          { success: false, message: '站点数据服务未绑定（KV_DB），请联系管理员检查 Cloudflare 绑定配置' },
+          { status: 503 }
+        );
+      }
+
+      if (message.includes('no such table')) {
+        return NextResponse.json(
+          { success: false, message: '站点数据表尚未初始化，请稍后刷新（若持续失败请联系管理员）' },
+          { status: 503 }
+        );
+      }
+
       return NextResponse.json(
         { success: false, message: '获取个人主页数据失败' },
         { status: 500 }

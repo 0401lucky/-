@@ -22,8 +22,8 @@ interface D1DatabaseLike {
 }
 
 let _db: D1DatabaseLike | null = null;
-let _secondaryExpiryTableReady = false;
-let _secondaryExpiryTableInitPromise: Promise<void> | null = null;
+let _schemaReady = false;
+let _schemaInitPromise: Promise<void> | null = null;
 
 function getD1(): D1DatabaseLike {
   if (_db) return _db;
@@ -40,8 +40,8 @@ function getD1(): D1DatabaseLike {
 /** Reset cached binding (for testing). */
 export function __resetD1(): void {
   _db = null;
-  _secondaryExpiryTableReady = false;
-  _secondaryExpiryTableInitPromise = null;
+  _schemaReady = false;
+  _schemaInitPromise = null;
 }
 
 // ---------- helpers ----------
@@ -72,13 +72,68 @@ function placeholders(size: number): string {
   return Array.from({ length: size }, () => "?").join(",");
 }
 
-async function ensureSecondaryExpiryTable(db: D1DatabaseLike): Promise<void> {
-  if (_secondaryExpiryTableReady) {
+async function ensureKvSchema(db: D1DatabaseLike): Promise<void> {
+  if (_schemaReady) {
     return;
   }
 
-  if (!_secondaryExpiryTableInitPromise) {
-    _secondaryExpiryTableInitPromise = (async () => {
+  if (!_schemaInitPromise) {
+    _schemaInitPromise = (async () => {
+      await db
+        .prepare(
+          `CREATE TABLE IF NOT EXISTS kv_data (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            expires_at INTEGER
+          )`,
+        )
+        .run();
+      await db
+        .prepare(
+          `CREATE TABLE IF NOT EXISTS kv_lists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL
+          )`,
+        )
+        .run();
+      await db
+        .prepare("CREATE INDEX IF NOT EXISTS idx_kv_lists_key ON kv_lists(key, id)")
+        .run();
+      await db
+        .prepare(
+          `CREATE TABLE IF NOT EXISTS kv_sets (
+            key TEXT NOT NULL,
+            member TEXT NOT NULL,
+            PRIMARY KEY (key, member)
+          )`,
+        )
+        .run();
+      await db
+        .prepare(
+          `CREATE TABLE IF NOT EXISTS kv_zsets (
+            key TEXT NOT NULL,
+            member TEXT NOT NULL,
+            score REAL NOT NULL,
+            PRIMARY KEY (key, member)
+          )`,
+        )
+        .run();
+      await db
+        .prepare(
+          "CREATE INDEX IF NOT EXISTS idx_kv_zsets_score ON kv_zsets(key, score, member)",
+        )
+        .run();
+      await db
+        .prepare(
+          `CREATE TABLE IF NOT EXISTS kv_hashes (
+            key TEXT NOT NULL,
+            field TEXT NOT NULL,
+            value TEXT NOT NULL,
+            PRIMARY KEY (key, field)
+          )`,
+        )
+        .run();
       await db
         .prepare(
           `CREATE TABLE IF NOT EXISTS kv_key_expirations (
@@ -92,15 +147,15 @@ async function ensureSecondaryExpiryTable(db: D1DatabaseLike): Promise<void> {
           "CREATE INDEX IF NOT EXISTS idx_kv_key_expirations_expires_at ON kv_key_expirations(expires_at)",
         )
         .run();
-      _secondaryExpiryTableReady = true;
+      _schemaReady = true;
     })();
   }
 
-  await _secondaryExpiryTableInitPromise;
+  await _schemaInitPromise;
 }
 
 async function deleteKeyAcrossTables(db: D1DatabaseLike, key: string): Promise<void> {
-  await ensureSecondaryExpiryTable(db);
+  await ensureKvSchema(db);
   await db.batch([
     db.prepare("DELETE FROM kv_data WHERE key = ?").bind(key),
     db.prepare("DELETE FROM kv_lists WHERE key = ?").bind(key),
@@ -129,7 +184,7 @@ async function hasNonStringKeyData(db: D1DatabaseLike, key: string): Promise<boo
 }
 
 async function getSecondaryExpiry(db: D1DatabaseLike, key: string): Promise<number | null> {
-  await ensureSecondaryExpiryTable(db);
+  await ensureKvSchema(db);
   const row = await db
     .prepare("SELECT expires_at FROM kv_key_expirations WHERE key = ?")
     .bind(key)
@@ -138,7 +193,7 @@ async function getSecondaryExpiry(db: D1DatabaseLike, key: string): Promise<numb
 }
 
 async function setSecondaryExpiry(db: D1DatabaseLike, key: string, expiresAt: number): Promise<void> {
-  await ensureSecondaryExpiryTable(db);
+  await ensureKvSchema(db);
   await db
     .prepare(
       `INSERT INTO kv_key_expirations (key, expires_at) VALUES (?, ?)
@@ -149,7 +204,7 @@ async function setSecondaryExpiry(db: D1DatabaseLike, key: string, expiresAt: nu
 }
 
 async function clearSecondaryExpiry(db: D1DatabaseLike, key: string): Promise<void> {
-  await ensureSecondaryExpiryTable(db);
+  await ensureKvSchema(db);
   await db.prepare("DELETE FROM kv_key_expirations WHERE key = ?").bind(key).run();
 }
 
@@ -168,6 +223,7 @@ async function purgeIfExpired(db: D1DatabaseLike, key: string): Promise<boolean>
 }
 
 async function keyExists(db: D1DatabaseLike, key: string): Promise<boolean> {
+  await ensureKvSchema(db);
   const dataRow = await db
     .prepare("SELECT expires_at FROM kv_data WHERE key = ?")
     .bind(key)
@@ -261,7 +317,7 @@ export const kv = {
   async del(...keys: string[]): Promise<number> {
     if (keys.length === 0) return 0;
     const db = getD1();
-    await ensureSecondaryExpiryTable(db);
+    await ensureKvSchema(db);
     const keyPlaceholders = placeholders(keys.length);
     const stmts = [
       db.prepare(`DELETE FROM kv_data WHERE key IN (${keyPlaceholders})`).bind(...keys),
@@ -282,6 +338,7 @@ export const kv = {
   async mget<T = unknown>(...keys: string[]): Promise<(T | null)[]> {
     if (keys.length === 0) return [];
     const db = getD1();
+    await ensureKvSchema(db);
     const keyPlaceholders = placeholders(keys.length);
     const rows = await db
       .prepare(
@@ -301,7 +358,7 @@ export const kv = {
     }
     // Lazy cleanup
     if (expiredKeys.length > 0) {
-      await ensureSecondaryExpiryTable(db);
+      await ensureKvSchema(db);
       const ep = placeholders(expiredKeys.length);
       await db.batch([
         db.prepare(`DELETE FROM kv_data WHERE key IN (${ep})`).bind(...expiredKeys),
@@ -351,6 +408,7 @@ export const kv = {
 
   async ttl(key: string): Promise<number> {
     const db = getD1();
+    await ensureKvSchema(db);
     const row = await db
       .prepare("SELECT expires_at FROM kv_data WHERE key = ?")
       .bind(key)
@@ -787,6 +845,7 @@ export const kv = {
     options?: { match?: string; count?: number },
   ): Promise<[number, string[]]> {
     const db = getD1();
+    await ensureKvSchema(db);
     const match = options?.match;
     const limit = options?.count ?? 1000;
     const now = nowMs();
