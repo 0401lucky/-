@@ -10,7 +10,6 @@ import { creditQuotaToUser } from './new-api';
 import { maskUserId } from './logging';
 import type {
   RewardBatch,
-  RewardBatchStatus,
   RewardClaim,
   RewardClaimStatus,
   RewardTargetMode,
@@ -23,6 +22,80 @@ const BATCH_LIST_KEY = 'rewards:batch:list';
 const CLAIM_KEY = (batchId: string, userId: number) => `rewards:claim:${batchId}:${userId}`;
 const CLAIM_LOCK_KEY = (batchId: string, userId: number) => `rewards:claim:lock:${batchId}:${userId}`;
 const BATCH_NOTIFIED_KEY = (batchId: string) => `rewards:batch:notified:${batchId}`;
+const NOTIFICATION_ITEM_KEY = (id: string) => `notifications:item:${id}`;
+const USER_NOTIFICATION_INDEX_KEY = (userId: number) => `notifications:user:${userId}:index`;
+const USER_NOTIFICATION_UNREAD_KEY = (userId: number) => `notifications:user:${userId}:unread`;
+const CLAIM_LOCK_TTL_SECONDS = 120;
+
+function normalizeUniqueUserIds(ids: number[]): number[] {
+  const unique = new Set<number>();
+  const result: number[] = [];
+
+  for (const rawId of ids) {
+    const id = Number(rawId);
+    if (!Number.isFinite(id) || id <= 0 || unique.has(id)) {
+      continue;
+    }
+    unique.add(id);
+    result.push(id);
+  }
+
+  return result;
+}
+
+async function rollbackCreatedNotification(userId: number, notificationId: string): Promise<void> {
+  try {
+    await Promise.all([
+      kv.del(NOTIFICATION_ITEM_KEY(notificationId)),
+      kv.zrem(USER_NOTIFICATION_INDEX_KEY(userId), notificationId),
+      kv.srem(USER_NOTIFICATION_UNREAD_KEY(userId), notificationId),
+    ]);
+  } catch (error) {
+    console.error('Reward notification rollback failed', {
+      userId: maskUserId(userId),
+      notificationId,
+      error,
+    });
+  }
+}
+
+async function rebuildMissingClaimFromNotification(
+  batchId: string,
+  userId: number,
+  notificationId: string,
+  notificationData: {
+    rewardType?: RewardType;
+    rewardAmount?: number;
+  }
+): Promise<RewardClaim | null> {
+  const rewardType = notificationData.rewardType;
+  const rewardAmount = Number(notificationData.rewardAmount);
+
+  if ((rewardType !== 'points' && rewardType !== 'quota')
+    || !Number.isFinite(rewardAmount)
+    || rewardAmount <= 0
+  ) {
+    return null;
+  }
+
+  const rebuilt: RewardClaim = {
+    id: nanoid(16),
+    batchId,
+    userId,
+    notificationId,
+    type: rewardType,
+    amount: rewardAmount,
+    status: 'pending',
+    retryCount: 0,
+  };
+
+  const created = await kv.set(CLAIM_KEY(batchId, userId), rebuilt, { nx: true });
+  if (created === 'OK') {
+    return rebuilt;
+  }
+
+  return kv.get<RewardClaim>(CLAIM_KEY(batchId, userId));
+}
 
 // ---------- 管理员: 创建并分发奖励批次 ----------
 
@@ -52,12 +125,12 @@ export async function createAndDistributeRewardBatch(
   let targetIds: number[];
   if (targetMode === 'all') {
     const users = await getAllUsers();
-    targetIds = users.map((u) => Number(u.id)).filter((id) => Number.isFinite(id));
+    targetIds = normalizeUniqueUserIds(users.map((u) => Number(u.id)));
   } else {
     if (!targetUserIds || targetUserIds.length === 0) {
       throw new Error('指定用户模式必须提供目标用户列表');
     }
-    targetIds = targetUserIds;
+    targetIds = normalizeUniqueUserIds(targetUserIds);
   }
 
   if (targetIds.length === 0) {
@@ -92,13 +165,14 @@ export async function createAndDistributeRewardBatch(
   const dedupeKey = BATCH_NOTIFIED_KEY(batchId);
 
   for (const userId of targetIds) {
+    let notification: NotificationItem | null = null;
     try {
       // 去重
       const added = await kv.sadd(dedupeKey, userId);
       if (Number(added) !== 1) continue;
 
       // 创建通知
-      const notification = await createUserNotification({
+      notification = await createUserNotification({
         userId,
         type: 'reward',
         title: batch.title,
@@ -126,6 +200,10 @@ export async function createAndDistributeRewardBatch(
 
       distributedCount++;
     } catch (error) {
+      if (notification?.id) {
+        await rollbackCreatedNotification(userId, notification.id);
+      }
+
       // 分发失败，回滚去重标记
       try {
         await kv.srem(dedupeKey, userId);
@@ -145,7 +223,7 @@ export async function createAndDistributeRewardBatch(
 
   // 更新批次状态
   batch.distributedCount = distributedCount;
-  batch.status = 'completed';
+  batch.status = distributedCount === targetIds.length ? 'completed' : 'failed';
   await kv.set(BATCH_KEY(batchId), batch);
 
   return batch;
@@ -213,9 +291,15 @@ export async function claimReward(
   const batchId = data.rewardBatchId;
 
   // 获取 claim 记录
-  const claim = await kv.get<RewardClaim>(CLAIM_KEY(batchId, userId));
+  let claim = await kv.get<RewardClaim>(CLAIM_KEY(batchId, userId));
   if (!claim) {
-    return { success: false, message: '未找到领取记录', claimStatus: 'pending' };
+    claim = await rebuildMissingClaimFromNotification(batchId, userId, notificationId, {
+      rewardType: data.rewardType,
+      rewardAmount: data.rewardAmount,
+    });
+    if (!claim) {
+      return { success: false, message: '未找到领取记录', claimStatus: 'pending' };
+    }
   }
 
   // 已领取 → 幂等返回
@@ -225,7 +309,7 @@ export async function claimReward(
 
   // 获取分布式锁
   const lockKey = CLAIM_LOCK_KEY(batchId, userId);
-  const lockAcquired = await kv.set(lockKey, '1', { ex: 10, nx: true });
+  const lockAcquired = await kv.set(lockKey, '1', { ex: CLAIM_LOCK_TTL_SECONDS, nx: true });
   if (!lockAcquired) {
     return { success: false, message: '正在处理中，请稍后重试', claimStatus: claim.status };
   }
@@ -256,9 +340,11 @@ export async function claimReward(
     } else if (freshClaim.type === 'quota') {
       try {
         const result = await creditQuotaToUser(userId, freshClaim.amount);
-        // creditQuotaToUser 返回 success=false 时也可能实际成功（uncertain 视为成功）
-        claimSuccess = result.success;
-        if (!claimSuccess) {
+        const uncertainSuccess = result.uncertain === true;
+        claimSuccess = result.success || uncertainSuccess;
+        if (uncertainSuccess) {
+          failReason = result.message || '充值结果不确定，请稍后检查余额';
+        } else if (!claimSuccess) {
           failReason = result.message || '额度充值失败';
         }
       } catch (error) {
@@ -272,6 +358,9 @@ export async function claimReward(
       // 更新 claim 状态
       freshClaim.status = 'claimed';
       freshClaim.claimedAt = now;
+      if (failReason) {
+        freshClaim.failReason = failReason;
+      }
       await kv.set(CLAIM_KEY(batchId, userId), freshClaim);
 
       // 更新通知 data.claimStatus
@@ -292,7 +381,11 @@ export async function claimReward(
         await kv.set(BATCH_KEY(batchId), batch);
       }
 
-      return { success: true, message: '奖励领取成功', claimStatus: 'claimed' };
+      return {
+        success: true,
+        message: failReason || '奖励领取成功',
+        claimStatus: 'claimed',
+      };
     } else {
       // 失败
       freshClaim.status = 'failed';

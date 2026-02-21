@@ -1,20 +1,16 @@
 import { cookies } from "next/headers";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "crypto";
 import { kv } from '@/lib/d1-kv';
+import { getRuntimeEnvValue, sanitizeRuntimeEnvValue } from './runtime-env';
 
 function sanitizeEnvValue(value: string | undefined): string {
-  if (!value) return "";
-
-  return value
-    .replace(/\\r\\n|\\n|\\r/g, "")
-    .replace(/[\r\n]/g, "")
-    .trim();
+  return sanitizeRuntimeEnvValue(value);
 }
 
 // [P0-1补充] ADMIN_USERNAMES 移除危险默认值
 // 生产环境必须配置，否则默认为空（无管理员）
 function getAdminUsernames(): string[] {
-  const adminEnv = sanitizeEnvValue(process.env.ADMIN_USERNAMES);
+  const adminEnv = sanitizeEnvValue(getRuntimeEnvValue("ADMIN_USERNAMES"));
   if (!adminEnv) {
     if (process.env.NODE_ENV === "production") {
       console.warn("⚠️ ADMIN_USERNAMES not set in production, no admin users configured!");
@@ -151,7 +147,7 @@ function isSessionRevokedInMemory(sessionData: SessionData): boolean {
 // [P0-1修复] 用于签名的密钥，生产环境必须设置 SESSION_SECRET 环境变量
 // 不再提供默认值，缺失则 fail-fast
 function getSessionSecret(): string {
-  const secret = process.env.SESSION_SECRET;
+  const secret = sanitizeEnvValue(getRuntimeEnvValue("SESSION_SECRET"));
   if (!secret) {
     // 非生产环境允许使用进程级随机密钥（避免硬编码）
     if (process.env.NODE_ENV !== "production") {

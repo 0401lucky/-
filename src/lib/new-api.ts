@@ -1,5 +1,6 @@
 import { kv } from '@/lib/d1-kv';
 import { maskUserId, maskUsername } from './logging';
+import { getRuntimeEnvValue, sanitizeRuntimeEnvValue } from './runtime-env';
 
 let _newApiUrl: string | null = null;
 
@@ -44,18 +45,13 @@ async function releaseUserQuotaLock(lock: UserQuotaLock): Promise<void> {
 }
 
 function sanitizeEnvValue(value: string | undefined): string {
-  if (!value) return '';
-
-  return value
-    .replace(/\\r\\n|\\n|\\r/g, '')
-    .replace(/[\r\n]/g, '')
-    .trim();
+  return sanitizeRuntimeEnvValue(value);
 }
 
 export function getNewApiUrl(): string {
   if (_newApiUrl) return _newApiUrl;
 
-  const rawUrl = sanitizeEnvValue(process.env.NEW_API_URL);
+  const rawUrl = sanitizeEnvValue(getRuntimeEnvValue("NEW_API_URL"));
   if (!rawUrl) {
     throw new Error(
       "NEW_API_URL is not set. Please configure it (e.g. in .env.local / Vercel env vars)."
@@ -81,6 +77,13 @@ export interface LoginResponse {
   success: boolean;
   message: string;
   data?: NewApiUser;
+}
+
+export interface CreditQuotaResult {
+  success: boolean;
+  message: string;
+  newQuota?: number;
+  uncertain?: boolean;
 }
 
 export async function loginToNewApi(username: string, password: string): Promise<{ success: boolean; message: string; cookies?: string; user?: NewApiUser }> {
@@ -228,8 +231,8 @@ export async function getAdminSession(): Promise<string | null> {
     return adminSessionCache.cookies;
   }
 
-  const username = sanitizeEnvValue(process.env.NEW_API_ADMIN_USERNAME);
-  const password = sanitizeEnvValue(process.env.NEW_API_ADMIN_PASSWORD);
+  const username = sanitizeEnvValue(getRuntimeEnvValue("NEW_API_ADMIN_USERNAME"));
+  const password = sanitizeEnvValue(getRuntimeEnvValue("NEW_API_ADMIN_PASSWORD"));
 
   if (!username || !password) {
     console.error('Admin credentials not configured. Please set NEW_API_ADMIN_USERNAME and NEW_API_ADMIN_PASSWORD.');
@@ -268,7 +271,7 @@ export async function getAdminSession(): Promise<string | null> {
 export async function creditQuotaToUser(
   userId: number,
   dollars: number
-): Promise<{ success: boolean; message: string; newQuota?: number }> {
+): Promise<CreditQuotaResult> {
   const baseUrl = getNewApiUrl();
   const loginResult = await getAdminSessionWithUser();
   if (!loginResult) {
@@ -378,7 +381,7 @@ export async function creditQuotaToUser(
               success: false,
               message: '充值结果不确定，请稍后检查余额',
               uncertain: true,
-            } as { success: boolean; message: string; newQuota?: number; uncertain?: boolean };
+            };
           }
           return verifyResult;
         }
@@ -389,7 +392,7 @@ export async function creditQuotaToUser(
         success: false,
         message: '服务连接失败，结果不确定，请检查余额',
         uncertain: true,
-      } as { success: boolean; message: string; newQuota?: number; uncertain?: boolean };
+      };
     }
   } finally {
     await releaseUserQuotaLock(lock);
@@ -452,8 +455,8 @@ async function getAdminSessionWithUser(): Promise<{ cookies: string; adminUserId
     return { cookies: adminSessionWithUserCache.cookies, adminUserId: adminSessionWithUserCache.adminUserId };
   }
 
-  const username = sanitizeEnvValue(process.env.NEW_API_ADMIN_USERNAME);
-  const password = sanitizeEnvValue(process.env.NEW_API_ADMIN_PASSWORD);
+  const username = sanitizeEnvValue(getRuntimeEnvValue("NEW_API_ADMIN_USERNAME"));
+  const password = sanitizeEnvValue(getRuntimeEnvValue("NEW_API_ADMIN_PASSWORD"));
 
   if (!username || !password) {
     console.error('Admin credentials not configured');

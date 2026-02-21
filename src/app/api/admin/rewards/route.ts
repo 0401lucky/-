@@ -92,8 +92,12 @@ export const POST = withAdmin(
         createdBy: user.username,
       });
 
+      const responseMessage = batch.status === 'completed'
+        ? '奖励发放完成'
+        : `奖励发放已完成（部分失败：${batch.totalTargets - batch.distributedCount}）`;
+
       return NextResponse.json(
-        { success: true, message: '奖励发放完成', data: batch },
+        { success: true, message: responseMessage, data: batch },
         { status: 201 }
       );
     } catch (error) {
