@@ -7,6 +7,7 @@
 const DELIVERY_PATH = "/api/internal/raffle/delivery";
 const DEFAULT_MAX_JOBS = 20;
 const IMAGE_PREFIX = "/images/";
+const IMAGE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const IMAGE_MIME_TYPES = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -70,10 +71,71 @@ async function triggerDelivery(env) {
   }
 }
 
-async function maybeHandleCardImage(request, env) {
+function ifNoneMatchHit(ifNoneMatch, etag) {
+  if (!ifNoneMatch || !etag) {
+    return false;
+  }
+  if (ifNoneMatch.trim() === "*") {
+    return true;
+  }
+
+  const values = ifNoneMatch
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return values.some((value) => value === etag || value === `W/${etag}` || `W/${value}` === etag);
+}
+
+function buildImageHeaders(object, resolvedKey) {
+  const dotIndex = resolvedKey.lastIndexOf(".");
+  const ext = dotIndex >= 0 ? resolvedKey.slice(dotIndex).toLowerCase() : "";
+  const contentType =
+    object.httpMetadata?.contentType ||
+    IMAGE_MIME_TYPES[ext] ||
+    "application/octet-stream";
+
+  const headers = new Headers({
+    "Content-Type": contentType,
+    "Cache-Control": IMAGE_CACHE_CONTROL,
+    "CDN-Cache-Control": IMAGE_CACHE_CONTROL,
+  });
+
+  if (typeof object.size === "number") {
+    headers.set("Content-Length", String(object.size));
+  }
+  if (object.httpEtag) {
+    headers.set("ETag", object.httpEtag);
+  }
+  if (object.uploaded) {
+    headers.set("Last-Modified", object.uploaded.toUTCString());
+  }
+
+  return headers;
+}
+
+async function maybeHandleCardImage(request, env, ctx) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith(IMAGE_PREFIX)) {
     return null;
+  }
+
+  const method = request.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    return new Response(null, {
+      status: 405,
+      headers: { Allow: "GET, HEAD" },
+    });
+  }
+
+  const cacheKey = new Request(url.toString(), { method: "GET" });
+  const cache = caches.default;
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    if (method === "HEAD") {
+      return new Response(null, { status: cached.status, headers: cached.headers });
+    }
+    return cached;
   }
 
   const encodedKey = url.pathname.slice(IMAGE_PREFIX.length);
@@ -109,24 +171,24 @@ async function maybeHandleCardImage(request, env) {
     return new Response(null, { status: 404 });
   }
 
-  const dotIndex = resolvedKey.lastIndexOf(".");
-  const ext = dotIndex >= 0 ? resolvedKey.slice(dotIndex).toLowerCase() : "";
-  const contentType =
-    object.httpMetadata?.contentType ||
-    IMAGE_MIME_TYPES[ext] ||
-    "application/octet-stream";
+  const headers = buildImageHeaders(object, resolvedKey);
+  const ifNoneMatch = request.headers.get("if-none-match");
+  if (ifNoneMatchHit(ifNoneMatch, object.httpEtag)) {
+    return new Response(null, { status: 304, headers });
+  }
 
-  return new Response(object.body, {
-    headers: {
-      "Content-Type": contentType,
-      "Cache-Control": "public, max-age=31536000, immutable",
-    },
-  });
+  const response = new Response(object.body, { status: 200, headers });
+  if (method === "GET") {
+    ctx.waitUntil(cache.put(cacheKey, response.clone()));
+    return response;
+  }
+
+  return new Response(null, { status: 200, headers });
 }
 
 export default {
   async fetch(request, env, ctx) {
-    const imageResponse = await maybeHandleCardImage(request, env);
+    const imageResponse = await maybeHandleCardImage(request, env, ctx);
     if (imageResponse) {
       return imageResponse;
     }
