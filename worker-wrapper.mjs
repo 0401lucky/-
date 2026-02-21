@@ -6,6 +6,15 @@
 
 const DELIVERY_PATH = "/api/internal/raffle/delivery";
 const DEFAULT_MAX_JOBS = 20;
+const IMAGE_PREFIX = "/images/";
+const IMAGE_MIME_TYPES = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+};
 
 function readSecret(env) {
   return String(env.RAFFLE_DELIVERY_CRON_SECRET || env.CRON_SECRET || "").trim();
@@ -61,8 +70,67 @@ async function triggerDelivery(env) {
   }
 }
 
+async function maybeHandleCardImage(request, env) {
+  const url = new URL(request.url);
+  if (!url.pathname.startsWith(IMAGE_PREFIX)) {
+    return null;
+  }
+
+  const encodedKey = url.pathname.slice(IMAGE_PREFIX.length);
+  const decodedKey = decodeURIComponent(encodedKey);
+  if (!decodedKey && !encodedKey) {
+    return new Response(null, { status: 404 });
+  }
+
+  const bucket = env.CARD_IMAGES;
+  if (!bucket?.get) {
+    return new Response("CARD_IMAGES binding not available", { status: 503 });
+  }
+
+  const candidates = Array.from(new Set([decodedKey, encodedKey].filter(Boolean)));
+  let object = null;
+  let resolvedKey = "";
+  for (const candidate of candidates) {
+    const result = await bucket.get(candidate);
+    if (result) {
+      object = result;
+      resolvedKey = candidate;
+      if (result.body) {
+        break;
+      }
+    }
+  }
+
+  if (!object) {
+    return new Response(null, { status: 404 });
+  }
+
+  if (!object.body) {
+    return new Response(null, { status: 404 });
+  }
+
+  const dotIndex = resolvedKey.lastIndexOf(".");
+  const ext = dotIndex >= 0 ? resolvedKey.slice(dotIndex).toLowerCase() : "";
+  const contentType =
+    object.httpMetadata?.contentType ||
+    IMAGE_MIME_TYPES[ext] ||
+    "application/octet-stream";
+
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": contentType,
+      "Cache-Control": "public, max-age=31536000, immutable",
+    },
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
+    const imageResponse = await maybeHandleCardImage(request, env);
+    if (imageResponse) {
+      return imageResponse;
+    }
+
     const worker = await getOpenNextWorker();
     return worker.fetch(request, env, ctx);
   },
