@@ -1,6 +1,6 @@
 /**
  * GET/POST /api/internal/raffle/delivery
- * 处理发奖队列（建议通过 Vercel Cron 调用）
+ * 处理发奖队列（支持 Cloudflare Cron / 外部调度调用）
  */
 
 import { timingSafeEqual } from "crypto";

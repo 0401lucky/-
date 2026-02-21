@@ -13,12 +13,15 @@ export const POST = withUserRateLimit(
   'game:start',
   async (_request, user) => {
     try {
-      let [farmState, balance, dailyEarned, dailyLimit] = await Promise.all([
+      const [initialFarmState, initialBalance, initialDailyEarned, dailyLimit] = await Promise.all([
         getOrCreateFarm(user.id),
         getUserPoints(user.id),
         getDailyEarnedPoints(user.id),
         getDailyPointsLimit(),
       ]);
+      let farmState = initialFarmState;
+      let balance = initialBalance;
+      let dailyEarned = initialDailyEarned;
 
       const weather = getTodayWeather(getTodayDateString());
 

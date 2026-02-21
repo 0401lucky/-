@@ -13,12 +13,15 @@ export const GET = withUserRateLimit(
   'api:default',
   async (_request, user) => {
     try {
-      let [farmState, balance, dailyEarned, dailyLimit] = await Promise.all([
+      const [initialFarmState, initialBalance, initialDailyEarned, dailyLimit] = await Promise.all([
         getFarmState(user.id),
         getUserPoints(user.id),
         getDailyEarnedPoints(user.id),
         getDailyPointsLimit(),
       ]);
+      const farmState = initialFarmState;
+      let balance = initialBalance;
+      let dailyEarned = initialDailyEarned;
 
       if (!farmState) {
         return NextResponse.json({

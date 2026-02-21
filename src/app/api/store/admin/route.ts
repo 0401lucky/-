@@ -64,7 +64,7 @@ export async function GET() {
   try {
     const items = await getAllStoreItems();
 
-    let purchaseCounts: Record<string, unknown> = {};
+    const purchaseCounts: Record<string, unknown> = {};
     try {
       if (items.length > 0) {
         const fields = items.map(item => item.id);

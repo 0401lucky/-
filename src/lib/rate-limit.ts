@@ -19,6 +19,9 @@ export interface RateLimitResult {
 
 const DEFAULT_WINDOW = 60; // 1 分钟
 const DEFAULT_MAX_REQUESTS = 10;
+const RATE_LIMIT_LOCK_TTL_SECONDS = 3;
+const RATE_LIMIT_LOCK_MAX_RETRIES = 6;
+const RATE_LIMIT_LOCK_RETRY_MS = 15;
 
 interface InMemoryRateLimitBucket {
   timestamps: number[];
@@ -27,6 +30,40 @@ interface InMemoryRateLimitBucket {
 
 const inMemoryRateLimitStore = new Map<string, InMemoryRateLimitBucket>();
 let inMemorySweepCounter = 0;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withRateLimitLock<T>(
+  key: string,
+  handler: () => Promise<T>
+): Promise<T> {
+  const lockKey = `${key}:lock`;
+  const token = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+  for (let attempt = 0; attempt < RATE_LIMIT_LOCK_MAX_RETRIES; attempt += 1) {
+    const acquired = await kv.set(lockKey, token, {
+      nx: true,
+      ex: RATE_LIMIT_LOCK_TTL_SECONDS,
+    });
+
+    if (acquired === "OK") {
+      try {
+        return await handler();
+      } finally {
+        const current = await kv.get<string>(lockKey);
+        if (current === token) {
+          await kv.del(lockKey);
+        }
+      }
+    }
+
+    await sleep(RATE_LIMIT_LOCK_RETRY_MS);
+  }
+
+  throw new Error("RATE_LIMIT_LOCK_TIMEOUT");
+}
 
 function checkRateLimitInMemory(
   key: string,
@@ -147,24 +184,27 @@ export async function checkRateLimit(
   const key = `${prefix}:${userId}`;
   const now = Math.floor(Date.now() / 1000);
 
-  // D1-compatible: simple counter approach with TTL
   try {
-    const currentCount = await kv.get<number>(key) ?? 0;
+    return await withRateLimitLock(key, async () => {
+      const currentCount = await kv.get<number>(key) ?? 0;
+      const ttl = await kv.ttl(key);
+      const resetAt = now + (ttl > 0 ? ttl : windowSeconds);
 
-    if (currentCount >= maxRequests) {
-      return { success: false, remaining: 0, resetAt: now + windowSeconds };
-    }
+      if (currentCount >= maxRequests) {
+        return { success: false, remaining: 0, resetAt };
+      }
 
-    const newCount = await kv.incrby(key, 1);
-    if (newCount === 1) {
-      await kv.expire(key, windowSeconds);
-    }
+      const newCount = await kv.incrby(key, 1);
+      if (ttl <= 0) {
+        await kv.expire(key, windowSeconds);
+      }
 
-    return {
-      success: true,
-      remaining: Math.max(0, maxRequests - newCount),
-      resetAt: now + windowSeconds,
-    };
+      return {
+        success: true,
+        remaining: Math.max(0, maxRequests - newCount),
+        resetAt,
+      };
+    });
   } catch (error) {
     console.error("Rate limit check error, fallback to in-memory limiter:", error);
     return checkRateLimitInMemory(key, now, windowSeconds, maxRequests);

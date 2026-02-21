@@ -22,6 +22,8 @@ interface D1DatabaseLike {
 }
 
 let _db: D1DatabaseLike | null = null;
+let _secondaryExpiryTableReady = false;
+let _secondaryExpiryTableInitPromise: Promise<void> | null = null;
 
 function getD1(): D1DatabaseLike {
   if (_db) return _db;
@@ -38,6 +40,8 @@ function getD1(): D1DatabaseLike {
 /** Reset cached binding (for testing). */
 export function __resetD1(): void {
   _db = null;
+  _secondaryExpiryTableReady = false;
+  _secondaryExpiryTableInitPromise = null;
 }
 
 // ---------- helpers ----------
@@ -64,6 +68,125 @@ function isExpired(expiresAt: number | null | undefined): boolean {
   return nowMs() >= expiresAt;
 }
 
+function placeholders(size: number): string {
+  return Array.from({ length: size }, () => "?").join(",");
+}
+
+async function ensureSecondaryExpiryTable(db: D1DatabaseLike): Promise<void> {
+  if (_secondaryExpiryTableReady) {
+    return;
+  }
+
+  if (!_secondaryExpiryTableInitPromise) {
+    _secondaryExpiryTableInitPromise = (async () => {
+      await db
+        .prepare(
+          `CREATE TABLE IF NOT EXISTS kv_key_expirations (
+            key TEXT PRIMARY KEY,
+            expires_at INTEGER NOT NULL
+          )`,
+        )
+        .run();
+      await db
+        .prepare(
+          "CREATE INDEX IF NOT EXISTS idx_kv_key_expirations_expires_at ON kv_key_expirations(expires_at)",
+        )
+        .run();
+      _secondaryExpiryTableReady = true;
+    })();
+  }
+
+  await _secondaryExpiryTableInitPromise;
+}
+
+async function deleteKeyAcrossTables(db: D1DatabaseLike, key: string): Promise<void> {
+  await ensureSecondaryExpiryTable(db);
+  await db.batch([
+    db.prepare("DELETE FROM kv_data WHERE key = ?").bind(key),
+    db.prepare("DELETE FROM kv_lists WHERE key = ?").bind(key),
+    db.prepare("DELETE FROM kv_sets WHERE key = ?").bind(key),
+    db.prepare("DELETE FROM kv_zsets WHERE key = ?").bind(key),
+    db.prepare("DELETE FROM kv_hashes WHERE key = ?").bind(key),
+    db.prepare("DELETE FROM kv_key_expirations WHERE key = ?").bind(key),
+  ]);
+}
+
+async function hasNonStringKeyData(db: D1DatabaseLike, key: string): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 AS ok FROM kv_lists WHERE key = ?
+       UNION ALL
+       SELECT 1 AS ok FROM kv_sets WHERE key = ?
+       UNION ALL
+       SELECT 1 AS ok FROM kv_zsets WHERE key = ?
+       UNION ALL
+       SELECT 1 AS ok FROM kv_hashes WHERE key = ?
+       LIMIT 1`,
+    )
+    .bind(key, key, key, key)
+    .first<{ ok: number }>();
+  return !!row;
+}
+
+async function getSecondaryExpiry(db: D1DatabaseLike, key: string): Promise<number | null> {
+  await ensureSecondaryExpiryTable(db);
+  const row = await db
+    .prepare("SELECT expires_at FROM kv_key_expirations WHERE key = ?")
+    .bind(key)
+    .first<{ expires_at: number }>();
+  return row?.expires_at ?? null;
+}
+
+async function setSecondaryExpiry(db: D1DatabaseLike, key: string, expiresAt: number): Promise<void> {
+  await ensureSecondaryExpiryTable(db);
+  await db
+    .prepare(
+      `INSERT INTO kv_key_expirations (key, expires_at) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET expires_at = excluded.expires_at`,
+    )
+    .bind(key, expiresAt)
+    .run();
+}
+
+async function clearSecondaryExpiry(db: D1DatabaseLike, key: string): Promise<void> {
+  await ensureSecondaryExpiryTable(db);
+  await db.prepare("DELETE FROM kv_key_expirations WHERE key = ?").bind(key).run();
+}
+
+async function purgeIfExpired(db: D1DatabaseLike, key: string): Promise<boolean> {
+  const secondaryExpiry = await getSecondaryExpiry(db, key);
+  if (secondaryExpiry === null) {
+    return false;
+  }
+
+  if (!isExpired(secondaryExpiry)) {
+    return false;
+  }
+
+  await deleteKeyAcrossTables(db, key);
+  return true;
+}
+
+async function keyExists(db: D1DatabaseLike, key: string): Promise<boolean> {
+  const dataRow = await db
+    .prepare("SELECT expires_at FROM kv_data WHERE key = ?")
+    .bind(key)
+    .first<{ expires_at: number | null }>();
+  if (dataRow) {
+    if (isExpired(dataRow.expires_at)) {
+      await deleteKeyAcrossTables(db, key);
+      return false;
+    }
+    return true;
+  }
+
+  if (await purgeIfExpired(db, key)) {
+    return false;
+  }
+
+  return hasNonStringKeyData(db, key);
+}
+
 // ---------- kv object ----------
 
 export const kv = {
@@ -71,13 +194,16 @@ export const kv = {
 
   async get<T = unknown>(key: string): Promise<T | null> {
     const db = getD1();
+    if (await purgeIfExpired(db, key)) {
+      return null;
+    }
     const row = await db
       .prepare("SELECT value, expires_at FROM kv_data WHERE key = ?")
       .bind(key)
       .first<{ value: string; expires_at: number | null }>();
     if (!row) return null;
     if (isExpired(row.expires_at)) {
-      await db.prepare("DELETE FROM kv_data WHERE key = ?").bind(key).run();
+      await deleteKeyAcrossTables(db, key);
       return null;
     }
     return deserialize<T>(row.value);
@@ -94,43 +220,56 @@ export const kv = {
       options?.ex != null ? nowMs() + options.ex * 1000 : null;
 
     if (options?.nx) {
-      // Only set if not exists (or expired)
-      const existing = await db
-        .prepare("SELECT expires_at FROM kv_data WHERE key = ?")
-        .bind(key)
-        .first<{ expires_at: number | null }>();
-      if (existing && !isExpired(existing.expires_at)) {
+      if (await purgeIfExpired(db, key)) {
+        // 已过期并清理，继续抢占写入
+      }
+
+      if (await hasNonStringKeyData(db, key)) {
         return null;
       }
-      // Delete if expired then insert
-      await db
+
+      const now = nowMs();
+      const setResult = await db
         .prepare(
-          "INSERT OR REPLACE INTO kv_data (key, value, expires_at) VALUES (?, ?, ?)",
+          `INSERT INTO kv_data (key, value, expires_at) VALUES (?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET
+             value = excluded.value,
+             expires_at = excluded.expires_at
+           WHERE kv_data.expires_at IS NOT NULL AND kv_data.expires_at <= ?
+           RETURNING key`,
         )
-        .bind(key, serialized, expiresAt)
-        .run();
+        .bind(key, serialized, expiresAt, now)
+        .first<{ key: string }>();
+      if (!setResult) {
+        return null;
+      }
+      await clearSecondaryExpiry(db, key);
       return "OK";
     }
 
+    await deleteKeyAcrossTables(db, key);
     await db
       .prepare(
         "INSERT OR REPLACE INTO kv_data (key, value, expires_at) VALUES (?, ?, ?)",
       )
       .bind(key, serialized, expiresAt)
       .run();
+    await clearSecondaryExpiry(db, key);
     return "OK";
   },
 
   async del(...keys: string[]): Promise<number> {
     if (keys.length === 0) return 0;
     const db = getD1();
-    const placeholders = keys.map(() => "?").join(",");
+    await ensureSecondaryExpiryTable(db);
+    const keyPlaceholders = placeholders(keys.length);
     const stmts = [
-      db.prepare(`DELETE FROM kv_data WHERE key IN (${placeholders})`).bind(...keys),
-      db.prepare(`DELETE FROM kv_lists WHERE key IN (${placeholders})`).bind(...keys),
-      db.prepare(`DELETE FROM kv_sets WHERE key IN (${placeholders})`).bind(...keys),
-      db.prepare(`DELETE FROM kv_zsets WHERE key IN (${placeholders})`).bind(...keys),
-      db.prepare(`DELETE FROM kv_hashes WHERE key IN (${placeholders})`).bind(...keys),
+      db.prepare(`DELETE FROM kv_data WHERE key IN (${keyPlaceholders})`).bind(...keys),
+      db.prepare(`DELETE FROM kv_lists WHERE key IN (${keyPlaceholders})`).bind(...keys),
+      db.prepare(`DELETE FROM kv_sets WHERE key IN (${keyPlaceholders})`).bind(...keys),
+      db.prepare(`DELETE FROM kv_zsets WHERE key IN (${keyPlaceholders})`).bind(...keys),
+      db.prepare(`DELETE FROM kv_hashes WHERE key IN (${keyPlaceholders})`).bind(...keys),
+      db.prepare(`DELETE FROM kv_key_expirations WHERE key IN (${keyPlaceholders})`).bind(...keys),
     ];
     const results = await db.batch(stmts);
     let total = 0;
@@ -143,10 +282,10 @@ export const kv = {
   async mget<T = unknown>(...keys: string[]): Promise<(T | null)[]> {
     if (keys.length === 0) return [];
     const db = getD1();
-    const placeholders = keys.map(() => "?").join(",");
+    const keyPlaceholders = placeholders(keys.length);
     const rows = await db
       .prepare(
-        `SELECT key, value, expires_at FROM kv_data WHERE key IN (${placeholders})`,
+        `SELECT key, value, expires_at FROM kv_data WHERE key IN (${keyPlaceholders})`,
       )
       .bind(...keys)
       .all<{ key: string; value: string; expires_at: number | null }>();
@@ -162,8 +301,12 @@ export const kv = {
     }
     // Lazy cleanup
     if (expiredKeys.length > 0) {
-      const ep = expiredKeys.map(() => "?").join(",");
-      await db.prepare(`DELETE FROM kv_data WHERE key IN (${ep})`).bind(...expiredKeys).run();
+      await ensureSecondaryExpiryTable(db);
+      const ep = placeholders(expiredKeys.length);
+      await db.batch([
+        db.prepare(`DELETE FROM kv_data WHERE key IN (${ep})`).bind(...expiredKeys),
+        db.prepare(`DELETE FROM kv_key_expirations WHERE key IN (${ep})`).bind(...expiredKeys),
+      ]);
     }
 
     return keys.map((k) => {
@@ -179,6 +322,8 @@ export const kv = {
 
   async incrby(key: string, increment: number): Promise<number> {
     const db = getD1();
+    await purgeIfExpired(db, key);
+    await clearSecondaryExpiry(db, key);
     // Clean up expired key first
     await db
       .prepare("DELETE FROM kv_data WHERE key = ? AND expires_at IS NOT NULL AND expires_at < ?")
@@ -210,38 +355,78 @@ export const kv = {
       .prepare("SELECT expires_at FROM kv_data WHERE key = ?")
       .bind(key)
       .first<{ expires_at: number | null }>();
-    if (!row) return -2; // key does not exist
-    if (row.expires_at === null) return -1; // no expiry
-    const remaining = Math.ceil((row.expires_at - nowMs()) / 1000);
-    if (remaining <= 0) {
-      await db.prepare("DELETE FROM kv_data WHERE key = ?").bind(key).run();
+    if (row) {
+      if (row.expires_at === null) return -1; // no expiry
+      const remaining = Math.ceil((row.expires_at - nowMs()) / 1000);
+      if (remaining <= 0) {
+        await deleteKeyAcrossTables(db, key);
+        return -2;
+      }
+      return remaining;
+    }
+
+    const secondaryExpiry = await getSecondaryExpiry(db, key);
+    if (secondaryExpiry === null) {
+      const hasComplexData = await hasNonStringKeyData(db, key);
+      return hasComplexData ? -1 : -2;
+    }
+
+    const secondaryRemaining = Math.ceil((secondaryExpiry - nowMs()) / 1000);
+    if (secondaryRemaining <= 0) {
+      await deleteKeyAcrossTables(db, key);
       return -2;
     }
-    return remaining;
+
+    if (!(await hasNonStringKeyData(db, key))) {
+      await clearSecondaryExpiry(db, key);
+      return -2;
+    }
+
+    return secondaryRemaining;
   },
 
   async expire(key: string, seconds: number): Promise<number> {
     const db = getD1();
+    if (seconds <= 0) {
+      const existed = await keyExists(db, key);
+      if (!existed) {
+        return 0;
+      }
+      await deleteKeyAcrossTables(db, key);
+      return 1;
+    }
+
+    if (await purgeIfExpired(db, key)) {
+      return 0;
+    }
     const expiresAt = nowMs() + seconds * 1000;
     const result = await db
       .prepare("UPDATE kv_data SET expires_at = ? WHERE key = ?")
       .bind(expiresAt, key)
       .run();
-    return (result.meta?.changes ?? 0) > 0 ? 1 : 0;
+    if ((result.meta?.changes ?? 0) > 0) {
+      await clearSecondaryExpiry(db, key);
+      return 1;
+    }
+
+    if (!(await hasNonStringKeyData(db, key))) {
+      return 0;
+    }
+
+    await setSecondaryExpiry(db, key, expiresAt);
+    return 1;
   },
 
   async exists(...keys: string[]): Promise<number> {
     if (keys.length === 0) return 0;
     const db = getD1();
-    const now = nowMs();
-    const placeholders = keys.map(() => "?").join(",");
-    const row = await db
-      .prepare(
-        `SELECT COUNT(*) AS cnt FROM kv_data WHERE key IN (${placeholders}) AND (expires_at IS NULL OR expires_at > ?)`,
-      )
-      .bind(...keys, now)
-      .first<{ cnt: number }>();
-    return row?.cnt ?? 0;
+    let count = 0;
+    for (const key of keys) {
+      if (await keyExists(db, key)) {
+        count += 1;
+      }
+    }
+    return count;
   },
 
   // ==================== List commands ====================
@@ -249,6 +434,7 @@ export const kv = {
   async lpush(key: string, ...values: unknown[]): Promise<number> {
     if (values.length === 0) return 0;
     const db = getD1();
+    await purgeIfExpired(db, key);
     const stmts = values.map((v) =>
       db
         .prepare("INSERT INTO kv_lists (key, value) VALUES (?, ?)")
@@ -264,6 +450,7 @@ export const kv = {
 
   async rpop(key: string): Promise<string | null> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     // rpop = remove lowest id (oldest inserted) — matching Redis RPOP on a list where LPUSH adds to head
     const row = await db
       .prepare(
@@ -277,6 +464,7 @@ export const kv = {
 
   async lrange<T = unknown>(key: string, start: number, stop: number): Promise<T[]> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     // Get total count for negative index support
     const countRow = await db
       .prepare("SELECT COUNT(*) AS cnt FROM kv_lists WHERE key = ?")
@@ -286,7 +474,7 @@ export const kv = {
     if (total === 0) return [];
 
     // Normalize negative indices
-    let s = start < 0 ? Math.max(0, total + start) : start;
+    const s = start < 0 ? Math.max(0, total + start) : start;
     let e = stop < 0 ? total + stop : stop;
     if (e >= total) e = total - 1;
     if (s > e) return [];
@@ -306,6 +494,7 @@ export const kv = {
 
   async llen(key: string): Promise<number> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     const row = await db
       .prepare("SELECT COUNT(*) AS cnt FROM kv_lists WHERE key = ?")
       .bind(key)
@@ -315,6 +504,7 @@ export const kv = {
 
   async ltrim(key: string, start: number, stop: number): Promise<void> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     // Get all ids ordered by id DESC (LPUSH head first)
     const rows = await db
       .prepare("SELECT id FROM kv_lists WHERE key = ? ORDER BY id DESC")
@@ -323,7 +513,7 @@ export const kv = {
     const total = rows.results.length;
     if (total === 0) return;
 
-    let s = start < 0 ? Math.max(0, total + start) : start;
+    const s = start < 0 ? Math.max(0, total + start) : start;
     let e = stop < 0 ? total + stop : stop;
     if (e >= total) e = total - 1;
 
@@ -347,6 +537,7 @@ export const kv = {
 
   async lrem(key: string, count: number, value: unknown): Promise<number> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     const serialized = serialize(value);
 
     if (count === 0) {
@@ -384,6 +575,7 @@ export const kv = {
   async sadd(key: string, ...members: unknown[]): Promise<number> {
     if (members.length === 0) return 0;
     const db = getD1();
+    await purgeIfExpired(db, key);
     const stmts = members.map((m) =>
       db
         .prepare("INSERT OR IGNORE INTO kv_sets (key, member) VALUES (?, ?)")
@@ -400,6 +592,7 @@ export const kv = {
   async srem(key: string, ...members: unknown[]): Promise<number> {
     if (members.length === 0) return 0;
     const db = getD1();
+    await purgeIfExpired(db, key);
     const placeholders = members.map(() => "?").join(",");
     const result = await db
       .prepare(`DELETE FROM kv_sets WHERE key = ? AND member IN (${placeholders})`)
@@ -410,6 +603,7 @@ export const kv = {
 
   async scard(key: string): Promise<number> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     const row = await db
       .prepare("SELECT COUNT(*) AS cnt FROM kv_sets WHERE key = ?")
       .bind(key)
@@ -419,6 +613,7 @@ export const kv = {
 
   async smembers<T = string>(key: string): Promise<T[]> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     const rows = await db
       .prepare("SELECT member FROM kv_sets WHERE key = ?")
       .bind(key)
@@ -428,6 +623,7 @@ export const kv = {
 
   async sismember(key: string, member: unknown): Promise<number> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     const row = await db
       .prepare("SELECT 1 AS ok FROM kv_sets WHERE key = ? AND member = ?")
       .bind(key, String(member))
@@ -437,6 +633,7 @@ export const kv = {
 
   async srandmember(key: string): Promise<string | null> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     const row = await db
       .prepare("SELECT member FROM kv_sets WHERE key = ? ORDER BY RANDOM() LIMIT 1")
       .bind(key)
@@ -452,6 +649,7 @@ export const kv = {
   ): Promise<number> {
     if (items.length === 0) return 0;
     const db = getD1();
+    await purgeIfExpired(db, key);
     const stmts = items.map((item) =>
       db
         .prepare(
@@ -470,6 +668,7 @@ export const kv = {
     options?: { rev?: boolean; withScores?: boolean; byScore?: boolean; offset?: number; count?: number },
   ): Promise<T[]> {
     const db = getD1();
+    await purgeIfExpired(db, key);
 
     // byScore mode: range by score values
     if (options?.byScore) {
@@ -498,7 +697,7 @@ export const kv = {
 
     const numStart = Number(start);
     const numStop = Number(stop);
-    let s = numStart < 0 ? Math.max(0, total + numStart) : numStart;
+    const s = numStart < 0 ? Math.max(0, total + numStart) : numStart;
     let e = numStop < 0 ? total + numStop : numStop;
     if (e >= total) e = total - 1;
     if (s > e) return [];
@@ -527,6 +726,7 @@ export const kv = {
 
   async zcount(key: string, min: number, max: number): Promise<number> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     const row = await db
       .prepare(
         "SELECT COUNT(*) AS cnt FROM kv_zsets WHERE key = ? AND score >= ? AND score <= ?",
@@ -538,6 +738,7 @@ export const kv = {
 
   async zscore(key: string, member: string): Promise<number | null> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     const row = await db
       .prepare("SELECT score FROM kv_zsets WHERE key = ? AND member = ?")
       .bind(key, member)
@@ -548,6 +749,7 @@ export const kv = {
   async zrem(key: string, ...members: string[]): Promise<number> {
     if (members.length === 0) return 0;
     const db = getD1();
+    await purgeIfExpired(db, key);
     const placeholders = members.map(() => "?").join(",");
     const result = await db
       .prepare(`DELETE FROM kv_zsets WHERE key = ? AND member IN (${placeholders})`)
@@ -558,6 +760,7 @@ export const kv = {
 
   async zcard(key: string): Promise<number> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     const row = await db
       .prepare("SELECT COUNT(*) AS cnt FROM kv_zsets WHERE key = ?")
       .bind(key)
@@ -567,6 +770,7 @@ export const kv = {
 
   async zincrby(key: string, increment: number, member: string): Promise<number> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     const result = await db
       .prepare(
         `INSERT INTO kv_zsets (key, member, score) VALUES (?, ?, ?)
@@ -582,26 +786,62 @@ export const kv = {
     cursor: number,
     options?: { match?: string; count?: number },
   ): Promise<[number, string[]]> {
-    void cursor; // D1 returns all results at once, cursor is ignored
     const db = getD1();
     const match = options?.match;
     const limit = options?.count ?? 1000;
+    const now = nowMs();
+    const offset = Number.isFinite(cursor) && cursor > 0
+      ? Math.max(0, Math.floor(cursor))
+      : 0;
 
     if (!match) {
+      const totalRow = await db
+        .prepare(
+          "SELECT COUNT(*) AS cnt FROM kv_data WHERE expires_at IS NULL OR expires_at > ?",
+        )
+        .bind(now)
+        .first<{ cnt: number }>();
       const rows = await db
-        .prepare("SELECT key FROM kv_data LIMIT ?")
-        .bind(limit)
+        .prepare(
+          `SELECT key FROM kv_data
+           WHERE expires_at IS NULL OR expires_at > ?
+           ORDER BY key
+           LIMIT ? OFFSET ?`,
+        )
+        .bind(now, limit, offset)
         .all<{ key: string }>();
-      return [0, rows.results.map((r: { key: string }) => r.key)];
+      const total = totalRow?.cnt ?? 0;
+      const nextCursor = offset + rows.results.length < total
+        ? offset + rows.results.length
+        : 0;
+      return [nextCursor, rows.results.map((r: { key: string }) => r.key)];
     }
 
     // Convert Redis glob pattern to SQL LIKE pattern
     const likePattern = match.replace(/\*/g, "%").replace(/\?/g, "_");
+    const totalRow = await db
+      .prepare(
+        `SELECT COUNT(*) AS cnt FROM kv_data
+         WHERE (expires_at IS NULL OR expires_at > ?)
+           AND key LIKE ?`,
+      )
+      .bind(now, likePattern)
+      .first<{ cnt: number }>();
     const rows = await db
-      .prepare("SELECT key FROM kv_data WHERE key LIKE ? LIMIT ?")
-      .bind(likePattern, limit)
+      .prepare(
+        `SELECT key FROM kv_data
+         WHERE (expires_at IS NULL OR expires_at > ?)
+           AND key LIKE ?
+         ORDER BY key
+         LIMIT ? OFFSET ?`,
+      )
+      .bind(now, likePattern, limit, offset)
       .all<{ key: string }>();
-    return [0, rows.results.map((r: { key: string }) => r.key)];
+    const total = totalRow?.cnt ?? 0;
+    const nextCursor = offset + rows.results.length < total
+      ? offset + rows.results.length
+      : 0;
+    return [nextCursor, rows.results.map((r: { key: string }) => r.key)];
   },
 
   // ==================== Hash commands ====================
@@ -610,6 +850,7 @@ export const kv = {
     const entries = Object.entries(fields);
     if (entries.length === 0) return 0;
     const db = getD1();
+    await purgeIfExpired(db, key);
     const stmts = entries.map(([field, value]) =>
       db
         .prepare(
@@ -623,6 +864,7 @@ export const kv = {
 
   async hget<T = unknown>(key: string, field: string): Promise<T | null> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     const row = await db
       .prepare("SELECT value FROM kv_hashes WHERE key = ? AND field = ?")
       .bind(key, field)
@@ -633,6 +875,7 @@ export const kv = {
 
   async hgetall<T = Record<string, unknown>>(key: string): Promise<T | null> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     const rows = await db
       .prepare("SELECT field, value FROM kv_hashes WHERE key = ?")
       .bind(key)
@@ -649,6 +892,7 @@ export const kv = {
   async hdel(key: string, ...fields: string[]): Promise<number> {
     if (fields.length === 0) return 0;
     const db = getD1();
+    await purgeIfExpired(db, key);
     const placeholders = fields.map(() => "?").join(",");
     const result = await db
       .prepare(
@@ -661,6 +905,7 @@ export const kv = {
 
   async hincrby(key: string, field: string, increment: number): Promise<number> {
     const db = getD1();
+    await purgeIfExpired(db, key);
     const result = await db
       .prepare(
         `INSERT INTO kv_hashes (key, field, value) VALUES (?, ?, ?)
@@ -675,6 +920,7 @@ export const kv = {
   async hmget<T = unknown>(key: string, ...fields: string[]): Promise<(T | null)[]> {
     if (fields.length === 0) return [];
     const db = getD1();
+    await purgeIfExpired(db, key);
     const placeholders = fields.map(() => "?").join(",");
     const rows = await db
       .prepare(

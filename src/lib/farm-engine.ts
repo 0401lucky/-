@@ -141,7 +141,7 @@ export function computeGrowthProgress(
 
   const growthUnits = sumDailySegments(plantedAt, now, (segmentStart, segmentEnd, weather) => {
     const weatherConfig = WEATHERS[weather];
-    let modifier = weatherConfig.growthModifier;
+    const modifier = weatherConfig.growthModifier;
 
     // growth_speed buff：在 buff 活跃期间额外乘以 multiplier
     if (buffCtx?.growthSpeed) {

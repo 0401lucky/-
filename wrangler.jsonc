@@ -1,6 +1,6 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"main": ".open-next/worker.js",
+	"main": "worker-wrapper.mjs",
 	"name": "redemption-code-distributor",
 	"compatibility_date": "2026-02-20",
 	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
@@ -46,5 +46,8 @@
 		// Enable image optimization
 		// see https://opennext.js.org/cloudflare/howtos/image
 		"binding": "IMAGES"
+	},
+	"triggers": {
+		"crons": ["0 3 * * *"]
 	}
 }

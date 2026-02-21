@@ -91,11 +91,10 @@ npx wrangler r2 bucket create cache
 - `SESSION_SECRET`
 - `NEW_API_ADMIN_USERNAME`（可选）
 - `NEW_API_ADMIN_PASSWORD`（可选）
-- `CRON_SECRET`
+- `RAFFLE_DELIVERY_CRON_SECRET`（或 `CRON_SECRET`）
 - `BLOB_READ_WRITE_TOKEN`（可选）
 
-> 说明：项目当前使用的是 Redis REST 接口（`@vercel/kv`）。  
-> 迁移到 Cloudflare 后，数据层仍需可用的 Upstash Redis（或兼容 REST 的 Redis 服务），不是 Cloudflare KV。
+> 说明：项目已迁移到 Cloudflare D1（绑定名 `KV_DB`），无需再配置 `KV_REST_*`。
 
 ### 4. 部署
 
@@ -113,8 +112,8 @@ npm run preview
 
 ### 6. 定时任务说明
 
-`vercel.json` 里的 Cron 在 Cloudflare 不生效。  
-如果你要继续使用多人抽奖发奖任务（`/api/internal/raffle/delivery`），需要改成 Cloudflare Cron Trigger 或外部定时调用。
+已在 `wrangler.jsonc` 中配置 Cloudflare Cron（默认 UTC `0 3 * * *`），  
+由 `worker-wrapper.mjs` 自动调用 `/api/internal/raffle/delivery`。
 
 ## 本地开发
 
@@ -216,7 +215,7 @@ node scripts/migrate-feedback-images-to-blob.mjs --execute --verbose
 ## 多人抽奖发奖队列
 
 - 多人抽奖开奖后会先落库中奖名单，再将“直充发奖”写入 KV 队列。
-- 队列由 `vercel.json` 中的 Cron 每日触发一次（路径：`/api/internal/raffle/delivery`，默认 UTC 03:00）。
+- 队列由 `wrangler.jsonc` 的 Cron 每日触发（路径：`/api/internal/raffle/delivery`，默认 UTC 03:00）。
 - 发奖处理策略：单任务最多处理 20 位中奖者，发奖并发上限 5；失败和超时 pending 可重试。
 src/
 ├── app/

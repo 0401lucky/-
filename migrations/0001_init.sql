@@ -34,3 +34,11 @@ CREATE TABLE kv_hashes (
   value TEXT NOT NULL,
   PRIMARY KEY (key, field)
 );
+
+-- 非 string 类型 key 的过期信息（list/set/zset/hash）
+CREATE TABLE IF NOT EXISTS kv_key_expirations (
+  key TEXT PRIMARY KEY,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_kv_key_expirations_expires_at
+  ON kv_key_expirations(expires_at);
