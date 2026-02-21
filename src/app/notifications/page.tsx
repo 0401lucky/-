@@ -3,16 +3,25 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Bell, CheckCircle2, Clock3, MailOpen, RefreshCw, X } from 'lucide-react';
+import { ArrowLeft, Bell, CheckCircle2, Clock3, Gift, MailOpen, RefreshCw, X } from 'lucide-react';
+
+interface NotificationData {
+  rewardBatchId?: string;
+  rewardType?: 'points' | 'quota';
+  rewardAmount?: number;
+  claimStatus?: 'pending' | 'claimed' | 'failed';
+  [key: string]: unknown;
+}
 
 interface NotificationItem {
   id: string;
-  type: 'system' | 'announcement' | 'feedback_reply' | 'lottery_win' | 'raffle_win';
+  type: 'system' | 'announcement' | 'feedback_reply' | 'lottery_win' | 'raffle_win' | 'reward';
   title: string;
   content: string;
   createdAt: number;
   readAt?: number;
   isRead: boolean;
+  data?: NotificationData;
 }
 
 interface Pagination {
@@ -34,6 +43,7 @@ export default function NotificationsPage() {
   const [page, setPage] = useState(1);
   const [selectedItem, setSelectedItem] = useState<NotificationItem | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [claimingId, setClaimingId] = useState<string | null>(null);
 
   const fetchNotifications = useCallback(
     async (targetPage = page, silent = false) => {
@@ -122,6 +132,100 @@ export default function NotificationsPage() {
     feedback_reply: '反馈回复',
     lottery_win: '抽奖中奖',
     raffle_win: '多人抽奖中奖',
+    reward: '奖励通知',
+  };
+
+  const claimReward = async (notificationId: string) => {
+    if (claimingId) return;
+    setClaimingId(notificationId);
+    setError(null);
+
+    try {
+      const res = await fetch('/api/notifications/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notificationId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || '领取失败');
+      }
+      await fetchNotifications(page, true);
+      // 更新弹窗中的 selectedItem
+      if (selectedItem?.id === notificationId) {
+        setSelectedItem((prev) =>
+          prev
+            ? {
+                ...prev,
+                data: { ...prev.data, claimStatus: 'claimed' as const },
+                isRead: true,
+              }
+            : null
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '领取失败');
+    } finally {
+      setClaimingId(null);
+    }
+  };
+
+  const renderClaimButton = (item: NotificationItem, size: 'sm' | 'md' = 'sm') => {
+    if (item.type !== 'reward' || !item.data) return null;
+    const claimStatus = item.data.claimStatus;
+    const isClaiming = claimingId === item.id;
+    const rewardDesc =
+      item.data.rewardType === 'points'
+        ? `${item.data.rewardAmount} 积分`
+        : `$${item.data.rewardAmount} 额度`;
+
+    if (claimStatus === 'claimed') {
+      return (
+        <span
+          className={`inline-flex items-center gap-1 ${
+            size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'
+          } rounded-lg bg-stone-100 text-stone-500 border border-stone-200`}
+        >
+          <CheckCircle2 className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
+          已领取 {rewardDesc}
+        </span>
+      );
+    }
+
+    if (claimStatus === 'failed') {
+      return (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            void claimReward(item.id);
+          }}
+          disabled={isClaiming}
+          className={`inline-flex items-center gap-1 ${
+            size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'
+          } rounded-lg border border-red-200 text-red-600 font-medium hover:bg-red-50 disabled:opacity-50`}
+        >
+          <Gift className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
+          {isClaiming ? '领取中...' : `重试领取 ${rewardDesc}`}
+        </button>
+      );
+    }
+
+    // pending
+    return (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          void claimReward(item.id);
+        }}
+        disabled={isClaiming}
+        className={`inline-flex items-center gap-1 ${
+          size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'
+        } rounded-lg border border-emerald-200 text-emerald-700 font-medium hover:bg-emerald-50 disabled:opacity-50`}
+      >
+        <Gift className={size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
+        {isClaiming ? '领取中...' : `领取 ${rewardDesc}`}
+      </button>
+    );
   };
 
   return (
@@ -219,6 +323,9 @@ export default function NotificationsPage() {
                     </div>
                     <h3 className="mt-2 text-sm font-semibold text-stone-800">{item.title}</h3>
                     <p className="mt-1 text-sm text-stone-600 whitespace-pre-wrap break-words">{item.content}</p>
+                    {item.type === 'reward' && (
+                      <div className="mt-2">{renderClaimButton(item, 'sm')}</div>
+                    )}
                     <p className="mt-2 text-xs text-sky-600">点击查看详情</p>
                     <p className="mt-2 text-xs text-stone-400">{formatTime(item.createdAt)}</p>
                   </div>
@@ -297,6 +404,9 @@ export default function NotificationsPage() {
               </div>
 
               <p className="mt-4 text-sm text-stone-600 whitespace-pre-wrap break-words">{selectedItem.content}</p>
+              {selectedItem.type === 'reward' && (
+                <div className="mt-4">{renderClaimButton(selectedItem, 'md')}</div>
+              )}
               <p className="mt-4 text-xs text-stone-400">发布时间：{formatTime(selectedItem.createdAt)}</p>
 
               <div className="mt-5 flex items-center justify-end gap-2">

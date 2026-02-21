@@ -11,6 +11,7 @@ export type PointsSource =
   | 'admin_adjust'   // 管理员调整
   | 'card_collection' // 卡牌集齐奖励
   | 'ranking_reward' // 排行榜周期奖励
+  | 'reward_claim'   // 奖励领取
 
 /** 积分流水记录 */
 export interface PointsLog {

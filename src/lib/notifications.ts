@@ -8,7 +8,8 @@ export type NotificationType =
   | 'announcement'
   | 'feedback_reply'
   | 'lottery_win'
-  | 'raffle_win';
+  | 'raffle_win'
+  | 'reward';
 
 export interface NotificationItem {
   id: string;
@@ -250,6 +251,10 @@ export async function markUserNotificationsRead(
 export async function getUserNotificationUnreadCount(userId: number): Promise<number> {
   const unread = await kv.scard(USER_NOTIFICATION_UNREAD_KEY(userId));
   return Number(unread) || 0;
+}
+
+export async function getNotificationById(id: string): Promise<NotificationItem | null> {
+  return kv.get<NotificationItem>(NOTIFICATION_ITEM_KEY(id));
 }
 
 export async function fanoutAnnouncementNotification(announcement: {

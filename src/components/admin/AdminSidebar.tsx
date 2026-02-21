@@ -6,7 +6,7 @@ import {
   Package, Sparkles, Gift, Activity,
   Users, MessageSquareText, Megaphone,
   ShoppingBag, Layers, Settings,
-  LogOut, Home, X, Sprout,
+  LogOut, Home, X, Sprout, Send,
   User as UserIcon,
 } from 'lucide-react';
 import type { AdminUser } from './AdminContext';
@@ -30,6 +30,7 @@ const NAV_GROUPS: NavGroup[] = [
       { name: '项目管理', href: '/admin', icon: Package },
       { name: '抽奖管理', href: '/admin/lottery', icon: Sparkles },
       { name: '多人抽奖', href: '/admin/raffle', icon: Gift },
+      { name: '奖励发放', href: '/admin/rewards', icon: Send },
       { name: '运营仪表盘', href: '/admin/dashboard', icon: Activity },
     ],
   },

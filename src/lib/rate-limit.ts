@@ -160,6 +160,10 @@ export const RATE_LIMITS = {
   'profile:overview': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:profile:overview' },
   'admin:dashboard': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:admin:dashboard' },
   'admin:alerts': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:admin:alerts' },
+  'admin:rewards': { windowSeconds: 60, maxRequests: 20, prefix: 'ratelimit:admin:rewards' },
+
+  // 奖励领取
+  'rewards:claim': { windowSeconds: 60, maxRequests: 10, prefix: 'ratelimit:rewards:claim' },
 
   // 通用 API
   'api:default': { windowSeconds: 60, maxRequests: 100, prefix: 'ratelimit:api' },
