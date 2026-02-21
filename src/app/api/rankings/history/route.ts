@@ -4,6 +4,11 @@ import {
   type RankingSettlementPeriod,
 } from '@/lib/ranking-settlement';
 import { withUserRateLimit } from '@/lib/rate-limit';
+import {
+  buildKvUnavailablePayload,
+  getKvErrorInsight,
+  KV_UNAVAILABLE_RETRY_AFTER_SECONDS,
+} from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,6 +44,19 @@ export const GET = withUserRateLimit(
         data,
       });
     } catch (error) {
+      const kvInsight = getKvErrorInsight(error);
+      if (kvInsight.isUnavailable) {
+        return NextResponse.json(
+          buildKvUnavailablePayload('排行榜历史服务暂时不可用，请稍后重试'),
+          {
+            status: 503,
+            headers: {
+              'Retry-After': KV_UNAVAILABLE_RETRY_AFTER_SECONDS.toString(),
+            },
+          }
+        );
+      }
+
       console.error('Get ranking settlement history error:', error);
       return NextResponse.json(
         { success: false, message: '获取排行榜结算历史失败' },

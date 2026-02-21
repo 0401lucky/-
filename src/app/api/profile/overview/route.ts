@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getProfileOverview } from '@/lib/profile';
 import { withUserRateLimit } from '@/lib/rate-limit';
+import {
+  buildKvUnavailablePayload,
+  getKvErrorInsight,
+  KV_UNAVAILABLE_RETRY_AFTER_SECONDS,
+} from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,21 +24,16 @@ export const GET = withUserRateLimit(
       });
     } catch (error) {
       console.error('Get profile overview error:', error);
-
-      const message =
-        error instanceof Error ? error.message.toLowerCase() : String(error ?? '').toLowerCase();
-
-      if (message.includes('d1 binding kv_db not available')) {
+      const kvInsight = getKvErrorInsight(error);
+      if (kvInsight.isUnavailable) {
         return NextResponse.json(
-          { success: false, message: '站点数据服务未绑定（KV_DB），请联系管理员检查 Cloudflare 绑定配置' },
-          { status: 503 }
-        );
-      }
-
-      if (message.includes('no such table')) {
-        return NextResponse.json(
-          { success: false, message: '站点数据表尚未初始化，请稍后刷新（若持续失败请联系管理员）' },
-          { status: 503 }
+          buildKvUnavailablePayload('个人主页数据服务暂时不可用，请稍后重试'),
+          {
+            status: 503,
+            headers: {
+              'Retry-After': KV_UNAVAILABLE_RETRY_AFTER_SECONDS.toString(),
+            },
+          }
         );
       }
 

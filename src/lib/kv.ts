@@ -11,6 +11,18 @@ const KV_NETWORK_PATTERNS = [
   "fetch failed",
   "connect",
 ];
+const KV_SCHEMA_PATTERNS = [
+  "no such table",
+  "no such column",
+  "duplicate column name",
+  "database schema has changed",
+];
+const KV_DB_LOCK_PATTERNS = [
+  "database is locked",
+  "database is busy",
+  "sql_busy",
+  "sqlite_busy",
+];
 
 export const KV_UNAVAILABLE_RETRY_AFTER_SECONDS = 30;
 
@@ -166,6 +178,28 @@ export function getKvErrorInsight(error: unknown): KvErrorInsight {
       isUnavailable: true,
       retryable: true,
       code: "KV_NETWORK",
+      status,
+      message,
+    };
+  }
+
+  if (includesAnyPattern(fingerprint, KV_SCHEMA_PATTERNS)) {
+    return {
+      isKvError: true,
+      isUnavailable: true,
+      retryable: false,
+      code: "KV_D1_ERROR",
+      status,
+      message,
+    };
+  }
+
+  if (includesAnyPattern(fingerprint, KV_DB_LOCK_PATTERNS)) {
+    return {
+      isKvError: true,
+      isUnavailable: true,
+      retryable: true,
+      code: "KV_D1_ERROR",
       status,
       message,
     };

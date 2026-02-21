@@ -72,6 +72,39 @@ function placeholders(size: number): string {
   return Array.from({ length: size }, () => "?").join(",");
 }
 
+function isDuplicateColumnError(error: unknown): boolean {
+  const message = error instanceof Error
+    ? error.message.toLowerCase()
+    : String(error ?? "").toLowerCase();
+  return message.includes("duplicate column name");
+}
+
+async function ensureColumnExists(
+  db: D1DatabaseLike,
+  tableName: string,
+  columnName: string,
+  columnDefinition: string,
+): Promise<void> {
+  const columns = await db
+    .prepare(`PRAGMA table_info("${tableName}")`)
+    .all<{ name: string }>();
+
+  if (columns.results.some((column) => column.name === columnName)) {
+    return;
+  }
+
+  try {
+    await db
+      .prepare(`ALTER TABLE "${tableName}" ADD COLUMN "${columnName}" ${columnDefinition}`)
+      .run();
+  } catch (error) {
+    if (isDuplicateColumnError(error)) {
+      return;
+    }
+    throw error;
+  }
+}
+
 async function ensureKvSchema(db: D1DatabaseLike): Promise<void> {
   if (_schemaReady) {
     return;
@@ -147,6 +180,12 @@ async function ensureKvSchema(db: D1DatabaseLike): Promise<void> {
           "CREATE INDEX IF NOT EXISTS idx_kv_key_expirations_expires_at ON kv_key_expirations(expires_at)",
         )
         .run();
+
+      // 兼容历史 D1 表结构：早期 kv_data 可能缺失 expires_at 列。
+      await ensureColumnExists(db, "kv_data", "expires_at", "INTEGER");
+      // 兼容历史 kv_key_expirations 表结构（若缺列则补齐）。
+      await ensureColumnExists(db, "kv_key_expirations", "expires_at", "INTEGER NOT NULL DEFAULT 0");
+
       _schemaReady = true;
     })();
   }
