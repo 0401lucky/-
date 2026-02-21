@@ -15,6 +15,8 @@ const nextConfig: NextConfig = {
   // 图片优化
   images: {
     formats: ["image/avif", "image/webp"],
+    // Cloudflare + R2 自定义图片路由下，关闭 Next 内置优化，直接走原图 URL
+    unoptimized: true,
   },
 
   // 实验性优化

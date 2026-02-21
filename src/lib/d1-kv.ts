@@ -24,6 +24,7 @@ interface D1DatabaseLike {
 let _db: D1DatabaseLike | null = null;
 let _schemaReady = false;
 let _schemaInitPromise: Promise<void> | null = null;
+const MAX_SQL_BINDINGS = 90;
 
 function getD1(): D1DatabaseLike {
   if (_db) return _db;
@@ -70,6 +71,14 @@ function isExpired(expiresAt: number | null | undefined): boolean {
 
 function placeholders(size: number): string {
   return Array.from({ length: size }, () => "?").join(",");
+}
+
+function chunkValues<T>(values: T[], size: number = MAX_SQL_BINDINGS): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
 }
 
 function isDuplicateColumnError(error: unknown): boolean {
@@ -357,20 +366,24 @@ export const kv = {
     if (keys.length === 0) return 0;
     const db = getD1();
     await ensureKvSchema(db);
-    const keyPlaceholders = placeholders(keys.length);
-    const stmts = [
-      db.prepare(`DELETE FROM kv_data WHERE key IN (${keyPlaceholders})`).bind(...keys),
-      db.prepare(`DELETE FROM kv_lists WHERE key IN (${keyPlaceholders})`).bind(...keys),
-      db.prepare(`DELETE FROM kv_sets WHERE key IN (${keyPlaceholders})`).bind(...keys),
-      db.prepare(`DELETE FROM kv_zsets WHERE key IN (${keyPlaceholders})`).bind(...keys),
-      db.prepare(`DELETE FROM kv_hashes WHERE key IN (${keyPlaceholders})`).bind(...keys),
-      db.prepare(`DELETE FROM kv_key_expirations WHERE key IN (${keyPlaceholders})`).bind(...keys),
-    ];
-    const results = await db.batch(stmts);
     let total = 0;
-    for (const r of results) {
-      total += (r.meta?.changes ?? 0);
+
+    for (const keyChunk of chunkValues(keys)) {
+      const keyPlaceholders = placeholders(keyChunk.length);
+      const stmts = [
+        db.prepare(`DELETE FROM kv_data WHERE key IN (${keyPlaceholders})`).bind(...keyChunk),
+        db.prepare(`DELETE FROM kv_lists WHERE key IN (${keyPlaceholders})`).bind(...keyChunk),
+        db.prepare(`DELETE FROM kv_sets WHERE key IN (${keyPlaceholders})`).bind(...keyChunk),
+        db.prepare(`DELETE FROM kv_zsets WHERE key IN (${keyPlaceholders})`).bind(...keyChunk),
+        db.prepare(`DELETE FROM kv_hashes WHERE key IN (${keyPlaceholders})`).bind(...keyChunk),
+        db.prepare(`DELETE FROM kv_key_expirations WHERE key IN (${keyPlaceholders})`).bind(...keyChunk),
+      ];
+      const results = await db.batch(stmts);
+      for (const r of results) {
+        total += (r.meta?.changes ?? 0);
+      }
     }
+
     return total > 0 ? total : 0;
   },
 
@@ -378,31 +391,38 @@ export const kv = {
     if (keys.length === 0) return [];
     const db = getD1();
     await ensureKvSchema(db);
-    const keyPlaceholders = placeholders(keys.length);
-    const rows = await db
-      .prepare(
-        `SELECT key, value, expires_at FROM kv_data WHERE key IN (${keyPlaceholders})`,
-      )
-      .bind(...keys)
-      .all<{ key: string; value: string; expires_at: number | null }>();
 
     const map = new Map<string, string>();
-    const expiredKeys: string[] = [];
-    for (const row of rows.results) {
-      if (isExpired(row.expires_at)) {
-        expiredKeys.push(row.key);
-      } else {
-        map.set(row.key, row.value);
+    const expiredKeySet = new Set<string>();
+
+    for (const keyChunk of chunkValues(keys)) {
+      const keyPlaceholders = placeholders(keyChunk.length);
+      const rows = await db
+        .prepare(
+          `SELECT key, value, expires_at FROM kv_data WHERE key IN (${keyPlaceholders})`,
+        )
+        .bind(...keyChunk)
+        .all<{ key: string; value: string; expires_at: number | null }>();
+
+      for (const row of rows.results) {
+        if (isExpired(row.expires_at)) {
+          expiredKeySet.add(row.key);
+        } else {
+          map.set(row.key, row.value);
+        }
       }
     }
+
     // Lazy cleanup
+    const expiredKeys = Array.from(expiredKeySet);
     if (expiredKeys.length > 0) {
-      await ensureKvSchema(db);
-      const ep = placeholders(expiredKeys.length);
-      await db.batch([
-        db.prepare(`DELETE FROM kv_data WHERE key IN (${ep})`).bind(...expiredKeys),
-        db.prepare(`DELETE FROM kv_key_expirations WHERE key IN (${ep})`).bind(...expiredKeys),
-      ]);
+      for (const expiredChunk of chunkValues(expiredKeys)) {
+        const ep = placeholders(expiredChunk.length);
+        await db.batch([
+          db.prepare(`DELETE FROM kv_data WHERE key IN (${ep})`).bind(...expiredChunk),
+          db.prepare(`DELETE FROM kv_key_expirations WHERE key IN (${ep})`).bind(...expiredChunk),
+        ]);
+      }
     }
 
     return keys.map((k) => {

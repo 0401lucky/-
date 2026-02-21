@@ -1,4 +1,5 @@
 import { kv } from "@/lib/d1-kv";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getTodayDateString, getSecondsUntilMidnight } from "./time";
 
 const KV_TIMEOUT_PATTERNS = ["timeout", "timed out", "deadline exceeded", "etimedout", "econnaborted"];
@@ -54,11 +55,8 @@ export interface KvErrorInsight {
 
 function hasD1Binding(): boolean {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getCloudflareContext } = require("@opennextjs/cloudflare");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ctx = (getCloudflareContext as any)?.();
-    return !!ctx?.env?.KV_DB;
+    const context = getCloudflareContext() as { env?: { KV_DB?: unknown } } | undefined;
+    return !!context?.env?.KV_DB;
   } catch {
     return false;
   }
