@@ -9,11 +9,21 @@ interface CropShopProps {
   level: FarmLevel;
   unlockedCrops: CropId[];
   balance: number;
+  actionLoading: boolean;
+  error?: string | null;
   onSelect: (cropId: CropId) => void;
   onClose: () => void;
 }
 
-export default function CropShop({ level, unlockedCrops, balance, onSelect, onClose }: CropShopProps) {
+export default function CropShop({
+  level,
+  unlockedCrops,
+  balance,
+  actionLoading,
+  error,
+  onSelect,
+  onClose,
+}: CropShopProps) {
   const availableCrops = getCropsForLevel(level);
 
   return (
@@ -44,12 +54,24 @@ export default function CropShop({ level, unlockedCrops, balance, onSelect, onCl
           <span>余额: <b>{balance}</b> 积分</span>
         </div>
 
+        {actionLoading && (
+          <div className="mx-4 mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-center text-sm text-blue-700">
+            正在种植，请稍候...
+          </div>
+        )}
+
+        {!actionLoading && error && (
+          <div className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-center text-sm text-red-600">
+            {error}
+          </div>
+        )}
+
         {/* 作物列表 */}
         <div className="p-4 overflow-y-auto max-h-[60vh] space-y-2">
           {availableCrops.map((crop, index) => {
             const isUnlocked = unlockedCrops.includes(crop.id);
             const canAfford = balance >= crop.seedCost;
-            const disabled = !isUnlocked || !canAfford;
+            const disabled = !isUnlocked || !canAfford || actionLoading;
 
             return (
               <button

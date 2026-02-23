@@ -178,6 +178,7 @@ export function useFarmState(): FarmData {
 
   const plant = useCallback(async (plotIndex: number, cropId: string): Promise<boolean> => {
     setActionLoading(true);
+    setError(null);
     try {
       const res = await fetch('/api/games/farm/plant', {
         method: 'POST',
@@ -190,7 +191,6 @@ export function useFarmState(): FarmData {
         return false;
       }
       updateFromResponse(data.data);
-      setError(null);
       return true;
     } catch {
       setError('网络错误');

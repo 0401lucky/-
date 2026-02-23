@@ -2,7 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { withUserRateLimit } from '@/lib/rate-limit';
-import { checkActionCooldown, plantCrop } from '@/lib/farm';
+import { plantCrop } from '@/lib/farm';
 import { CROPS } from '@/lib/farm-config';
 import { getTodayWeather } from '@/lib/farm-engine';
 import { getTodayDateString } from '@/lib/time';
@@ -12,15 +12,6 @@ export const POST = withUserRateLimit(
   'game:submit',
   async (request: NextRequest, user) => {
     try {
-      // 冷却检查
-      const canAct = await checkActionCooldown(user.id);
-      if (!canAct) {
-        return NextResponse.json(
-          { success: false, message: '操作太频繁，请稍等' },
-          { status: 429 },
-        );
-      }
-
       const body = (await request.json().catch(() => null)) as { plotIndex?: number; cropId?: string } | null;
       if (!body || typeof body !== 'object') {
         return NextResponse.json(

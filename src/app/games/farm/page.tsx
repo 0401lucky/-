@@ -422,6 +422,8 @@ export default function FarmPage() {
           level={farm.farmState.level}
           unlockedCrops={farm.farmState.unlockedCrops}
           balance={farm.balance}
+          actionLoading={farm.actionLoading}
+          error={farm.error}
           onSelect={handleCropSelect}
           onClose={() => {
             setShopOpen(false);
