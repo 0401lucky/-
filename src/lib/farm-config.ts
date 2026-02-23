@@ -259,7 +259,7 @@ export const WATER_MISS_PENALTY = 0.12;
 export const WATER_MISS_WITHER_THRESHOLD = 5;
 
 /** 操作冷却时间（秒） */
-export const ACTION_COOLDOWN_SECONDS = 2;
+export const ACTION_COOLDOWN_SECONDS = 1;
 
 /** 获取所有作物列表 */
 export function getAllCrops(): CropConfig[] {

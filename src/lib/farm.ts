@@ -1,8 +1,8 @@
 // src/lib/farm.ts - 农场后端业务逻辑（KV操作 + Lua脚本）
 
 import { kv } from '@/lib/d1-kv';
-import type { CropId, FarmState, FarmLevel, HarvestDetail } from './types/farm';
-import { CROPS, WEATHERS, ACTION_COOLDOWN_SECONDS } from './farm-config';
+import type { CropId, FarmState, FarmLevel, HarvestDetail, PlotState, CropStage } from './types/farm';
+import { CROPS, WEATHERS, ACTION_COOLDOWN_SECONDS, FARM_LEVELS, getLevelByExp } from './farm-config';
 import {
   createInitialFarmState, refreshFarmState, computePlotState,
   computeHarvestYield, computePestYieldMultiplier, checkLevelUp, createEmptyPlot,
@@ -19,9 +19,11 @@ const FARM_STATE_KEY = (userId: number) => `farm:state:${userId}`;
 const FARM_COOLDOWN_KEY = (userId: number) => `farm:cooldown:action:${userId}`;
 const FARM_ACTION_LOCK_KEY = (userId: number) => `farm:lock:action:${userId}`;
 
-const FARM_ACTION_LOCK_TTL_SECONDS = 15;
-const FARM_ACTION_LOCK_RETRY_MS = 80;
-const FARM_ACTION_LOCK_MAX_RETRIES = 15;
+const FARM_ACTION_LOCK_TTL_SECONDS = 6;
+const FARM_ACTION_LOCK_RETRY_MS = 50;
+const FARM_ACTION_LOCK_MAX_RETRIES = 6;
+const FARM_LEVEL_SEQUENCE: FarmLevel[] = [1, 2, 3, 4, 5];
+const PLOT_STAGES: CropStage[] = ['seed', 'sprout', 'growing', 'mature', 'withered'];
 
 interface FarmActionLock {
   key: string;
@@ -61,7 +63,7 @@ async function releaseFarmActionLock(lock: FarmActionLock): Promise<void> {
 // ---- 冷却检查 ----
 
 /**
- * 检查操作冷却（2秒防连点）
+ * 检查操作冷却（1秒防连点）
  */
 export async function checkActionCooldown(userId: number): Promise<boolean> {
   const key = FARM_COOLDOWN_KEY(userId);
@@ -116,16 +118,115 @@ function isValidPlotIndex(plotIndex: number, plotCount: number): boolean {
   return Number.isInteger(plotIndex) && plotIndex >= 0 && plotIndex < plotCount;
 }
 
+function isFarmLevel(value: unknown): value is FarmLevel {
+  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5;
+}
+
+function toSafeNonNegativeInt(value: unknown, fallback = 0): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.floor(value));
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, parsed);
+    }
+  }
+  return fallback;
+}
+
+function toSafeTimestamp(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  return fallback;
+}
+
+function getLevelByPlotCount(plotCount: number): FarmLevel {
+  let inferredLevel: FarmLevel = 1;
+  for (const level of FARM_LEVEL_SEQUENCE) {
+    if (plotCount >= FARM_LEVELS[level].plotCount) {
+      inferredLevel = level;
+    }
+  }
+  return inferredLevel;
+}
+
+function getUnlockedCropsByLevel(level: FarmLevel): CropId[] {
+  const allUnlocked: CropId[] = [];
+  for (let l = 1; l <= level; l += 1) {
+    allUnlocked.push(...FARM_LEVELS[l as FarmLevel].unlockedCrops);
+  }
+  return allUnlocked;
+}
+
+function normalizePlotState(rawPlot: unknown, index: number): PlotState {
+  const plot = (rawPlot ?? {}) as Partial<PlotState>;
+  const cropId = typeof plot.cropId === 'string' && plot.cropId in CROPS
+    ? plot.cropId as CropId
+    : null;
+  const plantedAtRaw = toSafeTimestamp(plot.plantedAt, 0);
+  const plantedAt = cropId && plantedAtRaw > 0 ? plantedAtRaw : null;
+  const lastWateredAtRaw = toSafeTimestamp(plot.lastWateredAt, 0);
+  const lastWateredAt = plantedAt && lastWateredAtRaw > 0 ? lastWateredAtRaw : null;
+  const pestAppearedAtRaw = toSafeTimestamp(plot.pestAppearedAt, 0);
+  const pestClearedAtRaw = toSafeTimestamp(plot.pestClearedAt, 0);
+  const normalizedStage = typeof plot.stage === 'string' && (PLOT_STAGES as string[]).includes(plot.stage)
+    ? plot.stage as CropStage
+    : 'seed';
+  const hasPest = Boolean(plot.hasPest) && !!cropId;
+
+  return {
+    index,
+    cropId,
+    plantedAt,
+    lastWateredAt,
+    waterCount: toSafeNonNegativeInt(plot.waterCount, 0),
+    hasPest,
+    pestAppearedAt: hasPest && pestAppearedAtRaw > 0 ? pestAppearedAtRaw : null,
+    pestClearedAt: cropId && pestClearedAtRaw > 0 ? pestClearedAtRaw : null,
+    stage: cropId ? normalizedStage : 'seed',
+    yieldMultiplier: cropId && typeof plot.yieldMultiplier === 'number' && Number.isFinite(plot.yieldMultiplier)
+      ? Math.max(0, plot.yieldMultiplier)
+      : 1.0,
+  };
+}
+
 function normalizeFarmState(farmState: FarmState): FarmState {
+  const now = Date.now();
+  const raw = farmState as Partial<FarmState>;
+  const existingPlotsRaw = Array.isArray(raw.plots) ? raw.plots : [];
+  const existingPlots = existingPlotsRaw.map((plot, index) => normalizePlotState(plot, index));
+  const storedLevel = isFarmLevel(raw.level) ? raw.level : 1;
+  const levelByExp = getLevelByExp(toSafeNonNegativeInt(raw.exp, 0));
+  const levelByPlots = getLevelByPlotCount(existingPlots.length);
+  const normalizedLevel = Math.max(storedLevel, levelByExp, levelByPlots) as FarmLevel;
+  const levelExpRequired = FARM_LEVELS[normalizedLevel].expRequired;
+  const normalizedExp = Math.max(levelExpRequired, toSafeNonNegativeInt(raw.exp, levelExpRequired));
+  const requiredPlotCount = FARM_LEVELS[normalizedLevel].plotCount;
+  const plotCount = Math.max(requiredPlotCount, existingPlots.length);
+  const normalizedPlots = Array.from({ length: plotCount }, (_, index) => {
+    const existingPlot = existingPlots[index];
+    return existingPlot ? { ...existingPlot, index } : createEmptyPlot(index);
+  });
+  const unlockedByLevel = getUnlockedCropsByLevel(normalizedLevel);
+  const rawUnlocked = Array.isArray(raw.unlockedCrops)
+    ? raw.unlockedCrops.filter((cropId): cropId is CropId => typeof cropId === 'string' && cropId in CROPS)
+    : [];
+  const unlockedSet = new Set<CropId>([...unlockedByLevel, ...rawUnlocked]);
+
   return {
     ...farmState,
-    activeBuffs: farmState.activeBuffs ?? [],
-    inventory: farmState.inventory ?? {},
-    plots: farmState.plots.map((plot, index) => ({
-      ...plot,
-      index: Number.isInteger(plot.index) ? plot.index : index,
-      pestClearedAt: plot.pestClearedAt ?? null,
-    })),
+    level: normalizedLevel,
+    exp: normalizedExp,
+    unlockedCrops: Array.from(unlockedSet),
+    totalHarvests: toSafeNonNegativeInt(raw.totalHarvests, 0),
+    totalEarnings: toSafeNonNegativeInt(raw.totalEarnings, 0),
+    createdAt: toSafeTimestamp(raw.createdAt, now),
+    lastUpdatedAt: toSafeTimestamp(raw.lastUpdatedAt, now),
+    activeBuffs: Array.isArray(raw.activeBuffs) ? raw.activeBuffs : [],
+    inventory: raw.inventory && typeof raw.inventory === 'object' ? raw.inventory : {},
+    plots: normalizedPlots,
   };
 }
 

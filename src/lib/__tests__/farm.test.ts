@@ -98,6 +98,38 @@ describe('farm business consistency', () => {
     expect(mockKvSet).not.toHaveBeenCalled();
   });
 
+  it('getOrCreateFarm normalizes legacy state without level reset', async () => {
+    const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+    const legacy = {
+      userId: 1,
+      plots: Array.from({ length: 9 }, (_, index) => ({
+        index,
+        cropId: null,
+        plantedAt: null,
+        lastWateredAt: null,
+        waterCount: 0,
+        hasPest: false,
+        pestAppearedAt: null,
+        pestClearedAt: null,
+        stage: 'seed',
+        yieldMultiplier: 1,
+      })),
+      totalHarvests: 8,
+      totalEarnings: 520,
+      lastUpdatedAt: now - 60_000,
+      createdAt: now - 120_000,
+    } as unknown as FarmState;
+    mockKvGet.mockResolvedValueOnce(legacy);
+
+    const farm = await getOrCreateFarm(1);
+
+    expect(farm.level).toBe(3);
+    expect(farm.exp).toBeGreaterThanOrEqual(400);
+    expect(farm.plots).toHaveLength(9);
+    expect(farm.unlockedCrops).toEqual(expect.arrayContaining(['corn', 'pumpkin']));
+    expect(mockKvSet).not.toHaveBeenCalled();
+  });
+
   it('waterPlot rejects when plot currently does not need water', async () => {
     const now = Date.UTC(2026, 0, 1, 12, 0, 0);
     vi.spyOn(Date, 'now').mockReturnValue(now);
