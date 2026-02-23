@@ -43,6 +43,8 @@ const PRIZES_WITH_ANGLES = calculateAngles();
 
 const RANKING_POLL_INTERVAL_MS = 15000;
 const RANKING_MAX_BACKOFF_MS = 120000;
+const PRE_SPIN_STEP_MS = 120;
+const PRE_SPIN_STEP_DEG = 120;
 
 interface UserData {
   id: number;
@@ -77,6 +79,7 @@ export default function LotteryPage() {
   const [hasSpunToday, setHasSpunToday] = useState(false);
   const [extraSpins, setExtraSpins] = useState(0);
   const [spinning, setSpinning] = useState(false);
+  const [spinPhase, setSpinPhase] = useState<'idle' | 'requesting' | 'settling'>('idle');
   const [rotation, setRotation] = useState(0);
   const [result, setResult] = useState<{ name: string; code: string; directCredit?: boolean; value?: number } | null>(null);
   const [showResultModal, setShowResultModal] = useState(false);
@@ -90,6 +93,7 @@ export default function LotteryPage() {
   
   // [M2修复] 用于清理 setTimeout 和 requestAnimationFrame
   const spinTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const preSpinIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const confettiFrameRef = useRef<number | null>(null);
   const confettiEndTimeRef = useRef<number>(0);
   const modalCopyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -98,6 +102,13 @@ export default function LotteryPage() {
   const rankingInFlightRef = useRef(false);
   const rankingFailCountRef = useRef(0);
   const rankingUnmountedRef = useRef(false);
+
+  const clearPreSpinInterval = useCallback(() => {
+    if (preSpinIntervalRef.current) {
+      clearInterval(preSpinIntervalRef.current);
+      preSpinIntervalRef.current = null;
+    }
+  }, []);
 
   // [M2修复] 清理函数
   useEffect(() => {
@@ -112,6 +123,7 @@ export default function LotteryPage() {
         clearTimeout(spinTimeoutRef.current);
         spinTimeoutRef.current = null;
       }
+      clearPreSpinInterval();
       if (confettiFrameRef.current) {
         cancelAnimationFrame(confettiFrameRef.current);
         confettiFrameRef.current = null;
@@ -129,7 +141,7 @@ export default function LotteryPage() {
         rankingPollTimeoutRef.current = null;
       }
     };
-  }, []);
+  }, [clearPreSpinInterval]);
 
   const clearRankingPollTimer = useCallback(() => {
     if (rankingPollTimeoutRef.current) {
@@ -260,7 +272,15 @@ export default function LotteryPage() {
     if (!canSpin || spinning) return;
 
     setSpinning(true);
+    setSpinPhase('requesting');
     setError(null);
+    clearPreSpinInterval();
+
+    // 立刻开始预旋转，避免等待接口返回时转盘静止
+    setRotation(prev => prev + PRE_SPIN_STEP_DEG);
+    preSpinIntervalRef.current = setInterval(() => {
+      setRotation(prev => prev + PRE_SPIN_STEP_DEG);
+    }, PRE_SPIN_STEP_MS);
 
     try {
       const res = await fetch('/api/lottery/spin', { method: 'POST' });
@@ -271,6 +291,9 @@ export default function LotteryPage() {
         const prize = PRIZES_WITH_ANGLES.find(p => p.value === Number(data.record.tierValue));
         
         if (prize) {
+          clearPreSpinInterval();
+          setSpinPhase('settling');
+
           // 归一化角度到 [0, 360) 范围，处理负数和超过 360 的情况
           const normalize = (deg: number) => ((deg % 360) + 360) % 360;
           
@@ -292,8 +315,13 @@ export default function LotteryPage() {
 
           // 动画结束后显示结果 (6.5秒后 - 稍微留点余量给CSS动画)
           // [M2修复] 使用 ref 存储 timeout ID 以便清理
+          if (spinTimeoutRef.current) {
+            clearTimeout(spinTimeoutRef.current);
+          }
           spinTimeoutRef.current = setTimeout(async () => {
+            spinTimeoutRef.current = null;
             setSpinning(false);
+            setSpinPhase('idle');
             // 直接使用后端返回的数据
             setResult({ 
               name: data.record.tierName, 
@@ -373,17 +401,23 @@ export default function LotteryPage() {
 
           }, 6000);
         } else {
+          clearPreSpinInterval();
           setSpinning(false);
+          setSpinPhase('idle');
           setError('系统错误：未知奖品');
         }
       } else {
+        clearPreSpinInterval();
         setError(data.message || '抽奖失败');
         setSpinning(false);
+        setSpinPhase('idle');
       }
     } catch (err) {
+      clearPreSpinInterval();
       console.error(err);
       setError('抽奖请求失败，请稍后重试');
       setSpinning(false);
+      setSpinPhase('idle');
     }
   };
 
@@ -594,7 +628,11 @@ export default function LotteryPage() {
                   style={{ 
                     background: getConicGradient(),
                     transform: `rotate(${rotation}deg) translateZ(0)`,
-                    transition: spinning ? 'transform 6s cubic-bezier(0.25, 0.1, 0.25, 1)' : 'none',
+                    transition: spinPhase === 'settling'
+                      ? 'transform 6s cubic-bezier(0.25, 0.1, 0.25, 1)'
+                      : spinPhase === 'requesting'
+                        ? `transform ${PRE_SPIN_STEP_MS}ms linear`
+                        : 'none',
                     boxShadow: 'inset 0 0 40px rgba(0,0,0,0.2)',
                     backfaceVisibility: 'hidden'
                   }}
