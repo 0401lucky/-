@@ -325,21 +325,16 @@ export async function submitGameResult(
     createdAt: Date.now(),
   };
 
-  // 删除会话（完成后不再需要）
-  await kv.del(SESSION_KEY(result.sessionId));
-
-  // 清除活跃会话标记
-  await kv.del(ACTIVE_SESSION_KEY(userId));
-
-  // 设置冷却
-  await kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL });
-
-  // 更新每日统计（游戏次数和分数统计，积分已由原子操作处理）
-  await incrementSharedDailyStats(userId, result.score, pointsResult.dailyEarned);
-
-  // 保存游戏记录
-  await kv.lpush(RECORDS_KEY(userId), record);
-  await kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1);
+  // [Perf] 清理会话、冷却、统计并行执行，lpush/ltrim 保持顺序
+  await Promise.all([
+    kv.del(SESSION_KEY(result.sessionId)),
+    kv.del(ACTIVE_SESSION_KEY(userId)),
+    kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
+    incrementSharedDailyStats(userId, result.score, pointsResult.dailyEarned),
+    kv.lpush(RECORDS_KEY(userId), record).then(() =>
+      kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)
+    ),
+  ]);
 
   return { success: true, record, pointsEarned };
 }

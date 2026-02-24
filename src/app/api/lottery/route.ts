@@ -2,10 +2,8 @@ import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import {
   getLotteryConfig,
-  checkAllTiersHaveCodes,
   getTiersStats,
   checkDailyDirectLimit,
-  getMinTierValue,
 } from "@/lib/lottery";
 import { checkDailyLimit, getExtraSpinCount } from "@/lib/kv";
 import {
@@ -41,12 +39,24 @@ export async function GET() {
       );
     }
 
-    const config = await getLotteryConfig();
-    const hasSpunToday = await checkDailyLimit(user.id);
-    const extraSpins = await getExtraSpinCount(user.id);
+    // [Perf] 并行查询所有独立数据，减少串行等待
+    const [config, hasSpunToday, extraSpins, tiersStats] = await Promise.all([
+      getLotteryConfig(),
+      checkDailyLimit(user.id),
+      getExtraSpinCount(user.id),
+      getTiersStats(),
+    ]);
+
     const bypassSpinLimit = user.isAdmin;
-    const allTiersHaveCodes = await checkAllTiersHaveCodes();
-    const tiersStats = await getTiersStats();
+
+    // [Perf] 从 tiersStats 推导 allTiersHaveCodes，不再重复查询
+    const activeTierIds = new Set(
+      config.tiers.filter(t => t.probability > 0).map(t => t.id)
+    );
+    const allTiersHaveCodes = activeTierIds.size > 0 &&
+      tiersStats
+        .filter(s => activeTierIds.has(s.id))
+        .every(s => s.available > 0);
 
     // 为前端返回带有库存状态的档位信息
     const tiersWithStats = config.tiers.map((tier) => {
@@ -60,18 +70,18 @@ export async function GET() {
       };
     });
 
+    // [Perf] 从 config 直接算 minTierValue，不再额外查 D1
+    const activeTiers = config.tiers.filter(t => t.probability > 0);
+    const minTierValue = activeTiers.length > 0
+      ? Math.min(...activeTiers.map(t => t.value))
+      : Infinity;
+
     // 根据模式判断是否可以抽奖
-    // direct 模式：不需要兑换码库存，只需要直充额度
-    // code 模式：需要兑换码库存
-    // hybrid 模式：只要其中一个可用即可
     let canSpinByMode = false;
-    const minTierValue = await getMinTierValue();
-    
+
     if (config.mode === 'direct') {
-      // 直充模式：检查每日直充额度是否还有剩余（用最低可中奖档位判断）
       canSpinByMode = await checkDailyDirectLimit(minTierValue);
     } else if (config.mode === 'code') {
-      // 兑换码模式：需要所有档位都有库存
       canSpinByMode = allTiersHaveCodes;
     } else {
       // hybrid 模式：直充可用 OR 兑换码可用

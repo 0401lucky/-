@@ -216,29 +216,29 @@ export async function markUserNotificationsRead(
   const now = Date.now();
   let updated = 0;
 
-  for (const notificationId of targetIds) {
-    const existsInUserIndex = await kv.zscore(USER_NOTIFICATION_INDEX_KEY(userId), notificationId);
-    if (existsInUserIndex === null) {
-      continue;
-    }
+  const updateResults = await Promise.all(
+    targetIds.map(async (notificationId) => {
+      const existsInUserIndex = await kv.zscore(USER_NOTIFICATION_INDEX_KEY(userId), notificationId);
+      if (existsInUserIndex === null) return false;
 
-    const item = await kv.get<NotificationItem>(NOTIFICATION_ITEM_KEY(notificationId));
-    if (!item) {
-      continue;
-    }
+      const item = await kv.get<NotificationItem>(NOTIFICATION_ITEM_KEY(notificationId));
+      if (!item) return false;
 
-    const nextItem: NotificationItem = {
-      ...item,
-      readAt: item.readAt ?? now,
-    };
+      const nextItem: NotificationItem = {
+        ...item,
+        readAt: item.readAt ?? now,
+      };
 
-    await Promise.all([
-      kv.set(NOTIFICATION_ITEM_KEY(notificationId), nextItem),
-      kv.srem(USER_NOTIFICATION_UNREAD_KEY(userId), notificationId),
-    ]);
+      await Promise.all([
+        kv.set(NOTIFICATION_ITEM_KEY(notificationId), nextItem),
+        kv.srem(USER_NOTIFICATION_UNREAD_KEY(userId), notificationId),
+      ]);
 
-    updated += 1;
-  }
+      return true;
+    })
+  );
+
+  updated = updateResults.filter(Boolean).length;
 
   const unread = await kv.scard(USER_NOTIFICATION_UNREAD_KEY(userId));
 
@@ -268,44 +268,44 @@ export async function fanoutAnnouncementNotification(announcement: {
   }
 
   const dedupeKey = ANNOUNCEMENT_NOTIFIED_KEY(announcement.id);
-  let notifiedUsers = 0;
 
-  for (const user of users) {
-    const userId = Number(user.id);
-    if (!Number.isFinite(userId)) {
-      continue;
-    }
+  const validUsers = users.filter((u) => Number.isFinite(Number(u.id)));
 
-    try {
-      const added = await kv.sadd(dedupeKey, userId);
-      if (Number(added) !== 1) {
-        continue;
-      }
-
-      await createUserNotification({
-        userId,
-        type: 'announcement',
-        title: `系统公告：${announcement.title}`,
-        content: announcement.content,
-        data: {
-          announcementId: announcement.id,
-        },
-      });
-
-      notifiedUsers += 1;
-    } catch (error) {
+  const results = await Promise.all(
+    validUsers.map(async (user) => {
+      const userId = Number(user.id);
       try {
-        await kv.srem(dedupeKey, userId);
-      } catch {
-        // ignore rollback error
+        const added = await kv.sadd(dedupeKey, userId);
+        if (Number(added) !== 1) return false;
+
+        await createUserNotification({
+          userId,
+          type: 'announcement',
+          title: `系统公告：${announcement.title}`,
+          content: announcement.content,
+          data: {
+            announcementId: announcement.id,
+          },
+        });
+
+        return true;
+      } catch (error) {
+        try {
+          await kv.srem(dedupeKey, userId);
+        } catch {
+          // ignore rollback error
+        }
+        console.error('fanoutAnnouncementNotification failed', {
+          announcementId: announcement.id,
+          userId: maskUserId(userId),
+          error,
+        });
+        return false;
       }
-      console.error('fanoutAnnouncementNotification failed', {
-        announcementId: announcement.id,
-        userId: maskUserId(userId),
-        error,
-      });
-    }
-  }
+    })
+  );
+
+  const notifiedUsers = results.filter(Boolean).length;
 
   await kv.expire(dedupeKey, 180 * 24 * 60 * 60);
 

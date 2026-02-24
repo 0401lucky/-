@@ -177,34 +177,35 @@ export default function LotteryPage() {
 
   const fetchData = useCallback(async () => {
     try {
+      // [Perf] auth/me 必须先完成以判断登录状态，但 lottery 状态可以并行请求
       const userRes = await fetch('/api/auth/me');
 
       if (userRes.ok) {
         const userData = await userRes.json();
         if (userData.success) {
           setUser(userData.user);
-          // 获取中奖记录
-          const recordsRes = await fetch('/api/lottery/records');
+          // [Perf] records 和 lottery 状态并行请求
+          const [recordsRes, lotteryRes] = await Promise.all([
+            fetch('/api/lottery/records'),
+            fetch('/api/lottery'),
+          ]);
           if (recordsRes.ok) {
             const recordsData = await recordsRes.json();
             if (recordsData.success) {
               setRecords(recordsData.records || []);
             }
           }
+          if (lotteryRes.ok) {
+            const data = await lotteryRes.json();
+            if (data.success) {
+              setCanSpin(data.canSpin);
+              setHasSpunToday(data.hasSpunToday || false);
+              setExtraSpins(data.extraSpins || 0);
+            }
+          }
         } else {
           router.push('/login?redirect=/lottery');
           return;
-        }
-      }
-
-      // 获取抽奖状态
-      const lotteryRes = await fetch('/api/lottery');
-      if (lotteryRes.ok) {
-        const data = await lotteryRes.json();
-        if (data.success) {
-          setCanSpin(data.canSpin);
-          setHasSpunToday(data.hasSpunToday || false);
-          setExtraSpins(data.extraSpins || 0);
         }
       }
     } catch (err) {
@@ -346,8 +347,13 @@ export default function LotteryPage() {
             setShowResultModal(true);
             
             // [M1修复] 抽奖成功后重新从后端获取最新状态，确保前后端一致
+            // [Perf] 三个刷新请求并行执行
             try {
-              const lotteryRes = await fetch('/api/lottery');
+              const [lotteryRes, recordsRes] = await Promise.all([
+                fetch('/api/lottery'),
+                fetch('/api/lottery/records'),
+                fetchRanking(),
+              ]);
               if (lotteryRes.ok) {
                 const lotteryData = await lotteryRes.json();
                 if (lotteryData.success) {
@@ -356,16 +362,12 @@ export default function LotteryPage() {
                   setExtraSpins(lotteryData.extraSpins || 0);
                 }
               }
-              // 刷新记录
-              const recordsRes = await fetch('/api/lottery/records');
               if (recordsRes.ok) {
                 const recordsData = await recordsRes.json();
                 if (recordsData.success) {
                   setRecords(recordsData.records || []);
                 }
               }
-              // 刷新排行榜
-              await fetchRanking();
             } catch (err) {
               console.error('刷新状态失败', err);
             }

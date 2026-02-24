@@ -207,16 +207,17 @@ export async function initDefaultFarmShopItems(): Promise<void> {
     if (recheck && Object.keys(recheck).length > 0) return;
 
     const now = Date.now();
+    const batch: Record<string, FarmShopItem> = {};
     for (const item of DEFAULT_FARM_SHOP_ITEMS) {
       const id = nanoid();
-      const shopItem: FarmShopItem = {
+      batch[id] = {
         ...item,
         id,
         createdAt: now,
         updatedAt: now,
       };
-      await kv.hset(FARM_SHOP_ITEMS_KEY, { [id]: shopItem });
     }
+    await kv.hset(FARM_SHOP_ITEMS_KEY, batch);
   } finally {
     try {
       const current = await kv.get<string>(FARM_SHOP_INIT_LOCK_KEY);

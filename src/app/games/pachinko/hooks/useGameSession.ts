@@ -93,7 +93,8 @@ export function useGameSession() {
       
       if (data.success) {
         setSession(null);
-        await fetchStatus();
+        // [Perf] 后台非阻塞刷新
+        fetchStatus();
         return true;
       }
       
@@ -135,11 +136,20 @@ export function useGameSession() {
       
       if (data.success) {
         setSession(null);
-        await fetchStatus();
-        return { 
-          success: true, 
+        // [Perf] 用 submit 返回的数据立即更新 status，不阻塞等待 fetchStatus
+        setStatus(prev => prev ? {
+          ...prev,
+          balance: data.data.newBalance ?? prev.balance,
+          dailyStats: data.data.dailyStats ?? prev.dailyStats,
+          inCooldown: true,
+          activeSession: null,
+        } : prev);
+        // 后台非阻塞刷新完整状态
+        fetchStatus();
+        return {
+          success: true,
           pointsEarned: data.data.pointsEarned,
-          message: data.message 
+          message: data.message
         };
       }
       

@@ -107,7 +107,8 @@ export function useGameSession() {
       if (data.success) {
         setSession(null);
         setIsRestored(false);
-        await fetchStatus();
+        // [Perf] 后台非阻塞刷新
+        fetchStatus();
         return true;
       }
 
@@ -141,7 +142,8 @@ export function useGameSession() {
         }
 
         setSession(null);
-        await fetchStatus();
+        // [Perf] 后台非阻塞刷新
+        fetchStatus();
         return data.data;
       } catch {
         hasSubmittedRef.current = false;

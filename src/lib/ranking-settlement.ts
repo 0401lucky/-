@@ -355,36 +355,37 @@ async function retryFailedRewards(
   range: SettlementRange,
 ): Promise<RankingSettlementRecord> {
   const nextRewards = [...existing.rewards];
-  let retried = false;
+  const failedIndices = nextRewards
+    .map((reward, idx) => ({ reward, idx }))
+    .filter(({ reward }) => reward.status === 'failed' && reward.rewardPoints > 0);
 
-  for (let idx = 0; idx < nextRewards.length; idx += 1) {
-    const reward = nextRewards[idx];
-    if (reward.status !== 'failed' || reward.rewardPoints <= 0) {
-      continue;
-    }
-
-    retried = true;
-    const winner: OverallLeaderboardEntry = {
-      rank: reward.rank,
-      userId: reward.userId,
-      username: reward.username,
-      totalScore: reward.totalScore,
-      totalPoints: reward.totalPoints,
-      gamesPlayed: reward.gamesPlayed,
-      gameBreakdown: {},
-    };
-
-    nextRewards[idx] = await settleSingleReward(
-      existing.period,
-      range,
-      winner,
-      reward.rewardPoints,
-      Boolean(input.dryRun),
-    );
+  if (failedIndices.length === 0) {
+    return existing;
   }
 
-  if (!retried) {
-    return existing;
+  const settled = await Promise.all(
+    failedIndices.map(({ reward, idx }) => {
+      const winner: OverallLeaderboardEntry = {
+        rank: reward.rank,
+        userId: reward.userId,
+        username: reward.username,
+        totalScore: reward.totalScore,
+        totalPoints: reward.totalPoints,
+        gamesPlayed: reward.gamesPlayed,
+        gameBreakdown: {},
+      };
+      return settleSingleReward(
+        existing.period,
+        range,
+        winner,
+        reward.rewardPoints,
+        Boolean(input.dryRun),
+      ).then((result) => ({ idx, result }));
+    })
+  );
+
+  for (const { idx, result } of settled) {
+    nextRewards[idx] = result;
   }
 
   const next: RankingSettlementRecord = {
@@ -456,20 +457,19 @@ export async function settleRankingPeriod(input: SettleRankingInput): Promise<Se
     );
 
     const winners = snapshot.overall.slice(0, rewardPolicy.topN);
-    const rewards: RankingSettlementReward[] = [];
 
-    for (let index = 0; index < winners.length; index += 1) {
-      const winner = winners[index];
-      const rewardPoints = rewardPolicy.rewardPoints[index] ?? 0;
-      const reward = await settleSingleReward(
-        input.period,
-        range,
-        winner,
-        rewardPoints,
-        Boolean(input.dryRun),
-      );
-      rewards.push(reward);
-    }
+    const rewards = await Promise.all(
+      winners.map((winner, index) => {
+        const rewardPoints = rewardPolicy.rewardPoints[index] ?? 0;
+        return settleSingleReward(
+          input.period,
+          range,
+          winner,
+          rewardPoints,
+          Boolean(input.dryRun),
+        );
+      })
+    );
 
     const now = Date.now();
     const record: RankingSettlementRecord = {

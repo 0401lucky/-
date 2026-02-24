@@ -427,15 +427,13 @@ export async function getAvailableTiers(): Promise<LotteryTier[]> {
   return activeTiers.filter((_, index) => counts[index] > 0);
 }
 
-// 获取各档位库存统计
+// 获取各档位库存统计 — [Perf] 改为 Promise.all 并行查询
 export async function getTiersStats(): Promise<{ id: string; available: number }[]> {
   const config = await getLotteryConfig();
-  const stats: { id: string; available: number }[] = [];
-  for (const tier of config.tiers) {
-    const available = await getTierAvailableCodesCount(tier.id);
-    stats.push({ id: tier.id, available });
-  }
-  return stats;
+  const counts = await Promise.all(
+    config.tiers.map(tier => getTierAvailableCodesCount(tier.id))
+  );
+  return config.tiers.map((tier, i) => ({ id: tier.id, available: counts[i] }));
 }
 
 

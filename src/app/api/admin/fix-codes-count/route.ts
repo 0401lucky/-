@@ -24,50 +24,42 @@ export const POST = withAdmin(
       }
 
       const projects = await getAllProjects();
-      const results: Array<{
-        id: string;
-        name: string;
-        oldCount: number;
-        newCount: number;
-        fixed: boolean;
-      }> = [];
+      const results = await Promise.all(
+        projects.map(async (project) => {
+          // 直充项目不依赖兑换码库存，跳过
+          if (project.rewardType === "direct") {
+            return {
+              id: project.id,
+              name: project.name,
+              oldCount: project.codesCount,
+              newCount: project.codesCount,
+              fixed: false,
+            };
+          }
+          // 获取当前可用的兑换码数量
+          const availableCodes = await getAvailableCodesCount(project.id);
+          // 正确的 codesCount = 可用数量 + 已领取数量
+          const correctCount = availableCodes + project.claimedCount;
 
-      for (const project of projects) {
-        // 直充项目不依赖兑换码库存，跳过
-        if (project.rewardType === "direct") {
-          results.push({
-            id: project.id,
-            name: project.name,
-            oldCount: project.codesCount,
-            newCount: project.codesCount,
-            fixed: false,
-          });
-          continue;
-        }
-        // 获取当前可用的兑换码数量
-        const availableCodes = await getAvailableCodesCount(project.id);
-        // 正确的 codesCount = 可用数量 + 已领取数量
-        const correctCount = availableCodes + project.claimedCount;
-
-        if (project.codesCount !== correctCount) {
-          await updateProject(project.id, { codesCount: correctCount });
-          results.push({
-            id: project.id,
-            name: project.name,
-            oldCount: project.codesCount,
-            newCount: correctCount,
-            fixed: true,
-          });
-        } else {
-          results.push({
+          if (project.codesCount !== correctCount) {
+            await updateProject(project.id, { codesCount: correctCount });
+            return {
+              id: project.id,
+              name: project.name,
+              oldCount: project.codesCount,
+              newCount: correctCount,
+              fixed: true,
+            };
+          }
+          return {
             id: project.id,
             name: project.name,
             oldCount: project.codesCount,
             newCount: correctCount,
             fixed: false,
-          });
-        }
-      }
+          };
+        })
+      );
 
       const fixedCount = results.filter((r) => r.fixed).length;
 

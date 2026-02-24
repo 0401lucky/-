@@ -94,12 +94,15 @@ function mapRecentRecord(gameType: ProfileGameType, raw: unknown): ProfileRecent
 
 async function getRecentRecords(userId: number, limit = 10): Promise<ProfileRecentRecord[]> {
   const readSize = Math.max(limit * 2, 20);
-  const rows: ProfileRecentRecord[] = [];
 
-  for (const item of GAME_RECORD_KEYS) {
-    const records = await kv.lrange<unknown[]>(item.key(userId), 0, readSize - 1);
-    for (const raw of records ?? []) {
-      const row = mapRecentRecord(item.type, raw);
+  const allRecords = await Promise.all(
+    GAME_RECORD_KEYS.map((item) => kv.lrange<unknown[]>(item.key(userId), 0, readSize - 1))
+  );
+
+  const rows: ProfileRecentRecord[] = [];
+  for (let i = 0; i < GAME_RECORD_KEYS.length; i++) {
+    for (const raw of allRecords[i] ?? []) {
+      const row = mapRecentRecord(GAME_RECORD_KEYS[i].type, raw);
       if (row) {
         rows.push(row);
       }

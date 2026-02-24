@@ -270,13 +270,16 @@ export async function submitTowerResult(
     } : {}),
   };
 
-  await kv.del(SESSION_KEY(payload.sessionId));
-  await kv.del(ACTIVE_SESSION_KEY(userId));
-  await kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL });
-  await incrementSharedDailyStats(userId, score, pointsResult.dailyEarned);
-
-  await kv.lpush(RECORDS_KEY(userId), record);
-  await kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1);
+  // [Perf] 清理会话、冷却、统计并行执行
+  await Promise.all([
+    kv.del(SESSION_KEY(payload.sessionId)),
+    kv.del(ACTIVE_SESSION_KEY(userId)),
+    kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
+    incrementSharedDailyStats(userId, score, pointsResult.dailyEarned),
+    kv.lpush(RECORDS_KEY(userId), record).then(() =>
+      kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)
+    ),
+  ]);
 
   return { success: true, record, pointsEarned: pointsResult.pointsEarned };
 }

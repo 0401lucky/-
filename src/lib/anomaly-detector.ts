@@ -93,38 +93,29 @@ function getChinaMonthStartUtc(referenceTime: number = Date.now()): number {
 }
 
 async function hasActivitySince(userId: number, startAt: number): Promise<boolean> {
-  const logs = await kv.lrange<{ createdAt?: number }>(`points_log:${userId}`, 0, RECENT_SCAN_LIMIT - 1);
-  if ((logs ?? []).some((item) => toFiniteNumber(item?.createdAt) >= startAt)) {
-    return true;
-  }
+  const [logs, lotteryRecords, ...gameRecords] = await Promise.all([
+    kv.lrange<{ createdAt?: number }>(`points_log:${userId}`, 0, RECENT_SCAN_LIMIT - 1),
+    kv.lrange<{ createdAt?: number }>(`lottery:user:records:${userId}`, 0, RECENT_SCAN_LIMIT - 1),
+    ...GAME_ACTIVITY_KEYS.map((buildKey) =>
+      kv.lrange<{ createdAt?: number }>(buildKey(userId), 0, RECENT_SCAN_LIMIT - 1)
+    ),
+  ]);
 
-  const lotteryRecords = await kv.lrange<{ createdAt?: number }>(
-    `lottery:user:records:${userId}`,
-    0,
-    RECENT_SCAN_LIMIT - 1,
-  );
-  if ((lotteryRecords ?? []).some((item) => toFiniteNumber(item?.createdAt) >= startAt)) {
-    return true;
-  }
+  const hasSince = (items: typeof logs) =>
+    (items ?? []).some((item) => toFiniteNumber(item?.createdAt) >= startAt);
 
-  for (const buildKey of GAME_ACTIVITY_KEYS) {
-    const records = await kv.lrange<{ createdAt?: number }>(buildKey(userId), 0, RECENT_SCAN_LIMIT - 1);
-    if ((records ?? []).some((item) => toFiniteNumber(item?.createdAt) >= startAt)) {
-      return true;
-    }
-  }
-
-  return false;
+  return hasSince(logs) || hasSince(lotteryRecords) || gameRecords.some(hasSince);
 }
 
 async function hasGameActivitySince(userId: number, startAt: number): Promise<boolean> {
-  for (const buildKey of GAME_ACTIVITY_KEYS) {
-    const records = await kv.lrange<{ createdAt?: number }>(buildKey(userId), 0, RECENT_SCAN_LIMIT - 1);
-    if ((records ?? []).some((item) => toFiniteNumber(item?.createdAt) >= startAt)) {
-      return true;
-    }
-  }
-  return false;
+  const allRecords = await Promise.all(
+    GAME_ACTIVITY_KEYS.map((buildKey) =>
+      kv.lrange<{ createdAt?: number }>(buildKey(userId), 0, RECENT_SCAN_LIMIT - 1)
+    )
+  );
+  return allRecords.some((records) =>
+    (records ?? []).some((item) => toFiniteNumber(item?.createdAt) >= startAt)
+  );
 }
 
 async function getTodayPointsFlowByUser(userId: number, todayStartAt: number): Promise<{ incoming: number; outgoing: number }> {
@@ -283,29 +274,36 @@ export async function getDashboardOverview(options: { referenceTime?: number } =
   const monthStartAt = getChinaMonthStartUtc(now);
   const users = await getAllUsers();
 
+  const validUsers = users.filter((u) => {
+    const id = Number(u.id);
+    return Number.isFinite(id) && id > 0;
+  });
+
+  const perUserResults = await Promise.all(
+    validUsers.map(async (user) => {
+      const userId = Number(user.id);
+      const [activeToday, activeMonth, gameToday, flowToday] = await Promise.all([
+        hasActivitySince(userId, todayStartAt),
+        hasActivitySince(userId, monthStartAt),
+        hasGameActivitySince(userId, todayStartAt),
+        getTodayPointsFlowByUser(userId, todayStartAt),
+      ]);
+      return { activeToday, activeMonth, gameToday, flowToday };
+    })
+  );
+
   let dau = 0;
   let mau = 0;
   let gameParticipants = 0;
   let pointsIn = 0;
   let pointsOut = 0;
 
-  for (const user of users) {
-    const userId = Number(user.id);
-    if (!Number.isFinite(userId) || userId <= 0) continue;
-
-    const [activeToday, activeMonth, gameToday, flowToday] = await Promise.all([
-      hasActivitySince(userId, todayStartAt),
-      hasActivitySince(userId, monthStartAt),
-      hasGameActivitySince(userId, todayStartAt),
-      getTodayPointsFlowByUser(userId, todayStartAt),
-    ]);
-
-    if (activeToday) dau += 1;
-    if (activeMonth) mau += 1;
-    if (gameToday) gameParticipants += 1;
-
-    pointsIn += flowToday.incoming;
-    pointsOut += flowToday.outgoing;
+  for (const r of perUserResults) {
+    if (r.activeToday) dau += 1;
+    if (r.activeMonth) mau += 1;
+    if (r.gameToday) gameParticipants += 1;
+    pointsIn += r.flowToday.incoming;
+    pointsOut += r.flowToday.outgoing;
   }
 
   const dailyStats = await getDailyStats();

@@ -144,12 +144,14 @@ export async function deleteRaffle(id: string): Promise<boolean> {
     throw new Error("只能删除草稿或已取消的活动");
   }
 
-  await kv.del(`${RAFFLE_PREFIX}${id}`);
-  await kv.lrem(RAFFLE_LIST_KEY, 0, id);
-  await kv.srem(RAFFLE_ACTIVE_KEY, id);
-  await kv.del(`${RAFFLE_ENTRIES_PREFIX}${id}`);
-  await kv.del(`${RAFFLE_PARTICIPANTS_PREFIX}${id}`);
-  await kv.del(`${RAFFLE_ENTRY_COUNT_PREFIX}${id}`);
+  await Promise.all([
+    kv.del(`${RAFFLE_PREFIX}${id}`),
+    kv.lrem(RAFFLE_LIST_KEY, 0, id),
+    kv.srem(RAFFLE_ACTIVE_KEY, id),
+    kv.del(`${RAFFLE_ENTRIES_PREFIX}${id}`),
+    kv.del(`${RAFFLE_PARTICIPANTS_PREFIX}${id}`),
+    kv.del(`${RAFFLE_ENTRY_COUNT_PREFIX}${id}`),
+  ]);
 
   return true;
 }
@@ -181,8 +183,10 @@ export async function publishRaffle(id: string): Promise<Raffle | null> {
     updatedAt: Date.now(),
   };
 
-  await kv.set(`${RAFFLE_PREFIX}${id}`, updated);
-  await kv.sadd(RAFFLE_ACTIVE_KEY, id);
+  await Promise.all([
+    kv.set(`${RAFFLE_PREFIX}${id}`, updated),
+    kv.sadd(RAFFLE_ACTIVE_KEY, id),
+  ]);
 
   return updated;
 }
@@ -204,8 +208,10 @@ export async function cancelRaffle(id: string): Promise<Raffle | null> {
     updatedAt: Date.now(),
   };
 
-  await kv.set(`${RAFFLE_PREFIX}${id}`, updated);
-  await kv.srem(RAFFLE_ACTIVE_KEY, id);
+  await Promise.all([
+    kv.set(`${RAFFLE_PREFIX}${id}`, updated),
+    kv.srem(RAFFLE_ACTIVE_KEY, id),
+  ]);
 
   return updated;
 }
@@ -341,9 +347,11 @@ export async function joinRaffle(
   };
 
   // 7. Atomic writes
-  await kv.lpush(entriesKey, entry);
-  await kv.sadd(participantsKey, userId);
-  await kv.sadd(userRafflesKey, raffleId);
+  await Promise.all([
+    kv.lpush(entriesKey, entry),
+    kv.sadd(participantsKey, userId),
+    kv.sadd(userRafflesKey, raffleId),
+  ]);
 
   // 8. Update raffle
   raffle.participantsCount = (raffle.participantsCount ?? 0) + 1;
@@ -370,13 +378,15 @@ export async function getUserRaffleStatus(
     return { hasJoined: false, isWinner: false };
   }
 
-  // 查找用户的参与记录
+  // 查找用户的参与记录和活动详情（并行）
   const entriesKey = `${RAFFLE_ENTRIES_PREFIX}${raffleId}`;
-  const entries = await kv.lrange<RaffleEntry>(entriesKey, 0, -1);
+  const [entries, raffle] = await Promise.all([
+    kv.lrange<RaffleEntry>(entriesKey, 0, -1),
+    getRaffle(raffleId),
+  ]);
   const entry = entries.find((e) => e.userId === userId);
 
   // 检查是否中奖
-  const raffle = await getRaffle(raffleId);
   let isWinner = false;
   let prize: RaffleWinner | undefined;
 
@@ -762,8 +772,10 @@ export async function executeRaffleDraw(
         winnersCount: 0,
         updatedAt: Date.now(),
       };
-      await kv.set(`${RAFFLE_PREFIX}${raffleId}`, updated);
-      await kv.srem(RAFFLE_ACTIVE_KEY, raffleId);
+      await Promise.all([
+        kv.set(`${RAFFLE_PREFIX}${raffleId}`, updated),
+        kv.srem(RAFFLE_ACTIVE_KEY, raffleId),
+      ]);
 
       return { success: true, message: "无人参与，活动已结束", winners: [] };
     }
@@ -802,8 +814,10 @@ export async function executeRaffleDraw(
       updatedAt: now,
     };
 
-    await kv.set(`${RAFFLE_PREFIX}${raffleId}`, updated);
-    await kv.srem(RAFFLE_ACTIVE_KEY, raffleId);
+    await Promise.all([
+      kv.set(`${RAFFLE_PREFIX}${raffleId}`, updated),
+      kv.srem(RAFFLE_ACTIVE_KEY, raffleId),
+    ]);
 
     if (!waitForDelivery) {
       // 自动开奖路径：先确保开奖结果落库，再入队处理，避免 Serverless fire-and-forget 丢失

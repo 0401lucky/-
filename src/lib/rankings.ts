@@ -169,26 +169,27 @@ async function getGameLeaderboardByRange(
   const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
   const users = await getAllUsers();
 
+  const validUsers = users
+    .map((user) => ({ id: ensurePositiveInteger(user.id), username: user.username }))
+    .filter((u) => u.id > 0);
+
+  const allRecords = await Promise.all(
+    validUsers.map((u) => getRecordsInPeriod(u.id, gameType, startAt, endAt))
+  );
+
   const rows: Omit<GameLeaderboardEntry, 'rank'>[] = [];
-
-  for (const user of users) {
-    const userId = ensurePositiveInteger(user.id);
-    if (userId <= 0) continue;
-
-    const records = await getRecordsInPeriod(userId, gameType, startAt, endAt);
+  for (let i = 0; i < validUsers.length; i++) {
+    const records = allRecords[i];
     if (records.length === 0) continue;
-
-    const totalScore = records.reduce((sum, record) => sum + toFiniteNumber(record.score), 0);
-    const totalPoints = records.reduce((sum, record) => sum + toFiniteNumber(record.pointsEarned), 0);
-    const bestScore = records.reduce((max, record) => Math.max(max, toFiniteNumber(record.score)), 0);
+    const user = validUsers[i];
 
     rows.push({
-      userId,
-      username: user.username || `#${userId}`,
+      userId: user.id,
+      username: user.username || `#${user.id}`,
       gameType,
-      totalScore,
-      totalPoints,
-      bestScore,
+      totalScore: records.reduce((sum, r) => sum + toFiniteNumber(r.score), 0),
+      totalPoints: records.reduce((sum, r) => sum + toFiniteNumber(r.pointsEarned), 0),
+      bestScore: records.reduce((max, r) => Math.max(max, toFiniteNumber(r.score)), 0),
       gamesPlayed: records.length,
     });
   }
@@ -219,15 +220,21 @@ export async function getAllGamesLeaderboardByRange(
   const overallLimit = Math.max(1, Math.min(100, Math.floor(options.overallLimit ?? 20)));
 
   const gameTypes: SupportedRankingGame[] = ['slot', 'linkgame', 'match3', 'memory', 'pachinko', 'tower'];
-  const gameResults: GameRankingResult[] = [];
+
+  const allLeaderboards = await Promise.all(
+    gameTypes.map((gameType) => getGameLeaderboardByRange(gameType, startAt, endAt, limitPerGame))
+  );
+
+  const gameResults: GameRankingResult[] = gameTypes.map((gameType, i) => ({
+    gameType,
+    leaderboard: allLeaderboards[i],
+  }));
 
   const overallMap = new Map<number, Omit<OverallLeaderboardEntry, 'rank'>>();
 
-  for (const gameType of gameTypes) {
-    const leaderboard = await getGameLeaderboardByRange(gameType, startAt, endAt, limitPerGame);
-    gameResults.push({ gameType, leaderboard });
-
-    for (const entry of leaderboard) {
+  for (let i = 0; i < gameTypes.length; i++) {
+    const gameType = gameTypes[i];
+    for (const entry of allLeaderboards[i]) {
       const current = overallMap.get(entry.userId) ?? {
         userId: entry.userId,
         username: entry.username,
@@ -302,36 +309,33 @@ export async function getPointsLeaderboard(
 
   const startAt = period === 'monthly' ? getMonthlyStartUtc() : 0;
 
-  const rows: Array<Omit<PointsLeaderboardEntry, 'rank'>> = [];
+  const validUsers = users
+    .map((user) => ({ id: ensurePositiveInteger(user.id), username: user.username }))
+    .filter((u) => u.id > 0);
 
-  for (const user of users) {
-    const userId = ensurePositiveInteger(user.id);
-    if (userId <= 0) continue;
-
-    let points = 0;
-
-    if (period === 'all') {
-      points = toFiniteNumber(await kv.get<number>(`points:${userId}`));
-    } else {
+  const allPoints = await Promise.all(
+    validUsers.map(async (user) => {
+      if (period === 'all') {
+        return toFiniteNumber(await kv.get<number>(`points:${user.id}`));
+      }
       const logs = await kv.lrange<{ amount?: number; createdAt?: number }>(
-        `points_log:${userId}`,
+        `points_log:${user.id}`,
         0,
         MAX_RECORD_SCAN - 1,
       );
-
-      points = (logs ?? []).reduce((sum, item) => {
+      return (logs ?? []).reduce((sum, item) => {
         const createdAt = toFiniteNumber(item?.createdAt);
         if (createdAt < startAt) return sum;
         return sum + toFiniteNumber(item?.amount);
       }, 0);
-    }
+    })
+  );
 
-    rows.push({
-      userId,
-      username: user.username || `#${userId}`,
-      points,
-    });
-  }
+  const rows: Array<Omit<PointsLeaderboardEntry, 'rank'>> = validUsers.map((user, i) => ({
+    userId: user.id,
+    username: user.username || `#${user.id}`,
+    points: allPoints[i],
+  }));
 
   const leaderboard = [...rows]
     .sort((a, b) => {
@@ -426,19 +430,19 @@ export async function getCheckinStreakLeaderboard(
   const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
   const users = await getAllUsers();
 
-  const rows: Array<Omit<CheckinStreakLeaderboardEntry, 'rank'>> = [];
+  const validUsers = users
+    .map((user) => ({ id: ensurePositiveInteger(user.id), username: user.username }))
+    .filter((u) => u.id > 0);
 
-  for (const user of users) {
-    const userId = ensurePositiveInteger(user.id);
-    if (userId <= 0) continue;
+  const allStreaks = await Promise.all(
+    validUsers.map((u) => getCheckinStreak(u.id, period))
+  );
 
-    const streak = await getCheckinStreak(userId, period);
-    rows.push({
-      userId,
-      username: user.username || `#${userId}`,
-      streak,
-    });
-  }
+  const rows: Array<Omit<CheckinStreakLeaderboardEntry, 'rank'>> = validUsers.map((user, i) => ({
+    userId: user.id,
+    username: user.username || `#${user.id}`,
+    streak: allStreaks[i],
+  }));
 
   const leaderboard = rows
     .sort((a, b) => {

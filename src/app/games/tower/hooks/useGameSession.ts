@@ -177,7 +177,8 @@ export function useGameSession() {
         setIsRestored(false);
         hasSubmittedRef.current = false;
         submitInFlightRef.current = null;
-        await fetchStatus();
+        // [Perf] 后台非阻塞刷新
+        fetchStatus();
         return true;
       }
 
@@ -223,7 +224,8 @@ export function useGameSession() {
           setError(null);
           setSession(null);
           setIsRestored(false);
-          await fetchStatus();
+          // [Perf] 后台非阻塞刷新
+          fetchStatus();
           return data.data;
         } catch {
           hasSubmittedRef.current = false;

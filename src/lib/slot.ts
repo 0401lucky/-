@@ -237,7 +237,12 @@ export async function spinSlot(
   }
 
   try {
-    const cooldownRemaining = await getCooldownRemainingMs(userId);
+    // [Perf] 并行查询冷却、每日限额、每日统计
+    const [cooldownRemaining, dailyLimit, dailyStats] = await Promise.all([
+      getCooldownRemainingMs(userId),
+      getDailyPointsLimit(),
+      getDailyStats(userId),
+    ]);
     if (cooldownRemaining > 0) {
       return {
         success: false,
@@ -251,10 +256,7 @@ export async function spinSlot(
     const reels: SlotSymbolId[] = [pickSymbolId(), pickSymbolId(), pickSymbolId()];
     const outcome = computeOutcome(reels);
 
-    const dailyLimit = await getDailyPointsLimit();
-
     const date = getTodayDateString();
-    const dailyStats = await getDailyStats(userId);
 
     if (mode === 'bet') {
       const slotConfig = await getSlotConfig();

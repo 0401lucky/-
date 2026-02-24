@@ -29,53 +29,61 @@ export const GET = withAdmin(async () => {
   try {
     const records = await getLotteryRecords(50);
 
-    const debugInfo: DebugCodeInfo[] = [];
+    const debugInfo: DebugCodeInfo[] = await Promise.all(
+      records.slice(0, 10).map(async (record) => {
+        const codeInfo: DebugCodeInfo = {
+          code: record.code,
+          codeLength: record.code.length,
+          recordedTier: record.tierName,
+          foundIn: null,
+        };
 
-    for (const record of records.slice(0, 10)) {
-      const codeInfo: DebugCodeInfo = {
-        code: record.code,
-        codeLength: record.code.length,
-        recordedTier: record.tierName,
-        foundIn: null,
-      };
-
-      // 检查这个码存在于哪个档位
-      for (const tierId of TIERS) {
-        const exists = await kv.sismember(`lottery:codes:${tierId}`, record.code);
-        if (exists === 1) {
-          codeInfo.foundIn = tierId;
-          break;
-        }
-      }
-
-      // 也检查 trim 后的码
-      const trimmedCode = record.code.trim();
-      if (trimmedCode !== record.code) {
-        codeInfo.hasPadding = true;
-        codeInfo.trimmedCode = trimmedCode;
-        for (const tierId of TIERS) {
-          const exists = await kv.sismember(`lottery:codes:${tierId}`, trimmedCode);
-          if (exists === 1) {
-            codeInfo.foundInAfterTrim = tierId;
+        // 并行检查所有档位
+        const memberChecks = await Promise.all(
+          TIERS.map((tierId) => kv.sismember(`lottery:codes:${tierId}`, record.code))
+        );
+        for (let i = 0; i < TIERS.length; i++) {
+          if (memberChecks[i] === 1) {
+            codeInfo.foundIn = TIERS[i];
             break;
           }
         }
-      }
 
-      debugInfo.push(codeInfo);
-    }
+        // 也检查 trim 后的码
+        const trimmedCode = record.code.trim();
+        if (trimmedCode !== record.code) {
+          codeInfo.hasPadding = true;
+          codeInfo.trimmedCode = trimmedCode;
+          const trimChecks = await Promise.all(
+            TIERS.map((tierId) => kv.sismember(`lottery:codes:${tierId}`, trimmedCode))
+          );
+          for (let i = 0; i < TIERS.length; i++) {
+            if (trimChecks[i] === 1) {
+              codeInfo.foundInAfterTrim = TIERS[i];
+              break;
+            }
+          }
+        }
 
-    // 获取各档位的一些样本码
-    const tierSamples = {} as Record<TierId, TierSample>;
-    for (const tierId of TIERS) {
-      const sample = await kv.srandmember(`lottery:codes:${tierId}`);
-      const count = await kv.scard(`lottery:codes:${tierId}`);
-      tierSamples[tierId] = {
-        count,
-        sample: sample ? String(sample) : null,
-        sampleLength: sample ? String(sample).length : 0,
-      };
-    }
+        return codeInfo;
+      })
+    );
+
+    // 并行获取各档位的样本码
+    const tierEntries = await Promise.all(
+      TIERS.map(async (tierId) => {
+        const [sample, count] = await Promise.all([
+          kv.srandmember(`lottery:codes:${tierId}`),
+          kv.scard(`lottery:codes:${tierId}`),
+        ]);
+        return [tierId, {
+          count,
+          sample: sample ? String(sample) : null,
+          sampleLength: sample ? String(sample).length : 0,
+        }] as const;
+      })
+    );
+    const tierSamples = Object.fromEntries(tierEntries) as Record<TierId, TierSample>;
 
     return NextResponse.json({
       success: true,

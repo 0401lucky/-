@@ -212,6 +212,7 @@ async function deleteKeyAcrossTables(db: D1DatabaseLike, key: string): Promise<v
     db.prepare("DELETE FROM kv_hashes WHERE key = ?").bind(key),
     db.prepare("DELETE FROM kv_key_expirations WHERE key = ?").bind(key),
   ]);
+  invalidatePurgeCache(key);
 }
 
 async function hasNonStringKeyData(db: D1DatabaseLike, key: string): Promise<boolean> {
@@ -249,23 +250,45 @@ async function setSecondaryExpiry(db: D1DatabaseLike, key: string, expiresAt: nu
     )
     .bind(key, expiresAt)
     .run();
+  invalidatePurgeCache(key);
 }
 
 async function clearSecondaryExpiry(db: D1DatabaseLike, key: string): Promise<void> {
   await ensureKvSchema(db);
   await db.prepare("DELETE FROM kv_key_expirations WHERE key = ?").bind(key).run();
+  invalidatePurgeCache(key);
+}
+
+// [Perf] 请求级缓存：记住"该 key 无过期时间"，避免同一请求内重复查 kv_key_expirations
+// Worker 每个请求是独立执行上下文，模块级 Map 在请求结束后自动回收
+let _purgeCache: Map<string, number | null> | null = null;
+function getPurgeCache(): Map<string, number | null> {
+  if (!_purgeCache) _purgeCache = new Map();
+  return _purgeCache;
+}
+
+/** 清除 purge 缓存（在写操作修改过期时间时调用） */
+function invalidatePurgeCache(key: string): void {
+  _purgeCache?.delete(key);
 }
 
 async function purgeIfExpired(db: D1DatabaseLike, key: string): Promise<boolean> {
-  const secondaryExpiry = await getSecondaryExpiry(db, key);
-  if (secondaryExpiry === null) {
+  const cache = getPurgeCache();
+  const cached = cache.get(key);
+  // 已缓存且无过期时间 → 直接跳过
+  if (cached === undefined) {
+    // 未缓存，查一次
+    const secondaryExpiry = await getSecondaryExpiry(db, key);
+    cache.set(key, secondaryExpiry);
+    if (secondaryExpiry === null) return false;
+    if (!isExpired(secondaryExpiry)) return false;
+  } else if (cached === null) {
     return false;
+  } else {
+    if (!isExpired(cached)) return false;
   }
 
-  if (!isExpired(secondaryExpiry)) {
-    return false;
-  }
-
+  cache.delete(key);
   await deleteKeyAcrossTables(db, key);
   return true;
 }

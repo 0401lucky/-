@@ -93,16 +93,17 @@ export async function initDefaultStoreItems(): Promise<void> {
   }
 
   const now = Date.now();
+  const batch: Record<string, StoreItem> = {};
   for (const item of DEFAULT_STORE_ITEMS) {
     const id = nanoid();
-    const storeItem: StoreItem = {
+    batch[id] = {
       ...item,
       id,
       createdAt: now,
       updatedAt: now,
     };
-    await kv.hset(STORE_ITEMS_KEY, { [id]: storeItem });
   }
+  await kv.hset(STORE_ITEMS_KEY, batch);
 }
 
 /**

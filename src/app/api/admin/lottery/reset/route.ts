@@ -19,14 +19,17 @@ export const POST = withAdmin(async () => {
     }
 
     let deleted = 0;
-    for (const key of keysToDelete) {
-      try {
-        const result = await kv.del(key);
-        deleted += result;
-      } catch (e) {
-        console.log(`Failed to delete ${key}:`, e);
-      }
-    }
+    const results = await Promise.all(
+      keysToDelete.map(async (key) => {
+        try {
+          return await kv.del(key);
+        } catch (e) {
+          console.log(`Failed to delete ${key}:`, e);
+          return 0;
+        }
+      })
+    );
+    deleted = results.reduce((sum, r) => sum + r, 0);
 
     // 重置配置中的库存计数（保留概率设置）
     const config = await kv.get<Partial<LotteryConfig>>("lottery:config");
