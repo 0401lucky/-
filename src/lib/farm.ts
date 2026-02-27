@@ -7,7 +7,7 @@ import {
   createInitialFarmState, refreshFarmState, computePlotState,
   computeHarvestYield, computePestYieldMultiplier, checkLevelUp, createEmptyPlot,
   computeMissedWaterCycles, computeWaterYieldMultiplier,
-  getTodayWeather,
+  getTodayWeather, buildBuffContext,
 } from './farm-engine';
 import { getTodayDateString } from './time';
 import { addGamePointsWithLimit, addPoints, deductPoints } from './points';
@@ -50,14 +50,8 @@ async function acquireFarmActionLock(userId: number): Promise<FarmActionLock | n
 }
 
 async function releaseFarmActionLock(lock: FarmActionLock): Promise<void> {
-  try {
-    const current = await kv.get<string>(lock.key);
-    if (current === lock.token) {
-      await kv.del(lock.key);
-    }
-  } catch (error) {
-    console.error('Release farm action lock failed:', error);
-  }
+  // 锁有 TTL 自动过期兜底，直接 del 减少一次 KV 往返
+  kv.del(lock.key).catch(e => console.error('Release farm action lock failed:', e));
 }
 
 // ---- 冷却检查 ----
@@ -466,6 +460,7 @@ export async function harvestPlot(
   const farmBeforeHarvest = JSON.parse(JSON.stringify(farm)) as FarmState;
   const now = Date.now();
   const weather = getTodayWeather(getTodayDateString());
+  const buffCtx = buildBuffContext(farm.activeBuffs, now);
 
   if (!isValidPlotIndex(plotIndex, farm.plots.length)) {
     return { success: false, message: '无效的田地' };
@@ -477,7 +472,7 @@ export async function harvestPlot(
   }
 
   // 刷新计算阶段
-  const computed = computePlotState(plot, now, weather, userId);
+  const computed = computePlotState(plot, now, weather, userId, buffCtx);
   if (computed.stage === 'withered') {
     return { success: false, message: '作物已枯萎，请铲除' };
   }
@@ -488,7 +483,7 @@ export async function harvestPlot(
   const crop = CROPS[plot.cropId];
   const { yield: harvestYield } = computeHarvestYield(
     { ...plot, stage: computed.stage, hasPest: computed.hasPest, pestAppearedAt: computed.pestAppearedAt },
-    now, weather,
+    now, weather, buffCtx,
   );
 
   const missedWaterCycles = computeMissedWaterCycles(
@@ -496,6 +491,7 @@ export async function harvestPlot(
     plot.plantedAt,
     now,
     plot.cropId,
+    buffCtx,
   );
   const waterMultiplier = computeWaterYieldMultiplier(missedWaterCycles);
 
@@ -514,11 +510,11 @@ export async function harvestPlot(
     Object.assign(farm, levelResult.newState);
   }
 
-  // 先持久化田地与经验状态，避免发分成功但田地未清空导致重复领取
-  await saveFarmState(farm);
-
-  // 发放积分（受每日上限约束）
-  const dailyLimit = await getDailyPointsLimit();
+  // 先持久化田地与经验状态，同时获取每日积分上限
+  const [, dailyLimit] = await Promise.all([
+    saveFarmState(farm),
+    getDailyPointsLimit(),
+  ]);
   let pointsResult: Awaited<ReturnType<typeof addGamePointsWithLimit>>;
   try {
     pointsResult = await addGamePointsWithLimit(
@@ -535,12 +531,8 @@ export async function harvestPlot(
   }
 
   farm.totalEarnings += pointsResult.pointsEarned;
-  // totalEarnings 仅用于展示统计，写回失败不影响主流程
-  try {
-    await saveFarmState(farm);
-  } catch (statsSaveError) {
-    console.error('Farm harvest save totalEarnings failed:', statsSaveError);
-  }
+  // totalEarnings 仅用于展示统计，fire-and-forget 不阻塞返回
+  saveFarmState(farm).catch(e => console.error('Farm harvest save totalEarnings failed:', e));
 
   // 构建收获详情
   const weatherConfig = WEATHERS[weather];
@@ -773,6 +765,7 @@ export async function harvestAllPlots(
   const now = Date.now();
   const weather = getTodayWeather(getTodayDateString());
   const weatherConfig = WEATHERS[weather];
+  const buffCtx = buildBuffContext(farm.activeBuffs, now);
 
   const harvests: HarvestDetail[] = [];
   let totalExpectedYield = 0;
@@ -782,13 +775,13 @@ export async function harvestAllPlots(
     const plot = farm.plots[i];
     if (!plot.cropId || !plot.plantedAt) continue;
 
-    const computed = computePlotState(plot, now, weather, userId);
+    const computed = computePlotState(plot, now, weather, userId, buffCtx);
     if (computed.stage !== 'mature') continue;
 
     const crop = CROPS[plot.cropId];
     const { yield: harvestYield } = computeHarvestYield(
       { ...plot, stage: computed.stage, hasPest: computed.hasPest, pestAppearedAt: computed.pestAppearedAt },
-      now, weather,
+      now, weather, buffCtx,
     );
 
     const missedWaterCycles = computeMissedWaterCycles(
@@ -796,6 +789,7 @@ export async function harvestAllPlots(
       plot.plantedAt,
       now,
       plot.cropId,
+      buffCtx,
     );
     const waterMultiplier = computeWaterYieldMultiplier(missedWaterCycles);
 
@@ -832,10 +826,11 @@ export async function harvestAllPlots(
       Object.assign(farm, levelResult.newState);
     }
 
-    // 先持久化田地与经验状态，避免发分成功但田地未清空导致重复领取
-    await saveFarmState(farm);
-
-    const dailyLimit = await getDailyPointsLimit();
+    // 先持久化田地与经验状态，同时获取每日积分上限
+    const [, dailyLimit] = await Promise.all([
+      saveFarmState(farm),
+      getDailyPointsLimit(),
+    ]);
     let pointsResult: Awaited<ReturnType<typeof addGamePointsWithLimit>>;
     try {
       pointsResult = await addGamePointsWithLimit(
@@ -868,11 +863,8 @@ export async function harvestAllPlots(
     }
 
     farm.totalEarnings += pointsResult.pointsEarned;
-    try {
-      await saveFarmState(farm);
-    } catch (statsSaveError) {
-      console.error('Farm harvest-all save totalEarnings failed:', statsSaveError);
-    }
+    // totalEarnings 仅用于展示统计，fire-and-forget 不阻塞返回
+    saveFarmState(farm).catch(e => console.error('Farm harvest-all save totalEarnings failed:', e));
 
     return {
       success: true,

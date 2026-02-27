@@ -107,18 +107,14 @@ export async function addGamePointsWithLimit(
   let newDailyEarned = dailyEarned;
 
   if (grant > 0) {
-    balance = await kv.incrby(pointsKey, grant);
-    newDailyEarned = await kv.incrby(dailyEarnedKey, grant);
-    await kv.expire(dailyEarnedKey, DAILY_EARNED_TTL);
-  } else {
-    const currentBalance = await kv.get<number>(pointsKey);
-    balance = currentBalance ?? 0;
-  }
+    // 并行执行两个 incrby
+    const [bal, daily] = await Promise.all([
+      kv.incrby(pointsKey, grant),
+      kv.incrby(dailyEarnedKey, grant),
+    ]);
+    balance = bal;
+    newDailyEarned = daily;
 
-  const limitReached = newDailyEarned >= dailyLimit;
-
-  // 如果实际发放了积分，记录流水
-  if (grant > 0) {
     const log: PointsLog = {
       id: nanoid(),
       amount: grant,
@@ -128,9 +124,18 @@ export async function addGamePointsWithLimit(
       createdAt: Date.now(),
     };
 
-    await kv.lpush(POINTS_LOG_KEY(userId), log);
-    await kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1);
+    // 并行执行 expire + lpush，ltrim 不阻塞返回
+    await Promise.all([
+      kv.expire(dailyEarnedKey, DAILY_EARNED_TTL),
+      kv.lpush(POINTS_LOG_KEY(userId), log),
+    ]);
+    kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1).catch(() => {});
+  } else {
+    const currentBalance = await kv.get<number>(pointsKey);
+    balance = currentBalance ?? 0;
   }
+
+  const limitReached = newDailyEarned >= dailyLimit;
 
   return {
     success: true,
