@@ -125,6 +125,46 @@ describe('Checkin and Card Draw Integration', () => {
       // The checkin route returns early before grantCheckinLocalRewards is called
       expect(kv.incrby).not.toHaveBeenCalled();
     });
+
+    it('should return already checked when local lock is occupied after pre-check', async () => {
+      // 模拟并发：预检查未签到，但发奖励时 checkin key 的 NX 抢占失败
+      mockKvGet.mockImplementation(async (key: string) => {
+        if (key.includes('user:checkin')) return null;
+        if (key.includes('user:extra_spins')) return 2;
+        if (key.includes('cards:user')) return { drawsAvailable: 6 };
+        return null;
+      });
+      mockKvSet.mockResolvedValueOnce(null);
+      mockCheckinToNewApi.mockResolvedValue({ success: true, message: '签到成功', quotaAwarded: 500000 });
+
+      const response = await checkinPOST(createMockRequest(), undefined as any);
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.message).toContain('已经签到过了');
+      expect(kv.incrby).not.toHaveBeenCalled();
+    });
+
+    it('should return already checked for new-api duplicate when local lock is occupied', async () => {
+      // 模拟并发：new-api 提示已签到，福利站本地发奖励时发现当天已占用
+      mockKvGet.mockImplementation(async (key: string) => {
+        if (key.includes('user:checkin')) return null;
+        if (key.includes('user:extra_spins')) return 2;
+        if (key.includes('cards:user')) return { drawsAvailable: 6 };
+        return null;
+      });
+      mockKvSet.mockResolvedValueOnce(null);
+      mockCheckinToNewApi.mockResolvedValue({ success: false, message: '已签到' });
+
+      const response = await checkinPOST(createMockRequest(), undefined as any);
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.message).toContain('已经签到过了');
+      expect(kv.incrby).not.toHaveBeenCalled();
+    });
   });
 
   describe('Draw API', () => {

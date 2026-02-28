@@ -65,7 +65,13 @@ export const POST = withUserRateLimit(
         const msg = result.message || "";
         if (msg.includes("已经签到") || msg.includes("已签到") || msg.includes("Duplicate entry")) {
           const localRewards = await grantCheckinLocalRewards(user.id, { cardDraws: CARD_DRAWS_PER_CHECKIN });
-          if (!localRewards.granted && !localRewards.alreadyCheckedIn) {
+          if (localRewards.alreadyCheckedIn) {
+            return NextResponse.json(
+              { success: false, message: "今天已经签到过了" },
+              { status: 400 }
+            );
+          }
+          if (!localRewards.granted) {
             return NextResponse.json(
               { success: false, message: "本地签到奖励发放失败，请稍后重试" },
               { status: 500 }
@@ -88,7 +94,13 @@ export const POST = withUserRateLimit(
 
       // 3. 签到成功处理
       const localRewards = await grantCheckinLocalRewards(user.id, { cardDraws: CARD_DRAWS_PER_CHECKIN });
-      if (!localRewards.granted && !localRewards.alreadyCheckedIn) {
+      if (localRewards.alreadyCheckedIn) {
+        return NextResponse.json(
+          { success: false, message: "今天已经签到过了" },
+          { status: 400 }
+        );
+      }
+      if (!localRewards.granted) {
         return NextResponse.json(
           { success: false, message: "本地签到奖励发放失败，请稍后重试" },
           { status: 500 }

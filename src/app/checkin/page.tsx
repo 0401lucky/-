@@ -192,7 +192,7 @@ export default function CheckinPage() {
             <p className="text-xs text-stone-400">
               签到数据同步自 New API 系统
               <br />
-              每日 00:00 重置签到状态
+              北京时间每日 00:00 重置签到状态
             </p>
           </div>
         </div>
