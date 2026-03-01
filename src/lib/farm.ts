@@ -89,6 +89,24 @@ export async function getOrCreateFarm(userId: number): Promise<FarmState> {
 
   // 新建农场
   const newFarm = createInitialFarmState(userId);
+  // 使用 NX 避免并发窗口下误覆盖已有状态（尤其是底层存储在写入期间短暂不可读时）
+  const created = await kv.set(key, newFarm, { nx: true });
+  if (created === 'OK') {
+    return newFarm;
+  }
+
+  // 可能是并发创建/写入导致 NX 失败，回读一次返回真实状态
+  const raced = await kv.get<FarmState>(key);
+  if (raced) {
+    const normalized = normalizeFarmState(raced);
+    const weather = getTodayWeather(getTodayDateString());
+    const now = Date.now();
+    const cleanedBuffs = (normalized.activeBuffs ?? []).filter(b => b.expiresAt > now);
+    const cleaned = { ...normalized, activeBuffs: cleanedBuffs };
+    return refreshFarmState(cleaned, now, weather);
+  }
+
+  // 理论上不应到这里：兜底保证 key 一定存在
   await kv.set(key, newFarm);
   return newFarm;
 }

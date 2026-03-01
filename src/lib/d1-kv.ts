@@ -259,9 +259,25 @@ async function clearSecondaryExpiry(db: D1DatabaseLike, key: string): Promise<vo
   invalidatePurgeCache(key);
 }
 
-// [Perf] 请求级缓存：记住"该 key 无过期时间"，避免同一请求内重复查 kv_key_expirations
-// Worker 每个请求是独立执行上下文，模块级 Map 在请求结束后自动回收
+// [Perf] 过期清理缓存：记住"该 key 的 secondary expiry"（或不存在），避免短时间内重复查 kv_key_expirations。
+// 注意：模块级状态可能在多次请求间复用，因此必须限制缓存规模，避免长期运行导致内存增长。
+const PURGE_CACHE_MAX_ENTRIES = 2000;
 let _purgeCache: Map<string, number | null> | null = null;
+
+function sweepPurgeCache(cache: Map<string, number | null>): void {
+  if (cache.size <= PURGE_CACHE_MAX_ENTRIES) {
+    return;
+  }
+  // 这是纯优化缓存：超出上限时做一次轻量清理（删除最旧的一批）即可。
+  const targetSize = Math.floor(PURGE_CACHE_MAX_ENTRIES * 0.75);
+  for (const key of cache.keys()) {
+    cache.delete(key);
+    if (cache.size <= targetSize) {
+      break;
+    }
+  }
+}
+
 function getPurgeCache(): Map<string, number | null> {
   if (!_purgeCache) _purgeCache = new Map();
   return _purgeCache;
@@ -280,6 +296,7 @@ async function purgeIfExpired(db: D1DatabaseLike, key: string): Promise<boolean>
     // 未缓存，查一次
     const secondaryExpiry = await getSecondaryExpiry(db, key);
     cache.set(key, secondaryExpiry);
+    sweepPurgeCache(cache);
     if (secondaryExpiry === null) return false;
     if (!isExpired(secondaryExpiry)) return false;
   } else if (cached === null) {
@@ -374,14 +391,25 @@ export const kv = {
       return "OK";
     }
 
-    await deleteKeyAcrossTables(db, key);
-    await db
-      .prepare(
-        "INSERT OR REPLACE INTO kv_data (key, value, expires_at) VALUES (?, ?, ?)",
-      )
-      .bind(key, serialized, expiresAt)
-      .run();
-    await clearSecondaryExpiry(db, key);
+    // 非 NX SET：需要覆盖任意类型的 key。
+    // 关键点：必须避免「先删后插」导致的瞬时缺失窗口，否则并发读取可能误判为不存在，
+    // 进而触发业务侧 getOrCreate 类逻辑把状态重建为初始值（例如农场等级被重置）。
+    await ensureKvSchema(db);
+    await db.batch([
+      // 清理其它类型数据（与 Redis 的 key-type 覆盖语义对齐）
+      db.prepare("DELETE FROM kv_lists WHERE key = ?").bind(key),
+      db.prepare("DELETE FROM kv_sets WHERE key = ?").bind(key),
+      db.prepare("DELETE FROM kv_zsets WHERE key = ?").bind(key),
+      db.prepare("DELETE FROM kv_hashes WHERE key = ?").bind(key),
+      db.prepare("DELETE FROM kv_key_expirations WHERE key = ?").bind(key),
+      // Upsert string value（不删除 kv_data，避免并发读取窗口）
+      db.prepare("INSERT OR REPLACE INTO kv_data (key, value, expires_at) VALUES (?, ?, ?)").bind(
+        key,
+        serialized,
+        expiresAt,
+      ),
+    ]);
+    invalidatePurgeCache(key);
     return "OK";
   },
 
