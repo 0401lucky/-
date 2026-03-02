@@ -1,7 +1,10 @@
 // src/lib/d1-kv.ts — Cloudflare D1 adapter with @vercel/kv-compatible API
 // Replaces @vercel/kv (Upstash Redis) with D1 (SQLite)
+//
+// 运行时会优先使用 Cloudflare D1（KV_DB 绑定）；若不存在 D1 绑定，则自动回退到 Vercel KV（KV_REST_API_URL + KV_REST_API_TOKEN）。
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { kv as vercelKv } from "@vercel/kv";
 
 // Minimal D1 type definitions (subset used by this adapter)
 interface D1Result<T = unknown> {
@@ -25,6 +28,22 @@ let _db: D1DatabaseLike | null = null;
 let _schemaReady = false;
 let _schemaInitPromise: Promise<void> | null = null;
 const MAX_SQL_BINDINGS = 90;
+
+type CloudflareEnvLike = { KV_DB?: unknown };
+
+function hasD1Binding(): boolean {
+  try {
+    const context = getCloudflareContext() as { env?: CloudflareEnvLike } | undefined;
+    return !!context?.env?.KV_DB;
+  } catch {
+    return false;
+  }
+}
+
+function hasVercelKvEnv(): boolean {
+  // 与 @vercel/kv 的读取方式对齐：仅依赖 process.env
+  return !!process.env.KV_REST_API_URL && !!process.env.KV_REST_API_TOKEN;
+}
 
 function getD1(): D1DatabaseLike {
   if (_db) return _db;
@@ -333,7 +352,7 @@ async function keyExists(db: D1DatabaseLike, key: string): Promise<boolean> {
 
 // ---------- kv object ----------
 
-export const kv = {
+const d1Kv = {
   // ==================== String commands ====================
 
   async get<T = unknown>(key: string): Promise<T | null> {
@@ -484,7 +503,7 @@ export const kv = {
   },
 
   async incr(key: string): Promise<number> {
-    return kv.incrby(key, 1);
+    return d1Kv.incrby(key, 1);
   },
 
   async incrby(key: string, increment: number): Promise<number> {
@@ -509,11 +528,11 @@ export const kv = {
   },
 
   async decrby(key: string, decrement: number): Promise<number> {
-    return kv.incrby(key, -decrement);
+    return d1Kv.incrby(key, -decrement);
   },
 
   async decr(key: string): Promise<number> {
-    return kv.incrby(key, -1);
+    return d1Kv.incrby(key, -1);
   },
 
   async ttl(key: string): Promise<number> {
@@ -1119,3 +1138,35 @@ export const kv = {
     );
   },
 };
+
+function selectKvBackend(): unknown {
+  if (hasD1Binding()) {
+    return d1Kv;
+  }
+
+  if (hasVercelKvEnv()) {
+    return vercelKv;
+  }
+
+  // 这里不直接返回空实现，避免“静默读写失败”让业务误判为无数据。
+  throw new Error(
+    "KV backend not configured: missing KV_DB (D1 binding) and KV_REST_API_URL/KV_REST_API_TOKEN",
+  );
+}
+
+export const kv = new Proxy(
+  {},
+  {
+    get(_target, prop) {
+      // 防止被误判为 thenable
+      if (prop === "then") return undefined;
+
+      const backend = selectKvBackend() as Record<PropertyKey, unknown>;
+      const value = Reflect.get(backend, prop);
+      if (typeof value === "function") {
+        return value.bind(backend);
+      }
+      return value;
+    },
+  },
+) as typeof d1Kv;

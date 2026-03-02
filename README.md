@@ -15,7 +15,7 @@
 
 - **框架**: Next.js 16 (App Router)
 - **样式**: Tailwind CSS
-- **数据库**: Vercel KV (Redis)
+- **数据库**: Cloudflare D1（默认）/ Vercel KV (Redis)（自动适配）
 - **部署**: Vercel / Cloudflare Workers
 
 ## 部署到 Vercel
@@ -95,6 +95,8 @@ npx wrangler r2 bucket create cache
 - `BLOB_READ_WRITE_TOKEN`（可选）
 
 > 说明：项目已迁移到 Cloudflare D1（绑定名 `KV_DB`），无需再配置 `KV_REST_*`。
+>
+> 兼容说明：在非 Cloudflare 环境（如 Vercel）运行时，会自动回退到 Vercel KV（需配置 `KV_REST_API_URL` + `KV_REST_API_TOKEN`）。
 
 ### 4. 部署
 

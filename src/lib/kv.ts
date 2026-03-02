@@ -32,7 +32,7 @@ export type KvAvailabilityReason = "ok" | "missing_binding";
 export interface KvAvailabilityStatus {
   available: boolean;
   reason: KvAvailabilityReason;
-  provider: "d1" | null;
+  provider: "d1" | "vercel" | null;
   missingEnvKeys: string[];
 }
 
@@ -60,6 +60,10 @@ function hasD1Binding(): boolean {
   } catch {
     return false;
   }
+}
+
+function hasVercelKvEnv(): boolean {
+  return !!process.env.KV_REST_API_URL && !!process.env.KV_REST_API_TOKEN;
 }
 
 function includesAnyPattern(text: string, patterns: readonly string[]): boolean {
@@ -117,11 +121,20 @@ export function getKvAvailabilityStatus(): KvAvailabilityStatus {
     };
   }
 
+  if (hasVercelKvEnv()) {
+    return {
+      available: true,
+      reason: "ok",
+      provider: "vercel",
+      missingEnvKeys: [],
+    };
+  }
+
   return {
     available: false,
     reason: "missing_binding",
     provider: null,
-    missingEnvKeys: ["KV_DB (D1 binding)"],
+    missingEnvKeys: ["KV_DB (D1 binding)", "KV_REST_API_URL", "KV_REST_API_TOKEN"],
   };
 }
 
@@ -148,7 +161,27 @@ export function getKvErrorInsight(error: unknown): KvErrorInsight {
     || fingerprint.includes("d1 binding")
     || fingerprint.includes("sqlite");
 
+  const hasVercelFingerprint =
+    fingerprint.includes("@vercel/kv")
+    || fingerprint.includes("kv_rest_api_url")
+    || fingerprint.includes("upstash")
+    || fingerprint.includes("redis");
+
+  const hasKvFingerprint = hasD1Fingerprint || hasVercelFingerprint;
+
   if (fingerprint.includes("d1 binding") || fingerprint.includes("kv_db not available")) {
+    return {
+      isKvError: true,
+      isUnavailable: true,
+      retryable: false,
+      code: "KV_BINDING_MISSING",
+      status,
+      message,
+    };
+  }
+
+  if (fingerprint.includes("@vercel/kv: missing required environment variables")
+    || fingerprint.includes("missing required environment variables kv_rest_api_url")) {
     return {
       isKvError: true,
       isUnavailable: true,
@@ -214,7 +247,7 @@ export function getKvErrorInsight(error: unknown): KvErrorInsight {
     };
   }
 
-  if (hasD1Fingerprint) {
+  if (hasKvFingerprint) {
     return {
       isKvError: true,
       isUnavailable: true,
