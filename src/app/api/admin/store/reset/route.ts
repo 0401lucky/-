@@ -4,11 +4,23 @@
 import { NextResponse } from 'next/server';
 import { kv } from '@/lib/d1-kv';
 import { withAdmin } from '@/lib/api-guards';
+import { getRuntimeEnvValue, sanitizeRuntimeEnvValue } from '@/lib/runtime-env';
 
 const STORE_ITEMS_KEY = 'store:items';
 
+function isStoreResetEnabled(): boolean {
+  return sanitizeRuntimeEnvValue(getRuntimeEnvValue('ENABLE_ADMIN_STORE_RESET')) === 'true';
+}
+
 export const POST = withAdmin(
   async () => {
+    if (!isStoreResetEnabled()) {
+      return NextResponse.json(
+        { success: false, message: '此接口已禁用。请设置环境变量 ENABLE_ADMIN_STORE_RESET=true 启用。' },
+        { status: 403 }
+      );
+    }
+
     // 删除现有商品数据
     await kv.del(STORE_ITEMS_KEY);
 

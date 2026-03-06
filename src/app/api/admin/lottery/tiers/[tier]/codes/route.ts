@@ -1,12 +1,13 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
+import type { AuthUser } from "@/lib/auth";
 import { addCodesToTier, getLotteryConfig, getTierAvailableCodesCount, clearTierCodes } from "@/lib/lottery";
 
 export const dynamic = "force-dynamic";
 
 export const POST = withAdmin(async (
   request: NextRequest,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ tier: string }> }
 ) => {
   try {
@@ -66,7 +67,7 @@ export const POST = withAdmin(async (
 
 export const GET = withAdmin(async (
   _request: NextRequest,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ tier: string }> }
 ) => {
   try {
@@ -103,7 +104,7 @@ export const GET = withAdmin(async (
 // DELETE - 清空档位库存
 export const DELETE = withAdmin(async (
   _request: NextRequest,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ tier: string }> }
 ) => {
   try {
@@ -134,3 +135,5 @@ export const DELETE = withAdmin(async (
     );
   }
 });
+
+

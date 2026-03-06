@@ -1,6 +1,8 @@
 import { kv } from "@/lib/d1-kv";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getTodayDateString, getSecondsUntilMidnight } from "./time";
+import { withUserEconomyLock } from "./economy-lock";
+import { createDefaultUserCards, normalizeUserCards, type UserCards } from "./cards/draw";
 
 const KV_TIMEOUT_PATTERNS = ["timeout", "timed out", "deadline exceeded", "etimedout", "econnaborted"];
 const KV_NETWORK_PATTERNS = [
@@ -1002,17 +1004,23 @@ export async function addExtraSpinCount(userId: number, count: number): Promise<
 // [C3修复] 原子性消耗额外次数 - 使用 DECR 并检查结果
 // 返回 { success: boolean, remaining: number }
 export async function tryUseExtraSpin(userId: number): Promise<{ success: boolean; remaining: number }> {
-  const key = `user:extra_spins:${userId}`;
+  return withUserEconomyLock(userId, async () => {
+    const key = `user:extra_spins:${userId}`;
+    const current = await kv.get<number>(key);
+    const currentCount = current ?? 0;
 
-  const current = await kv.get<number>(key);
-  const currentCount = current ?? 0;
+    if (currentCount <= 0) {
+      return { success: false, remaining: Math.max(0, currentCount) };
+    }
 
-  if (currentCount <= 0) {
-    return { success: false, remaining: Math.max(0, currentCount) };
-  }
+    const remaining = await kv.decrby(key, 1);
+    if (remaining < 0) {
+      await kv.incrby(key, 1);
+      return { success: false, remaining: 0 };
+    }
 
-  const remaining = await kv.decrby(key, 1);
-  return { success: true, remaining: Math.max(0, remaining) };
+    return { success: true, remaining: Math.max(0, remaining) };
+  });
 }
 
 // [C3修复] 回滚额外次数（失败补偿用）
@@ -1045,74 +1053,58 @@ export async function grantCheckinLocalRewards(
   extraSpins: number;
   drawsAvailable: number;
 }> {
-  const dateStr = getTodayDateString();
-  const ttl = CHECKIN_HISTORY_RETENTION_SECONDS;
+  return withUserEconomyLock(userId, async () => {
+    const dateStr = getTodayDateString();
+    const ttl = CHECKIN_HISTORY_RETENTION_SECONDS;
+    const checkinKey = `user:checkin:${userId}:${dateStr}`;
+    const extraSpinsKey = `user:extra_spins:${userId}`;
+    const cardsKey = `cards:user:${userId}`;
 
-  const checkinKey = `user:checkin:${userId}:${dateStr}`;
-  const extraSpinsKey = `user:extra_spins:${userId}`;
-  const cardsKey = `cards:user:${userId}`;
+    const setResult = await kv.set(checkinKey, '1', { nx: true, ex: ttl });
+    if (setResult !== 'OK') {
+      const currentSpins = await kv.get<number>(extraSpinsKey);
+      const existingCardData = normalizeUserCards(await kv.get<Partial<UserCards>>(cardsKey));
+      return {
+        granted: false,
+        alreadyCheckedIn: true,
+        extraSpins: currentSpins ?? 0,
+        drawsAvailable: existingCardData.drawsAvailable,
+      };
+    }
 
-  // Try to mark check-in (atomic, once per day)
-  const setResult = await kv.set(checkinKey, '1', { nx: true, ex: ttl });
-  if (setResult !== 'OK') {
-    // Already checked in
-    const currentSpins = await kv.get<number>(extraSpinsKey);
-    const cardData = await kv.get<{ drawsAvailable?: number }>(cardsKey);
-    return {
-      granted: false,
-      alreadyCheckedIn: true,
-      extraSpins: currentSpins ?? 0,
-      drawsAvailable: cardData?.drawsAvailable ?? 1,
-    };
-  }
+    const previousCardDataRaw = await kv.get<Partial<UserCards>>(cardsKey);
+    const nextCardData = previousCardDataRaw === null
+      ? createDefaultUserCards(1 + cardDraws)
+      : normalizeUserCards(previousCardDataRaw);
 
-  // Load & validate card data
-  const cardData = await kv.get<{
-    inventory?: string[];
-    fragments?: number;
-    pityCounter?: number;
-    drawsAvailable?: number;
-    collectionRewards?: Record<string, unknown>;
-  }>(cardsKey);
+    if (previousCardDataRaw !== null) {
+      nextCardData.drawsAvailable = Math.max(0, nextCardData.drawsAvailable + cardDraws);
+    }
 
-  if (cardData === null) {
-    // No card data yet — initialize
-    const newCardData = {
-      inventory: [],
-      fragments: 0,
-      pityCounter: 0,
-      drawsAvailable: 1 + cardDraws,
-      collectionRewards: {},
-    };
-    await kv.set(cardsKey, newCardData);
-    const newSpins = await kv.incrby(extraSpinsKey, extraSpins);
+    try {
+      await kv.set(cardsKey, nextCardData);
+      const newSpins = await kv.incrby(extraSpinsKey, extraSpins);
 
-    return {
-      granted: true,
-      alreadyCheckedIn: false,
-      extraSpins: newSpins,
-      drawsAvailable: newCardData.drawsAvailable,
-    };
-  }
-
-  // Award card draws
-  if (!cardData.inventory) cardData.inventory = [];
-  if (!cardData.fragments) cardData.fragments = 0;
-  if (!cardData.pityCounter) cardData.pityCounter = 0;
-  if (!cardData.collectionRewards) cardData.collectionRewards = {};
-  cardData.drawsAvailable = Math.max(0, (cardData.drawsAvailable ?? 0) + cardDraws);
-
-  await kv.set(cardsKey, cardData);
-
-  // Award extra spins
-  const newSpins = await kv.incrby(extraSpinsKey, extraSpins);
-
-  return {
-    granted: true,
-    alreadyCheckedIn: false,
-    extraSpins: newSpins,
-    drawsAvailable: cardData.drawsAvailable,
-  };
+      return {
+        granted: true,
+        alreadyCheckedIn: false,
+        extraSpins: newSpins,
+        drawsAvailable: nextCardData.drawsAvailable,
+      };
+    } catch (error) {
+      try {
+        if (previousCardDataRaw === null) {
+          await kv.del(cardsKey);
+        } else {
+          await kv.set(cardsKey, normalizeUserCards(previousCardDataRaw));
+        }
+        await kv.del(checkinKey);
+      } catch (rollbackError) {
+        console.error('回滚签到本地奖励失败:', rollbackError);
+      }
+      throw error;
+    }
+  });
 }
 
 /**
@@ -1122,37 +1114,20 @@ export async function addCardDraws(
   userId: number,
   amount: number
 ): Promise<{ success: boolean; drawsAvailable: number }> {
-  const cardsKey = `cards:user:${userId}`;
+  return withUserEconomyLock(userId, async () => {
+    const cardsKey = `cards:user:${userId}`;
+    const cardData = await kv.get<Partial<UserCards>>(cardsKey);
 
-  const cardData = await kv.get<{
-    inventory?: string[];
-    fragments?: number;
-    pityCounter?: number;
-    drawsAvailable?: number;
-    collectionRewards?: Record<string, unknown>;
-  }>(cardsKey);
+    const nextCardData = cardData === null
+      ? createDefaultUserCards(Math.max(0, 1 + amount))
+      : normalizeUserCards(cardData);
 
-  if (!cardData) {
-    // Initialize card data
-    const newCardData = {
-      inventory: [],
-      fragments: 0,
-      pityCounter: 0,
-      drawsAvailable: Math.max(0, 1 + amount),
-      collectionRewards: {},
-    };
-    await kv.set(cardsKey, newCardData);
-    return { success: true, drawsAvailable: newCardData.drawsAvailable };
-  }
+    if (cardData !== null) {
+      nextCardData.drawsAvailable = Math.max(0, nextCardData.drawsAvailable + amount);
+    }
 
-  // Preserve existing state
-  if (!cardData.inventory) cardData.inventory = [];
-  if (!cardData.fragments) cardData.fragments = 0;
-  if (!cardData.pityCounter) cardData.pityCounter = 0;
-  if (!cardData.collectionRewards) cardData.collectionRewards = {};
-  cardData.drawsAvailable = Math.max(0, (cardData.drawsAvailable ?? 0) + amount);
-
-  await kv.set(cardsKey, cardData);
-  return { success: true, drawsAvailable: cardData.drawsAvailable };
+    await kv.set(cardsKey, nextCardData);
+    return { success: true, drawsAvailable: nextCardData.drawsAvailable };
+  });
 }
 

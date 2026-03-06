@@ -7,6 +7,7 @@
     "dev": "next dev",
     "start": "next start",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "migrate:feedback-images": "node scripts/migrate-feedback-images-to-blob.mjs",
@@ -40,7 +41,7 @@
     "typescript": "^5.9.3"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "^1.16.5",
+    "@opennextjs/cloudflare": "^1.17.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@types/canvas-confetti": "^1.9.0",
     "@types/matter-js": "^0.20.2",

@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
+import type { AuthUser } from "@/lib/auth";
 import {
   getFeedbackById,
   getFeedbackMessages,
@@ -18,7 +19,7 @@ const FEEDBACK_STATUSES = new Set<FeedbackStatus>([
 
 export const GET = withAdmin(async (
   _request: NextRequest,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ id: string }> }
 ) => {
   try {
@@ -50,7 +51,7 @@ export const GET = withAdmin(async (
 
 export const PATCH = withAdmin(async (
   request: NextRequest,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ id: string }> }
 ) => {
   try {
@@ -89,3 +90,5 @@ export const PATCH = withAdmin(async (
     );
   }
 });
+
+

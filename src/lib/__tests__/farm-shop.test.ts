@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CROPS, WATER_MISS_WITHER_THRESHOLD } from '../farm-config';
+import { CROPS } from '../farm-config';
 import {
   buildBuffContext,
   computeGrowthProgress,
@@ -8,7 +8,6 @@ import {
   computeHarvestYield,
   needsWater,
   shouldPestAppear,
-  getPestAppearTime,
 } from '../farm-engine';
 import type { ActiveBuff, BuffContext } from '../types/farm-shop';
 import type { PlotState } from '../types/farm';

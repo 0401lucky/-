@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAllProjects, updateProject, getAvailableCodesCount } from "@/lib/kv";
 import { withAdmin } from "@/lib/api-guards";
+import { getRuntimeEnvValue, sanitizeRuntimeEnvValue } from "@/lib/runtime-env";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export const POST = withAdmin(
   async () => {
     try {
       // 环境变量开关检查（数据已修复，此接口已禁用）
-      if (process.env.ENABLE_FIX_CODES_COUNT !== "true") {
+      if (sanitizeRuntimeEnvValue(getRuntimeEnvValue('ENABLE_FIX_CODES_COUNT')) !== "true") {
         return NextResponse.json(
           { success: false, message: "此接口已禁用。请设置环境变量 ENABLE_FIX_CODES_COUNT=true 启用。" },
           { status: 403 }

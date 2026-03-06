@@ -1,14 +1,15 @@
-/**
+﻿/**
  * POST /api/admin/raffle/[id]/publish - 发布活动
  */
 
 import { NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
+import type { AuthUser } from "@/lib/auth";
 import { publishRaffle } from "@/lib/raffle";
 
 export const POST = withAdmin(async (
   _request: Request,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ id: string }> }
 ) => {
   try {
@@ -36,3 +37,5 @@ export const POST = withAdmin(async (
     );
   }
 });
+
+

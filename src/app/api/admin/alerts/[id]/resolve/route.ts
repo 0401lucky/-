@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { withAdmin } from '@/lib/api-guards';
+import type { AuthUser } from "@/lib/auth";
 import { withRateLimit } from '@/lib/rate-limit';
 import { resolveAlertById } from '@/lib/anomaly-detector';
 
@@ -12,7 +13,7 @@ interface AlertResolveContext {
 }
 
 export const POST = withAdmin(
-  async (_request: NextRequest, user, context: AlertResolveContext) => {
+  async (_request: NextRequest, user: AuthUser, context: AlertResolveContext) => {
     try {
       const limited = await withRateLimit('admin:alerts', user.id);
       if (limited) return limited;
@@ -41,3 +42,5 @@ export const POST = withAdmin(
   },
   { forbiddenMessage: '无权限' }
 );
+
+

@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
+import type { AuthUser } from "@/lib/auth";
 import { getProject, updateProject, deleteProject, addCodesToProject, getProjectRecords } from "@/lib/kv";
 
 export const GET = withAdmin(async (
   _request: NextRequest,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ id: string }> }
 ) => {
   try {
@@ -36,7 +37,7 @@ export const GET = withAdmin(async (
 
 export const PATCH = withAdmin(async (
   request: NextRequest,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ id: string }> }
 ) => {
   try {
@@ -101,7 +102,7 @@ export const PATCH = withAdmin(async (
 
 export const DELETE = withAdmin(async (
   _request: NextRequest,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ id: string }> }
 ) => {
   try {
@@ -124,7 +125,7 @@ export const DELETE = withAdmin(async (
 // 追加兑换码
 export const POST = withAdmin(async (
   request: NextRequest,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ id: string }> }
 ) => {
   try {
@@ -208,3 +209,5 @@ export const POST = withAdmin(async (
     );
   }
 });
+
+

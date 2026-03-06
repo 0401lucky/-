@@ -33,6 +33,10 @@ vi.mock('@/lib/new-api', () => ({
   checkinToNewApi: vi.fn(),
 }));
 
+vi.mock('@/lib/economy-lock', () => ({
+  withUserEconomyLock: vi.fn(async (_userId: number, handler: () => Promise<unknown>) => handler()),
+}));
+
 vi.mock('@/lib/rate-limit', () => ({
   checkRateLimit: vi.fn(),
   rateLimitResponse: vi.fn(),

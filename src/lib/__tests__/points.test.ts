@@ -25,6 +25,10 @@ vi.mock('../time', async (importOriginal) => {
   };
 });
 
+vi.mock('../economy-lock', () => ({
+  withUserEconomyLock: vi.fn(async (_userId: number, handler: () => Promise<unknown>) => handler()),
+}));
+
 import {
   getUserPoints,
   addPoints,

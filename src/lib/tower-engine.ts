@@ -595,7 +595,6 @@ function generateNormalFloor(
   floor: number,
   currentPower: number,
   diff: DifficultyRange,
-  _ownedBuffs: BuffType[],
 ): TowerFloor {
   const laneCount = randInt(rng, diff.laneCount[0], diff.laneCount[1]);
 
@@ -689,12 +688,12 @@ export function generateFloor(
     if (theme) {
       result = generateThemeFloorByType(rng, floor, currentPower, diff, theme);
     } else {
-      result = generateNormalFloor(rng, floor, currentPower, diff, ownedBuffs ?? []);
+      result = generateNormalFloor(rng, floor, currentPower, diff);
     }
   }
   // 无难度模式 → 原始逻辑
   else {
-    result = generateNormalFloor(rng, floor, currentPower, diff, ownedBuffs ?? []);
+    result = generateNormalFloor(rng, floor, currentPower, diff);
   }
 
   // 混沌诅咒：交换两个通道位置（始终消耗 2 次 rng 对齐）

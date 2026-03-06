@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
+import type { AuthUser } from "@/lib/auth";
 import {
   addFeedbackMessage,
   getFeedbackById,
@@ -11,7 +12,7 @@ const MAX_MESSAGE_LENGTH = 1000;
 
 export const POST = withAdmin(async (
   request: NextRequest,
-  user,
+  user: AuthUser,
   context: { params: Promise<{ id: string }> }
 ) => {
   try {
@@ -88,3 +89,5 @@ export const POST = withAdmin(async (
     );
   }
 });
+
+

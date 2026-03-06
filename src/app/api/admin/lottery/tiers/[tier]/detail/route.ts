@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
+import type { AuthUser } from "@/lib/auth";
 import { kv } from '@/lib/d1-kv';
 
 export const dynamic = "force-dynamic";
@@ -7,7 +8,7 @@ export const dynamic = "force-dynamic";
 // GET - 获取档位的所有兑换码（分已使用和未使用）
 export const GET = withAdmin(async (
   _request: NextRequest,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ tier: string }> }
 ) => {
   try {
@@ -53,3 +54,5 @@ export const GET = withAdmin(async (
     );
   }
 });
+
+

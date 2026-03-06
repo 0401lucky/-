@@ -3,7 +3,7 @@
 import type { TowerFloor, TowerLaneContent, BuffType, ThemeFloorType, ActiveBlessing, ActiveCurse } from '@/lib/tower-engine';
 import { BUFF_LABELS, BUFF_DESCRIPTIONS, THEME_ICONS } from '@/lib/tower-engine';
 import {
-  HelpCircle, Ghost, Skull, Shield, Plus, X as XIcon, ShoppingBag, Bomb, Wind, Star
+  HelpCircle, Ghost, Skull, Shield, Plus, X as XIcon, ShoppingBag, Bomb, Wind
 } from 'lucide-react';
 
 type AnimState = 'idle' | 'walking' | 'attacking' | 'powerup' | 'death' | 'nextFloor' | 'revealing' | 'shieldBlock' | 'bossDefeated' | 'trapped' | 'shopping';

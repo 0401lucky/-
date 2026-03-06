@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
+import type { AuthUser } from "@/lib/auth";
 import { getUserAllClaims, getAllProjects } from "@/lib/kv";
 import { kv } from '@/lib/d1-kv';
 
@@ -15,7 +16,7 @@ interface LotteryRecord {
 
 export const GET = withAdmin(async (
   _request: NextRequest,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ id: string }> }
 ) => {
   try {
@@ -58,3 +59,5 @@ export const GET = withAdmin(async (
     );
   }
 });
+
+

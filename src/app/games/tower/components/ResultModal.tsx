@@ -1,7 +1,7 @@
 'use client';
 
-import { RotateCcw, Home, Trophy, Share2, Zap, Skull } from 'lucide-react';
-import { floorToPoints, formatPower, MAX_POWER } from '@/lib/tower-engine';
+import { Trophy, Zap, Skull } from 'lucide-react';
+import { formatPower } from '@/lib/tower-engine';
 import type { TowerDifficulty } from '@/lib/tower-engine';
 
 interface ResultModalProps {

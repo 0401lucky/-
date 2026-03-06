@@ -4,8 +4,17 @@ type RuntimeEnvRecord = Record<string, unknown>;
 
 function getCloudflareEnv(): RuntimeEnvRecord | null {
   try {
-    const context = getCloudflareContext() as { env?: RuntimeEnvRecord } | undefined;
-    return context?.env ?? null;
+    const context = getCloudflareContext();
+    if (!context || typeof context !== "object" || !("env" in context)) {
+      return null;
+    }
+
+    const env = (context as { env?: unknown }).env;
+    if (!env || typeof env !== "object") {
+      return null;
+    }
+
+    return env as RuntimeEnvRecord;
   } catch {
     return null;
   }

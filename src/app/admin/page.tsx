@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   Plus, Pause, Play, Trash2, Upload,
   Loader2, AlertCircle, Package,
-  ChevronRight, X, Check, Gift, Pin,
+  X, Check, Gift, Pin,
 } from 'lucide-react';
 
 interface Project {

@@ -2,10 +2,11 @@ import { kv } from '@/lib/d1-kv';
 import { CARDS, getCardsByAlbum, getAlbumById } from "./config";
 import { COLLECTION_REWARDS } from "./constants";
 import { Rarity } from "./types";
-import { UserCards } from "./draw";
+import { createDefaultUserCards, normalizeUserCards, UserCards } from "./draw";
 import { nanoid } from "nanoid";
 import { getAlbumReward } from "./albumRewards";
 import type { PointsLog } from "../types/store";
+import { withUserEconomyLock } from "../economy-lock";
 
 export type RewardType = Rarity | 'full_set';
 
@@ -76,13 +77,14 @@ export function getRewardKey(type: RewardType, albumId?: string): string {
  * Check if a reward has been claimed
  */
 export function isRewardClaimed(userData: UserCards, type: RewardType, albumId?: string): boolean {
-  return userData.collectionRewards.includes(getRewardKey(type, albumId));
+  return normalizeUserCards(userData).collectionRewards.includes(getRewardKey(type, albumId));
 }
 
 /**
  * Get status of all collection rewards for a user within an album
  */
 export async function getAlbumRewardStatuses(userData: UserCards, albumId: string): Promise<RewardStatus[]> {
+  const normalizedUserData = normalizeUserCards(userData);
   const rarities: Rarity[] = ['common', 'rare', 'epic', 'legendary', 'legendary_rare'];
   const statuses: RewardStatus[] = [];
   const album = getAlbumById(albumId);
@@ -93,10 +95,10 @@ export async function getAlbumRewardStatuses(userData: UserCards, albumId: strin
     const rarityCards = albumCards.filter(c => c.rarity === rarity);
     if (rarityCards.length === 0) continue; // Skip if no cards of this rarity in album
 
-    const ownedCount = countOwnedByRarity(userData.inventory, rarity, albumId);
+    const ownedCount = countOwnedByRarity(normalizedUserData.inventory, rarity, albumId);
     const totalCount = rarityCards.length;
-    const eligible = isTierComplete(userData.inventory, rarity, albumId);
-    const claimed = isRewardClaimed(userData, rarity, albumId);
+    const eligible = isTierComplete(normalizedUserData.inventory, rarity, albumId);
+    const claimed = isRewardClaimed(normalizedUserData, rarity, albumId);
 
     // Use album-specific tier rewards if available
     const points = album?.tierRewards?.[rarity] ?? COLLECTION_REWARDS[rarity];
@@ -112,14 +114,14 @@ export async function getAlbumRewardStatuses(userData: UserCards, albumId: strin
   }
 
   // Full album reward - use dynamic reward from Redis
-  const fullSetEligible = isAlbumComplete(userData.inventory, albumId);
-  const ownedInAlbum = albumCards.filter(c => userData.inventory.includes(c.id)).length;
+  const fullSetEligible = isAlbumComplete(normalizedUserData.inventory, albumId);
+  const ownedInAlbum = albumCards.filter(c => normalizedUserData.inventory.includes(c.id)).length;
   const fullSetReward = await getAlbumReward(albumId);
 
   statuses.push({
     type: 'full_set',
     points: fullSetReward,
-    claimed: isRewardClaimed(userData, 'full_set', albumId),
+    claimed: isRewardClaimed(normalizedUserData, 'full_set', albumId),
     eligible: fullSetEligible,
     ownedCount: ownedInAlbum,
     totalCount: albumCards.length,
@@ -166,71 +168,77 @@ export async function claimCollectionReward(
     return { success: false, message: "奖励积分配置异常" };
   }
 
-  // Read user data
-  const data = await kv.get<UserCards>(userKey);
-  const userData: UserCards = data ?? {
-    inventory: [],
-    fragments: 0,
-    pityCounter: 0,
-    drawsAvailable: 1,
-    collectionRewards: [],
-  };
-  if (!userData.collectionRewards) {
-    userData.collectionRewards = [];
-  }
+  return withUserEconomyLock(userId, async () => {
+    const data = await kv.get<Partial<UserCards>>(userKey);
+    const userData = data === null ? createDefaultUserCards() : normalizeUserCards(data);
 
-  // Check if already claimed
-  if (userData.collectionRewards.includes(rewardKey)) {
-    return { success: false, message: "该奖励已领取" };
-  }
-
-  // Check eligibility: user must have all required cards
-  const inventorySet = new Set(userData.inventory ?? []);
-  for (const requiredId of requiredCardIds) {
-    if (!inventorySet.has(requiredId)) {
-      return { success: false, message: "尚未集齐该系列卡牌" };
+    if (userData.collectionRewards.includes(rewardKey)) {
+      return { success: false, message: "该奖励已领取" };
     }
-  }
 
-  // Mark as claimed and award points
-  userData.collectionRewards.push(rewardKey);
-  await kv.set(userKey, userData);
-  const newBalance = await kv.incrby(pointsKey, pointsToAward);
+    const inventorySet = new Set(userData.inventory);
+    for (const requiredId of requiredCardIds) {
+      if (!inventorySet.has(requiredId)) {
+        return { success: false, message: "尚未集齐该系列卡牌" };
+      }
+    }
 
-  if (!Number.isFinite(newBalance)) {
-    return { success: false, message: "奖励发放异常，请稍后重试" };
-  }
+    const nextUserData: UserCards = {
+      ...userData,
+      inventory: [...userData.inventory],
+      collectionRewards: [...userData.collectionRewards, rewardKey],
+    };
 
-  const rarityNames: Record<RewardType, string> = {
-    common: '普通',
-    rare: '稀有',
-    epic: '史诗',
-    legendary: '传说',
-    legendary_rare: '传说稀有',
-    full_set: '全套',
-  };
+    let newBalance: number | null = null;
+    try {
+      newBalance = await kv.incrby(pointsKey, pointsToAward);
+      if (!Number.isFinite(newBalance)) {
+        throw new Error("奖励积分写入异常");
+      }
+      await kv.set(userKey, nextUserData);
+    } catch (error) {
+      if (newBalance !== null && Number.isFinite(newBalance)) {
+        try {
+          await kv.decrby(pointsKey, pointsToAward);
+        } catch (rollbackError) {
+          console.error("Claim reward points rollback failed:", rollbackError);
+        }
+      }
+      console.error("Claim reward failed:", error);
+      return { success: false, message: "奖励发放异常，请稍后重试" };
+    }
 
-  const description = `集齐${rarityNames[rewardType]}卡牌奖励`;
+    const rarityNames: Record<RewardType, string> = {
+      common: '普通',
+      rare: '稀有',
+      epic: '史诗',
+      legendary: '传说',
+      legendary_rare: '传说稀有',
+      full_set: '全套',
+    };
 
-  const log: PointsLog = {
-    id: nanoid(),
-    amount: pointsToAward,
-    source: 'card_collection',
-    description,
-    balance: Math.floor(newBalance),
-    createdAt: Date.now(),
-  };
+    const description = `集齐${rarityNames[rewardType]}卡牌奖励`;
 
-  try {
-    await kv.lpush(pointsLogKey, log);
-    await kv.ltrim(pointsLogKey, 0, USER_POINTS_LOG_MAX - 1);
-  } catch (error) {
-    console.error("Claim reward log write failed:", error);
-  }
+    const log: PointsLog = {
+      id: nanoid(),
+      amount: pointsToAward,
+      source: 'card_collection',
+      description,
+      balance: Math.floor(newBalance),
+      createdAt: Date.now(),
+    };
 
-  return {
-    success: true,
-    pointsAwarded: pointsToAward,
-    newBalance: Math.floor(newBalance),
-  };
+    try {
+      await kv.lpush(pointsLogKey, log);
+      await kv.ltrim(pointsLogKey, 0, USER_POINTS_LOG_MAX - 1);
+    } catch (error) {
+      console.error("Claim reward log write failed:", error);
+    }
+
+    return {
+      success: true,
+      pointsAwarded: pointsToAward,
+      newBalance: Math.floor(newBalance),
+    };
+  });
 }

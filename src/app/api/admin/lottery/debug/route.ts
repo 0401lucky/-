@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
 import { kv } from '@/lib/d1-kv';
 import { getLotteryRecords } from "@/lib/lottery";
+import { getRuntimeEnvValue, sanitizeRuntimeEnvValue } from "@/lib/runtime-env";
 
 export const dynamic = "force-dynamic";
 
@@ -24,9 +25,20 @@ type TierSample = {
   sampleLength: number;
 };
 
+function isLotteryDebugEnabled(): boolean {
+  return sanitizeRuntimeEnvValue(getRuntimeEnvValue('ENABLE_LOTTERY_DEBUG')) === 'true';
+}
+
 // GET - 调试：查看已发放记录中的码是否存在于各档位
 export const GET = withAdmin(async () => {
   try {
+    if (!isLotteryDebugEnabled()) {
+      return NextResponse.json(
+        { success: false, message: '此接口已禁用。请设置环境变量 ENABLE_LOTTERY_DEBUG=true 启用。' },
+        { status: 403 }
+      );
+    }
+
     const records = await getLotteryRecords(50);
 
     const debugInfo: DebugCodeInfo[] = await Promise.all(
@@ -72,14 +84,13 @@ export const GET = withAdmin(async () => {
     // 并行获取各档位的样本码
     const tierEntries = await Promise.all(
       TIERS.map(async (tierId) => {
-        const [sample, count] = await Promise.all([
-          kv.srandmember(`lottery:codes:${tierId}`),
+        const [count] = await Promise.all([
           kv.scard(`lottery:codes:${tierId}`),
         ]);
         return [tierId, {
           count,
-          sample: sample ? String(sample) : null,
-          sampleLength: sample ? String(sample).length : 0,
+          sample: null,
+          sampleLength: 0,
         }] as const;
       })
     );

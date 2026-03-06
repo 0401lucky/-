@@ -534,14 +534,14 @@ export async function spinLottery(
       return { success: false, message: "抽奖活动暂未开放" };
     }
 
-    const allHaveCodes = await checkAllTiersHaveCodes();
-    if (!allHaveCodes) {
+    const availableTiers = await getAvailableTiers();
+    if (availableTiers.length === 0) {
       await rollbackSpinCount();
       return { success: false, message: "库存不足，请联系管理员" };
     }
 
     // === 第三步：选择档位并原子性获取兑换码 ===
-    const selectedTier = weightedRandomSelect(config.tiers);
+    const selectedTier = weightedRandomSelect(availableTiers);
 
     // [Opt-3] 配置保护：如果所有概率都为0，返回错误
     if (!selectedTier) {

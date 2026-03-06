@@ -11,6 +11,10 @@ vi.mock('@/lib/d1-kv', () => ({
   },
 }));
 
+vi.mock('../../economy-lock', () => ({
+  withUserEconomyLock: vi.fn(async (_userId: string, handler: () => Promise<unknown>) => handler()),
+}));
+
 describe('Card Draw System', () => {
   const userId = 'user_123';
   const getFreshMockData = (): UserCards => ({
@@ -138,10 +142,6 @@ describe('Card Draw System', () => {
     });
 
     it('should handle duplicate cards and return fragments', async () => {
-      // Pick a known card to force into inventory for duplication
-      const knownCard = CARDS[0];
-      const fragmentValue = FRAGMENT_VALUES[knownCard.rarity];
-
       const userData: UserCards = {
         ...getFreshMockData(),
         inventory: CARDS.map(c => c.id), // all cards in inventory = guaranteed duplicate

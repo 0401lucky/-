@@ -1,4 +1,4 @@
-/**
+﻿/**
  * GET /api/admin/raffle/[id] - 获取活动详情（管理）
  * PUT /api/admin/raffle/[id] - 更新活动
  * DELETE /api/admin/raffle/[id] - 删除活动
@@ -6,6 +6,7 @@
 
 import { NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
+import type { AuthUser } from "@/lib/auth";
 import {
   getRaffle,
   updateRaffle,
@@ -17,7 +18,7 @@ import type { UpdateRaffleInput } from "@/lib/types/raffle";
 
 export const GET = withAdmin(async (
   _request: Request,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ id: string }> }
 ) => {
   try {
@@ -57,7 +58,7 @@ export const GET = withAdmin(async (
 
 export const PUT = withAdmin(async (
   request: Request,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ id: string }> }
 ) => {
   try {
@@ -89,7 +90,7 @@ export const PUT = withAdmin(async (
 
 export const DELETE = withAdmin(async (
   _request: Request,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ id: string }> }
 ) => {
   try {
@@ -116,3 +117,5 @@ export const DELETE = withAdmin(async (
     );
   }
 });
+
+

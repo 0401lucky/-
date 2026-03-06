@@ -4,6 +4,7 @@ import { CardConfig, Rarity } from "./types";
 import { RARITY_PROBABILITIES, RARITY_LEVELS, FRAGMENT_VALUES } from "./constants";
 import { getGuaranteedRarity, normalizePityCounters, type PityCounters } from "./pity";
 import { secureRandomFloat, secureRandomIndex } from "../random";
+import { withUserEconomyLock } from "../economy-lock";
 
 export interface UserCards {
   inventory: string[];
@@ -33,7 +34,21 @@ const DEFAULT_USER_CARDS: UserCards = {
   collectionRewards: [],
 };
 
-function normalizeUserCards(data: Partial<UserCards> | null | undefined): UserCards {
+export function createDefaultUserCards(drawsAvailable: number = DEFAULT_USER_CARDS.drawsAvailable): UserCards {
+  return {
+    inventory: [],
+    fragments: 0,
+    pityCounter: 0,
+    pityRare: 0,
+    pityEpic: 0,
+    pityLegendary: 0,
+    pityLegendaryRare: 0,
+    drawsAvailable,
+    collectionRewards: [],
+  };
+}
+
+export function normalizeUserCards(data: Partial<UserCards> | null | undefined): UserCards {
   const inventory = Array.isArray(data?.inventory)
     ? data.inventory.filter((id): id is string => typeof id === "string")
     : [];
@@ -87,7 +102,7 @@ export async function getUserCardData(userId: string): Promise<UserCards> {
 }
 
 export async function updateUserCardData(userId: string, data: UserCards): Promise<void> {
-  await kv.set(`cards:user:${userId}`, data);
+  await kv.set(`cards:user:${userId}`, normalizeUserCards(data));
 }
 
 /**
@@ -263,38 +278,34 @@ export async function drawCard(userId: string): Promise<{
 }> {
   const userKey = `cards:user:${userId}`;
 
-  // Phase 1: Reserve the draw and get actual pity counters
-  const reserve = await reserveDraw(userKey);
+  return withUserEconomyLock(userId, async () => {
+    const reserve = await reserveDraw(userKey);
 
-  if (!reserve.success) {
-    return { success: false, message: "抽卡次数不足" };
-  }
-
-  const pityCounters = normalizePityCounters(reserve.pityCounters!);
-
-  // Card selection based on ACTUAL pity counters
-  const card = selectCardForDraw(pityCounters);
-
-  // Get fragment value for duplicate handling
-  const fragmentValue = FRAGMENT_VALUES[card.rarity];
-
-  // Phase 2: Finalize the draw
-  try {
-    const result = await finalizeDraw(userKey, card.id, card.rarity, fragmentValue);
-
-    return {
-      success: true,
-      card,
-      isDuplicate: result.status === "duplicate",
-      fragmentsAdded: result.fragmentsAdded > 0 ? result.fragmentsAdded : undefined,
-    };
-  } catch (error) {
-    try {
-      await rollbackReservedDraw(userKey);
-    } catch (rollbackError) {
-      console.error("Rollback draw failed:", rollbackError);
+    if (!reserve.success) {
+      return { success: false, message: "抽卡次数不足" };
     }
-    console.error("Finalize draw failed:", error);
-    return { success: false, message: "抽卡异常，请重试" };
-  }
+
+    const pityCounters = normalizePityCounters(reserve.pityCounters!);
+    const card = selectCardForDraw(pityCounters);
+    const fragmentValue = FRAGMENT_VALUES[card.rarity];
+
+    try {
+      const result = await finalizeDraw(userKey, card.id, card.rarity, fragmentValue);
+
+      return {
+        success: true,
+        card,
+        isDuplicate: result.status === "duplicate",
+        fragmentsAdded: result.fragmentsAdded > 0 ? result.fragmentsAdded : undefined,
+      };
+    } catch (error) {
+      try {
+        await rollbackReservedDraw(userKey);
+      } catch (rollbackError) {
+        console.error("Rollback draw failed:", rollbackError);
+      }
+      console.error("Finalize draw failed:", error);
+      return { success: false, message: "抽卡异常，请重试" };
+    }
+  });
 }

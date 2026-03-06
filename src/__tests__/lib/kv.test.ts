@@ -21,6 +21,10 @@ vi.mock('@/lib/d1-kv', () => ({
   },
 }));
 
+vi.mock('../../lib/economy-lock', () => ({
+  withUserEconomyLock: vi.fn(async (_userId: number, handler: () => Promise<unknown>) => handler()),
+}));
+
 describe('kv D1 migration tests', () => {
   const mockKvGet = vi.mocked(kv.get);
   const mockKvSet = vi.mocked(kv.set);
@@ -221,8 +225,8 @@ describe('kv D1 migration tests', () => {
 
     const result = await tryUseExtraSpin(2003);
 
-    // success is true because balance was > 0, but remaining clamped to 0
-    expect(result).toEqual({ success: true, remaining: 0 });
+    // 新实现会把异常的负数结果回滚，并按失败处理
+    expect(result).toEqual({ success: false, remaining: 0 });
   });
 
   it('tryUseExtraSpin concurrent calls: read→check→write pattern', async () => {

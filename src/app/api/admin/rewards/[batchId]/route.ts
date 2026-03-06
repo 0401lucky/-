@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { withAdmin } from '@/lib/api-guards';
+import type { AuthUser } from "@/lib/auth";
 import { withRateLimit } from '@/lib/rate-limit';
 import { getRewardBatch } from '@/lib/rewards';
 
@@ -9,7 +10,7 @@ export const dynamic = 'force-dynamic';
 export const GET = withAdmin(
   async (
     request: NextRequest,
-    user,
+    user: AuthUser,
     context: { params: Promise<{ batchId: string }> }
   ) => {
     try {
@@ -40,3 +41,5 @@ export const GET = withAdmin(
   },
   { forbiddenMessage: '无权限' }
 );
+
+

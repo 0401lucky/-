@@ -1,12 +1,13 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
+import type { AuthUser } from "@/lib/auth";
 import { getUserCardData } from "@/lib/cards/draw";
 
 export const dynamic = "force-dynamic";
 
 export const GET = withAdmin(async (
   request: NextRequest,
-  _user,
+  _user: AuthUser,
   context: { params: Promise<{ userId: string }> }
 ) => {
   try {
@@ -28,3 +29,5 @@ export const GET = withAdmin(async (
     );
   }
 });
+
+

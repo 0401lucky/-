@@ -30,6 +30,7 @@ yarn-error.log*
 /devserver.log
 /devserver.err
 /nul
+/tailwindcss-*.log
 
 # duplicate local assets (kept in public/images)
 /images/

@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { archiveAnnouncement, getAnnouncementById, updateAnnouncement } from '@/lib/announcements';
 import { withAdmin } from '@/lib/api-guards';
+import type { AuthUser } from "@/lib/auth";
 import { withRateLimit } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
@@ -8,7 +9,7 @@ export const dynamic = 'force-dynamic';
 export const PATCH = withAdmin(
   async (
     request: NextRequest,
-    user,
+    user: AuthUser,
     context: { params: Promise<{ id: string }> }
   ) => {
     try {
@@ -60,7 +61,7 @@ export const PATCH = withAdmin(
 export const DELETE = withAdmin(
   async (
     _request: NextRequest,
-    user,
+    user: AuthUser,
     context: { params: Promise<{ id: string }> }
   ) => {
     try {
@@ -90,3 +91,5 @@ export const DELETE = withAdmin(
   },
   { forbiddenMessage: '无权限' }
 );
+
+

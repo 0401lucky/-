@@ -4,6 +4,7 @@ import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import { getTodayDateString } from './time';
 import type { PointsLog, PointsSource } from './types/store';
+import { withUserEconomyLock } from './economy-lock';
 
 // Key 格式
 const POINTS_KEY = (userId: number) => `points:${userId}`;
@@ -35,24 +36,23 @@ export async function addPoints(
     throw new Error('Amount must be positive');
   }
 
-  // 原子增加积分
-  const newBalance = await kv.incrby(POINTS_KEY(userId), amount);
+  return withUserEconomyLock(userId, async () => {
+    const newBalance = await kv.incrby(POINTS_KEY(userId), amount);
 
-  // 记录流水
-  const log: PointsLog = {
-    id: nanoid(),
-    amount,
-    source,
-    description,
-    balance: newBalance,
-    createdAt: Date.now(),
-  };
+    const log: PointsLog = {
+      id: nanoid(),
+      amount,
+      source,
+      description,
+      balance: newBalance,
+      createdAt: Date.now(),
+    };
 
-  await kv.lpush(POINTS_LOG_KEY(userId), log);
-  // 保持最近100条记录
-  await kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1);
+    await kv.lpush(POINTS_LOG_KEY(userId), log);
+    await kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1);
 
-  return { success: true, balance: newBalance };
+    return { success: true, balance: newBalance };
+  });
 }
 
 /**
@@ -95,55 +95,52 @@ export async function addGamePointsWithLimit(
   const pointsKey = POINTS_KEY(userId);
   const dailyEarnedKey = DAILY_EARNED_KEY(userId, date);
 
-  // Read current daily earned
-  const dailyEarnedRaw = await kv.get<number>(dailyEarnedKey);
-  const dailyEarned = dailyEarnedRaw ?? 0;
+  return withUserEconomyLock(userId, async () => {
+    const dailyEarnedRaw = await kv.get<number>(dailyEarnedKey);
+    const dailyEarned = dailyEarnedRaw ?? 0;
+    const remaining = Math.max(0, dailyLimit - dailyEarned);
+    const grant = Math.min(score, remaining);
 
-  // Calculate grantable amount
-  const remaining = Math.max(0, dailyLimit - dailyEarned);
-  const grant = Math.min(score, remaining);
+    let balance: number;
+    let newDailyEarned = dailyEarned;
 
-  let balance: number;
-  let newDailyEarned = dailyEarned;
+    if (grant > 0) {
+      const [nextBalance, nextDailyEarned] = await Promise.all([
+        kv.incrby(pointsKey, grant),
+        kv.incrby(dailyEarnedKey, grant),
+      ]);
+      balance = nextBalance;
+      newDailyEarned = nextDailyEarned;
 
-  if (grant > 0) {
-    // 并行执行两个 incrby
-    const [bal, daily] = await Promise.all([
-      kv.incrby(pointsKey, grant),
-      kv.incrby(dailyEarnedKey, grant),
-    ]);
-    balance = bal;
-    newDailyEarned = daily;
+      const log: PointsLog = {
+        id: nanoid(),
+        amount: grant,
+        source,
+        description,
+        balance,
+        createdAt: Date.now(),
+      };
 
-    const log: PointsLog = {
-      id: nanoid(),
-      amount: grant,
-      source,
-      description,
+      await Promise.all([
+        kv.expire(dailyEarnedKey, DAILY_EARNED_TTL),
+        kv.lpush(POINTS_LOG_KEY(userId), log),
+      ]);
+      kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1).catch(() => {});
+    } else {
+      const currentBalance = await kv.get<number>(pointsKey);
+      balance = currentBalance ?? 0;
+    }
+
+    const limitReached = newDailyEarned >= dailyLimit;
+
+    return {
+      success: true,
+      pointsEarned: grant,
       balance,
-      createdAt: Date.now(),
+      dailyEarned: newDailyEarned,
+      limitReached,
     };
-
-    // 并行执行 expire + lpush，ltrim 不阻塞返回
-    await Promise.all([
-      kv.expire(dailyEarnedKey, DAILY_EARNED_TTL),
-      kv.lpush(POINTS_LOG_KEY(userId), log),
-    ]);
-    kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1).catch(() => {});
-  } else {
-    const currentBalance = await kv.get<number>(pointsKey);
-    balance = currentBalance ?? 0;
-  }
-
-  const limitReached = newDailyEarned >= dailyLimit;
-
-  return {
-    success: true,
-    pointsEarned: grant,
-    balance,
-    dailyEarned: newDailyEarned,
-    limitReached,
-  };
+  });
 }
 
 /**
@@ -156,7 +153,7 @@ export async function getDailyEarnedPoints(userId: number): Promise<number> {
 }
 
 /**
- * 扣除积分（使用 Lua 脚本保证原子性）
+ * 扣除积分（使用用户级串行锁避免并发穿透）
  */
 export async function deductPoints(
   userId: number,
@@ -168,30 +165,31 @@ export async function deductPoints(
     throw new Error('Amount must be positive');
   }
 
-  const pointsKey = POINTS_KEY(userId);
-  const currentRaw = await kv.get<number>(pointsKey);
-  const current = currentRaw ?? 0;
+  return withUserEconomyLock(userId, async () => {
+    const pointsKey = POINTS_KEY(userId);
+    const currentRaw = await kv.get<number>(pointsKey);
+    const current = currentRaw ?? 0;
 
-  if (current < amount) {
-    return { success: false, balance: current, message: '积分不足' };
-  }
+    if (current < amount) {
+      return { success: false, balance: current, message: '积分不足' };
+    }
 
-  const newBalance = await kv.decrby(pointsKey, amount);
+    const newBalance = await kv.decrby(pointsKey, amount);
 
-  // 记录流水（扣除用负数）
-  const log: PointsLog = {
-    id: nanoid(),
-    amount: -amount,
-    source,
-    description,
-    balance: newBalance,
-    createdAt: Date.now(),
-  };
+    const log: PointsLog = {
+      id: nanoid(),
+      amount: -amount,
+      source,
+      description,
+      balance: newBalance,
+      createdAt: Date.now(),
+    };
 
-  await kv.lpush(POINTS_LOG_KEY(userId), log);
-  await kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1);
+    await kv.lpush(POINTS_LOG_KEY(userId), log);
+    await kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1);
 
-  return { success: true, balance: newBalance };
+    return { success: true, balance: newBalance };
+  });
 }
 
 /**
@@ -217,32 +215,34 @@ export async function applyPointsDelta(
     throw new Error('Description is required');
   }
 
-  const pointsKey = POINTS_KEY(userId);
-  const logKey = POINTS_LOG_KEY(userId);
   const now = Date.now();
   const logId = nanoid();
 
-  const currentRaw = await kv.get<number>(pointsKey);
-  const current = currentRaw ?? 0;
+  return withUserEconomyLock(userId, async () => {
+    const pointsKey = POINTS_KEY(userId);
+    const logKey = POINTS_LOG_KEY(userId);
+    const currentRaw = await kv.get<number>(pointsKey);
+    const current = currentRaw ?? 0;
 
-  if (delta < 0 && current < (-delta)) {
-    return { success: false, balance: current, message: '积分不足' };
-  }
+    if (delta < 0 && current < (-delta)) {
+      return { success: false, balance: current, message: '积分不足' };
+    }
 
-  const newBalance = await kv.incrby(pointsKey, delta);
+    const newBalance = await kv.incrby(pointsKey, delta);
 
-  const log: PointsLog = {
-    id: logId,
-    amount: delta,
-    source,
-    description: description.trim(),
-    balance: newBalance,
-    createdAt: now,
-  };
-  await kv.lpush(logKey, log);
-  await kv.ltrim(logKey, 0, MAX_LOG_ENTRIES - 1);
+    const log: PointsLog = {
+      id: logId,
+      amount: delta,
+      source,
+      description: description.trim(),
+      balance: newBalance,
+      createdAt: now,
+    };
+    await kv.lpush(logKey, log);
+    await kv.ltrim(logKey, 0, MAX_LOG_ENTRIES - 1);
 
-  return { success: true, balance: newBalance };
+    return { success: true, balance: newBalance };
+  });
 }
 
 /**

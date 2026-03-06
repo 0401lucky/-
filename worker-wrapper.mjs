@@ -186,7 +186,7 @@ async function maybeHandleCardImage(request, env, ctx) {
   return new Response(null, { status: 200, headers });
 }
 
-export default {
+const workerWrapper = {
   async fetch(request, env, ctx) {
     const imageResponse = await maybeHandleCardImage(request, env, ctx);
     if (imageResponse) {
@@ -201,3 +201,5 @@ export default {
     ctx.waitUntil(triggerDelivery(env));
   },
 };
+
+export default workerWrapper;

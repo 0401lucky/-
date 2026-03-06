@@ -8,7 +8,6 @@ import {
   DIFFICULTY_MODIFIERS,
   type TowerLaneContent,
   type ResolvedLaneContent,
-  type BuffType,
   type TowerDifficulty,
   type GenerateFloorOptions,
 } from '../tower-engine';

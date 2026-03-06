@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
-import { kv } from '@/lib/d1-kv';
 import { getAuthUser } from '@/lib/auth';
 import { CARD_DRAW_PRICE } from '@/lib/cards/constants';
-import { nanoid } from 'nanoid';
-import type { PointsLog } from '@/lib/types/store';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
+import { addCardDraws } from '@/lib/kv';
+import { addPoints, deductPoints } from '@/lib/points';
 
 export async function POST() {
   const user = await getAuthUser();
@@ -21,59 +20,57 @@ export async function POST() {
   }
 
   const userId = user.id;
-  const pointsKey = `points:${userId}`;
-  const cardsKey = `cards:user:${userId}`;
   const amount = CARD_DRAW_PRICE;
   const drawAward = 1;
 
   try {
-    // 1. Check points balance
-    const currentPoints = Number(await kv.get<number>(pointsKey)) || 0;
-    if (currentPoints < amount) {
+    const deductResult = await deductPoints(
+      userId,
+      amount,
+      'exchange',
+      `购买动物卡抽卡次数 x${drawAward}`,
+    );
+
+    if (!deductResult.success) {
       return NextResponse.json({
         success: false,
-        message: '积分不足',
-        balance: currentPoints,
+        message: deductResult.message ?? '积分不足',
+        balance: deductResult.balance,
       });
     }
 
-    // 2. Deduct points
-    const newBalance = await kv.decrby(pointsKey, amount);
+    try {
+      const drawResult = await addCardDraws(userId, drawAward);
 
-    // 3. Award draws - get current card data or initialize
-    const cardData = await kv.get<Record<string, unknown>>(cardsKey) ?? {
-      inventory: [],
-      fragments: 0,
-      pityCounter: 0,
-      drawsAvailable: 1,
-      collectionRewards: [],
-    };
-    const currentDraws = Number(cardData.drawsAvailable) || 0;
-    cardData.drawsAvailable = currentDraws + drawAward;
-    await kv.set(cardsKey, cardData);
+      return NextResponse.json({
+        success: true,
+        message: `成功购买 ${drawAward} 次抽卡机会`,
+        newBalance: deductResult.balance,
+        drawsAvailable: drawResult.drawsAvailable,
+      });
+    } catch (awardError) {
+      console.error('Award card draw failed, refunding points:', awardError);
 
-    const drawsAvailable = cardData.drawsAvailable;
+      try {
+        await addPoints(
+          userId,
+          amount,
+          'exchange_refund',
+          `购买动物卡抽卡次数失败退款 x${drawAward}`,
+        );
+      } catch (refundError) {
+        console.error('Refund points failed after card purchase error:', refundError);
+        return NextResponse.json(
+          { success: false, message: '购买失败，且自动退款失败，请联系管理员处理' },
+          { status: 500 },
+        );
+      }
 
-    // Record points log
-    const log: PointsLog = {
-      id: nanoid(),
-      amount: -amount,
-      source: 'exchange',
-      description: `购买动物卡抽卡次数 x${drawAward}`,
-      balance: newBalance,
-      createdAt: Date.now(),
-    };
-
-    const logKey = `points_log:${userId}`;
-    await kv.lpush(logKey, log);
-    await kv.ltrim(logKey, 0, 99);
-
-    return NextResponse.json({
-      success: true,
-      message: `成功购买 ${drawAward} 次抽卡机会`,
-      newBalance,
-      drawsAvailable
-    });
+      return NextResponse.json(
+        { success: false, message: '购买失败，积分已自动退回' },
+        { status: 500 },
+      );
+    }
   } catch (error) {
     console.error('Purchase card draw error:', error);
     return NextResponse.json({ success: false, message: '服务器内部错误' }, { status: 500 });
