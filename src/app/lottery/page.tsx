@@ -44,6 +44,9 @@ const PRIZES_WITH_ANGLES = calculateAngles();
 const RANKING_POLL_INTERVAL_MS = 30000;
 const RANKING_MAX_BACKOFF_MS = 120000;
 const PRE_SPIN_DEG_PER_SECOND = 540;
+const TARGET_TOTAL_SPIN_MS = 2200;
+const MIN_SETTLE_SPIN_MS = 900;
+const MAX_SETTLE_SPIN_MS = 1800;
 
 interface UserData {
   id: number;
@@ -114,6 +117,7 @@ export default function LotteryPage() {
   const spinTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const preSpinFrameRef = useRef<number | null>(null);
   const preSpinLastTsRef = useRef<number | null>(null);
+  const spinRequestStartedAtRef = useRef<number>(0);
   const confettiFrameRef = useRef<number | null>(null);
   const confettiEndTimeRef = useRef<number>(0);
   const modalCopyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -302,6 +306,7 @@ export default function LotteryPage() {
     setSpinning(true);
     setSpinPhase('requesting');
     setError(null);
+    spinRequestStartedAtRef.current = Date.now();
     startPreSpinAnimation();
 
     try {
@@ -318,34 +323,30 @@ export default function LotteryPage() {
           return;
         }
 
-        // 根据后端返回的 tierValue 找到对应的奖品（用于转盘动画定位）
         const prize = PRIZES_WITH_ANGLES.find(p => p.value === Number(record.tierValue));
 
         if (prize) {
           clearPreSpinAnimation();
           setSpinPhase('settling');
 
-          // 归一化角度到 [0, 360) 范围，处理负数和超过 360 的情况
           const normalize = (deg: number) => ((deg % 360) + 360) % 360;
-          
-          // 计算这个奖品区域的中心角度
           const centerAngle = (prize.startAngle + prize.endAngle) / 2;
-          // 转盘需要停在指针指向的位置（顶部 = 0度）
-          // 目标角度：让 centerAngle 对准指针（0度位置）
           const targetAngle = normalize(360 - centerAngle);
-          
-          // [FIX] 修复累加逻辑：计算相对于当前角度的增量
-          // 修复前 bug：直接用 prev + 360*12 + targetAngle 累加，
-          // 把"绝对目标角度"当成"增量"，导致第二次及之后停留位置偏移
+
           setRotation(prev => {
-            const current = normalize(prev);      // 当前停留角度
-            const desired = targetAngle;          // 目标停留角度
-            const delta = normalize(desired - current); // 需要额外转动的增量
-            return prev + 360 * 12 + delta;       // 12 圈 + 增量
+            const current = normalize(prev);
+            const desired = targetAngle;
+            const delta = normalize(desired - current);
+            return prev + 360 * 4 + delta;
           });
 
-          // 动画结束后显示结果 (6.5秒后 - 稍微留点余量给CSS动画)
-          // [M2修复] 使用 ref 存储 timeout ID 以便清理
+          const elapsedMs = Math.max(0, Date.now() - spinRequestStartedAtRef.current);
+          const remainingMs = TARGET_TOTAL_SPIN_MS - elapsedMs;
+          const settleDelay = Math.min(
+            MAX_SETTLE_SPIN_MS,
+            Math.max(MIN_SETTLE_SPIN_MS, remainingMs)
+          );
+
           if (spinTimeoutRef.current) {
             clearTimeout(spinTimeoutRef.current);
           }
@@ -353,7 +354,6 @@ export default function LotteryPage() {
             spinTimeoutRef.current = null;
             setSpinning(false);
             setSpinPhase('idle');
-            // 直接使用后端返回的数据
             setResult({
               name: record.tierName,
               code: record.code || '',
@@ -370,28 +370,25 @@ export default function LotteryPage() {
             }
             void fetchRanking();
 
-            // [Perf] 动态导入彩带特效，减少首屏 JS 体积
-            // [M2修复] 使用 ref 控制动画循环
-            // [Perf] 优化: 减少粒子数量，使用节流避免每帧都发射
             import('canvas-confetti').then(({ default: confetti }) => {
               const duration = 2500;
               confettiEndTimeRef.current = Date.now() + duration;
               let lastFrame = 0;
-              const throttleMs = 80; // 每80ms发射一次，而不是每帧
+              const throttleMs = 80;
 
               const frame = (timestamp: number) => {
                 if (timestamp - lastFrame >= throttleMs) {
                   lastFrame = timestamp;
                   confetti({
-                    particleCount: 6,  // 减少粒子数
+                    particleCount: 6,
                     angle: 60,
                     spread: 55,
                     origin: { x: 0 },
-                    shapes: ['circle'],  // 只用圆形，star性能开销大
+                    shapes: ['circle'],
                     colors: ['#fbbf24', '#f97316', '#ec4899', '#a78bfa', '#34d399', '#60a5fa'],
                     disableForReducedMotion: true,
                     drift: 0,
-                    ticks: 150  // 粒子存活时间缩短
+                    ticks: 150
                   });
                   confetti({
                     particleCount: 6,
@@ -413,7 +410,7 @@ export default function LotteryPage() {
               confettiFrameRef.current = requestAnimationFrame(frame);
             });
 
-          }, 6000);
+          }, settleDelay);
         } else {
           clearPreSpinAnimation();
           setSpinning(false);
@@ -649,7 +646,7 @@ export default function LotteryPage() {
                     background: getConicGradient(),
                     transform: `rotate(${rotation}deg) translateZ(0)`,
                     transition: spinPhase === 'settling'
-                      ? 'transform 6s cubic-bezier(0.25, 0.1, 0.25, 1)'
+                      ? 'transform 1.35s cubic-bezier(0.22, 1, 0.36, 1)'
                       : 'none',
                     boxShadow: 'inset 0 0 40px rgba(0,0,0,0.2)',
                     backfaceVisibility: 'hidden'

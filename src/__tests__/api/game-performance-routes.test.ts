@@ -7,6 +7,10 @@ const {
   mockGetDailyStats,
   mockGetDailyPointsLimit,
   mockSubmitGameResult,
+  mockSpinLotteryAuto,
+  mockGetLotteryPageState,
+  mockRecordUser,
+  mockCreateUserNotification,
   mockUser,
 } = vi.hoisted(() => {
   const mockUser = {
@@ -23,6 +27,10 @@ const {
     mockGetDailyStats: vi.fn(),
     mockGetDailyPointsLimit: vi.fn(),
     mockSubmitGameResult: vi.fn(),
+    mockSpinLotteryAuto: vi.fn(),
+    mockGetLotteryPageState: vi.fn(),
+    mockRecordUser: vi.fn(),
+    mockCreateUserNotification: vi.fn(),
   };
 });
 
@@ -40,6 +48,19 @@ vi.mock('@/lib/config', () => ({
 
 vi.mock('@/lib/game', () => ({
   submitGameResult: mockSubmitGameResult,
+}));
+
+vi.mock('@/lib/lottery', () => ({
+  spinLotteryAuto: mockSpinLotteryAuto,
+  getLotteryPageState: mockGetLotteryPageState,
+}));
+
+vi.mock('@/lib/kv', () => ({
+  recordUser: mockRecordUser,
+}));
+
+vi.mock('@/lib/notifications', () => ({
+  createUserNotification: mockCreateUserNotification,
 }));
 
 vi.mock('@/lib/rate-limit', () => ({
@@ -73,6 +94,7 @@ vi.mock('@/lib/rate-limit', () => ({
 
 import { GET as overviewGET } from '@/app/api/games/overview/route';
 import { POST as pachinkoSubmitPOST } from '@/app/api/games/pachinko/submit/route';
+import { POST as lotterySpinPOST } from '@/app/api/lottery/spin/route';
 
 describe('Game performance route handlers', () => {
   beforeEach(() => {
@@ -112,6 +134,25 @@ describe('Game performance route handlers', () => {
         lastGameAt: 2,
       },
     });
+    mockSpinLotteryAuto.mockResolvedValue({
+      success: true,
+      message: '恭喜获得 5刀福利！',
+      record: {
+        id: 'lottery-1',
+        tierName: '5刀福利',
+        tierValue: 5,
+        code: 'CODE-123',
+        directCredit: false,
+        createdAt: 123,
+      },
+    });
+    mockGetLotteryPageState.mockResolvedValue({
+      canSpin: false,
+      hasSpunToday: true,
+      extraSpins: 0,
+    });
+    mockRecordUser.mockResolvedValue(undefined);
+    mockCreateUserNotification.mockResolvedValue(undefined);
   });
 
   it('游戏中心概览接口仅返回首屏所需轻量字段', async () => {
@@ -141,6 +182,39 @@ describe('Game performance route handlers', () => {
 
     expect(response.status).toBe(401);
     expect(data).toEqual({ success: false, message: '未登录' });
+  });
+
+  it('抽奖接口直接返回中奖记录与最新页面状态', async () => {
+    const response = await lotterySpinPOST(
+      new NextRequest('http://localhost/api/lottery/spin', {
+        method: 'POST',
+      }),
+      undefined as never
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mockSpinLotteryAuto).toHaveBeenCalledWith(1, 'alice', {
+      bypassSpinLimit: false,
+    });
+    expect(mockGetLotteryPageState).toHaveBeenCalledWith(1, {
+      bypassSpinLimit: false,
+    });
+    expect(data).toMatchObject({
+      success: true,
+      message: '恭喜获得 5刀福利！',
+      record: {
+        id: 'lottery-1',
+        tierName: '5刀福利',
+        tierValue: 5,
+        code: 'CODE-123',
+      },
+      state: {
+        canSpin: false,
+        hasSpunToday: true,
+        extraSpins: 0,
+      },
+    });
   });
 
   it('弹珠机结算接口直接透传即时余额与日统计', async () => {
