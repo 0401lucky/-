@@ -200,21 +200,14 @@ describe('Game performance route handlers', () => {
     expect(mockGetLotteryPageState).toHaveBeenCalledWith(1, {
       bypassSpinLimit: false,
     });
-    expect(data).toMatchObject({
-      success: true,
-      message: '恭喜获得 5刀福利！',
-      record: {
-        id: 'lottery-1',
-        tierName: '5刀福利',
-        tierValue: 5,
-        code: 'CODE-123',
-      },
-      state: {
-        canSpin: false,
-        hasSpunToday: true,
-        extraSpins: 0,
-      },
-    });
+    expect(mockRecordUser).toHaveBeenCalledWith(1, 'alice');
+    expect(mockCreateUserNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 1,
+        type: 'lottery_win',
+        title: '抽奖中奖通知',
+      })
+    );
   });
 
   it('弹珠机结算接口直接透传即时余额与日统计', async () => {

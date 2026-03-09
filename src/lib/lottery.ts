@@ -538,24 +538,22 @@ export async function checkAllTiersHaveCodes(): Promise<boolean> {
 }
 
 // [M6修复] 获取可抽奖的档位（概率>0且有库存）- 并行查询优化
-export async function getAvailableTiers(): Promise<LotteryTier[]> {
-  const config = await getLotteryConfig();
+export async function getAvailableTiers(configOverride?: LotteryConfig): Promise<LotteryTier[]> {
+  const config = configOverride ?? await getLotteryConfig();
   const activeTiers = config.tiers.filter(t => t.probability > 0);
 
   if (activeTiers.length === 0) return [];
 
-  // 并行查询所有活跃档位的库存
   const counts = await Promise.all(
     activeTiers.map(tier => getTierAvailableCodesCount(tier.id))
   );
 
-  // 过滤出有库存的档位
   return activeTiers.filter((_, index) => counts[index] > 0);
 }
 
 // 获取各档位库存统计 — [Perf] 改为 Promise.all 并行查询
-export async function getTiersStats(): Promise<{ id: string; available: number }[]> {
-  const config = await getLotteryConfig();
+export async function getTiersStats(configOverride?: LotteryConfig): Promise<{ id: string; available: number }[]> {
+  const config = configOverride ?? await getLotteryConfig();
   const counts = await Promise.all(
     config.tiers.map(tier => getTierAvailableCodesCount(tier.id))
   );
@@ -906,8 +904,11 @@ export async function getTodayDirectTotal(): Promise<number> {
  * @param dollars 本次需要发放的金额
  * @returns 是否可以发放
  */
-export async function checkDailyDirectLimit(dollars: number): Promise<boolean> {
-  const config = await getLotteryConfig();
+export async function checkDailyDirectLimit(
+  dollars: number,
+  configOverride?: LotteryConfig,
+): Promise<boolean> {
+  const config = configOverride ?? await getLotteryConfig();
   const todayTotal = await getTodayDirectTotal();
   return (todayTotal + dollars) <= config.dailyDirectLimit;
 }
@@ -1002,11 +1003,11 @@ export async function getLotteryPageState(
   userId: number,
   options?: { bypassSpinLimit?: boolean }
 ): Promise<LotteryPageState> {
-  const [config, hasSpunToday, extraSpins, tiersStats] = await Promise.all([
-    getLotteryConfig(),
+  const config = await getLotteryConfig();
+  const [hasSpunToday, extraSpins, tiersStats] = await Promise.all([
     checkDailyLimit(userId),
     getExtraSpinCount(userId),
-    getTiersStats(),
+    getTiersStats(config),
   ]);
 
   const activeTierIds = new Set(
@@ -1035,11 +1036,11 @@ export async function getLotteryPageState(
 
   let canSpinByMode = false;
   if (config.mode === 'direct') {
-    canSpinByMode = await checkDailyDirectLimit(minTierValue);
+    canSpinByMode = await checkDailyDirectLimit(minTierValue, config);
   } else if (config.mode === 'code') {
     canSpinByMode = allTiersHaveCodes;
   } else {
-    const directAvailable = await checkDailyDirectLimit(minTierValue);
+    const directAvailable = await checkDailyDirectLimit(minTierValue, config);
     canSpinByMode = directAvailable || allTiersHaveCodes;
   }
 
