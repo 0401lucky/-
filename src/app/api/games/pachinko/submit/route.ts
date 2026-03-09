@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
-import { submitGameResult, getDailyStats } from '@/lib/game';
-import { getUserPoints } from '@/lib/points';
+import { submitGameResult } from '@/lib/game';
 import { withUserRateLimit } from '@/lib/rate-limit';
 import type { GameResultSubmit } from '@/lib/types/game';
 
 export const POST = withUserRateLimit('game:submit', async (request: Request, user) => {
   try {
     const body = await request.json();
-    
+
     const result: GameResultSubmit = {
       sessionId: body.sessionId,
       score: body.score,
@@ -29,20 +28,14 @@ export const POST = withUserRateLimit('game:submit', async (request: Request, us
       }, { status: 400 });
     }
 
-    // 获取最新状态
-    const [newBalance, dailyStats] = await Promise.all([
-      getUserPoints(user.id),
-      getDailyStats(user.id),
-    ]);
-
     return NextResponse.json({
       success: true,
       message: submitResult.message,
       data: {
         record: submitResult.record,
         pointsEarned: submitResult.record?.pointsEarned || 0,
-        newBalance,
-        dailyStats,
+        newBalance: submitResult.balance,
+        dailyStats: submitResult.dailyStats,
       },
     });
   } catch (error) {

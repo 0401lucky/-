@@ -237,7 +237,14 @@ function detectPachinkoAnomaly(result: GameResultSubmit): string | null {
 export async function submitGameResult(
   userId: number,
   result: GameResultSubmit
-): Promise<{ success: boolean; record?: GameRecord; pointsEarned?: number; message?: string }> {
+): Promise<{
+  success: boolean;
+  record?: GameRecord;
+  pointsEarned?: number;
+  balance?: number;
+  dailyStats?: Awaited<ReturnType<typeof incrementSharedDailyStats>>;
+  message?: string;
+}> {
   // 幂等锁：防止重复提交
   const lockKey = SUBMIT_LOCK_KEY(result.sessionId);
   const lockAcquired = await kv.set(lockKey, '1', { ex: SESSION_TTL, nx: true });
@@ -325,18 +332,25 @@ export async function submitGameResult(
     createdAt: Date.now(),
   };
 
-  // [Perf] 清理会话、冷却、统计并行执行，lpush/ltrim 保持顺序
+  const dailyStats = await incrementSharedDailyStats(userId, result.score, pointsResult.dailyEarned);
+
+  // [Perf] 清理会话、冷却与记录写入并行执行，lpush/ltrim 保持顺序
   await Promise.all([
     kv.del(SESSION_KEY(result.sessionId)),
     kv.del(ACTIVE_SESSION_KEY(userId)),
     kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
-    incrementSharedDailyStats(userId, result.score, pointsResult.dailyEarned),
     kv.lpush(RECORDS_KEY(userId), record).then(() =>
       kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)
     ),
   ]);
 
-  return { success: true, record, pointsEarned };
+  return {
+    success: true,
+    record,
+    pointsEarned,
+    balance: pointsResult.balance,
+    dailyStats,
+  };
 }
 
 /**

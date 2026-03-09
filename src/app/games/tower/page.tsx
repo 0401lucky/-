@@ -49,7 +49,7 @@ import {
   ANIM_SHOP_DURATION,
 } from './lib/constants';
 
-type Phase = 'loading' | 'ready' | 'selectDifficulty' | 'playing' | 'result';
+type Phase = 'ready' | 'selectDifficulty' | 'playing' | 'result';
 type AnimState = 'idle' | 'walking' | 'attacking' | 'powerup' | 'death' | 'nextFloor' | 'revealing' | 'shieldBlock' | 'bossDefeated' | 'trapped' | 'shopping';
 type TimerHandle = ReturnType<typeof setTimeout> | number;
 
@@ -104,7 +104,7 @@ export default function TowerPage() {
     setError,
   } = useGameSession();
 
-  const [phase, setPhase] = useState<Phase>('loading');
+  const [phase, setPhase] = useState<Phase>('ready');
   const [choices, setChoices] = useState<number[]>([]);
   const [power, setPower] = useState(1);
   const [shield, setShield] = useState(0);
@@ -207,7 +207,7 @@ export default function TowerPage() {
 
   // 初始化
   useEffect(() => {
-    fetchStatus().finally(() => setPhase('ready'));
+    void fetchStatus();
   }, [fetchStatus]);
 
   // 冷却轮询
@@ -1046,18 +1046,6 @@ export default function TowerPage() {
           )}
 
           {/* 主内容 */}
-          {phase === 'loading' && (
-            <div className="flex-1 flex flex-col items-center justify-center">
-              <div className="relative">
-                <div className="w-16 h-16 rounded-3xl bg-white shadow-lg border border-slate-100 flex items-center justify-center animate-bounce">
-                  <Zap className="w-8 h-8 text-amber-500" />
-                </div>
-                <div className="absolute -bottom-2 w-12 h-1 bg-slate-200 rounded-full blur-sm animate-pulse mx-auto left-0 right-0" />
-              </div>
-              <p className="text-slate-500 font-medium mt-6 animate-pulse">加载中...</p>
-            </div>
-          )}
-
           {phase === 'ready' && (
             <div className="flex-1 flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
               <div className="bg-white/70 backdrop-blur-md rounded-[2rem] p-8 shadow-sm border border-white/50 relative overflow-hidden group hover:shadow-xl transition-all hover:-translate-y-1">

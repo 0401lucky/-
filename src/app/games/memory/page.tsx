@@ -11,7 +11,7 @@ import { GameBoard } from './components/GameBoard';
 import { ResultModal } from './components/ResultModal';
 import type { MemoryDifficulty, MemoryMove } from '@/lib/types/game';
 
-type GamePhase = 'loading' | 'select' | 'playing' | 'result';
+type GamePhase = 'select' | 'playing' | 'result';
 
 interface GameResult {
   moves: number;
@@ -39,14 +39,14 @@ export default function MemoryGamePage() {
     setError,
   } = useGameSession();
 
-  const [phase, setPhase] = useState<GamePhase>('loading');
+  const [phase, setPhase] = useState<GamePhase>('select');
   const [selectedDifficulty, setSelectedDifficulty] = useState<MemoryDifficulty | null>(null);
   const [gameResult, setGameResult] = useState<GameResult | null>(null);
   const [showLimitWarning, setShowLimitWarning] = useState(false); // 积分上限警告
 
   // 初始化
   useEffect(() => {
-    fetchStatus().then(() => setPhase('select'));
+    void fetchStatus();
   }, [fetchStatus]);
 
   useEffect(() => {
@@ -207,13 +207,6 @@ export default function MemoryGamePage() {
         )}
 
         {/* 主内容区域 */}
-        {phase === 'loading' && (
-          <div className="text-center py-20">
-            <div className="inline-block animate-spin text-4xl mb-4">🎴</div>
-            <p className="text-slate-500">加载中...</p>
-          </div>
-        )}
-
         {phase === 'select' && (
           <DifficultySelect
             onSelect={handleSelectDifficulty}

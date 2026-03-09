@@ -7,7 +7,7 @@ import type { TowerDifficulty } from '@/lib/tower-engine';
 const VALID_DIFFICULTIES: TowerDifficulty[] = ['normal', 'hard', 'hell'];
 
 export const { POST } = createStartRoute(
-  async (request, { user, dailyStats, dailyPointsLimit, pointsLimitReached }) => {
+  async (request, { user }) => {
     // 解析难度参数（可选）
     let difficulty: TowerDifficulty | undefined;
     try {
@@ -35,12 +35,6 @@ export const { POST } = createStartRoute(
       startedAt: session.startedAt,
       expiresAt: session.expiresAt,
       difficulty: session.difficulty,
-      dailyStats: {
-        gamesPlayed: dailyStats.gamesPlayed,
-        pointsEarned: dailyStats.pointsEarned,
-      },
-      dailyLimit: dailyPointsLimit,
-      pointsLimitReached,
     };
   },
   { unauthorizedMessage: '请先登录', logLabel: 'tower game' },

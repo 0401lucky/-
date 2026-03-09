@@ -9,7 +9,7 @@ import { createStartRoute, fail } from '@/lib/game-route-factory';
 import type { MemoryDifficulty } from '@/lib/types/game';
 
 export const { POST } = createStartRoute(
-  async (request, { user, dailyStats, dailyPointsLimit, pointsLimitReached }) => {
+  async (request, { user }) => {
     const body = await request.json();
     const difficulty = body.difficulty as MemoryDifficulty;
 
@@ -28,9 +28,6 @@ export const { POST } = createStartRoute(
       ...buildMemorySessionView(result.session!),
       expiresAt: result.session!.expiresAt,
       config: DIFFICULTY_CONFIG[difficulty],
-      dailyStats,
-      dailyPointsLimit,
-      pointsLimitReached,
     };
   },
   { logLabel: 'memory game' },

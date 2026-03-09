@@ -5,14 +5,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, ChevronLeft, RotateCcw, Sparkles, Star, Timer, Trophy, X, Zap } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, RotateCcw, Star, Timer, Trophy, X, Zap } from 'lucide-react';
 import { Board } from './components/Board';
 import { useGameSession } from './hooks/useGameSession';
 import { createInitialBoard, simulateMatch3Game } from '@/lib/match3-engine';
 import type { Match3Move } from '@/lib/match3-engine';
 import { cn } from '@/lib/utils';
 
-type Phase = 'loading' | 'ready' | 'playing' | 'result';
+type Phase = 'ready' | 'playing' | 'result';
 
 function movesStorageKey(sessionId: string) {
   return `match3:moves:${sessionId}`;
@@ -118,7 +118,7 @@ export default function Match3Page() {
     setError,
   } = useGameSession();
 
-  const [phase, setPhase] = useState<Phase>('loading');
+  const [phase, setPhase] = useState<Phase>('ready');
   const [board, setBoard] = useState<number[]>([]);
   const [moves, setMoves] = useState<Match3Move[]>([]);
   const [score, setScore] = useState(0);
@@ -146,7 +146,7 @@ export default function Match3Page() {
   }, [moves]);
 
   useEffect(() => {
-    fetchStatus().finally(() => setPhase('ready'));
+    void fetchStatus();
   }, [fetchStatus]);
 
   useEffect(() => {
@@ -503,15 +503,6 @@ export default function Match3Page() {
         )}
 
         {/* 主内容 */}
-        {phase === 'loading' && (
-          <div className="text-center py-20">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white border border-slate-200 shadow-sm mb-4">
-              <Sparkles className="w-8 h-8 text-indigo-500 animate-spin-slow" />
-            </div>
-            <p className="text-slate-500 font-medium">加载中...</p>
-          </div>
-        )}
-
         {phase === 'ready' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="bg-white/90 backdrop-blur-md rounded-3xl p-8 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-lg transition-all">

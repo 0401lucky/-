@@ -4,7 +4,7 @@ import { startMatch3Game } from '@/lib/match3';
 import { createStartRoute, fail } from '@/lib/game-route-factory';
 
 export const { POST } = createStartRoute(
-  async (_request, { user, dailyStats, dailyPointsLimit, pointsLimitReached }) => {
+  async (_request, { user }) => {
     const result = await startMatch3Game(user.id);
     if (!result.success) {
       return fail(result.message ?? '开始游戏失败');
@@ -18,12 +18,6 @@ export const { POST } = createStartRoute(
       timeLimitMs: session.timeLimitMs,
       startedAt: session.startedAt,
       expiresAt: session.expiresAt,
-      dailyStats: {
-        gamesPlayed: dailyStats.gamesPlayed,
-        pointsEarned: dailyStats.pointsEarned,
-      },
-      dailyLimit: dailyPointsLimit,
-      pointsLimitReached,
     };
   },
   { logLabel: 'match3 game' },

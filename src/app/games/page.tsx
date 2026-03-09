@@ -28,7 +28,7 @@ export default function GamesPage() {
       setStatsError(null);
 
       try {
-        const res = await fetch('/api/games/pachinko/status');
+        const res = await fetch('/api/games/overview');
         const data = (await res.json().catch(() => null)) as {
           success?: boolean;
           data?: GameStats;

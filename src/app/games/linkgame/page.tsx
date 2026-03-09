@@ -23,7 +23,7 @@ import {
 } from '@/lib/linkgame';
 import type { LinkGameDifficulty, LinkGameMove, LinkGamePosition } from '@/lib/types/game';
 
-type GamePhase = 'loading' | 'select' | 'playing' | 'result';
+type GamePhase = 'select' | 'playing' | 'result';
 
 interface GameResult {
   moves: number;
@@ -49,7 +49,7 @@ export default function LinkGamePage() {
     resetSubmitFlag,
   } = useGameSession();
 
-  const [phase, setPhase] = useState<GamePhase>('loading');
+  const [phase, setPhase] = useState<GamePhase>('select');
   const [selectedDifficulty, setSelectedDifficulty] = useState<LinkGameDifficulty | null>(null);
   const [gameResult, setGameResult] = useState<GameResult | null>(null);
   const [showLimitWarning, setShowLimitWarning] = useState(false);
@@ -95,7 +95,7 @@ export default function LinkGamePage() {
   }, []);
 
   useEffect(() => {
-    fetchStatus().then(() => setPhase('select'));
+    void fetchStatus();
   }, [fetchStatus]);
 
   useEffect(() => {
@@ -615,13 +615,6 @@ export default function LinkGamePage() {
         {status?.inCooldown && phase === 'select' && (
           <div className="mb-6 p-4 bg-amber-100/90 border-2 border-amber-200 rounded-2xl text-amber-700 text-center font-bold shadow-sm animate-pulse">
             ⏳ 休息一下！请等待 {status.cooldownRemaining} 秒后再开始 🍵
-          </div>
-        )}
-
-        {phase === 'loading' && (
-          <div className="text-center py-20">
-            <div className="inline-block animate-spin text-5xl mb-6 filter drop-shadow-md">🍥</div>
-            <p className="text-indigo-400 font-bold text-lg animate-pulse">准备糖果中...</p>
           </div>
         )}
 

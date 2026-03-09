@@ -3,7 +3,7 @@ import { startGame, isInCooldown, getCooldownRemaining } from '@/lib/game';
 import { createStartRoute, fail } from '@/lib/game-route-factory';
 
 export const { POST } = createStartRoute(
-  async (_request, { user, dailyStats, dailyPointsLimit, pointsLimitReached }) => {
+  async (_request, { user }) => {
     // pachinko 特有：冷却时间检查
     const inCooldown = await isInCooldown(user.id);
     if (inCooldown) {
@@ -24,9 +24,6 @@ export const { POST } = createStartRoute(
       sessionId: result.session.id,
       seed: result.session.seed,
       expiresAt: result.session.expiresAt,
-      dailyStats,
-      dailyPointsLimit,
-      pointsLimitReached,
     };
   },
   { unauthorizedMessage: '未登录', logLabel: 'game' },

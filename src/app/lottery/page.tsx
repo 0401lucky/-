@@ -269,7 +269,10 @@ export default function LotteryPage() {
   // 初始化数据
   useEffect(() => {
     void fetchData();
-    void fetchRanking();
+
+    const rankingBootFrame = requestAnimationFrame(() => {
+      void fetchRanking();
+    });
 
     const onVisibilityChange = () => {
       if (rankingUnmountedRef.current) {
@@ -287,6 +290,7 @@ export default function LotteryPage() {
     document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
+      cancelAnimationFrame(rankingBootFrame);
       clearRankingPollTimer();
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
@@ -447,6 +451,15 @@ export default function LotteryPage() {
     router.push('/');
   };
 
+  const spinDisabled = loading || !user || !canSpin || spinning;
+  const spinHintText = loading
+    ? '正在同步今日抽奖资格'
+    : error && !user
+      ? '网络异常，请稍后刷新重试'
+      : canSpin
+        ? '点击按钮开始抽奖'
+        : '今日机会已耗尽 • 请签到获取更多次数';
+
   // 生成圆锥渐变样式 - 使用自定义的更美观的颜色
   const getConicGradient = () => {
     let stops = '';
@@ -458,15 +471,6 @@ export default function LotteryPage() {
     });
     return `conic-gradient(${stops})`;
   };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[#fdfcf8] gap-4">
-        <Loader2 className="w-12 h-12 animate-spin text-orange-500" />
-        <p className="text-stone-400 font-medium animate-pulse">正在准备惊喜...</p>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-[#fdfcf8] overflow-x-hidden pb-20">
@@ -483,28 +487,34 @@ export default function LotteryPage() {
               <span className="font-medium text-sm">返回首页</span>
             </Link>
             
-            {user && (
+            {(loading || user) && (
               <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 px-1.5 py-1.5 pr-4 bg-white/60 rounded-full border border-white/60 shadow-sm hover:shadow-md transition-shadow cursor-default">
+                <div className={`flex items-center gap-2 px-1.5 py-1.5 pr-4 rounded-full border shadow-sm transition-shadow ${
+                  loading
+                    ? 'bg-white/50 border-white/50 animate-pulse'
+                    : 'bg-white/60 border-white/60 hover:shadow-md'
+                }`}>
                   <div className="w-8 h-8 rounded-full bg-gradient-to-br from-orange-400 to-amber-500 flex items-center justify-center text-white shadow-inner">
                     <UserIcon className="w-4 h-4" />
                   </div>
-                  <div className="flex flex-col">
+                  <div className="flex flex-col min-w-[88px]">
                     <span className="font-bold text-stone-700 text-xs leading-none mb-0.5">
-                      {user.displayName}
+                      {loading ? '正在加载...' : user?.displayName}
                     </span>
                     <span className="text-[10px] text-stone-400 font-medium leading-none">
-                      LUCKY USER
+                      {loading ? '同步账户信息' : 'LUCKY USER'}
                     </span>
                   </div>
                 </div>
-                <button 
-                  onClick={handleLogout} 
-                  className="p-2.5 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-all hover:shadow-sm"
-                  title="退出登录"
-                >
-                  <LogOut className="w-5 h-5" />
-                </button>
+                {!loading && user && (
+                  <button
+                    onClick={handleLogout}
+                    className="p-2.5 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-all hover:shadow-sm"
+                    title="退出登录"
+                  >
+                    <LogOut className="w-5 h-5" />
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -702,16 +712,23 @@ export default function LotteryPage() {
               <div className="flex items-center justify-center gap-4 text-sm">
                  {/* 每日次数 */}
                 <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border transition-all ${
-                  hasSpunToday 
-                  ? 'bg-stone-100 text-stone-400 border-transparent' 
-                  : 'bg-green-50 text-green-700 border-green-200 shadow-sm'
+                  loading
+                    ? 'bg-stone-50 text-stone-300 border-stone-100 animate-pulse'
+                    : hasSpunToday
+                      ? 'bg-stone-100 text-stone-400 border-transparent'
+                      : 'bg-green-50 text-green-700 border-green-200 shadow-sm'
                 }`}>
                   <span className="font-bold">每日:</span>
-                  <span className="font-black text-base">{hasSpunToday ? '0' : '1'}</span>
+                  <span className="font-black text-base">{loading ? '—' : hasSpunToday ? '0' : '1'}</span>
                 </div>
 
                  {/* 额外次数 */}
-                 {extraSpins > 0 ? (
+                 {loading ? (
+                  <div className="flex items-center gap-2 px-4 py-2 bg-stone-50 text-stone-300 rounded-xl border border-stone-100 animate-pulse">
+                    <Gift className="w-4 h-4" />
+                    <span className="font-medium">额外: —</span>
+                  </div>
+                 ) : extraSpins > 0 ? (
                   <div className="flex items-center gap-2 px-4 py-2 bg-orange-50 text-orange-700 rounded-xl border border-orange-200 shadow-sm animate-pulse-glow">
                     <Gift className="w-4 h-4 fill-orange-700" />
                     <span className="font-bold">额外:</span>
@@ -724,22 +741,27 @@ export default function LotteryPage() {
                   </div>
                  )}
               </div>
-              
+
               <button
                 onClick={handleSpin}
-                disabled={!canSpin || spinning}
+                disabled={spinDisabled}
                 className={`group relative w-full py-5 rounded-2xl text-xl font-black text-white shadow-[0_10px_30px_rgba(249,115,22,0.4)] transition-all transform overflow-hidden
-                  ${canSpin && !spinning 
-                    ? 'gradient-warm hover:shadow-[0_15px_40px_rgba(249,115,22,0.6)] hover:-translate-y-1 active:scale-95 active:shadow-inner' 
+                  ${!spinDisabled
+                    ? 'gradient-warm hover:shadow-[0_15px_40px_rgba(249,115,22,0.6)] hover:-translate-y-1 active:scale-95 active:shadow-inner'
                     : 'bg-stone-300 cursor-not-allowed shadow-none grayscale'}`}
               >
                 {/* 按钮内的光效 */}
-                {canSpin && !spinning && <div className="absolute inset-0 bg-white/20 translate-y-full skew-y-12 group-hover:translate-y-[-200%] transition-transform duration-700 ease-in-out"></div>}
-                
+                {!spinDisabled && <div className="absolute inset-0 bg-white/20 translate-y-full skew-y-12 group-hover:translate-y-[-200%] transition-transform duration-700 ease-in-out"></div>}
+
                 {spinning ? (
                   <span className="flex items-center justify-center gap-3">
                     <Loader2 className="w-6 h-6 animate-spin" />
                     <span className="tracking-widest">WISHING...</span>
+                  </span>
+                ) : loading ? (
+                  <span className="flex items-center justify-center gap-3">
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                    <span className="tracking-widest">正在准备</span>
                   </span>
                 ) : canSpin ? (
                   <span className="flex items-center justify-center gap-2 tracking-widest">
@@ -747,15 +769,15 @@ export default function LotteryPage() {
                     GO LUCKY
                     <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                   </span>
+                ) : error && !user ? (
+                  '稍后重试'
                 ) : (
                   '明日再来'
                 )}
               </button>
-              
+
               <p className="text-xs text-stone-400 font-medium tracking-wide uppercase">
-                {canSpin 
-                  ? '点击按钮开始抽奖' 
-                  : '今日机会已耗尽 • 请签到获取更多次数'}
+                {spinHintText}
               </p>
             </div>
           </div>
@@ -771,7 +793,20 @@ export default function LotteryPage() {
               </div>
 
               <div className="space-y-3 max-h-[500px] overflow-y-auto scrollbar-hide pr-1">
-                {records.length === 0 ? (
+                {loading ? (
+                  Array.from({ length: 3 }, (_, index) => (
+                    <div
+                      key={index}
+                      className="bg-white rounded-xl border border-stone-100 p-3 shadow-sm animate-pulse"
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="h-4 w-24 rounded bg-stone-100" />
+                        <div className="h-4 w-16 rounded bg-stone-100" />
+                      </div>
+                      <div className="h-10 rounded-lg bg-stone-50 border border-stone-100" />
+                    </div>
+                  ))
+                ) : records.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 text-stone-400 bg-stone-50/50 rounded-2xl border border-stone-100 border-dashed">
                     <div className="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mb-3">
                         <Gift className="w-8 h-8 opacity-20" />

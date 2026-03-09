@@ -1,16 +1,13 @@
 /**
  * 游戏路由工厂函数
  *
- * 将 cancel / start 路由中重复的 认证、限流、dailyStats 获取、错误处理 等模板代码
+ * 将 cancel / start 路由中重复的认证、限流、错误处理等模板代码
  * 统一收敛到两个工厂函数中，各游戏路由只需提供差异化的业务逻辑。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser, type AuthUser } from './auth';
-import { getDailyStats } from './daily-stats';
-import { getDailyPointsLimit } from './config';
 import { withUserRateLimit, type RateLimitAction } from './rate-limit';
-import type { DailyGameStats } from './types/game';
 
 // ---------------------------------------------------------------------------
 // Cancel 路由工厂
@@ -55,9 +52,6 @@ export function createCancelRoute(
 /** 工厂注入给业务 handler 的预处理上下文 */
 export interface StartRouteContext {
   user: AuthUser;
-  dailyStats: DailyGameStats;
-  dailyPointsLimit: number;
-  pointsLimitReached: boolean;
 }
 
 /**
@@ -81,8 +75,8 @@ interface StartRouteOptions {
 /**
  * 创建标准的游戏开始路由处理器。
  *
- * 统一处理：鉴权 + 限流（withUserRateLimit）→ 获取 dailyStats / dailyPointsLimit →
- * 调用业务 handler → 包装成 `{ success, data }` 响应 → 错误兜底。
+ * 统一处理：鉴权 + 限流（withUserRateLimit）→ 调用业务 handler →
+ * 包装成 `{ success, data }` 响应 → 错误兜底。
  *
  * handler 返回一个普通对象时，工厂自动包装为 `{ success: true, data: { ...obj } }`；
  * handler 也可以直接返回 NextResponse 来完全控制响应（例如参数校验失败返回 400）。
@@ -101,19 +95,7 @@ export function createStartRoute(
     rateLimitAction,
     async (request: NextRequest, user: AuthUser) => {
       try {
-        const [dailyStats, dailyPointsLimit] = await Promise.all([
-          getDailyStats(user.id),
-          getDailyPointsLimit(),
-        ]);
-
-        const pointsLimitReached = dailyStats.pointsEarned >= dailyPointsLimit;
-
-        const result = await handler(request, {
-          user,
-          dailyStats,
-          dailyPointsLimit,
-          pointsLimitReached,
-        });
+        const result = await handler(request, { user });
 
         // handler 直接返回 NextResponse —— 透传
         if (result instanceof NextResponse) {
