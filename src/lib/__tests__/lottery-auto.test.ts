@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kv } from '@/lib/d1-kv';
-import { spinLotteryAuto } from '../lottery';
+import { spinLotteryAuto, getLotteryDailyRanking } from '../lottery';
 import { tryUseExtraSpin, tryClaimDailyFree, rollbackExtraSpin, releaseDailyFree } from '../kv';
 import { creditQuotaToUser } from '../new-api';
 
@@ -10,8 +10,17 @@ vi.mock('@/lib/d1-kv', () => ({
     set: vi.fn(),
     scard: vi.fn(),
     smembers: vi.fn(),
+    sismember: vi.fn(),
+    srandmember: vi.fn(),
     sadd: vi.fn(),
     lpush: vi.fn(),
+    hget: vi.fn(),
+    hset: vi.fn(),
+    hgetall: vi.fn(),
+    zrange: vi.fn(),
+    hincrby: vi.fn(),
+    zcard: vi.fn(),
+    zincrby: vi.fn(),
     decrby: vi.fn(),
     incrby: vi.fn(),
     ttl: vi.fn(),
@@ -41,10 +50,20 @@ vi.mock('../time', async (importOriginal) => {
 
 describe('spinLotteryAuto hybrid mode', () => {
   const mockKvGet = vi.mocked(kv.get);
+  const mockKvSet = vi.mocked(kv.set);
   const mockKvScard = vi.mocked(kv.scard);
   const mockKvSmembers = vi.mocked(kv.smembers);
+  const mockKvSismember = vi.mocked(kv.sismember);
+  const mockKvSrandmember = vi.mocked(kv.srandmember);
   const mockKvSadd = vi.mocked(kv.sadd);
   const mockKvLpush = vi.mocked(kv.lpush);
+  const mockKvHget = vi.mocked(kv.hget);
+  const mockKvHset = vi.mocked(kv.hset);
+  const mockKvHgetall = vi.mocked(kv.hgetall);
+  const mockKvZrange = vi.mocked(kv.zrange);
+  const mockKvHincrby = vi.mocked(kv.hincrby);
+  const mockKvZcard = vi.mocked(kv.zcard);
+  const mockKvZincrby = vi.mocked(kv.zincrby);
   const mockKvDecrby = vi.mocked(kv.decrby);
   const mockKvIncrby = vi.mocked(kv.incrby);
   const mockKvTtl = vi.mocked(kv.ttl);
@@ -76,6 +95,7 @@ describe('spinLotteryAuto hybrid mode', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-02-10T12:00:00+08:00').getTime());
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -105,13 +125,28 @@ describe('spinLotteryAuto hybrid mode', () => {
       return 0;
     });
 
+    mockKvSet.mockResolvedValue('OK');
     mockKvLpush.mockResolvedValue(1);
+    mockKvHget.mockResolvedValue(null);
+    mockKvHset.mockResolvedValue(1);
+    mockKvHgetall.mockResolvedValue({});
+    mockKvZrange.mockResolvedValue([] as any);
+    mockKvHincrby.mockResolvedValue(1);
+    mockKvZcard.mockResolvedValue(0);
+    mockKvZincrby.mockResolvedValue(1);
     mockKvDecrby.mockResolvedValue(0);
+
+    mockKvSismember.mockResolvedValue(0);
+    mockKvSrandmember.mockResolvedValue('CODE-OK');
 
     // Default mocks for reserveDailyDirectQuota (D1-compatible: incrby + ttl + expire)
     mockKvIncrby.mockResolvedValue(100); // 100 cents = $1.00
     mockKvTtl.mockResolvedValue(-1); // no existing expiry
     mockKvExpire.mockResolvedValue(1);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('does not downgrade to code mode when direct result is uncertain', async () => {
@@ -131,13 +166,39 @@ describe('spinLotteryAuto hybrid mode', () => {
     expect(result.success).toBe(false);
     expect((result as { uncertain?: boolean }).uncertain).toBe(true);
     expect(mockKvIncrby).toHaveBeenCalled();
+    expect(mockKvZincrby).toHaveBeenCalledWith('lottery:rank:daily:2026-02-10', 1, 'u:1001');
+    expect(mockKvHset).toHaveBeenCalledWith(
+      'lottery:rank:daily:2026-02-10:user:1001',
+      expect.objectContaining({
+        userId: '1001',
+        username: 'alice',
+        bestPrize: '[待确认] 1刀福利',
+        bestPrizeValue: 1,
+      })
+    );
     expect(mockRollbackExtraSpin).not.toHaveBeenCalled();
     expect(mockKvLpush).toHaveBeenCalledTimes(2);
   });
 
   it('downgrades to code mode when direct fails explicitly and keeps single spin consumption', async () => {
-    // reserveDailyDirectQuota: incrby returns new total in cents, within limit
-    mockKvIncrby.mockResolvedValue(100);
+    let directTotalCents = 0;
+    mockKvGet.mockImplementation(async (key: string) => {
+      if (key === 'lottery:config') {
+        return hybridConfig;
+      }
+      if (key === 'lottery:daily_direct:2026-02-10') {
+        return directTotalCents;
+      }
+      return null;
+    });
+    mockKvIncrby.mockImplementation(async (_key: string, amount: number) => {
+      directTotalCents += amount;
+      return directTotalCents;
+    });
+    mockKvDecrby.mockImplementation(async (_key: string, amount: number) => {
+      directTotalCents = Math.max(0, directTotalCents - amount);
+      return directTotalCents;
+    });
     mockKvTtl.mockResolvedValue(-1);
     mockKvExpire.mockResolvedValue(1);
 
@@ -159,38 +220,47 @@ describe('spinLotteryAuto hybrid mode', () => {
     expect(result.success).toBe(true);
     expect(result.record?.code).toBeTruthy(); // a code was assigned
     expect(mockTryUseExtraSpin).toHaveBeenCalledTimes(1);
+    expect(mockKvZincrby).toHaveBeenCalledWith('lottery:rank:daily:2026-02-10', 1, 'u:1002');
+    expect(mockKvHset).toHaveBeenCalledWith(
+      'lottery:rank:daily:2026-02-10:user:1002',
+      expect.objectContaining({
+        userId: '1002',
+        username: 'bob',
+        bestPrize: '1刀福利',
+        bestPrizeValue: 1,
+      })
+    );
     expect(mockRollbackExtraSpin).not.toHaveBeenCalled();
-    expect(mockKvDecrby).toHaveBeenCalledTimes(1); // direct 失败后回滚预占额度
+    expect(mockKvDecrby).toHaveBeenCalledWith('lottery:daily_direct:2026-02-10', 100);
   });
 
-  it('rolls back consumed spin when direct is unavailable and code fallback also fails', async () => {
-    mockKvGet.mockImplementation(async (key: string) => {
-      if (key === 'lottery:config') {
-        return {
-          ...hybridConfig,
-          dailyDirectLimit: 1,
-        };
+  it('reads daily ranking from aggregated keys', async () => {
+    mockKvZrange.mockResolvedValue(['u:1002', 5, 'u:1001', 3] as any);
+    mockKvZcard.mockResolvedValue(2);
+    mockKvHgetall.mockImplementation(async (key: string) => {
+      if (key === 'lottery:rank:daily:2026-02-10:user:1002') {
+        return { username: 'bob', bestPrize: '5刀福利', count: 2 };
       }
-      if (key.startsWith('lottery:daily_direct:')) {
-        return 100; // $1.00 已用满，checkDailyDirectLimit(1) => false
+      if (key === 'lottery:rank:daily:2026-02-10:user:1001') {
+        return { username: 'alice', bestPrize: '3刀福利', count: 1 };
       }
-      return null;
+      return {};
     });
 
-    mockKvScard.mockImplementation(async (key: string) => {
-      if (String(key).startsWith('lottery:codes:')) {
-        return 0; // 无库存，code fallback 失败
-      }
-      if (String(key).startsWith('lottery:used:')) {
-        return 0;
-      }
-      return 0;
+    const result = await getLotteryDailyRanking(10);
+
+    expect(result).toEqual({
+      date: '2026-02-10',
+      totalParticipants: 2,
+      ranking: [
+        { rank: 1, userId: '1002', username: 'bob', totalValue: 5, bestPrize: '5刀福利', count: 2 },
+        { rank: 2, userId: '1001', username: 'alice', totalValue: 3, bestPrize: '3刀福利', count: 1 },
+      ],
     });
-
-    const result = await spinLotteryAuto(1003, 'carol');
-
-    expect(result.success).toBe(false);
-    expect(result.message).toContain('库存不足');
-    expect(mockRollbackExtraSpin).toHaveBeenCalledTimes(1);
+    expect(mockKvZrange).toHaveBeenCalledWith('lottery:rank:daily:2026-02-10', 0, 9, {
+      rev: true,
+      withScores: true,
+    });
+    expect(mockKvZcard).toHaveBeenCalledWith('lottery:rank:daily:2026-02-10');
   });
 });

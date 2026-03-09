@@ -5,6 +5,7 @@ import type { GameType } from './types/game';
 const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 const MAX_RECORD_SCAN = 200;
 const MAX_STREAK_DAYS = 400;
+const ALL_GAMES_RANKING_CACHE_TTL_SECONDS = 30;
 
 export type RankingPeriod = 'daily' | 'weekly' | 'monthly';
 export type PointsRankingPeriod = 'all' | 'monthly';
@@ -143,6 +144,15 @@ function sortByScore<T extends { totalScore: number; totalPoints: number; gamesP
   });
 }
 
+function getAllGamesLeaderboardCacheKey(
+  period: RankingPeriod,
+  options: { limitPerGame?: number; overallLimit?: number },
+): string {
+  const limitPerGame = Math.max(1, Math.min(100, Math.floor(options.limitPerGame ?? 20)));
+  const overallLimit = Math.max(1, Math.min(100, Math.floor(options.overallLimit ?? 20)));
+  return `rankings:all-games:${period}:${limitPerGame}:${overallLimit}`;
+}
+
 async function getRecordsInPeriod(
   userId: number,
   gameType: SupportedRankingGame,
@@ -278,19 +288,28 @@ export async function getAllGamesLeaderboard(
   options: { limitPerGame?: number; overallLimit?: number } = {}
 ): Promise<AllGamesRankingResult> {
   const startAt = getPeriodStartUtc(period);
+  const cacheKey = getAllGamesLeaderboardCacheKey(period, options);
+  const cached = await kv.get<AllGamesRankingResult>(cacheKey);
+  if (cached && Array.isArray(cached.games) && Array.isArray(cached.overall)) {
+    return cached;
+  }
+
   const snapshot = await getAllGamesLeaderboardByRange(
     startAt,
     Number.POSITIVE_INFINITY,
     options,
   );
 
-  return {
+  const result: AllGamesRankingResult = {
     period,
     generatedAt: snapshot.generatedAt,
     startAt,
     games: snapshot.games,
     overall: snapshot.overall,
   };
+
+  await kv.set(cacheKey, result, { ex: ALL_GAMES_RANKING_CACHE_TTL_SECONDS });
+  return result;
 }
 
 function getMonthlyStartUtc(): number {

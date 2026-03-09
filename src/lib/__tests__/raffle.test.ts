@@ -82,6 +82,21 @@ describe('raffle robustness', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     mockNanoid.mockReturnValue('mock-token');
     mockGetTodayDateString.mockReturnValue('2026-02-10');
+    mockKvSet.mockResolvedValue('OK');
+    mockKvGet.mockImplementation(async (key: string) => {
+      if (key === 'lottery:config') {
+        return {
+          enabled: true,
+          mode: 'direct' as const,
+          dailyDirectLimit: 2000,
+          tiers: [],
+        };
+      }
+      if (key === 'lottery:daily_direct:2026-02-10') {
+        return 0;
+      }
+      return null;
+    });
   });
 
   afterEach(() => {
@@ -341,7 +356,13 @@ describe('raffle robustness', () => {
   });
 
   it('rolls back fractional direct quota with scaled decrby', async () => {
-    mockKvDecrby.mockResolvedValue(0);
+    mockKvGet.mockImplementation(async (key: string) => {
+      if (key === 'lottery:daily_direct:2026-02-10') {
+        return 500;
+      }
+      return null;
+    });
+    mockKvDecrby.mockResolvedValue(225);
 
     await rollbackDailyDirectQuota(2.75);
 

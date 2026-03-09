@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { kv } from '@/lib/d1-kv';
 import { getTodayDateString } from '@/lib/time';
 
-export const dynamic = 'force-dynamic';
+const PUBLIC_RANKING_CACHE_CONTROL = 'public, max-age=15, stale-while-revalidate=45';
 
 const SLOT_RANK_DAILY_KEY = (date: string) => `slot:rank:daily:${date}`;
 
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
 
     const date = searchParams.get('date') || getTodayDateString();
 
-    const raw = await kv.zrange<(string | number)[]>(
+    const raw = await kv.zrange<string | number>(
       SLOT_RANK_DAILY_KEY(date),
       0,
       limit - 1,
@@ -52,13 +52,15 @@ export async function GET(request: NextRequest) {
 
     const leaderboard: LeaderboardEntry[] = users;
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       data: {
         date,
         leaderboard,
       },
     });
+    response.headers.set('Cache-Control', PUBLIC_RANKING_CACHE_CONTROL);
+    return response;
   } catch (error) {
     console.error('Get slot ranking error:', error);
     return NextResponse.json({ success: false, message: '获取排行榜失败' }, { status: 500 });

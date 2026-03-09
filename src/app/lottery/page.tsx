@@ -41,7 +41,7 @@ const calculateAngles = () => {
 
 const PRIZES_WITH_ANGLES = calculateAngles();
 
-const RANKING_POLL_INTERVAL_MS = 15000;
+const RANKING_POLL_INTERVAL_MS = 30000;
 const RANKING_MAX_BACKOFF_MS = 120000;
 const PRE_SPIN_DEG_PER_SECOND = 540;
 
@@ -58,6 +58,26 @@ interface LotteryRecord {
   code: string;
   directCredit?: boolean;  // 是否为直充模式
   createdAt: number;
+}
+
+interface LotteryApiPayload {
+  success: boolean;
+  user: UserData;
+  records: LotteryRecord[];
+  canSpin: boolean;
+  hasSpunToday: boolean;
+  extraSpins: number;
+}
+
+interface LotterySpinResponse {
+  success: boolean;
+  message?: string;
+  record?: LotteryRecord;
+  state?: {
+    canSpin: boolean;
+    hasSpunToday: boolean;
+    extraSpins: number;
+  };
 }
 
 interface RankingUser {
@@ -177,37 +197,20 @@ export default function LotteryPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      // [Perf] auth/me 必须先完成以判断登录状态，但 lottery 状态可以并行请求
-      const userRes = await fetch('/api/auth/me');
+      const res = await fetch('/api/lottery');
+      const data: LotteryApiPayload = await res.json();
 
-      if (userRes.ok) {
-        const userData = await userRes.json();
-        if (userData.success) {
-          setUser(userData.user);
-          // [Perf] records 和 lottery 状态并行请求
-          const [recordsRes, lotteryRes] = await Promise.all([
-            fetch('/api/lottery/records'),
-            fetch('/api/lottery'),
-          ]);
-          if (recordsRes.ok) {
-            const recordsData = await recordsRes.json();
-            if (recordsData.success) {
-              setRecords(recordsData.records || []);
-            }
-          }
-          if (lotteryRes.ok) {
-            const data = await lotteryRes.json();
-            if (data.success) {
-              setCanSpin(data.canSpin);
-              setHasSpunToday(data.hasSpunToday || false);
-              setExtraSpins(data.extraSpins || 0);
-            }
-          }
-        } else {
-          router.push('/login?redirect=/lottery');
-          return;
-        }
+      if (res.status === 401 || !data.success || !data.user) {
+        router.push('/login?redirect=/lottery');
+        return;
       }
+
+      setUser(data.user);
+      setRecords(Array.isArray(data.records) ? data.records : []);
+      setCanSpin(Boolean(data.canSpin));
+      setHasSpunToday(Boolean(data.hasSpunToday));
+      setExtraSpins(typeof data.extraSpins === 'number' ? data.extraSpins : 0);
+      setError(null);
     } catch (err) {
       console.error('加载失败', err);
       setError('网络连接失败');
@@ -225,7 +228,7 @@ export default function LotteryPage() {
     let fetchOk = false;
 
     try {
-      const res = await fetch('/api/lottery/ranking?limit=10', { cache: 'no-store' });
+      const res = await fetch('/api/lottery/ranking?limit=10');
       if (!res.ok) {
         throw new Error('排行榜请求失败: ' + res.status);
       }
@@ -299,12 +302,21 @@ export default function LotteryPage() {
 
     try {
       const res = await fetch('/api/lottery/spin', { method: 'POST' });
-      const data = await res.json();
+      const data: LotterySpinResponse = await res.json();
 
       if (data.success) {
+        const record = data.record;
+        if (!record) {
+          clearPreSpinAnimation();
+          setSpinning(false);
+          setSpinPhase('idle');
+          setError('系统错误：中奖结果缺失');
+          return;
+        }
+
         // 根据后端返回的 tierValue 找到对应的奖品（用于转盘动画定位）
-        const prize = PRIZES_WITH_ANGLES.find(p => p.value === Number(data.record.tierValue));
-        
+        const prize = PRIZES_WITH_ANGLES.find(p => p.value === Number(record.tierValue));
+
         if (prize) {
           clearPreSpinAnimation();
           setSpinPhase('settling');
@@ -338,39 +350,21 @@ export default function LotteryPage() {
             setSpinning(false);
             setSpinPhase('idle');
             // 直接使用后端返回的数据
-            setResult({ 
-              name: data.record.tierName, 
-              code: data.record.code || '',
-              directCredit: data.record.directCredit || false,
-              value: data.record.tierValue
+            setResult({
+              name: record.tierName,
+              code: record.code || '',
+              directCredit: record.directCredit || false,
+              value: record.tierValue
             });
             setShowResultModal(true);
-            
-            // [M1修复] 抽奖成功后重新从后端获取最新状态，确保前后端一致
-            // [Perf] 三个刷新请求并行执行
-            try {
-              const [lotteryRes, recordsRes] = await Promise.all([
-                fetch('/api/lottery'),
-                fetch('/api/lottery/records'),
-                fetchRanking(),
-              ]);
-              if (lotteryRes.ok) {
-                const lotteryData = await lotteryRes.json();
-                if (lotteryData.success) {
-                  setCanSpin(lotteryData.canSpin);
-                  setHasSpunToday(lotteryData.hasSpunToday || false);
-                  setExtraSpins(lotteryData.extraSpins || 0);
-                }
-              }
-              if (recordsRes.ok) {
-                const recordsData = await recordsRes.json();
-                if (recordsData.success) {
-                  setRecords(recordsData.records || []);
-                }
-              }
-            } catch (err) {
-              console.error('刷新状态失败', err);
+
+            setRecords((prev) => [record, ...prev].slice(0, 20));
+            if (data.state) {
+              setCanSpin(Boolean(data.state.canSpin));
+              setHasSpunToday(Boolean(data.state.hasSpunToday));
+              setExtraSpins(typeof data.state.extraSpins === 'number' ? data.state.extraSpins : 0);
             }
+            void fetchRanking();
 
             // [Perf] 动态导入彩带特效，减少首屏 JS 体积
             // [M2修复] 使用 ref 控制动画循环

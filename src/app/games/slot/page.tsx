@@ -62,6 +62,8 @@ const INITIAL_REELS: [SlotSymbolId, SlotSymbolId, SlotSymbolId] = [
 const REEL_TRACK_LENGTHS: [number, number, number] = [30, 35, 40]; // Increased for smoother spin
 const REEL_DURATIONS_MS: [number, number, number] = [2000, 2400, 2800]; // Slower for dramatic effect
 const REEL_EASING = 'cubic-bezier(0.2, 0.8, 0.2, 1)'; // Smooth easing
+const SLOT_RANKING_POLL_INTERVAL_MS = 30000;
+const SLOT_RANKING_MAX_BACKOFF_MS = 120000;
 
   // Enhanced CSS Animation Keyframes
   const ANIMATION_STYLES = `
@@ -261,6 +263,46 @@ function getRecordDelta(record: SlotSpinRecord, fallbackBetCost: number): number
   return record.pointsEarned;
 }
 
+function getCooldownRemainingMs(cooldownUntil: number): number {
+  return Math.max(0, cooldownUntil - Date.now());
+}
+
+const CooldownStatus = memo(function CooldownStatus({
+  cooldownUntil,
+}: {
+  cooldownUntil: number;
+}) {
+  const [remainingMs, setRemainingMs] = useState(() => getCooldownRemainingMs(cooldownUntil));
+
+  useEffect(() => {
+    const updateRemaining = () => {
+      const next = getCooldownRemainingMs(cooldownUntil);
+      setRemainingMs(next);
+      return next;
+    };
+
+    const current = updateRemaining();
+    if (current <= 0) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      const next = updateRemaining();
+      if (next <= 0) {
+        clearInterval(timer);
+      }
+    }, 100);
+
+    return () => clearInterval(timer);
+  }, [cooldownUntil]);
+
+  return (
+    <div className={`text-sm font-mono font-bold ${remainingMs > 0 ? 'text-yellow-300 animate-pulse' : 'text-emerald-300 drop-shadow-sm'}`}>
+      {remainingMs > 0 ? `${(remainingMs / 1000).toFixed(1)}s` : 'READY'}
+    </div>
+  );
+});
+
 export default function SlotPage() {
   const router = useRouter();
 
@@ -296,7 +338,7 @@ export default function SlotPage() {
   const [winMask, setWinMask] = useState<[boolean, boolean, boolean]>([false, false, false]);
   const [spinning, setSpinning] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState(0);
-  const [now, setNow] = useState(Date.now());
+  const [isCooldownActive, setIsCooldownActive] = useState(false);
 
   const [lastResult, setLastResult] = useState<SlotSpinRecord | null>(null);
   const [showLimitWarning, setShowLimitWarning] = useState(false);
@@ -304,26 +346,57 @@ export default function SlotPage() {
   const [limitWarningAck, setLimitWarningAck] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
 
-  useEffect(() => {
-    if (lastResult && lastResult.payout > 0) {
-      setShowConfetti(true);
-      const t = setTimeout(() => setShowConfetti(false), 5000);
-      return () => clearTimeout(t);
-    }
-  }, [lastResult]);
-
   const timeoutsRef = useRef<NodeJS.Timeout[]>([]);
   const spinRafRef = useRef<number | null>(null);
   const reelMeasureRef = useRef<HTMLDivElement | null>(null);
   const didInitBetCostRef = useRef(false);
+  const rankingPollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const rankingInFlightRef = useRef(false);
+  const rankingFailCountRef = useRef(0);
+  const rankingUnmountedRef = useRef(false);
 
-  const cooldownRemainingMs = Math.max(0, cooldownUntil - now);
   const betModeEnabled = status?.config?.betModeEnabled ?? false;
   const fallbackBetCost = status?.config?.betCost ?? SLOT_BET_OPTIONS[0];
 
-  const fetchStatus = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  useEffect(() => {
+    if (!lastResult || lastResult.payout <= 0) {
+      return;
+    }
+
+    setShowConfetti(true);
+    const timer = setTimeout(() => setShowConfetti(false), 5000);
+    return () => clearTimeout(timer);
+  }, [lastResult]);
+
+  useEffect(() => {
+    const remainingMs = getCooldownRemainingMs(cooldownUntil);
+    if (remainingMs <= 0) {
+      setIsCooldownActive(false);
+      return;
+    }
+
+    setIsCooldownActive(true);
+    const timer = setTimeout(() => setIsCooldownActive(false), remainingMs);
+    return () => clearTimeout(timer);
+  }, [cooldownUntil]);
+
+  const clearRankingPollTimer = useCallback(() => {
+    if (rankingPollTimeoutRef.current) {
+      clearTimeout(rankingPollTimeoutRef.current);
+      rankingPollTimeoutRef.current = null;
+    }
+  }, []);
+
+  const getRankingBackoffDelay = useCallback((failCount: number) => {
+    const level = Math.min(Math.max(failCount, 0), 3);
+    return Math.min(SLOT_RANKING_POLL_INTERVAL_MS * (2 ** level), SLOT_RANKING_MAX_BACKOFF_MS);
+  }, []);
+
+  const fetchStatus = useCallback(async (options?: { background?: boolean }) => {
+    if (!options?.background) {
+      setLoading(true);
+      setError(null);
+    }
 
     try {
       const res = await fetch('/api/games/slot/status', { cache: 'no-store' });
@@ -336,38 +409,113 @@ export default function SlotPage() {
       const data = await res.json();
       if (data.success) {
         setStatus(data.data);
-        if (typeof data.data?.cooldownRemaining === 'number' && data.data.cooldownRemaining > 0) {
-          setCooldownUntil(Date.now() + data.data.cooldownRemaining);
+        const cooldownRemaining = typeof data.data?.cooldownRemaining === 'number' ? data.data.cooldownRemaining : 0;
+        if (cooldownRemaining > 0) {
+          setCooldownUntil(Date.now() + cooldownRemaining);
+          setIsCooldownActive(true);
+        } else {
+          setCooldownUntil(0);
+          setIsCooldownActive(false);
         }
-      } else {
+      } else if (!options?.background) {
         setError(data.message || '加载失败');
       }
     } catch (err) {
       console.error('Fetch slot status error:', err);
-      setError('网络错误');
+      if (!options?.background) {
+        setError('网络错误');
+      }
     } finally {
-      setLoading(false);
+      if (!options?.background) {
+        setLoading(false);
+      }
     }
   }, []);
 
   const fetchRanking = useCallback(async () => {
+    if (rankingUnmountedRef.current || rankingInFlightRef.current) {
+      return;
+    }
+
+    rankingInFlightRef.current = true;
+    let fetchOk = false;
+
     try {
-      const res = await fetch('/api/games/slot/ranking?limit=10', { cache: 'no-store' });
+      const res = await fetch('/api/games/slot/ranking?limit=10');
+      if (!res.ok) {
+        throw new Error(`排行榜请求失败: ${res.status}`);
+      }
+
       const data = await res.json();
-      if (data.success) {
+      if (!data.success) {
+        throw new Error(data.message || '排行榜返回失败状态');
+      }
+
+      if (!rankingUnmountedRef.current) {
         setRanking(Array.isArray(data.data?.leaderboard) ? data.data.leaderboard : []);
         setRankingError(false);
-      } else {
+      }
+      rankingFailCountRef.current = 0;
+      fetchOk = true;
+    } catch (err) {
+      rankingFailCountRef.current += 1;
+      console.error('获取排行榜失败', err);
+      if (!rankingUnmountedRef.current) {
         setRankingError(true);
       }
-    } catch {
-      setRankingError(true);
+    } finally {
+      rankingInFlightRef.current = false;
+      clearRankingPollTimer();
+      if (!rankingUnmountedRef.current && document.visibilityState === 'visible') {
+        const nextDelay = fetchOk
+          ? SLOT_RANKING_POLL_INTERVAL_MS
+          : getRankingBackoffDelay(rankingFailCountRef.current);
+        rankingPollTimeoutRef.current = setTimeout(() => {
+          if (!rankingUnmountedRef.current) {
+            void fetchRanking();
+          }
+        }, nextDelay);
+      }
     }
-  }, []);
+  }, [clearRankingPollTimer, getRankingBackoffDelay]);
 
   useEffect(() => {
-    fetchStatus();
+    void fetchStatus();
   }, [fetchStatus]);
+
+  useEffect(() => {
+    rankingUnmountedRef.current = false;
+    void fetchRanking();
+
+    const syncVisibleData = () => {
+      if (rankingUnmountedRef.current || document.visibilityState !== 'visible') {
+        return;
+      }
+      rankingFailCountRef.current = 0;
+      clearRankingPollTimer();
+      void fetchRanking();
+      void fetchStatus({ background: true });
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        syncVisibleData();
+      } else {
+        clearRankingPollTimer();
+      }
+    };
+
+    window.addEventListener('focus', syncVisibleData);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      rankingUnmountedRef.current = true;
+      rankingInFlightRef.current = false;
+      clearRankingPollTimer();
+      window.removeEventListener('focus', syncVisibleData);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [clearRankingPollTimer, fetchRanking, fetchStatus]);
 
   useEffect(() => {
     if (didInitBetCostRef.current) return;
@@ -383,12 +531,6 @@ export default function SlotPage() {
 
     didInitBetCostRef.current = true;
   }, [status?.config]);
-
-  useEffect(() => {
-    fetchRanking();
-    const t = setInterval(fetchRanking, 15000);
-    return () => clearInterval(t);
-  }, [fetchRanking]);
 
   useEffect(() => {
     if (playMode === 'bet' && status?.config && !status.config.betModeEnabled) {
@@ -429,14 +571,6 @@ export default function SlotPage() {
       }
     };
   }, []);
-
-  // 用于刷新倒计时（冷却/动画）
-  useEffect(() => {
-    if (spinning || cooldownRemainingMs > 0) {
-      const t = setInterval(() => setNow(Date.now()), 100);
-      return () => clearInterval(t);
-    }
-  }, [spinning, cooldownRemainingMs]);
 
   // 卸载清理
   useEffect(() => {
@@ -513,8 +647,7 @@ export default function SlotPage() {
   );
 
   const handleSpin = useCallback(async (options?: { ignoreLimit?: boolean }) => {
-    if (spinning) return;
-    if (cooldownRemainingMs > 0) return;
+    if (spinning || isCooldownActive) return;
 
     if (playMode === 'earn' && status?.pointsLimitReached && !limitWarningAck && !options?.ignoreLimit) {
       setShowLimitWarning(true);
@@ -569,28 +702,31 @@ export default function SlotPage() {
         next.dailyStats = data.data.dailyStats;
         next.dailyLimit = data.data.dailyLimit;
         next.pointsLimitReached = data.data.pointsLimitReached;
+        next.inCooldown = true;
+        next.cooldownRemaining = SLOT_SPIN_COOLDOWN_MS;
         if (record) {
           next.records = [record, ...(next.records || [])].slice(0, 10);
         }
         return next;
       });
+      void fetchStatus({ background: true });
     } catch (err) {
       console.error('Spin error:', err);
       setError('网络错误');
     } finally {
       clearPendingAnimations();
       setSpinning(false);
-      setNow(Date.now());
     }
   }, [
     spinning,
-    cooldownRemainingMs,
+    isCooldownActive,
     status?.pointsLimitReached,
     limitWarningAck,
     playMode,
     selectedBetCost,
     runReelAnimation,
     clearPendingAnimations,
+    fetchStatus,
   ]);
 
   const payoutText = useMemo(() => {
@@ -674,7 +810,9 @@ export default function SlotPage() {
                   历史记录
                 </h3>
                 <button
-                  onClick={fetchStatus}
+                  onClick={() => {
+                    void fetchStatus();
+                  }}
                   className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500 outline-none"
                   aria-label="刷新记录"
                 >
@@ -752,9 +890,7 @@ export default function SlotPage() {
                 </div>
                 <div className="text-right bg-indigo-800/50 rounded-xl px-4 py-2 border border-indigo-400/30 shadow-inner">
                   <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-200 mb-0.5">Status</div>
-                  <div className={`text-sm font-mono font-bold ${cooldownRemainingMs > 0 ? 'text-yellow-300 animate-pulse' : 'text-emerald-300 drop-shadow-sm'}`}>
-                    {cooldownRemainingMs > 0 ? `${(cooldownRemainingMs / 1000).toFixed(1)}s` : 'READY'}
-                  </div>
+                  <CooldownStatus cooldownUntil={cooldownUntil} />
                 </div>
               </div>
 
@@ -899,7 +1035,7 @@ export default function SlotPage() {
                               key={opt}
                               type="button"
                               onClick={() => setSelectedBetCost(opt)}
-                              disabled={spinning || cooldownRemainingMs > 0}
+                              disabled={spinning || isCooldownActive}
                               className={`w-12 h-10 rounded-xl text-xs font-black tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-rose-300 outline-none ${
                                 active 
                                   ? 'bg-rose-500 text-white shadow-md transform scale-110' 
@@ -918,7 +1054,7 @@ export default function SlotPage() {
 
                 <button
                   onClick={() => handleSpin()}
-                  disabled={loading || spinning || cooldownRemainingMs > 0 || (playMode === 'bet' && !betModeEnabled)}
+                  disabled={loading || spinning || isCooldownActive || (playMode === 'bet' && !betModeEnabled)}
                   className="game-btn group relative w-full h-24 rounded-3xl font-black text-2xl tracking-[0.1em] text-white overflow-hidden
                   disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none focus-visible:ring-4 focus-visible:ring-yellow-300 outline-none"
                 >
@@ -944,7 +1080,7 @@ export default function SlotPage() {
                   </div>
                 </button>
                 <div className="text-center mt-4 text-[10px] uppercase tracking-wider text-indigo-200 font-bold opacity-60">
-                  {cooldownRemainingMs > 0 ? 'COOLDOWN ACTIVE' : 'PROVABLY FAIR • RANDOM GENERATED'}
+                  {isCooldownActive ? 'COOLDOWN ACTIVE' : 'PROVABLY FAIR • RANDOM GENERATED'}
                 </div>
               </div>
             </div>

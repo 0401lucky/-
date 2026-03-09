@@ -1,6 +1,15 @@
 import { kv } from '@/lib/d1-kv';
-import { getKvErrorInsight, tryUseExtraSpin, tryClaimDailyFree, releaseDailyFree, rollbackExtraSpin } from "./kv";
+import {
+  checkDailyLimit,
+  getExtraSpinCount,
+  getKvErrorInsight,
+  tryUseExtraSpin,
+  tryClaimDailyFree,
+  releaseDailyFree,
+  rollbackExtraSpin,
+} from "./kv";
 import { getTodayDateString, getSecondsUntilMidnight } from "./time";
+import { withKvLock } from './economy-lock';
 
 // 抽奖档位
 export interface LotteryTier {
@@ -33,12 +42,51 @@ export interface SpinLotteryOptions {
 // 抽奖配置
 export interface LotteryConfig {
   enabled: boolean;
-  mode: 'code' | 'direct' | 'hybrid';  // code=兑换码, direct=直充, hybrid=优先直充降级兑换码
-  dailyDirectLimit: number;            // 每日直充发放上限（美元），默认2000
+  mode: 'code' | 'direct' | 'hybrid';
+  dailyDirectLimit: number;
   tiers: LotteryTier[];
 }
 
-// 默认配置 - 6个档位，概率方案B
+export interface LotteryPageState {
+  enabled: boolean;
+  mode: LotteryConfig["mode"];
+  tiers: Array<{
+    id: string;
+    name: string;
+    value: number;
+    color: string;
+    hasStock: boolean;
+  }>;
+  canSpin: boolean;
+  hasSpunToday: boolean;
+  extraSpins: number;
+  allTiersHaveCodes: boolean;
+}
+
+export interface LotteryPagePayload extends LotteryPageState {
+  user: {
+    id: number;
+    username: string;
+    displayName: string;
+  };
+  records: LotteryRecord[];
+}
+
+export interface LotteryRankingEntry {
+  rank: number;
+  userId: string;
+  username: string;
+  totalValue: number;
+  bestPrize: string;
+  count: number;
+}
+
+export interface LotteryDailyRankingResult {
+  date: string;
+  totalParticipants: number;
+  ranking: LotteryRankingEntry[];
+}
+
 const DEFAULT_TIERS: LotteryTier[] = [
   { id: "tier_1", name: "1刀福利", value: 1, probability: 40, color: "#fbbf24", codesCount: 0, usedCount: 0 },
   { id: "tier_3", name: "3刀福利", value: 3, probability: 30, color: "#fb923c", codesCount: 0, usedCount: 0 },
@@ -61,6 +109,84 @@ const LOTTERY_CODES_PREFIX = "lottery:codes:";        // 所有码（Set）
 const LOTTERY_USED_CODES_PREFIX = "lottery:used:";    // 已使用的码（Set）
 const LOTTERY_RECORDS_KEY = "lottery:records";
 const LOTTERY_USER_RECORDS_PREFIX = "lottery:user:records:";
+const LOTTERY_RANK_DAILY_KEY = (date: string) => `lottery:rank:daily:${date}`;
+const LOTTERY_RANK_DAILY_USER_KEY = (date: string, userId: string | number) => `lottery:rank:daily:${date}:user:${userId}`;
+const LOTTERY_DAILY_DIRECT_LOCK_KEY = "lottery:daily_direct_lock:";
+const LOTTERY_DAILY_TTL_BUFFER_SECONDS = 3600;
+const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
+const LOTTERY_CODE_PICK_RETRY_LIMIT = 6;
+
+function getChinaDateStringFromTimestamp(timestamp: number): string {
+  const chinaTime = new Date(timestamp + CHINA_TZ_OFFSET_MS);
+  const year = chinaTime.getUTCFullYear();
+  const month = String(chinaTime.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(chinaTime.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getLotteryDailyTtlSeconds(): number {
+  return getSecondsUntilMidnight() + LOTTERY_DAILY_TTL_BUFFER_SECONDS;
+}
+
+function normalizeLotteryRankingUserId(member: string | number): string {
+  const memberStr = typeof member === 'string' ? member : String(member);
+  const match = memberStr.match(/^u:(.+)$/);
+  return match ? match[1] : memberStr;
+}
+
+async function writeLotteryUserRecordBestEffort(userId: number, record: LotteryRecord): Promise<void> {
+  try {
+    await kv.lpush(`${LOTTERY_USER_RECORDS_PREFIX}${userId}`, record);
+  } catch (userRecordError) {
+    console.error("写入用户记录失败（不影响抽奖结果）:", userRecordError);
+  }
+}
+
+async function syncLotteryDailyRankingBestEffort(record: LotteryRecord): Promise<void> {
+  try {
+    const date = getChinaDateStringFromTimestamp(record.createdAt);
+    const rankingKey = LOTTERY_RANK_DAILY_KEY(date);
+    const userRankingKey = LOTTERY_RANK_DAILY_USER_KEY(date, record.oderId);
+    const ttl = getLotteryDailyTtlSeconds();
+    const currentBestPrizeValue = Number(await kv.hget<number>(userRankingKey, 'bestPrizeValue'));
+
+    const fields: Record<string, unknown> = {
+      userId: record.oderId,
+      username: record.username,
+    };
+
+    if (!Number.isFinite(currentBestPrizeValue) || record.tierValue > currentBestPrizeValue) {
+      fields.bestPrize = record.tierName;
+      fields.bestPrizeValue = record.tierValue;
+    }
+
+    await Promise.all([
+      kv.zincrby(rankingKey, record.tierValue, `u:${record.oderId}`),
+      kv.hincrby(userRankingKey, 'count', 1),
+      kv.hset(userRankingKey, fields),
+      kv.expire(rankingKey, ttl),
+      kv.expire(userRankingKey, ttl),
+    ]);
+  } catch (rankingError) {
+    console.error("更新抽奖排行榜聚合失败（不影响抽奖结果）:", rankingError);
+  }
+}
+
+async function syncLotteryTierStatsBestEffort(tierId: string): Promise<void> {
+  try {
+    const latestConfig = await getLotteryConfig();
+    const usedCountNew = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${tierId}`);
+    const updatedTiers = latestConfig.tiers.map((tier) => {
+      if (tier.id === tierId) {
+        return { ...tier, usedCount: usedCountNew };
+      }
+      return tier;
+    });
+    await updateLotteryConfig({ tiers: updatedTiers });
+  } catch (statsError) {
+    console.error("更新统计失败（不影响抽奖结果）:", statsError);
+  }
+}
 
 function cloneDefaultLotteryConfig(): LotteryConfig {
   return {
@@ -553,32 +679,65 @@ export async function spinLottery(
     const allCodesKey = `${LOTTERY_CODES_PREFIX}${selectedTier.id}`;
     const usedCodesKey = `${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`;
 
-    // D1-compatible: read sets, filter available codes, pick random, mark used
-    const allCodes = await kv.smembers<string>(allCodesKey);
+    // D1-compatible: 先用计数门禁，再随机抽样占用，避免全量读取 used 集合
+    const totalCodes = await kv.scard(allCodesKey);
     let ok: number;
     let selectedCode: string;
     let status: string;
 
-    if (allCodes.length === 0) {
+    if (totalCodes <= 0) {
       ok = 0; selectedCode = ''; status = 'empty';
     } else {
-      const usedCodes = await kv.smembers<string>(usedCodesKey);
-      const usedSet = new Set(usedCodes);
+      const usedCount = await kv.scard(usedCodesKey);
 
-      if (usedCodes.length >= allCodes.length) {
+      if (usedCount >= totalCodes) {
         ok = 0; selectedCode = ''; status = 'exhausted';
       } else {
-        const availableCodes = allCodes.filter(code => !usedSet.has(code));
-        if (availableCodes.length === 0) {
-          ok = 0; selectedCode = ''; status = 'exhausted';
-        } else {
-          const randomIndex = Math.floor(Math.random() * availableCodes.length);
-          const pickedCode = availableCodes[randomIndex];
+        ok = 0;
+        selectedCode = '';
+        status = 'conflict';
+
+        const retryLimit = Math.min(totalCodes, LOTTERY_CODE_PICK_RETRY_LIMIT);
+        for (let attempt = 0; attempt < retryLimit; attempt += 1) {
+          const pickedCode = await kv.srandmember(allCodesKey);
+          if (!pickedCode) {
+            status = 'empty';
+            break;
+          }
+
+          const alreadyUsed = await kv.sismember(usedCodesKey, pickedCode);
+          if (alreadyUsed === 1) {
+            continue;
+          }
+
           const added = await kv.sadd(usedCodesKey, pickedCode);
           if (added > 0) {
-            ok = 1; selectedCode = pickedCode; status = 'ok';
-          } else {
-            ok = 0; selectedCode = ''; status = 'conflict';
+            ok = 1;
+            selectedCode = pickedCode;
+            status = 'ok';
+            break;
+          }
+        }
+
+        if (ok !== 1) {
+          const allCodes = await kv.smembers<string>(allCodesKey);
+          for (const candidate of allCodes) {
+            const alreadyUsed = await kv.sismember(usedCodesKey, candidate);
+            if (alreadyUsed === 1) {
+              continue;
+            }
+
+            const added = await kv.sadd(usedCodesKey, candidate);
+            if (added > 0) {
+              ok = 1;
+              selectedCode = candidate;
+              status = 'ok';
+              break;
+            }
+          }
+
+          if (ok !== 1 && status !== 'empty') {
+            status = 'exhausted';
           }
         }
       }
@@ -638,30 +797,11 @@ async function completeSpinWithCode(
   await kv.lpush(LOTTERY_RECORDS_KEY, record);
   
   // [Final-A] 提交点之后的所有操作都用 try-catch 包裹，绝不抛错
-  // 第二步：写入用户记录（非关键，失败只记录日志）
-  try {
-    await kv.lpush(`${LOTTERY_USER_RECORDS_PREFIX}${userId}`, record);
-  } catch (userRecordError) {
-    // 用户记录写入失败，可通过 recalculateStats 修复
-    console.error("写入用户记录失败（不影响抽奖结果）:", userRecordError);
-  }
-
-  // 第三步：更新统计（非关键，失败只记录日志）
-  // [Opt-2] 使用最新 config，避免覆盖管理员刚更新的配置
-  try {
-    const latestConfig = await getLotteryConfig();
-    const usedCountNew = await kv.scard(`${LOTTERY_USED_CODES_PREFIX}${selectedTier.id}`);
-    const updatedTiers = latestConfig.tiers.map((tier) => {
-      if (tier.id === selectedTier.id) {
-        return { ...tier, usedCount: usedCountNew };
-      }
-      return tier;
-    });
-    await updateLotteryConfig({ tiers: updatedTiers });
-  } catch (statsError) {
-    // 统计更新失败不影响抽奖结果，可通过 recalculateStats 后台修复
-    console.error("更新统计失败（不影响抽奖结果）:", statsError);
-  }
+  await Promise.all([
+    writeLotteryUserRecordBestEffort(userId, record),
+    syncLotteryDailyRankingBestEffort(record),
+    syncLotteryTierStatsBestEffort(selectedTier.id),
+  ]);
 
   return {
     success: true,
@@ -685,6 +825,66 @@ export async function getUserLotteryRecords(
     0,
     limit - 1
   );
+}
+
+export async function getLotteryDailyRanking(
+  limit: number = 10,
+  date: string = getTodayDateString(),
+): Promise<LotteryDailyRankingResult> {
+  const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
+  const rankingKey = LOTTERY_RANK_DAILY_KEY(date);
+  const raw = await kv.zrange<string | number>(
+    rankingKey,
+    0,
+    safeLimit - 1,
+    { rev: true, withScores: true },
+  );
+  const totalParticipants = await kv.zcard(rankingKey);
+
+  const pairs: Array<{ userId: string; totalValue: number }> = [];
+  for (let i = 0; i < raw.length; i += 2) {
+    const member = raw[i];
+    const score = raw[i + 1];
+    if (member === undefined || score === undefined) {
+      continue;
+    }
+
+    const totalValue = typeof score === 'number' ? score : Number(score);
+    if (!Number.isFinite(totalValue)) {
+      continue;
+    }
+
+    pairs.push({
+      userId: normalizeLotteryRankingUserId(member),
+      totalValue,
+    });
+  }
+
+  const ranking = await Promise.all(
+    pairs.map(async ({ userId, totalValue }, index) => {
+      const meta = await kv.hgetall<Record<string, unknown>>(LOTTERY_RANK_DAILY_USER_KEY(date, userId));
+      const username = typeof meta?.username === 'string' && meta.username
+        ? meta.username
+        : `#${userId}`;
+      const bestPrize = typeof meta?.bestPrize === 'string' ? meta.bestPrize : '';
+      const count = Number(meta?.count);
+
+      return {
+        rank: index + 1,
+        userId,
+        username,
+        totalValue,
+        bestPrize,
+        count: Number.isFinite(count) ? count : 0,
+      };
+    })
+  );
+
+  return {
+    date,
+    totalParticipants,
+    ranking,
+  };
 }
 
 // ============ 直充模式相关函数 ============
@@ -721,7 +921,8 @@ export async function reserveDailyDirectQuota(dollars: number): Promise<{ succes
   const config = await getLotteryConfig();
   const today = getTodayDateString();
   const key = `${LOTTERY_DAILY_DIRECT_KEY}${today}`;
-  const ttl = getSecondsUntilMidnight() + 3600; // 额外1小时缓冲
+  const lockKey = `${LOTTERY_DAILY_DIRECT_LOCK_KEY}${today}`;
+  const ttl = getLotteryDailyTtlSeconds();
   const cents = Math.round(dollars * DIRECT_AMOUNT_SCALE);
   const limitCents = Math.round(config.dailyDirectLimit * DIRECT_AMOUNT_SCALE);
 
@@ -729,22 +930,29 @@ export async function reserveDailyDirectQuota(dollars: number): Promise<{ succes
     return { success: false, newTotal: await getTodayDirectTotal() };
   }
 
-  // D1-compatible: increment counter, check limit, rollback if exceeded
-  const newTotalCents = await kv.incrby(key, cents);
+  return withKvLock(
+    lockKey,
+    async () => {
+      const currentTotalCents = Number(await kv.get<number>(key)) || 0;
+      if (currentTotalCents + cents > limitCents) {
+        return { success: false, newTotal: currentTotalCents / DIRECT_AMOUNT_SCALE };
+      }
 
-  // Set TTL if this is a new key (no existing expiry)
-  const currentTtl = await kv.ttl(key);
-  if (currentTtl === -1) {
-    await kv.expire(key, ttl);
-  }
+      const newTotalCents = await kv.incrby(key, cents);
+      const currentTtl = await kv.ttl(key);
+      if (currentTtl === -1) {
+        await kv.expire(key, ttl);
+      }
 
-  if (newTotalCents > limitCents) {
-    // Exceeded limit, rollback
-    await kv.decrby(key, cents);
-    return { success: false, newTotal: (newTotalCents - cents) / DIRECT_AMOUNT_SCALE };
-  }
-
-  return { success: true, newTotal: (newTotalCents || 0) / DIRECT_AMOUNT_SCALE };
+      return { success: true, newTotal: (newTotalCents || 0) / DIRECT_AMOUNT_SCALE };
+    },
+    {
+      ttlSeconds: 5,
+      maxRetries: 10,
+      retryMs: 20,
+      timeoutMessage: 'DAILY_DIRECT_QUOTA_LOCK_TIMEOUT',
+    }
+  );
 }
 
 /**
@@ -754,11 +962,30 @@ export async function reserveDailyDirectQuota(dollars: number): Promise<{ succes
 export async function rollbackDailyDirectQuota(dollars: number): Promise<void> {
   const today = getTodayDateString();
   const key = `${LOTTERY_DAILY_DIRECT_KEY}${today}`;
+  const lockKey = `${LOTTERY_DAILY_DIRECT_LOCK_KEY}${today}`;
   const cents = Math.round(dollars * DIRECT_AMOUNT_SCALE);
   if (cents <= 0) {
     return;
   }
-  await kv.decrby(key, cents);
+
+  await withKvLock(
+    lockKey,
+    async () => {
+      const currentTotalCents = Math.max(0, Number(await kv.get<number>(key)) || 0);
+      if (currentTotalCents <= 0) {
+        return;
+      }
+
+      const decrement = Math.min(currentTotalCents, cents);
+      await kv.decrby(key, decrement);
+    },
+    {
+      ttlSeconds: 5,
+      maxRetries: 10,
+      retryMs: 20,
+      timeoutMessage: 'DAILY_DIRECT_QUOTA_LOCK_TIMEOUT',
+    }
+  );
 }
 
 /**
@@ -769,6 +996,84 @@ export async function getMinTierValue(): Promise<number> {
   const activeTiers = config.tiers.filter(t => t.probability > 0);
   if (activeTiers.length === 0) return Infinity;
   return Math.min(...activeTiers.map(t => t.value));
+}
+
+export async function getLotteryPageState(
+  userId: number,
+  options?: { bypassSpinLimit?: boolean }
+): Promise<LotteryPageState> {
+  const [config, hasSpunToday, extraSpins, tiersStats] = await Promise.all([
+    getLotteryConfig(),
+    checkDailyLimit(userId),
+    getExtraSpinCount(userId),
+    getTiersStats(),
+  ]);
+
+  const activeTierIds = new Set(
+    config.tiers.filter((tier) => tier.probability > 0).map((tier) => tier.id)
+  );
+  const allTiersHaveCodes = activeTierIds.size > 0
+    && tiersStats
+      .filter((stats) => activeTierIds.has(stats.id))
+      .every((stats) => stats.available > 0);
+
+  const tiers = config.tiers.map((tier) => {
+    const stats = tiersStats.find((item) => item.id === tier.id);
+    return {
+      id: tier.id,
+      name: tier.name,
+      value: tier.value,
+      color: tier.color,
+      hasStock: (stats?.available ?? 0) > 0,
+    };
+  });
+
+  const activeTiers = config.tiers.filter((tier) => tier.probability > 0);
+  const minTierValue = activeTiers.length > 0
+    ? Math.min(...activeTiers.map((tier) => tier.value))
+    : Infinity;
+
+  let canSpinByMode = false;
+  if (config.mode === 'direct') {
+    canSpinByMode = await checkDailyDirectLimit(minTierValue);
+  } else if (config.mode === 'code') {
+    canSpinByMode = allTiersHaveCodes;
+  } else {
+    const directAvailable = await checkDailyDirectLimit(minTierValue);
+    canSpinByMode = directAvailable || allTiersHaveCodes;
+  }
+
+  const bypassSpinLimit = options?.bypassSpinLimit === true;
+
+  return {
+    enabled: config.enabled,
+    mode: config.mode,
+    tiers,
+    canSpin: config.enabled && canSpinByMode && (bypassSpinLimit || !hasSpunToday || extraSpins > 0),
+    hasSpunToday,
+    extraSpins,
+    allTiersHaveCodes,
+  };
+}
+
+export async function getLotteryPagePayload(
+  user: { id: number; username: string; displayName: string; isAdmin?: boolean },
+  recordsLimit = 20
+): Promise<LotteryPagePayload> {
+  const [state, records] = await Promise.all([
+    getLotteryPageState(user.id, { bypassSpinLimit: user.isAdmin === true }),
+    getUserLotteryRecords(user.id, recordsLimit),
+  ]);
+
+  return {
+    ...state,
+    user: {
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+    },
+    records,
+  };
 }
 
 /**
@@ -855,7 +1160,10 @@ export async function spinLotteryDirect(
       
       try {
         await kv.lpush(LOTTERY_RECORDS_KEY, pendingRecord);
-        await kv.lpush(`${LOTTERY_USER_RECORDS_PREFIX}${userId}`, pendingRecord);
+        await Promise.all([
+          writeLotteryUserRecordBestEffort(userId, pendingRecord),
+          syncLotteryDailyRankingBestEffort(pendingRecord),
+        ]);
       } catch (e) {
         console.error("写入 pending 记录失败:", e);
       }
@@ -892,18 +1200,14 @@ export async function spinLotteryDirect(
       createdAt: Date.now(),
     };
 
-    // 写入全局记录（best-effort）
     try {
       await kv.lpush(LOTTERY_RECORDS_KEY, record);
+      await Promise.all([
+        writeLotteryUserRecordBestEffort(userId, record),
+        syncLotteryDailyRankingBestEffort(record),
+      ]);
     } catch (globalRecordError) {
       console.error("写入全局记录失败（充值已成功，不影响用户）:", globalRecordError);
-    }
-
-    // 写入用户记录（best-effort）
-    try {
-      await kv.lpush(`${LOTTERY_USER_RECORDS_PREFIX}${userId}`, record);
-    } catch (userRecordError) {
-      console.error("写入用户记录失败（充值已成功，不影响用户）:", userRecordError);
     }
 
     return {

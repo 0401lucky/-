@@ -1,16 +1,14 @@
 // src/app/api/games/farm/status/route.ts - 轻量状态查询
 
 import { NextResponse } from 'next/server';
-import { withUserRateLimit } from '@/lib/rate-limit';
+import { withAuthenticatedUser } from '@/lib/rate-limit';
 import { getFarmState } from '@/lib/farm';
 import { getTodayWeather, refreshFarmState } from '@/lib/farm-engine';
 import { getUserPoints, getDailyEarnedPoints } from '@/lib/points';
 import { getDailyPointsLimit } from '@/lib/config';
 import { getTodayDateString } from '@/lib/time';
-import { applyAutoHarvest } from '@/lib/farm-shop';
 
-export const GET = withUserRateLimit(
-  'api:default',
+export const GET = withAuthenticatedUser(
   async (_request, user) => {
     try {
       const [initialFarmState, initialBalance, initialDailyEarned, dailyLimit] = await Promise.all([
@@ -20,8 +18,8 @@ export const GET = withUserRateLimit(
         getDailyPointsLimit(),
       ]);
       const farmState = initialFarmState;
-      let balance = initialBalance;
-      let dailyEarned = initialDailyEarned;
+      const balance = initialBalance;
+      const dailyEarned = initialDailyEarned;
 
       if (!farmState) {
         return NextResponse.json({
@@ -37,15 +35,7 @@ export const GET = withUserRateLimit(
       }
 
       const weather = getTodayWeather(getTodayDateString());
-      let refreshed = refreshFarmState(farmState, Date.now(), weather);
-
-      // 自动收获
-      const autoResult = await applyAutoHarvest(refreshed, user.id, weather, Date.now());
-      refreshed = autoResult.farmState;
-      if (autoResult.autoHarvestPoints > 0) {
-        balance = await getUserPoints(user.id);
-        dailyEarned = await getDailyEarnedPoints(user.id);
-      }
+      const refreshed = refreshFarmState(farmState, Date.now(), weather);
 
       return NextResponse.json({
         success: true,

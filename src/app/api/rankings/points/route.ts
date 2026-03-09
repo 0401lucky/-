@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getPointsLeaderboard, type PointsRankingPeriod } from '@/lib/rankings';
-import { withUserRateLimit } from '@/lib/rate-limit';
+import { withAuthenticatedUser } from '@/lib/rate-limit';
 import {
   buildKvUnavailablePayload,
   getKvErrorInsight,
   KV_UNAVAILABLE_RETRY_AFTER_SECONDS,
 } from '@/lib/kv';
 
-export const dynamic = 'force-dynamic';
+const PRIVATE_RANKING_CACHE_CONTROL = 'private, max-age=15, stale-while-revalidate=45';
 
 function normalizePeriod(value: string | null): PointsRankingPeriod {
   if (value === 'monthly') {
@@ -16,8 +16,7 @@ function normalizePeriod(value: string | null): PointsRankingPeriod {
   return 'all';
 }
 
-export const GET = withUserRateLimit(
-  'rankings:points',
+export const GET = withAuthenticatedUser(
   async (request) => {
     try {
       const { searchParams } = new URL(request.url);
@@ -27,10 +26,12 @@ export const GET = withUserRateLimit(
 
       const data = await getPointsLeaderboard(period, limit);
 
-      return NextResponse.json({
+      const response = NextResponse.json({
         success: true,
         data,
       });
+      response.headers.set('Cache-Control', PRIVATE_RANKING_CACHE_CONTROL);
+      return response;
     } catch (error) {
       const kvInsight = getKvErrorInsight(error);
       if (kvInsight.isUnavailable) {

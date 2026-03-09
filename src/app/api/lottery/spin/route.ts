@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  getLotteryPageState,
   spinLotteryAuto,
 } from "@/lib/lottery";
 import { recordUser } from "@/lib/kv";
@@ -52,10 +53,15 @@ export const POST = withUserRateLimit(
         }
       }
 
+      const pageState = await getLotteryPageState(user.id, {
+        bypassSpinLimit: user.isAdmin,
+      });
+
       return NextResponse.json({
         success: true,
         message: result.message,
         record: result.record,
+        state: pageState,
       });
     } catch (error) {
       console.error("Spin lottery error:", error);

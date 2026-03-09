@@ -1,6 +1,14 @@
 import type { NextConfig } from "next";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "X-XSS-Protection", value: "1; mode=block" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+];
+
 initOpenNextCloudflareForDev();
 
 const nextConfig: NextConfig = {
@@ -20,12 +28,14 @@ const nextConfig: NextConfig = {
     optimizePackageImports: ["lucide-react", "react-icons"],
   },
 
-  // 生产环境移除 console.log（保留 warn/error）
-  compiler: {
-    removeConsole:
-      process.env.NODE_ENV === "production"
-        ? { exclude: ["warn", "error"] }
-        : false,
+  // 统一下发静态安全响应头，避免页面流量经过 middleware
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: securityHeaders,
+      },
+    ];
   },
 
   // 优化服务端外部包

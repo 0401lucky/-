@@ -258,12 +258,7 @@ export type UserRateLimitHandler<TRequest extends Request = Request, TContext = 
   context: TContext
 ) => Promise<NextResponse>;
 
-/**
- * 鉴权 + 速率限制 HOF
- * 统一处理：未登录响应、速率限制拦截、通过后回调业务处理器
- */
-export function withUserRateLimit<TRequest extends Request = Request, TContext = unknown>(
-  action: RateLimitAction,
+export function withAuthenticatedUser<TRequest extends Request = Request, TContext = unknown>(
   handler: UserRateLimitHandler<TRequest, TContext>,
   options: UserRateLimitOptions = {}
 ): (request: TRequest, context: TContext) => Promise<NextResponse> {
@@ -281,11 +276,6 @@ export function withUserRateLimit<TRequest extends Request = Request, TContext =
       );
     }
 
-    const limitedResponse = await withRateLimit(action, user.id);
-    if (limitedResponse) {
-      return limitedResponse;
-    }
-
     try {
       return await handler(request, user, context);
     } catch (error) {
@@ -296,6 +286,25 @@ export function withUserRateLimit<TRequest extends Request = Request, TContext =
       );
     }
   };
+}
+
+/**
+ * 鉴权 + 速率限制 HOF
+ * 统一处理：未登录响应、速率限制拦截、通过后回调业务处理器
+ */
+export function withUserRateLimit<TRequest extends Request = Request, TContext = unknown>(
+  action: RateLimitAction,
+  handler: UserRateLimitHandler<TRequest, TContext>,
+  options: UserRateLimitOptions = {}
+): (request: TRequest, context: TContext) => Promise<NextResponse> {
+  return withAuthenticatedUser(async (request, user, context) => {
+    const limitedResponse = await withRateLimit(action, user.id);
+    if (limitedResponse) {
+      return limitedResponse;
+    }
+
+    return handler(request, user, context);
+  }, options);
 }
 
 export async function checkRateLimitByAction(

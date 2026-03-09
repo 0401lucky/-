@@ -3,14 +3,14 @@ import {
   listRankingSettlementHistory,
   type RankingSettlementPeriod,
 } from '@/lib/ranking-settlement';
-import { withUserRateLimit } from '@/lib/rate-limit';
+import { withAuthenticatedUser } from '@/lib/rate-limit';
 import {
   buildKvUnavailablePayload,
   getKvErrorInsight,
   KV_UNAVAILABLE_RETRY_AFTER_SECONDS,
 } from '@/lib/kv';
 
-export const dynamic = 'force-dynamic';
+const PRIVATE_RANKING_CACHE_CONTROL = 'private, max-age=15, stale-while-revalidate=45';
 
 function normalizePeriod(value: string | null): RankingSettlementPeriod {
   return value === 'monthly' ? 'monthly' : 'weekly';
@@ -28,8 +28,7 @@ function normalizeLimit(value: string | null): number {
   return Math.max(1, Math.min(50, Math.floor(num)));
 }
 
-export const GET = withUserRateLimit(
-  'rankings:history',
+export const GET = withAuthenticatedUser(
   async (request) => {
     try {
       const { searchParams } = new URL(request.url);
@@ -39,10 +38,12 @@ export const GET = withUserRateLimit(
 
       const data = await listRankingSettlementHistory(period, { page, limit });
 
-      return NextResponse.json({
+      const response = NextResponse.json({
         success: true,
         data,
       });
+      response.headers.set('Cache-Control', PRIVATE_RANKING_CACHE_CONTROL);
+      return response;
     } catch (error) {
       const kvInsight = getKvErrorInsight(error);
       if (kvInsight.isUnavailable) {

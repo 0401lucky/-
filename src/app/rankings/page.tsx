@@ -129,14 +129,10 @@ export default function RankingsPage() {
         }
 
         const [gamesRes, pointsRes, checkinRes, historyRes] = await Promise.all([
-          fetch(`/api/rankings/games?period=${gamePeriod}&limit=10`, { cache: 'no-store' }),
-          fetch(`/api/rankings/points?period=${pointsPeriod}&limit=10`, { cache: 'no-store' }),
-          fetch(`/api/rankings/checkin-streak?period=${checkinPeriod}&limit=10`, {
-            cache: 'no-store',
-          }),
-          fetch(`/api/rankings/history?period=${historyPeriod}&limit=5`, {
-            cache: 'no-store',
-          }),
+          fetch(`/api/rankings/games?period=${gamePeriod}&limit=10`),
+          fetch(`/api/rankings/points?period=${pointsPeriod}&limit=10`),
+          fetch(`/api/rankings/checkin-streak?period=${checkinPeriod}&limit=10`),
+          fetch(`/api/rankings/history?period=${historyPeriod}&limit=5`),
         ]);
 
         const [gamesJson, pointsJson, checkinJson, historyJson] = await Promise.all([

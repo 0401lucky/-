@@ -13,6 +13,7 @@ vi.mock('@/lib/d1-kv', () => ({
   kv: {
     lrange: vi.fn(),
     get: vi.fn(),
+    set: vi.fn(),
     mget: vi.fn(),
   },
 }));
@@ -24,6 +25,7 @@ vi.mock('../kv', () => ({
 describe('rankings', () => {
   const mockKvLrange = vi.mocked(kv.lrange);
   const mockKvGet = vi.mocked(kv.get);
+  const mockKvSet = vi.mocked(kv.set);
   const mockKvMget = vi.mocked(kv.mget);
   const mockGetAllUsers = vi.mocked(getAllUsers);
 
@@ -35,6 +37,7 @@ describe('rankings', () => {
     ]);
     mockKvLrange.mockResolvedValue([]);
     mockKvGet.mockResolvedValue(0);
+    mockKvSet.mockResolvedValue('OK');
     mockKvMget.mockResolvedValue([]);
   });
 
@@ -74,6 +77,7 @@ describe('rankings', () => {
   it('builds all-games overall leaderboard', async () => {
     const now = Date.now();
 
+    mockKvGet.mockResolvedValueOnce(null);
     mockKvLrange.mockImplementation(async (key: string) => {
       if (key.endsWith(':1001')) {
         return [{ score: 100, pointsEarned: 20, createdAt: now - 1000 }];
@@ -99,6 +103,27 @@ describe('rankings', () => {
     expect(result.overall[1]).toMatchObject({
       userId: 1002,
     });
+    expect(mockKvSet).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns cached all-games leaderboard when available', async () => {
+    const cached = {
+      period: 'daily' as const,
+      generatedAt: 123,
+      startAt: 456,
+      games: [{ gameType: 'slot' as const, leaderboard: [] }],
+      overall: [],
+    };
+    mockKvGet.mockResolvedValueOnce(cached as any);
+
+    const result = await getAllGamesLeaderboard('daily', {
+      limitPerGame: 10,
+      overallLimit: 10,
+    });
+
+    expect(result).toEqual(cached);
+    expect(mockKvLrange).not.toHaveBeenCalled();
+    expect(mockKvSet).not.toHaveBeenCalled();
   });
 
   it('builds points leaderboard for all and monthly period', async () => {

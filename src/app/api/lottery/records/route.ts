@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserLotteryRecords } from "@/lib/lottery";
-import { withUserRateLimit } from "@/lib/rate-limit";
+import { withAuthenticatedUser } from "@/lib/rate-limit";
 import {
   buildKvUnavailablePayload,
   getKvAvailabilityStatus,
@@ -10,8 +10,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export const GET = withUserRateLimit(
-  'lottery:records',
+export const GET = withAuthenticatedUser(
   async (_request, user) => {
     try {
       const kvStatus = getKvAvailabilityStatus();
