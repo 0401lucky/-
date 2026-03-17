@@ -92,6 +92,7 @@ export function useFarmState(): FarmData {
   const [levelUpInfo, setLevelUpInfo] = useState<LevelUpInfo | null>(null);
   const [computedPlots, setComputedPlots] = useState<ComputedPlotState[]>([]);
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const statusSyncInFlightRef = useRef(false);
 
   // 客户端每30秒刷新展示状态
   useEffect(() => {
@@ -154,6 +155,11 @@ export function useFarmState(): FarmData {
   }, [updateFromResponse]);
 
   const syncStatus = useCallback(async () => {
+    if (statusSyncInFlightRef.current) {
+      return;
+    }
+
+    statusSyncInFlightRef.current = true;
     try {
       const res = await fetch('/api/games/farm/status');
       const data = await res.json();
@@ -162,8 +168,26 @@ export function useFarmState(): FarmData {
       }
     } catch {
       // 静默失败
+    } finally {
+      statusSyncInFlightRef.current = false;
     }
   }, [updateFromResponse]);
+
+  useEffect(() => {
+    if (!farmState) return;
+
+    const hasActiveAutoHarvest = (farmState.activeBuffs ?? []).some(
+      buff => buff.effect === 'auto_harvest' && buff.expiresAt > Date.now()
+    );
+    if (!hasActiveAutoHarvest) return;
+
+    // 自动收割需要服务端结算，页面常驻时也要定期同步一次真实状态。
+    const timer = setInterval(() => {
+      void syncStatus();
+    }, 30_000);
+
+    return () => clearInterval(timer);
+  }, [farmState, syncStatus]);
 
   // 页面获得焦点时同步状态
   useEffect(() => {

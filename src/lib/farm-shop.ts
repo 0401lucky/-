@@ -60,6 +60,15 @@ interface FarmActionLock {
   token: string;
 }
 
+interface AutoHarvestResult {
+  farmState: FarmState;
+  autoHarvestedCount: number;
+  autoHarvestPoints: number;
+  newBalance?: number;
+  dailyEarned?: number;
+  limitReached?: boolean;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -346,6 +355,8 @@ export async function purchaseFarmShopItem(
   message?: string;
   farmState?: FarmState;
   newBalance?: number;
+  dailyEarned?: number;
+  limitReached?: boolean;
 }> {
   if (!Number.isInteger(quantity) || quantity < 1) {
     return { success: false, message: '购买数量必须是大于 0 的整数' };
@@ -360,7 +371,7 @@ export async function purchaseFarmShopItem(
   }
 
   try {
-    const farmState = await getOrCreateFarm(userId).catch(() => farmStateFromCaller);
+    let farmState = await getOrCreateFarm(userId).catch(() => farmStateFromCaller);
     if (!farmState) {
       return { success: false, message: '读取农场状态失败，请稍后重试' };
     }
@@ -452,6 +463,7 @@ export async function purchaseFarmShopItem(
     }
 
     farmState.lastUpdatedAt = now;
+    const weather = getTodayWeather(getTodayDateString());
     try {
       await kv.set(FARM_STATE_KEY(userId), farmState);
     } catch (saveError) {
@@ -463,6 +475,17 @@ export async function purchaseFarmShopItem(
         console.error('Farm shop purchase refund failed:', refundError);
       }
       return { success: false, message: '购买失败，请稍后重试' };
+    }
+
+    let autoHarvestResult: AutoHarvestResult | null = null;
+    if (item.mode === 'buff' && item.effect === 'auto_harvest') {
+      autoHarvestResult = await applyAutoHarvestWithFarmState(
+        farmState,
+        userId,
+        weather,
+        now,
+      );
+      farmState = autoHarvestResult.farmState;
     }
 
     // 6. 记录日志（best-effort）
@@ -491,11 +514,12 @@ export async function purchaseFarmShopItem(
       console.error('Farm shop purchase count increment failed:', countError);
     }
 
-    const weather = getTodayWeather(getTodayDateString());
     return {
       success: true,
       farmState: refreshFarmState(farmState, now, weather),
-      newBalance: deductResult.balance,
+      newBalance: autoHarvestResult?.newBalance ?? deductResult.balance,
+      dailyEarned: autoHarvestResult?.dailyEarned,
+      limitReached: autoHarvestResult?.limitReached,
     };
   } finally {
     await releaseFarmActionLock(lock);
@@ -704,6 +728,123 @@ export async function useInstantItem(
 
 // ---- 自动收获 ----
 
+async function applyAutoHarvestWithFarmState(
+  farmState: FarmState,
+  userId: number,
+  weatherType: WeatherType,
+  now: number,
+): Promise<AutoHarvestResult> {
+  const buffCtx = buildBuffContext(farmState.activeBuffs, now);
+  if (!buffCtx?.autoHarvest?.active) {
+    return {
+      farmState: refreshFarmState(farmState, now, weatherType),
+      autoHarvestedCount: 0,
+      autoHarvestPoints: 0,
+    };
+  }
+
+  const farmBeforeHarvest = cloneFarmState(farmState);
+  let totalYield = 0;
+  let harvestedCount = 0;
+  let totalExp = 0;
+
+  for (let i = 0; i < farmState.plots.length; i++) {
+    const plot = farmState.plots[i];
+    if (!plot.cropId || !plot.plantedAt) continue;
+
+    const computed = computePlotState(plot, now, weatherType, userId, buffCtx);
+    if (computed.stage !== 'mature') continue;
+
+    const crop = CROPS[plot.cropId];
+    const { yield: harvestYield } = computeHarvestYield(
+      { ...plot, stage: 'mature', hasPest: computed.hasPest, pestAppearedAt: computed.pestAppearedAt },
+      now,
+      weatherType,
+      buffCtx,
+    );
+
+    totalYield += harvestYield;
+    totalExp += crop.expReward;
+    harvestedCount++;
+
+    farmState.plots[i] = createEmptyPlot(i);
+  }
+
+  if (harvestedCount === 0) {
+    return {
+      farmState: refreshFarmState(farmState, now, weatherType),
+      autoHarvestedCount: 0,
+      autoHarvestPoints: 0,
+    };
+  }
+
+  farmState.exp += totalExp;
+  farmState.totalHarvests += harvestedCount;
+  farmState.lastUpdatedAt = now;
+
+  const levelResult = checkLevelUp(farmState);
+  if (levelResult.leveledUp) {
+    Object.assign(farmState, levelResult.newState);
+  }
+
+  try {
+    await kv.set(FARM_STATE_KEY(userId), farmState);
+  } catch (saveError) {
+    console.error('Auto harvest pre-settlement save failed:', saveError);
+    return {
+      farmState: refreshFarmState(farmBeforeHarvest, now, weatherType),
+      autoHarvestedCount: 0,
+      autoHarvestPoints: 0,
+    };
+  }
+
+  let pointsEarned = 0;
+  let newBalance: number | undefined;
+  let dailyEarned: number | undefined;
+  let limitReached: boolean | undefined;
+  try {
+    const dailyLimit = await getDailyPointsLimit();
+    const pointsResult = await addGamePointsWithLimit(
+      userId,
+      totalYield,
+      dailyLimit,
+      'game_play',
+      `农场自动收获: ${harvestedCount}块田地`,
+    );
+    pointsEarned = pointsResult.pointsEarned;
+    newBalance = pointsResult.balance;
+    dailyEarned = pointsResult.dailyEarned;
+    limitReached = pointsResult.limitReached;
+    farmState.totalEarnings += pointsEarned;
+    try {
+      await kv.set(FARM_STATE_KEY(userId), farmState);
+    } catch (statsSaveError) {
+      console.error('Auto harvest totalEarnings save failed:', statsSaveError);
+    }
+  } catch (error) {
+    console.error('Auto harvest points settlement failed, rolling back farm state:', error);
+    try {
+      await kv.set(FARM_STATE_KEY(userId), farmBeforeHarvest);
+    } catch (rollbackError) {
+      console.error('Auto harvest rollback failed:', rollbackError);
+    }
+    return {
+      farmState: refreshFarmState(farmBeforeHarvest, now, weatherType),
+      autoHarvestedCount: 0,
+      autoHarvestPoints: 0,
+    };
+  }
+
+  return {
+    farmState: refreshFarmState(farmState, now, weatherType),
+    autoHarvestedCount: harvestedCount,
+    autoHarvestPoints: pointsEarned,
+    newBalance,
+    dailyEarned,
+    limitReached,
+  };
+}
+
 /**
  * 应用自动收获（auto_harvest buff 激活时自动收获成熟作物）
  * 在 /init 和 /status 中调用
@@ -713,11 +854,7 @@ export async function applyAutoHarvest(
   userId: number,
   weather: string,
   now: number,
-): Promise<{
-  farmState: FarmState;
-  autoHarvestedCount: number;
-  autoHarvestPoints: number;
-}> {
+): Promise<AutoHarvestResult> {
   const weatherType = weather as WeatherType;
   const lock = await acquireFarmActionLock(userId);
   if (!lock) {
@@ -738,106 +875,7 @@ export async function applyAutoHarvest(
       };
     }
 
-    const buffCtx = buildBuffContext(farmState.activeBuffs, now);
-    if (!buffCtx?.autoHarvest?.active) {
-      return {
-        farmState: refreshFarmState(farmState, now, weatherType),
-        autoHarvestedCount: 0,
-        autoHarvestPoints: 0,
-      };
-    }
-
-    const farmBeforeHarvest = cloneFarmState(farmState);
-    let totalYield = 0;
-    let harvestedCount = 0;
-    let totalExp = 0;
-
-    for (let i = 0; i < farmState.plots.length; i++) {
-      const plot = farmState.plots[i];
-      if (!plot.cropId || !plot.plantedAt) continue;
-
-      const computed = computePlotState(plot, now, weatherType, userId, buffCtx);
-      if (computed.stage !== 'mature') continue;
-
-      const crop = CROPS[plot.cropId];
-      const { yield: harvestYield } = computeHarvestYield(
-        { ...plot, stage: 'mature', hasPest: computed.hasPest, pestAppearedAt: computed.pestAppearedAt },
-        now,
-        weatherType,
-        buffCtx,
-      );
-
-      totalYield += harvestYield;
-      totalExp += crop.expReward;
-      harvestedCount++;
-
-      farmState.plots[i] = createEmptyPlot(i);
-    }
-
-    if (harvestedCount === 0) {
-      return {
-        farmState: refreshFarmState(farmState, now, weatherType),
-        autoHarvestedCount: 0,
-        autoHarvestPoints: 0,
-      };
-    }
-
-    farmState.exp += totalExp;
-    farmState.totalHarvests += harvestedCount;
-    farmState.lastUpdatedAt = now;
-
-    const levelResult = checkLevelUp(farmState);
-    if (levelResult.leveledUp) {
-      Object.assign(farmState, levelResult.newState);
-    }
-
-    try {
-      await kv.set(FARM_STATE_KEY(userId), farmState);
-    } catch (saveError) {
-      console.error('Auto harvest pre-settlement save failed:', saveError);
-      return {
-        farmState: refreshFarmState(farmBeforeHarvest, now, weatherType),
-        autoHarvestedCount: 0,
-        autoHarvestPoints: 0,
-      };
-    }
-
-    let pointsEarned = 0;
-    try {
-      const dailyLimit = await getDailyPointsLimit();
-      const pointsResult = await addGamePointsWithLimit(
-        userId,
-        totalYield,
-        dailyLimit,
-        'game_play',
-        `农场自动收获: ${harvestedCount}块田地`,
-      );
-      pointsEarned = pointsResult.pointsEarned;
-      farmState.totalEarnings += pointsEarned;
-      try {
-        await kv.set(FARM_STATE_KEY(userId), farmState);
-      } catch (statsSaveError) {
-        console.error('Auto harvest totalEarnings save failed:', statsSaveError);
-      }
-    } catch (error) {
-      console.error('Auto harvest points settlement failed, rolling back farm state:', error);
-      try {
-        await kv.set(FARM_STATE_KEY(userId), farmBeforeHarvest);
-      } catch (rollbackError) {
-        console.error('Auto harvest rollback failed:', rollbackError);
-      }
-      return {
-        farmState: refreshFarmState(farmBeforeHarvest, now, weatherType),
-        autoHarvestedCount: 0,
-        autoHarvestPoints: 0,
-      };
-    }
-
-    return {
-      farmState: refreshFarmState(farmState, now, weatherType),
-      autoHarvestedCount: harvestedCount,
-      autoHarvestPoints: pointsEarned,
-    };
+    return await applyAutoHarvestWithFarmState(farmState, userId, weatherType, now);
   } finally {
     await releaseFarmActionLock(lock);
   }

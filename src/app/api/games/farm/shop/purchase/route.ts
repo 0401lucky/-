@@ -49,6 +49,8 @@ export const POST = withUserRateLimit(
         data: {
           farmState: result.farmState,
           newBalance: result.newBalance,
+          dailyEarned: result.dailyEarned,
+          pointsLimitReached: result.limitReached,
         },
       });
     } catch (error) {

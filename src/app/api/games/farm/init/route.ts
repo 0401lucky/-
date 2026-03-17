@@ -28,10 +28,9 @@ export const POST = withUserRateLimit(
       // 自动收获
       const autoResult = await applyAutoHarvest(farmState, user.id, weather, Date.now());
       farmState = autoResult.farmState;
-      if (autoResult.autoHarvestPoints > 0) {
-        balance = await getUserPoints(user.id);
-        dailyEarned = await getDailyEarnedPoints(user.id);
-      }
+      balance = autoResult.newBalance ?? balance;
+      dailyEarned = autoResult.dailyEarned ?? dailyEarned;
+      const pointsLimitReached = autoResult.limitReached ?? dailyEarned >= dailyLimit;
 
       return NextResponse.json({
         success: true,
@@ -41,7 +40,7 @@ export const POST = withUserRateLimit(
           balance,
           dailyEarned,
           dailyLimit,
-          pointsLimitReached: dailyEarned >= dailyLimit,
+          pointsLimitReached,
         },
       });
     } catch (error) {

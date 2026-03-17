@@ -3,10 +3,11 @@
 import { NextResponse } from 'next/server';
 import { withAuthenticatedUser } from '@/lib/rate-limit';
 import { getFarmState } from '@/lib/farm';
-import { getTodayWeather, refreshFarmState } from '@/lib/farm-engine';
+import { getTodayWeather } from '@/lib/farm-engine';
 import { getUserPoints, getDailyEarnedPoints } from '@/lib/points';
 import { getDailyPointsLimit } from '@/lib/config';
 import { getTodayDateString } from '@/lib/time';
+import { applyAutoHarvest } from '@/lib/farm-shop';
 
 export const GET = withAuthenticatedUser(
   async (_request, user) => {
@@ -35,7 +36,11 @@ export const GET = withAuthenticatedUser(
       }
 
       const weather = getTodayWeather(getTodayDateString());
-      const refreshed = refreshFarmState(farmState, Date.now(), weather);
+      const autoResult = await applyAutoHarvest(farmState, user.id, weather, Date.now());
+      const refreshed = autoResult.farmState;
+      const latestBalance = autoResult.newBalance ?? balance;
+      const latestDailyEarned = autoResult.dailyEarned ?? dailyEarned;
+      const pointsLimitReached = autoResult.limitReached ?? latestDailyEarned >= dailyLimit;
 
       return NextResponse.json({
         success: true,
@@ -43,10 +48,10 @@ export const GET = withAuthenticatedUser(
           initialized: true,
           farmState: refreshed,
           weather,
-          balance,
-          dailyEarned,
+          balance: latestBalance,
+          dailyEarned: latestDailyEarned,
           dailyLimit,
-          pointsLimitReached: dailyEarned >= dailyLimit,
+          pointsLimitReached,
         },
       });
     } catch (error) {
