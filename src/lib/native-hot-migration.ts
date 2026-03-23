@@ -9,13 +9,13 @@ import {
   replaceNativeDailyStats,
   replaceNativeGameRecords,
   replaceNativePointLogs,
-  replaceNativeSlotDailyScores,
   replaceNativeUserCheckins,
   resetNativeHotStoreData,
   setNativeExtraSpinCount,
   setNativeHotStoreReady,
   setNativeUserCards,
   setNativeUserPoints,
+  upsertNativeSlotDailyScores,
   updateNativeSystemConfig,
   upsertNativeUser,
 } from "./hot-d1";
@@ -37,12 +37,22 @@ const GAME_RECORD_KEYS: Record<Exclude<GameType, "farm">, (userId: number) => st
 
 export interface NativeHotMigrationOptions {
   dryRun?: boolean;
+  offset?: number;
+  limit?: number;
+  reset?: boolean;
+  finalize?: boolean;
 }
 
 export interface NativeHotMigrationResult {
   dryRun: boolean;
   users: number;
   migratedUsers: number;
+  offset: number;
+  limit: number;
+  nextOffset: number | null;
+  hasMore: boolean;
+  resetApplied: boolean;
+  finalized: boolean;
   pointsLogs: number;
   checkins: number;
   gameRecords: number;
@@ -113,8 +123,13 @@ export async function migrateNativeHotData(
   }
 
   const dryRun = options.dryRun === true;
+  const offset = Math.max(0, Math.floor(options.offset ?? 0));
   const source = await getLegacyHotMigrationSource();
-  const users = source.users;
+  const allUsers = source.users;
+  const limit = Math.max(1, Math.min(50, Math.floor(options.limit ?? 10)));
+  const users = allUsers.slice(offset, offset + limit);
+  const nextOffset = offset + users.length < allUsers.length ? offset + users.length : null;
+  const hasMore = nextOffset !== null;
   const todayDate = getChinaDateString(0);
   const slotTodayMap = new Map<number, number>();
   let pointsLogs = 0;
@@ -123,7 +138,7 @@ export async function migrateNativeHotData(
   let dailyPointsRows = 0;
   let dailyStatsRows = 0;
 
-  if (!dryRun) {
+  if (!dryRun && options.reset === true) {
     await resetNativeHotStoreData();
     const legacyConfig = await kv.get<Record<string, unknown>>("system:config");
     if (legacyConfig) {
@@ -200,17 +215,25 @@ export async function migrateNativeHotData(
   }
 
   if (!dryRun) {
-    await replaceNativeSlotDailyScores(
+    await upsertNativeSlotDailyScores(
       todayDate,
       Array.from(slotTodayMap.entries()).map(([userId, score]) => ({ userId, score })),
     );
-    await setNativeHotStoreReady(true);
+    if (options.finalize === true) {
+      await setNativeHotStoreReady(true);
+    }
   }
 
   return {
     dryRun,
-    users: users.length,
+    users: allUsers.length,
     migratedUsers: users.length,
+    offset,
+    limit,
+    nextOffset,
+    hasMore,
+    resetApplied: !dryRun && options.reset === true,
+    finalized: !dryRun && options.finalize === true,
     pointsLogs,
     checkins,
     gameRecords,

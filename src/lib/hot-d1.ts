@@ -1955,6 +1955,27 @@ export async function replaceNativeSlotDailyScores(
   ));
 }
 
+export async function upsertNativeSlotDailyScores(
+  date: string,
+  entries: Array<{ userId: number; score: number }>,
+): Promise<void> {
+  await ensureHotSchema();
+  if (entries.length === 0) {
+    return;
+  }
+
+  const db = getHotDb();
+  await db.batch(entries.map((entry) =>
+    db.prepare(
+      `INSERT INTO native_slot_daily_rankings (stat_date, user_id, score, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(stat_date, user_id) DO UPDATE SET
+         score = excluded.score,
+         updated_at = excluded.updated_at`,
+    ).bind(date, entry.userId, entry.score, nowMs())
+  ));
+}
+
 export async function getLegacyHotMigrationSource(): Promise<{
   users: Array<{ id: number; username: string; firstSeen: number }>;
 }> {
