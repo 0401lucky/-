@@ -1,22 +1,12 @@
 // src/app/api/games/farm/shop/use-item/route.ts - 用户使用即时道具
 import { NextRequest, NextResponse } from 'next/server';
 import { withUserRateLimit } from '@/lib/rate-limit';
-import { checkActionCooldown } from '@/lib/farm';
 import { useInstantItem } from '@/lib/farm-shop';
 
 export const POST = withUserRateLimit(
-  'game:submit',
+  'farm:action',
   async (request: NextRequest, user) => {
     try {
-      // 冷却检查
-      const canAct = await checkActionCooldown(user.id);
-      if (!canAct) {
-        return NextResponse.json(
-          { success: false, message: '操作太快，请稍后再试' },
-          { status: 429 },
-        );
-      }
-
       const body = await request.json();
       const { itemId, plotIndex } = body;
 

@@ -9,7 +9,7 @@ import { getTodayDateString } from '@/lib/time';
 import type { CropId } from '@/lib/types/farm';
 
 export const POST = withUserRateLimit(
-  'game:submit',
+  'farm:action',
   async (request: NextRequest, user) => {
     try {
       const body = (await request.json().catch(() => null)) as { plotIndex?: number; cropId?: string } | null;

@@ -2,22 +2,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { withUserRateLimit } from '@/lib/rate-limit';
-import { checkActionCooldown, removePest } from '@/lib/farm';
+import { removePest } from '@/lib/farm';
 import { getTodayWeather } from '@/lib/farm-engine';
 import { getTodayDateString } from '@/lib/time';
 
 export const POST = withUserRateLimit(
-  'game:submit',
+  'farm:action',
   async (request: NextRequest, user) => {
     try {
-      const canAct = await checkActionCooldown(user.id);
-      if (!canAct) {
-        return NextResponse.json(
-          { success: false, message: '操作太频繁，请稍等' },
-          { status: 429 },
-        );
-      }
-
       const body = (await request.json().catch(() => null)) as { plotIndex?: number } | null;
       if (!body || typeof body !== 'object') {
         return NextResponse.json(

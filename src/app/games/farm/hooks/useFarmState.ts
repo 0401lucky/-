@@ -93,6 +93,23 @@ export function useFarmState(): FarmData {
   const [computedPlots, setComputedPlots] = useState<ComputedPlotState[]>([]);
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const statusSyncInFlightRef = useRef(false);
+  const actionInFlightRef = useRef(false);
+
+  const beginAction = useCallback(() => {
+    if (actionInFlightRef.current) {
+      return false;
+    }
+
+    actionInFlightRef.current = true;
+    setActionLoading(true);
+    setError(null);
+    return true;
+  }, []);
+
+  const endAction = useCallback(() => {
+    actionInFlightRef.current = false;
+    setActionLoading(false);
+  }, []);
 
   // 客户端每30秒刷新展示状态
   useEffect(() => {
@@ -201,8 +218,9 @@ export function useFarmState(): FarmData {
   }, [farmState, syncStatus]);
 
   const plant = useCallback(async (plotIndex: number, cropId: string): Promise<boolean> => {
-    setActionLoading(true);
-    setError(null);
+    if (!beginAction()) {
+      return false;
+    }
     try {
       const res = await fetch('/api/games/farm/plant', {
         method: 'POST',
@@ -220,12 +238,14 @@ export function useFarmState(): FarmData {
       setError('网络错误');
       return false;
     } finally {
-      setActionLoading(false);
+      endAction();
     }
-  }, [updateFromResponse]);
+  }, [beginAction, endAction, updateFromResponse]);
 
   const water = useCallback(async (plotIndex: number): Promise<boolean> => {
-    setActionLoading(true);
+    if (!beginAction()) {
+      return false;
+    }
     try {
       const res = await fetch('/api/games/farm/water', {
         method: 'POST',
@@ -244,12 +264,14 @@ export function useFarmState(): FarmData {
       setError('网络错误');
       return false;
     } finally {
-      setActionLoading(false);
+      endAction();
     }
-  }, [updateFromResponse]);
+  }, [beginAction, endAction, updateFromResponse]);
 
   const waterAll = useCallback(async (): Promise<number> => {
-    setActionLoading(true);
+    if (!beginAction()) {
+      return 0;
+    }
     try {
       const res = await fetch('/api/games/farm/water', {
         method: 'POST',
@@ -268,12 +290,14 @@ export function useFarmState(): FarmData {
       setError('网络错误');
       return 0;
     } finally {
-      setActionLoading(false);
+      endAction();
     }
-  }, [updateFromResponse]);
+  }, [beginAction, endAction, updateFromResponse]);
 
   const harvest = useCallback(async (plotIndex: number): Promise<HarvestResult | null> => {
-    setActionLoading(true);
+    if (!beginAction()) {
+      return null;
+    }
     try {
       const res = await fetch('/api/games/farm/harvest', {
         method: 'POST',
@@ -312,12 +336,14 @@ export function useFarmState(): FarmData {
       setError('网络错误');
       return null;
     } finally {
-      setActionLoading(false);
+      endAction();
     }
-  }, [updateFromResponse]);
+  }, [beginAction, endAction, updateFromResponse]);
 
   const harvestAllAction = useCallback(async (): Promise<BatchHarvestResult | null> => {
-    setActionLoading(true);
+    if (!beginAction()) {
+      return null;
+    }
     try {
       const res = await fetch('/api/games/farm/harvest', {
         method: 'POST',
@@ -361,12 +387,14 @@ export function useFarmState(): FarmData {
       setError('网络错误');
       return null;
     } finally {
-      setActionLoading(false);
+      endAction();
     }
-  }, [updateFromResponse]);
+  }, [beginAction, endAction, updateFromResponse]);
 
   const removeAllWitheredAction = useCallback(async (): Promise<number> => {
-    setActionLoading(true);
+    if (!beginAction()) {
+      return 0;
+    }
     try {
       const res = await fetch('/api/games/farm/remove-crop', {
         method: 'POST',
@@ -385,12 +413,14 @@ export function useFarmState(): FarmData {
       setError('网络错误');
       return 0;
     } finally {
-      setActionLoading(false);
+      endAction();
     }
-  }, [updateFromResponse]);
+  }, [beginAction, endAction, updateFromResponse]);
 
   const removePestAction = useCallback(async (plotIndex: number): Promise<boolean> => {
-    setActionLoading(true);
+    if (!beginAction()) {
+      return false;
+    }
     try {
       const res = await fetch('/api/games/farm/remove-pest', {
         method: 'POST',
@@ -409,12 +439,14 @@ export function useFarmState(): FarmData {
       setError('网络错误');
       return false;
     } finally {
-      setActionLoading(false);
+      endAction();
     }
-  }, [updateFromResponse]);
+  }, [beginAction, endAction, updateFromResponse]);
 
   const removeCropAction = useCallback(async (plotIndex: number): Promise<boolean> => {
-    setActionLoading(true);
+    if (!beginAction()) {
+      return false;
+    }
     try {
       const res = await fetch('/api/games/farm/remove-crop', {
         method: 'POST',
@@ -433,13 +465,15 @@ export function useFarmState(): FarmData {
       setError('网络错误');
       return false;
     } finally {
-      setActionLoading(false);
+      endAction();
     }
-  }, [updateFromResponse]);
+  }, [beginAction, endAction, updateFromResponse]);
 
   // 道具商店操作
   const purchaseItem = useCallback(async (itemId: string, quantity = 1): Promise<boolean> => {
-    setActionLoading(true);
+    if (!beginAction()) {
+      return false;
+    }
     try {
       const res = await fetch('/api/games/farm/shop/purchase', {
         method: 'POST',
@@ -458,12 +492,14 @@ export function useFarmState(): FarmData {
       setError('网络错误');
       return false;
     } finally {
-      setActionLoading(false);
+      endAction();
     }
-  }, [updateFromResponse]);
+  }, [beginAction, endAction, updateFromResponse]);
 
   const useItemAction = useCallback(async (itemId: string, plotIndex?: number): Promise<boolean> => {
-    setActionLoading(true);
+    if (!beginAction()) {
+      return false;
+    }
     try {
       const body: Record<string, unknown> = { itemId };
       if (plotIndex !== undefined) body.plotIndex = plotIndex;
@@ -484,9 +520,9 @@ export function useFarmState(): FarmData {
       setError('网络错误');
       return false;
     } finally {
-      setActionLoading(false);
+      endAction();
     }
-  }, [updateFromResponse]);
+  }, [beginAction, endAction, updateFromResponse]);
 
   // 初始加载
   useEffect(() => {

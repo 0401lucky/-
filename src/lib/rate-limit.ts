@@ -137,6 +137,7 @@ export const RATE_LIMITS = {
   'game:start': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:game:start' },
   'game:submit': { windowSeconds: 60, maxRequests: 60, prefix: 'ratelimit:game:submit' },
   'slot:spin': { windowSeconds: 60, maxRequests: 120, prefix: 'ratelimit:slot:spin' },
+  'farm:action': { windowSeconds: 60, maxRequests: 240, prefix: 'ratelimit:farm:action' },
 
   // 兑换码相关
   'project:claim': { windowSeconds: 60, maxRequests: 10, prefix: 'ratelimit:project:claim' },
