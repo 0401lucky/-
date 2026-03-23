@@ -9,13 +9,13 @@ import {
   replaceNativeDailyStats,
   replaceNativeGameRecords,
   replaceNativePointLogs,
+  replaceNativeSlotDailyScores,
   replaceNativeUserCheckins,
   resetNativeHotStoreData,
   setNativeExtraSpinCount,
   setNativeHotStoreReady,
   setNativeUserCards,
   setNativeUserPoints,
-  upsertNativeSlotDailyScores,
   updateNativeSystemConfig,
   upsertNativeUser,
 } from "./hot-d1";
@@ -23,6 +23,7 @@ import {
 const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 const CHECKIN_SCAN_DAYS = 400;
 const RECENT_STATE_DAYS = 2;
+const SLOT_RANKING_MIGRATION_DAYS = 2;
 const MAX_POINT_LOGS = 100;
 const MAX_GAME_RECORDS = 200;
 
@@ -70,14 +71,6 @@ function getChinaDateString(offsetDays: number): string {
   return `${year}-${month}-${day}`;
 }
 
-function getChinaDateStringFromTimestamp(timestamp: number): string {
-  const d = new Date(timestamp + CHINA_TZ_OFFSET_MS);
-  const year = d.getUTCFullYear();
-  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 async function getLegacyCheckins(userId: number): Promise<Array<{ date: string; createdAt: number }>> {
   const dates = Array.from({ length: CHECKIN_SCAN_DAYS }, (_, index) => getChinaDateString(index));
   const values = await kv.mget<unknown>(...dates.map((date) => `user:checkin:${userId}:${date}`));
@@ -115,6 +108,39 @@ async function getLegacyGameRecords<T>(key: string): Promise<T[]> {
   return (await kv.lrange<T>(key, 0, MAX_GAME_RECORDS - 1)) ?? [];
 }
 
+async function getLegacySlotDailyScores(date: string): Promise<Array<{ userId: number; score: number }>> {
+  const raw = await kv.zrange<string | number>(
+    `slot:rank:daily:${date}`,
+    0,
+    999,
+    { rev: true, withScores: true },
+  );
+
+  const entries: Array<{ userId: number; score: number }> = [];
+  for (let index = 0; index < raw.length; index += 2) {
+    const member = raw[index];
+    const score = raw[index + 1];
+    if (member === undefined || score === undefined) {
+      continue;
+    }
+
+    const memberStr = typeof member === "string" ? member : String(member);
+    const matched = memberStr.match(/^u:(\d+)$/);
+    const userId = matched ? Number(matched[1]) : Number(memberStr);
+    const scoreValue = typeof score === "number" ? score : Number(score);
+    if (!Number.isFinite(userId) || !Number.isFinite(scoreValue)) {
+      continue;
+    }
+
+    entries.push({
+      userId,
+      score: Math.floor(scoreValue),
+    });
+  }
+
+  return entries;
+}
+
 export async function migrateNativeHotData(
   options: NativeHotMigrationOptions = {},
 ): Promise<NativeHotMigrationResult> {
@@ -130,8 +156,7 @@ export async function migrateNativeHotData(
   const users = allUsers.slice(offset, offset + limit);
   const nextOffset = offset + users.length < allUsers.length ? offset + users.length : null;
   const hasMore = nextOffset !== null;
-  const todayDate = getChinaDateString(0);
-  const slotTodayMap = new Map<number, number>();
+  const rankingDates = Array.from({ length: SLOT_RANKING_MIGRATION_DAYS }, (_, index) => getChinaDateString(index));
   let pointsLogs = 0;
   let checkins = 0;
   let gameRecords = 0;
@@ -143,6 +168,11 @@ export async function migrateNativeHotData(
     const legacyConfig = await kv.get<Record<string, unknown>>("system:config");
     if (legacyConfig) {
       await updateNativeSystemConfig(legacyConfig);
+    }
+
+    for (const date of rankingDates) {
+      const slotScores = await getLegacySlotDailyScores(date);
+      await replaceNativeSlotDailyScores(date, slotScores);
     }
   }
 
@@ -173,20 +203,6 @@ export async function migrateNativeHotData(
       const records = await getLegacyGameRecords<Record<string, unknown>>(keyFactory(userId));
       migratedRecords.set(gameType, records);
       gameRecords += records.length;
-
-      if (gameType === "slot") {
-        for (const record of records) {
-          const createdAt = Number(record.createdAt ?? 0);
-          if (!Number.isFinite(createdAt) || getChinaDateStringFromTimestamp(createdAt) !== todayDate) {
-            continue;
-          }
-          const rawPoints = Number(record.pointsDelta ?? record.pointsEarned ?? 0);
-          if (!Number.isFinite(rawPoints) || rawPoints <= 0) {
-            continue;
-          }
-          slotTodayMap.set(userId, (slotTodayMap.get(userId) ?? 0) + Math.floor(rawPoints));
-        }
-      }
     }
 
     if (dryRun) {
@@ -215,10 +231,6 @@ export async function migrateNativeHotData(
   }
 
   if (!dryRun) {
-    await upsertNativeSlotDailyScores(
-      todayDate,
-      Array.from(slotTodayMap.entries()).map(([userId, score]) => ({ userId, score })),
-    );
     if (options.finalize === true) {
       await setNativeHotStoreReady(true);
     }
@@ -239,6 +251,6 @@ export async function migrateNativeHotData(
     gameRecords,
     dailyPointsRows,
     dailyStatsRows,
-    slotRankingUsers: slotTodayMap.size,
+    slotRankingUsers: 0,
   };
 }
