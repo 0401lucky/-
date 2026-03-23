@@ -184,7 +184,7 @@ describe('Game performance route handlers', () => {
     expect(data).toEqual({ success: false, message: '未登录' });
   });
 
-  it('抽奖接口直接返回中奖记录与最新页面状态', async () => {
+  it('抽奖接口直接返回中奖记录并异步刷新页面状态', async () => {
     const response = await lotterySpinPOST(
       new NextRequest('http://localhost/api/lottery/spin', {
         method: 'POST',
@@ -197,9 +197,7 @@ describe('Game performance route handlers', () => {
     expect(mockSpinLotteryAuto).toHaveBeenCalledWith(1, 'alice', {
       bypassSpinLimit: false,
     });
-    expect(mockGetLotteryPageState).toHaveBeenCalledWith(1, {
-      bypassSpinLimit: false,
-    });
+    expect(mockGetLotteryPageState).not.toHaveBeenCalled();
     expect(mockRecordUser).toHaveBeenCalledWith(1, 'alice');
     expect(mockCreateUserNotification).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -208,6 +206,12 @@ describe('Game performance route handlers', () => {
         title: '抽奖中奖通知',
       })
     );
+    expect(data).toMatchObject({
+      success: true,
+      record: {
+        tierName: '5刀福利',
+      },
+    });
   });
 
   it('弹珠机结算接口直接透传即时余额与日统计', async () => {

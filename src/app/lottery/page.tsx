@@ -52,6 +52,7 @@ interface UserData {
   id: number;
   username: string;
   displayName: string;
+  isAdmin?: boolean;
 }
 
 interface LotteryRecord {
@@ -76,11 +77,6 @@ interface LotterySpinResponse {
   success: boolean;
   message?: string;
   record?: LotteryRecord;
-  state?: {
-    canSpin: boolean;
-    hasSpunToday: boolean;
-    extraSpins: number;
-  };
 }
 
 interface RankingUser {
@@ -363,11 +359,18 @@ export default function LotteryPage() {
             setShowResultModal(true);
 
             setRecords((prev) => [record, ...prev].slice(0, 20));
-            if (data.state) {
-              setCanSpin(Boolean(data.state.canSpin));
-              setHasSpunToday(Boolean(data.state.hasSpunToday));
-              setExtraSpins(typeof data.state.extraSpins === 'number' ? data.state.extraSpins : 0);
+            if (user?.isAdmin) {
+              setCanSpin(true);
+            } else if (extraSpins > 0) {
+              setExtraSpins((prev) => Math.max(0, prev - 1));
+              setCanSpin(true);
+              setHasSpunToday(true);
+            } else {
+              setHasSpunToday(true);
+              setCanSpin(false);
             }
+
+            void fetchData();
             void fetchRanking();
 
             import('canvas-confetti').then(({ default: confetti }) => {
@@ -430,7 +433,7 @@ export default function LotteryPage() {
       setSpinning(false);
       setSpinPhase('idle');
     }
-  }, [canSpin, spinning, startPreSpinAnimation, clearPreSpinAnimation, fetchRanking]);
+  }, [canSpin, spinning, startPreSpinAnimation, clearPreSpinAnimation, fetchData, fetchRanking, extraSpins, user?.isAdmin]);
 
   const handleCopy = () => {
     if (result?.code) {
