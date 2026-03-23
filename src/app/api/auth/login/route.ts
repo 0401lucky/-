@@ -7,6 +7,7 @@ import {
   getLoginLockStatus,
   recordLoginFailure,
 } from "@/lib/auth";
+import { hasNativeHotStoreBinding, upsertNativeUser } from "@/lib/hot-d1";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
 const TRUSTED_IP_HEADERS = ["cf-connecting-ip", "true-client-ip", "x-real-ip"] as const;
@@ -139,6 +140,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, message: "登录失败：无法获取用户信息" },
         { status: 500 }
+      );
+    }
+
+    if (hasNativeHotStoreBinding()) {
+      await upsertNativeUser(
+        result.user.id,
+        result.user.username,
+        Date.now(),
       );
     }
 

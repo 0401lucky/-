@@ -7,6 +7,14 @@ import { getTodayDateString } from './time';
 import { getDailyPointsLimit } from './config';
 import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
 import {
+  acquireNativeLock,
+  completeNativeGameSettlement,
+  getNativeGameCooldownRemaining,
+  isNativeHotStoreReady,
+  listNativeGameRecords,
+  releaseNativeLock,
+} from './hot-d1';
+import {
   SLOT_BET_OPTIONS,
   SLOT_EARN_BASE,
   SLOT_MAX_RECORD_ENTRIES,
@@ -168,6 +176,10 @@ function resolveBetCost(configBetCost: unknown, requestedBetCost?: unknown): num
 }
 
 export async function getCooldownRemainingMs(userId: number): Promise<number> {
+  if (await isNativeHotStoreReady()) {
+    return (await getNativeGameCooldownRemaining(userId, 'slot')) * 1000;
+  }
+
   const lastSpinAt = await kv.get<number>(SLOT_LAST_SPIN_AT_KEY(userId));
   if (!lastSpinAt) return 0;
 
@@ -178,6 +190,9 @@ export async function getCooldownRemainingMs(userId: number): Promise<number> {
 export async function getSlotRecords(userId: number, limit: number = SLOT_STATUS_RECORD_LIMIT): Promise<SlotSpinRecord[]> {
   const safeLimit = Math.max(0, Math.min(limit, SLOT_MAX_RECORD_ENTRIES));
   if (safeLimit === 0) return [];
+  if (await isNativeHotStoreReady()) {
+    return listNativeGameRecords<SlotSpinRecord>(userId, 'slot', safeLimit);
+  }
   const records = await kv.lrange<SlotSpinRecord>(SLOT_RECORDS_KEY(userId), 0, safeLimit - 1);
   return records ?? [];
 }
@@ -230,9 +245,12 @@ export async function spinSlot(
     }
   | { success: false; message: string; cooldownRemaining?: number }
 > {
+  const useNativeHotStore = await isNativeHotStoreReady();
   const lockKey = SLOT_SPIN_LOCK_KEY(userId);
-  const lockAcquired = await kv.set(lockKey, '1', { ex: SPIN_LOCK_TTL, nx: true });
-  if (!lockAcquired) {
+  const lockAcquired = useNativeHotStore
+    ? await acquireNativeLock(lockKey, '1', SPIN_LOCK_TTL)
+    : await kv.set(lockKey, '1', { ex: SPIN_LOCK_TTL, nx: true });
+  if (lockAcquired !== true && lockAcquired !== 'OK') {
     return { success: false, message: '操作太快啦，请稍候再试' };
   }
 
@@ -323,16 +341,30 @@ export async function spinSlot(
         now,
       );
 
-      const tasks: Promise<unknown>[] = [
-        kv.set(SLOT_LAST_SPIN_AT_KEY(userId), now, { ex: 60 }),
-        kv.lpush(SLOT_RECORDS_KEY(userId), record),
-      ];
-      if (pointsDelta > 0) {
-        tasks.push(kv.zincrby(SLOT_RANK_DAILY_KEY(date), pointsDelta, `u:${userId}`));
-        tasks.push(kv.expire(SLOT_RANK_DAILY_KEY(date), DAILY_STATS_TTL));
+      if (useNativeHotStore) {
+        await completeNativeGameSettlement(
+          { ...record, score: payout },
+          '',
+          payout,
+          newDailyStats.pointsEarned,
+          Math.ceil(SLOT_SPIN_COOLDOWN_MS / 1000),
+          {
+            slotRankingDate: date,
+            slotRankingDelta: pointsDelta > 0 ? pointsDelta : 0,
+          },
+        );
+      } else {
+        const tasks: Promise<unknown>[] = [
+          kv.set(SLOT_LAST_SPIN_AT_KEY(userId), now, { ex: 60 }),
+          kv.lpush(SLOT_RECORDS_KEY(userId), record),
+        ];
+        if (pointsDelta > 0) {
+          tasks.push(kv.zincrby(SLOT_RANK_DAILY_KEY(date), pointsDelta, `u:${userId}`));
+          tasks.push(kv.expire(SLOT_RANK_DAILY_KEY(date), DAILY_STATS_TTL));
+        }
+        await Promise.all(tasks);
+        await kv.ltrim(SLOT_RECORDS_KEY(userId), 0, SLOT_MAX_RECORD_ENTRIES - 1);
       }
-      await Promise.all(tasks);
-      await kv.ltrim(SLOT_RECORDS_KEY(userId), 0, SLOT_MAX_RECORD_ENTRIES - 1);
 
       const pointsLimitReached = newDailyStats.pointsEarned >= dailyLimit;
 
@@ -387,17 +419,31 @@ export async function spinSlot(
       now,
     );
 
-    const tasks: Promise<unknown>[] = [
-      kv.set(SLOT_LAST_SPIN_AT_KEY(userId), now, { ex: 60 }),
-      kv.lpush(SLOT_RECORDS_KEY(userId), record),
-    ];
     const pointsDelta = pointsResult.pointsEarned;
-    if (pointsDelta > 0) {
-      tasks.push(kv.zincrby(SLOT_RANK_DAILY_KEY(date), pointsDelta, `u:${userId}`));
-      tasks.push(kv.expire(SLOT_RANK_DAILY_KEY(date), DAILY_STATS_TTL));
+    if (useNativeHotStore) {
+      await completeNativeGameSettlement(
+        { ...record, score: payout },
+        '',
+        payout,
+        newDailyStats.pointsEarned,
+        Math.ceil(SLOT_SPIN_COOLDOWN_MS / 1000),
+        {
+          slotRankingDate: date,
+          slotRankingDelta: pointsDelta > 0 ? pointsDelta : 0,
+        },
+      );
+    } else {
+      const tasks: Promise<unknown>[] = [
+        kv.set(SLOT_LAST_SPIN_AT_KEY(userId), now, { ex: 60 }),
+        kv.lpush(SLOT_RECORDS_KEY(userId), record),
+      ];
+      if (pointsDelta > 0) {
+        tasks.push(kv.zincrby(SLOT_RANK_DAILY_KEY(date), pointsDelta, `u:${userId}`));
+        tasks.push(kv.expire(SLOT_RANK_DAILY_KEY(date), DAILY_STATS_TTL));
+      }
+      await Promise.all(tasks);
+      await kv.ltrim(SLOT_RECORDS_KEY(userId), 0, SLOT_MAX_RECORD_ENTRIES - 1);
     }
-    await Promise.all(tasks);
-    await kv.ltrim(SLOT_RECORDS_KEY(userId), 0, SLOT_MAX_RECORD_ENTRIES - 1);
 
     const pointsLimitReached = newDailyStats.pointsEarned >= dailyLimit;
 
@@ -414,6 +460,10 @@ export async function spinSlot(
       },
     };
   } finally {
-    await kv.del(lockKey);
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey);
+    }
   }
 }

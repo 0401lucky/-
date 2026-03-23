@@ -5,6 +5,15 @@ import { nanoid } from 'nanoid';
 import { getTodayDateString } from './time';
 import type { PointsLog, PointsSource } from './types/store';
 import { withUserEconomyLock } from './economy-lock';
+import {
+  addNativeGamePointsWithLimit,
+  applyNativePointsDelta,
+  getNativeDailyGamePoints,
+  getNativePointsLogs,
+  getNativeUserPoints,
+  isNativeHotStoreReady,
+  trimNativePointLogs,
+} from './hot-d1';
 
 // Key 格式
 const POINTS_KEY = (userId: number) => `points:${userId}`;
@@ -19,6 +28,10 @@ const DAILY_EARNED_TTL = 48 * 60 * 60; // 48小时
  * 获取用户积分余额
  */
 export async function getUserPoints(userId: number): Promise<number> {
+  if (await isNativeHotStoreReady()) {
+    return getNativeUserPoints(userId);
+  }
+
   const points = await kv.get<number>(POINTS_KEY(userId));
   return points ?? 0;
 }
@@ -37,6 +50,19 @@ export async function addPoints(
   }
 
   return withUserEconomyLock(userId, async () => {
+    if (await isNativeHotStoreReady()) {
+      const logId = nanoid();
+      const result = await applyNativePointsDelta(
+        userId,
+        amount,
+        source,
+        description,
+        logId,
+      );
+      await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
+      return { success: true, balance: result.balance };
+    }
+
     const newBalance = await kv.incrby(POINTS_KEY(userId), amount);
 
     const log: PointsLog = {
@@ -96,6 +122,21 @@ export async function addGamePointsWithLimit(
   const dailyEarnedKey = DAILY_EARNED_KEY(userId, date);
 
   return withUserEconomyLock(userId, async () => {
+    if (await isNativeHotStoreReady()) {
+      const result = await addNativeGamePointsWithLimit(
+        userId,
+        score,
+        dailyLimit,
+        source,
+        description,
+        nanoid(),
+      );
+      if (result.pointsEarned > 0) {
+        await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
+      }
+      return result;
+    }
+
     const dailyEarnedRaw = await kv.get<number>(dailyEarnedKey);
     const dailyEarned = dailyEarnedRaw ?? 0;
     const remaining = Math.max(0, dailyLimit - dailyEarned);
@@ -148,6 +189,9 @@ export async function addGamePointsWithLimit(
  */
 export async function getDailyEarnedPoints(userId: number): Promise<number> {
   const date = getTodayDateString();
+  if (await isNativeHotStoreReady()) {
+    return getNativeDailyGamePoints(userId, date);
+  }
   const earned = await kv.get<number>(DAILY_EARNED_KEY(userId, date));
   return earned ?? 0;
 }
@@ -166,6 +210,21 @@ export async function deductPoints(
   }
 
   return withUserEconomyLock(userId, async () => {
+    if (await isNativeHotStoreReady()) {
+      const result = await applyNativePointsDelta(
+        userId,
+        -amount,
+        source,
+        description,
+        nanoid(),
+      );
+      if (!result.success) {
+        return result;
+      }
+      await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
+      return { success: true, balance: result.balance };
+    }
+
     const pointsKey = POINTS_KEY(userId);
     const currentRaw = await kv.get<number>(pointsKey);
     const current = currentRaw ?? 0;
@@ -219,6 +278,22 @@ export async function applyPointsDelta(
   const logId = nanoid();
 
   return withUserEconomyLock(userId, async () => {
+    if (await isNativeHotStoreReady()) {
+      const result = await applyNativePointsDelta(
+        userId,
+        delta,
+        source,
+        description.trim(),
+        logId,
+        now,
+      );
+      if (!result.success) {
+        return result;
+      }
+      await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
+      return { success: true, balance: result.balance };
+    }
+
     const pointsKey = POINTS_KEY(userId);
     const logKey = POINTS_LOG_KEY(userId);
     const currentRaw = await kv.get<number>(pointsKey);
@@ -252,6 +327,10 @@ export async function getPointsLogs(
   userId: number,
   limit: number = 20
 ): Promise<PointsLog[]> {
+  if (await isNativeHotStoreReady()) {
+    return getNativePointsLogs(userId, limit);
+  }
+
   const logs = await kv.lrange<PointsLog>(POINTS_LOG_KEY(userId), 0, limit - 1);
   return logs ?? [];
 }

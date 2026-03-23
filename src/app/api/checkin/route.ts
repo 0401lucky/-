@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import { checkinToNewApi } from "@/lib/new-api";
 import { grantCheckinLocalRewards, hasCheckedInToday, getExtraSpinCount } from "@/lib/kv";
+import { isNativeHotStoreReady } from "@/lib/hot-d1";
 import { cookies } from "next/headers";
 import { withUserRateLimit } from "@/lib/rate-limit";
 
@@ -33,13 +34,17 @@ export const POST = withUserRateLimit(
   'checkin',
   async (_request, user) => {
     try {
-      // 1. 检查本地签到状态
-      const alreadyCheckedIn = await hasCheckedInToday(user.id);
-      if (alreadyCheckedIn) {
-        return NextResponse.json(
-          { success: false, message: "今天已经签到过了" },
-          { status: 400 }
-        );
+      const useNativeHotStore = await isNativeHotStoreReady();
+
+      // 1. 检查本地签到状态（native 热路径下交给原子写入处理，避免额外一次读）
+      if (!useNativeHotStore) {
+        const alreadyCheckedIn = await hasCheckedInToday(user.id);
+        if (alreadyCheckedIn) {
+          return NextResponse.json(
+            { success: false, message: "今天已经签到过了" },
+            { status: 400 }
+          );
+        }
       }
 
       // 2. 调用 New API 签到

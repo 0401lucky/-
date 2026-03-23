@@ -1,6 +1,11 @@
 // src/lib/config.ts - 系统配置管理
 
 import { kv } from '@/lib/d1-kv';
+import {
+  getNativeSystemConfig,
+  isNativeHotStoreReady,
+  updateNativeSystemConfig,
+} from './hot-d1';
 
 // 配置 Key
 const SYSTEM_CONFIG_KEY = 'system:config';
@@ -24,6 +29,14 @@ const DEFAULT_CONFIG: SystemConfig = {
  * 获取系统配置
  */
 export async function getSystemConfig(): Promise<SystemConfig> {
+  if (await isNativeHotStoreReady()) {
+    const config = await getNativeSystemConfig<SystemConfig>(DEFAULT_CONFIG);
+    return {
+      ...DEFAULT_CONFIG,
+      ...config,
+    };
+  }
+
   const config = await kv.get<SystemConfig>(SYSTEM_CONFIG_KEY);
   
   if (!config) {
@@ -53,6 +66,11 @@ export async function updateSystemConfig(
     updatedBy,
   };
   
+  if (await isNativeHotStoreReady()) {
+    await updateNativeSystemConfig(newConfig);
+    return newConfig;
+  }
+
   await kv.set(SYSTEM_CONFIG_KEY, newConfig);
   
   return newConfig;

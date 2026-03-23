@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kv } from '@/lib/d1-kv';
+import { isNativeHotStoreReady, listNativeSlotDailyRanking } from '@/lib/hot-d1';
 import { getTodayDateString } from '@/lib/time';
 
 const PUBLIC_RANKING_CACHE_CONTROL = 'public, max-age=15, stale-while-revalidate=45';
@@ -19,6 +20,19 @@ export async function GET(request: NextRequest) {
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(50, Math.trunc(limitRaw))) : 10;
 
     const date = searchParams.get('date') || getTodayDateString();
+
+    if (await isNativeHotStoreReady()) {
+      const leaderboard = await listNativeSlotDailyRanking(date, limit);
+      const response = NextResponse.json({
+        success: true,
+        data: {
+          date,
+          leaderboard,
+        },
+      });
+      response.headers.set('Cache-Control', PUBLIC_RANKING_CACHE_CONTROL);
+      return response;
+    }
 
     const raw = await kv.zrange<string | number>(
       SLOT_RANK_DAILY_KEY(date),
@@ -66,4 +80,3 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: false, message: '获取排行榜失败' }, { status: 500 });
   }
 }
-

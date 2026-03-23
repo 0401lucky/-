@@ -6,6 +6,18 @@ import { nanoid } from 'nanoid';
 import { addGamePointsWithLimit } from './points';
 import { getDailyPointsLimit } from './config';
 import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
+import {
+  acquireNativeLock,
+  cancelNativeGameSession,
+  completeNativeGameSettlement,
+  createNativeGameSession,
+  getNativeActiveGameSession,
+  getNativeGameCooldownRemaining,
+  getNativeGameSession,
+  isNativeHotStoreReady,
+  listNativeGameRecords,
+  releaseNativeLock,
+} from './hot-d1';
 export { getDailyStats };
 import type {
   MemoryDifficulty,
@@ -215,6 +227,9 @@ export function calculateScore(
  * 检查用户是否在冷却中
  */
 export async function isInCooldown(userId: number): Promise<boolean> {
+  if (await isNativeHotStoreReady()) {
+    return (await getNativeGameCooldownRemaining(userId, 'memory')) > 0;
+  }
   const cooldown = await kv.get(COOLDOWN_KEY(userId));
   return cooldown !== null;
 }
@@ -223,6 +238,9 @@ export async function isInCooldown(userId: number): Promise<boolean> {
  * 获取冷却剩余时间（秒）
  */
 export async function getCooldownRemaining(userId: number): Promise<number> {
+  if (await isNativeHotStoreReady()) {
+    return getNativeGameCooldownRemaining(userId, 'memory');
+  }
   const ttl = await kv.ttl(COOLDOWN_KEY(userId));
   return ttl > 0 ? ttl : 0;
 }
@@ -234,6 +252,8 @@ export async function startMemoryGame(
   userId: number,
   difficulty: MemoryDifficulty
 ): Promise<{ success: boolean; session?: MemoryGameSession; message?: string }> {
+  const useNativeHotStore = await isNativeHotStoreReady();
+
   // 检查冷却
   if (await isInCooldown(userId)) {
     const remaining = await getCooldownRemaining(userId);
@@ -244,21 +264,31 @@ export async function startMemoryGame(
   }
 
   // 检查是否有未完成的会话
-  const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
-  if (activeSessionId) {
-    const activeSession = await kv.get<MemoryGameSession>(SESSION_KEY(activeSessionId));
-    
-    if (!activeSession) {
-      await kv.del(ACTIVE_SESSION_KEY(userId));
-    } else if (activeSession.status === 'playing') {
-      if (Date.now() < activeSession.expiresAt) {
-        return {
-          success: false,
-          message: '你已有正在进行的游戏',
-        };
+  if (useNativeHotStore) {
+    const activeSession = await getNativeActiveGameSession<MemoryGameSession>(userId, 'memory');
+    if (activeSession?.status === 'playing' && Date.now() < activeSession.expiresAt) {
+      return {
+        success: false,
+        message: '你已有正在进行的游戏',
+      };
+    }
+  } else {
+    const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
+    if (activeSessionId) {
+      const activeSession = await kv.get<MemoryGameSession>(SESSION_KEY(activeSessionId));
+      
+      if (!activeSession) {
+        await kv.del(ACTIVE_SESSION_KEY(userId));
+      } else if (activeSession.status === 'playing') {
+        if (Date.now() < activeSession.expiresAt) {
+          return {
+            success: false,
+            message: '你已有正在进行的游戏',
+          };
+        }
+        await kv.del(SESSION_KEY(activeSessionId));
+        await kv.del(ACTIVE_SESSION_KEY(userId));
       }
-      await kv.del(SESSION_KEY(activeSessionId));
-      await kv.del(ACTIVE_SESSION_KEY(userId));
     }
   }
 
@@ -282,9 +312,13 @@ export async function startMemoryGame(
     status: 'playing',
   };
 
-  // 保存会话
-  await kv.set(SESSION_KEY(session.id), session, { ex: SESSION_TTL });
-  await kv.set(ACTIVE_SESSION_KEY(userId), session.id, { ex: SESSION_TTL });
+  if (useNativeHotStore) {
+    await createNativeGameSession(session);
+  } else {
+    // 保存会话
+    await kv.set(SESSION_KEY(session.id), session, { ex: SESSION_TTL });
+    await kv.set(ACTIVE_SESSION_KEY(userId), session.id, { ex: SESSION_TTL });
+  }
 
   return { success: true, session };
 }
@@ -293,6 +327,10 @@ export async function startMemoryGame(
  * 获取当前活跃会话
  */
 export async function getActiveMemorySession(userId: number): Promise<MemoryGameSession | null> {
+  if (await isNativeHotStoreReady()) {
+    return getNativeActiveGameSession<MemoryGameSession>(userId, 'memory');
+  }
+
   const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
   if (!activeSessionId) return null;
   
@@ -309,6 +347,14 @@ export async function getActiveMemorySession(userId: number): Promise<MemoryGame
  * 取消游戏
  */
 export async function cancelMemoryGame(userId: number): Promise<{ success: boolean; message?: string }> {
+  if (await isNativeHotStoreReady()) {
+    const cancelled = await cancelNativeGameSession(userId, 'memory', COOLDOWN_TTL);
+    if (!cancelled) {
+      return { success: false, message: '没有正在进行的游戏' };
+    }
+    return { success: true };
+  }
+
   const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
   
   if (!activeSessionId) {
@@ -432,25 +478,38 @@ export async function submitMemoryResult(
   userId: number,
   result: MemoryGameResultSubmit
 ): Promise<{ success: boolean; record?: MemoryGameRecord; pointsEarned?: number; message?: string }> {
+  const useNativeHotStore = await isNativeHotStoreReady();
   // 幂等锁
   const lockKey = SUBMIT_LOCK_KEY(result.sessionId);
-  const lockAcquired = await kv.set(lockKey, '1', { ex: SESSION_TTL, nx: true });
-  if (!lockAcquired) {
+  const lockAcquired = useNativeHotStore
+    ? await acquireNativeLock(lockKey, '1', SESSION_TTL)
+    : await kv.set(lockKey, '1', { ex: SESSION_TTL, nx: true });
+  if (lockAcquired !== true && lockAcquired !== 'OK') {
     return { success: false, message: '请勿重复提交' };
   }
 
   // 获取会话
-  const session = await kv.get<MemoryGameSession>(SESSION_KEY(result.sessionId));
+  const session = useNativeHotStore
+    ? await getNativeGameSession<MemoryGameSession>(result.sessionId)
+    : await kv.get<MemoryGameSession>(SESSION_KEY(result.sessionId));
 
   if (!session) {
-    await kv.del(lockKey);
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey);
+    }
     return { success: false, message: '游戏会话不存在或已过期' };
   }
 
   const normalizedSession = normalizeSession(session);
 
   if (normalizedSession.userId !== userId) {
-    await kv.del(lockKey);
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey);
+    }
     return { success: false, message: '会话不属于该用户' };
   }
 
@@ -459,27 +518,43 @@ export async function submitMemoryResult(
   }
 
   if (normalizedSession.firstFlippedCard !== null && normalizedSession.firstFlippedCard !== undefined) {
-    await kv.del(lockKey);
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey);
+    }
     return { success: false, message: '存在未完成翻牌，请完成后再结算' };
   }
 
   if (Date.now() > normalizedSession.expiresAt) {
-    await kv.del(SESSION_KEY(result.sessionId));
-    await kv.del(lockKey);
+    if (!useNativeHotStore) {
+      await kv.del(SESSION_KEY(result.sessionId));
+      await kv.del(lockKey);
+    } else {
+      await releaseNativeLock(lockKey, '1');
+    }
     return { success: false, message: '游戏会话已过期' };
   }
 
   // 验证结果
   const validation = validateMemoryResult(normalizedSession, result);
   if (!validation.valid) {
-    await kv.del(lockKey);
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey);
+    }
     return { success: false, message: validation.message };
   }
 
   // 服务端时长校验
   const serverDuration = Date.now() - normalizedSession.startedAt;
   if (serverDuration < MIN_GAME_DURATION) {
-    await kv.del(lockKey);
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey);
+    }
     return { success: false, message: '游戏时长过短' };
   }
 
@@ -487,7 +562,11 @@ export async function submitMemoryResult(
   const authoritativeMoves = normalizedSession.moveLog ?? [];
 
   if (result.moves.length > 0 && result.moves.length !== authoritativeMoves.length) {
-    await kv.del(lockKey);
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey);
+    }
     return { success: false, message: '提交步数与服务端记录不一致' };
   }
 
@@ -501,7 +580,11 @@ export async function submitMemoryResult(
         expected.card2 !== actual.card2 ||
         expected.matched !== actual.matched
       ) {
-        await kv.del(lockKey);
+        if (useNativeHotStore) {
+          await releaseNativeLock(lockKey, '1');
+        } else {
+          await kv.del(lockKey);
+        }
         return { success: false, message: '提交步数与服务端记录不一致' };
       }
     }
@@ -536,16 +619,26 @@ export async function submitMemoryResult(
     createdAt: Date.now(),
   };
 
-  // [Perf] 清理会话、冷却、统计并行执行
-  await Promise.all([
-    kv.del(SESSION_KEY(result.sessionId)),
-    kv.del(ACTIVE_SESSION_KEY(userId)),
-    kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
-    incrementSharedDailyStats(userId, score, pointsResult.dailyEarned),
-    kv.lpush(RECORDS_KEY(userId), record).then(() =>
-      kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)
-    ),
-  ]);
+  if (useNativeHotStore) {
+    await completeNativeGameSettlement(
+      record,
+      result.sessionId,
+      score,
+      pointsResult.dailyEarned,
+      COOLDOWN_TTL,
+    );
+  } else {
+    // [Perf] 清理会话、冷却、统计并行执行
+    await Promise.all([
+      kv.del(SESSION_KEY(result.sessionId)),
+      kv.del(ACTIVE_SESSION_KEY(userId)),
+      kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
+      incrementSharedDailyStats(userId, score, pointsResult.dailyEarned),
+      kv.lpush(RECORDS_KEY(userId), record).then(() =>
+        kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)
+      ),
+    ]);
+  }
 
   return { success: true, record, pointsEarned };
 }
@@ -557,6 +650,10 @@ export async function getMemoryRecords(
   userId: number,
   limit: number = 20
 ): Promise<MemoryGameRecord[]> {
+  if (await isNativeHotStoreReady()) {
+    return listNativeGameRecords<MemoryGameRecord>(userId, 'memory', limit);
+  }
+
   const records = await kv.lrange<MemoryGameRecord>(RECORDS_KEY(userId), 0, limit - 1);
   return records ?? [];
 }
@@ -569,18 +666,23 @@ export async function flipMemoryCard(
   sessionId: string,
   cardIndex: number
 ): Promise<{ success: boolean; data?: MemoryFlipResult; message?: string }> {
+  const useNativeHotStore = await isNativeHotStoreReady();
   if (!Number.isInteger(cardIndex)) {
     return { success: false, message: '无效的卡片索引' };
   }
 
   const lockKey = FLIP_LOCK_KEY(sessionId);
-  const lockAcquired = await kv.set(lockKey, '1', { ex: FLIP_LOCK_TTL, nx: true });
-  if (!lockAcquired) {
+  const lockAcquired = useNativeHotStore
+    ? await acquireNativeLock(lockKey, '1', FLIP_LOCK_TTL)
+    : await kv.set(lockKey, '1', { ex: FLIP_LOCK_TTL, nx: true });
+  if (lockAcquired !== true && lockAcquired !== 'OK') {
     return { success: false, message: '翻牌处理中，请稍后再试' };
   }
 
   try {
-    const session = await kv.get<MemoryGameSession>(SESSION_KEY(sessionId));
+    const session = useNativeHotStore
+      ? await getNativeGameSession<MemoryGameSession>(sessionId)
+      : await kv.get<MemoryGameSession>(SESSION_KEY(sessionId));
     if (!session) {
       return { success: false, message: '游戏会话不存在或已过期' };
     }
@@ -596,8 +698,10 @@ export async function flipMemoryCard(
     }
 
     if (Date.now() > normalizedSession.expiresAt) {
-      await kv.del(SESSION_KEY(sessionId));
-      await kv.del(ACTIVE_SESSION_KEY(userId));
+      if (!useNativeHotStore) {
+        await kv.del(SESSION_KEY(sessionId));
+        await kv.del(ACTIVE_SESSION_KEY(userId));
+      }
       return { success: false, message: '游戏会话已过期' };
     }
 
@@ -628,8 +732,12 @@ export async function flipMemoryCard(
         firstFlippedCard: cardIndex,
       };
 
-      const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
-      await kv.set(SESSION_KEY(sessionId), nextSession, { ex: ttlSeconds });
+      if (useNativeHotStore) {
+        await createNativeGameSession(nextSession);
+      } else {
+        const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
+        await kv.set(SESSION_KEY(sessionId), nextSession, { ex: ttlSeconds });
+      }
 
       return {
         success: true,
@@ -649,8 +757,12 @@ export async function flipMemoryCard(
         ...normalizedSession,
         firstFlippedCard: null,
       };
-      const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
-      await kv.set(SESSION_KEY(sessionId), repairedSession, { ex: ttlSeconds });
+      if (useNativeHotStore) {
+        await createNativeGameSession(repairedSession);
+      } else {
+        const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
+        await kv.set(SESSION_KEY(sessionId), repairedSession, { ex: ttlSeconds });
+      }
       return { success: false, message: '会话状态异常，请重试' };
     }
 
@@ -683,8 +795,12 @@ export async function flipMemoryCard(
       moveLog: newMoveLog,
     };
 
-    const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
-    await kv.set(SESSION_KEY(sessionId), nextSession, { ex: ttlSeconds });
+    if (useNativeHotStore) {
+      await createNativeGameSession(nextSession);
+    } else {
+      const ttlSeconds = Math.max(1, Math.ceil((normalizedSession.expiresAt - now) / 1000));
+      await kv.set(SESSION_KEY(sessionId), nextSession, { ex: ttlSeconds });
+    }
 
     return {
       success: true,
@@ -702,10 +818,13 @@ export async function flipMemoryCard(
     };
   } finally {
     try {
-      await kv.del(lockKey);
+      if (useNativeHotStore) {
+        await releaseNativeLock(lockKey, '1');
+      } else {
+        await kv.del(lockKey);
+      }
     } catch (lockReleaseError) {
       console.error('Memory flip lock release failed:', lockReleaseError);
     }
   }
 }
-

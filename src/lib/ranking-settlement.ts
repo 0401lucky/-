@@ -6,6 +6,16 @@ import {
   getAllGamesLeaderboardByRange,
   type OverallLeaderboardEntry,
 } from './rankings';
+import {
+  acquireNativeLock,
+  getNativeSettlementRecord,
+  isNativeHotStoreReady,
+  listNativeSettlementHistory as listNativeSettlementHistoryRows,
+  releaseNativeLock,
+  releaseNativeSettlementRewardClaim,
+  saveNativeSettlementRecord,
+  tryClaimNativeSettlementReward,
+} from './hot-d1';
 
 const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 const LOCK_TTL_SECONDS = 60;
@@ -287,12 +297,15 @@ async function settleSingleReward(
   }
 
   const rewardKey = SETTLEMENT_REWARDED_KEY(period, range.startAt, range.endAt, winner.userId);
-  const lockResult = await kv.set(rewardKey, String(processedAt), {
-    nx: true,
-    ex: REWARD_KEY_TTL_SECONDS,
-  });
+  const useNativeHotStore = await isNativeHotStoreReady();
+  const lockResult = useNativeHotStore
+    ? await tryClaimNativeSettlementReward(period, range.startAt, range.endAt, winner.userId, processedAt)
+    : await kv.set(rewardKey, String(processedAt), {
+      nx: true,
+      ex: REWARD_KEY_TTL_SECONDS,
+    });
 
-  if (lockResult !== 'OK') {
+  if (lockResult !== true && lockResult !== 'OK') {
     return { ...base, reason: 'already_rewarded' };
   }
 
@@ -318,7 +331,11 @@ async function settleSingleReward(
       balance: pointsResult.balance,
     };
   } catch (error) {
-    await kv.del(rewardKey);
+    if (useNativeHotStore) {
+      await releaseNativeSettlementRewardClaim(period, range.startAt, range.endAt, winner.userId);
+    } else {
+      await kv.del(rewardKey);
+    }
     const reason = error instanceof Error ? error.message.slice(0, 200) : 'unknown_error';
     return {
       ...base,
@@ -336,10 +353,18 @@ async function getSettlementRecord(
   period: RankingSettlementPeriod,
   range: SettlementRange,
 ): Promise<RankingSettlementRecord | null> {
+  if (await isNativeHotStoreReady()) {
+    return (await getNativeSettlementRecord(period, range.startAt, range.endAt)) as RankingSettlementRecord | null;
+  }
   return kv.get<RankingSettlementRecord>(SETTLEMENT_RECORD_KEY(period, range.startAt, range.endAt));
 }
 
 async function saveSettlementRecord(record: RankingSettlementRecord): Promise<void> {
+  if (await isNativeHotStoreReady()) {
+    await saveNativeSettlementRecord(record);
+    return;
+  }
+
   await Promise.all([
     kv.set(SETTLEMENT_RECORD_KEY(record.period, record.periodStart, record.periodEnd), record),
     kv.zadd(SETTLEMENT_INDEX_KEY(record.period), {
@@ -408,6 +433,7 @@ async function retryFailedRewards(
 export async function settleRankingPeriod(input: SettleRankingInput): Promise<SettleRankingResult> {
   const range = getPreviousSettlementRange(input.period, input.referenceTime);
   const recordKey = SETTLEMENT_RECORD_KEY(input.period, range.startAt, range.endAt);
+  const useNativeHotStore = await isNativeHotStoreReady();
 
   const existing = await getSettlementRecord(input.period, range);
   if (existing && !input.retryFailed) {
@@ -419,16 +445,20 @@ export async function settleRankingPeriod(input: SettleRankingInput): Promise<Se
   }
 
   const lockKey = SETTLEMENT_LOCK_KEY(input.period, range.startAt, range.endAt);
-  const lockOk = await kv.set(lockKey, String(Date.now()), {
-    nx: true,
-    ex: LOCK_TTL_SECONDS,
-  });
-  if (lockOk !== 'OK') {
+  const lockOk = useNativeHotStore
+    ? await acquireNativeLock(lockKey, '1', LOCK_TTL_SECONDS)
+    : await kv.set(lockKey, String(Date.now()), {
+      nx: true,
+      ex: LOCK_TTL_SECONDS,
+    });
+  if (lockOk !== true && lockOk !== 'OK') {
     throw new Error('结算任务正在进行中，请稍后重试');
   }
 
   try {
-    const latest = await kv.get<RankingSettlementRecord>(recordKey);
+    const latest = useNativeHotStore
+      ? await getNativeSettlementRecord(input.period, range.startAt, range.endAt) as RankingSettlementRecord | null
+      : await kv.get<RankingSettlementRecord>(recordKey);
     if (latest) {
       if (input.retryFailed) {
         const retriedRecord = await retryFailedRewards(latest, input, range);
@@ -500,7 +530,11 @@ export async function settleRankingPeriod(input: SettleRankingInput): Promise<Se
       record,
     };
   } finally {
-    await kv.del(lockKey);
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey);
+    }
   }
 }
 
@@ -531,6 +565,16 @@ export async function listRankingSettlementHistory(
 ): Promise<RankingSettlementHistoryResult> {
   const page = normalizePage(options.page);
   const limit = normalizeLimit(options.limit);
+
+  if (await isNativeHotStoreReady()) {
+    const offset = (page - 1) * limit;
+    const result = await listNativeSettlementHistoryRows(period, offset, limit);
+    return {
+      period,
+      pagination: buildPagination(page, limit, result.total),
+      items: result.items as RankingSettlementRecord[],
+    };
+  }
 
   const indexKey = SETTLEMENT_INDEX_KEY(period);
   const totalRaw = await kv.zcard(indexKey);

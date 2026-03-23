@@ -15,6 +15,18 @@ import type {
 // 常量配置
 import { getDailyPointsLimit } from './config';
 import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
+import {
+  acquireNativeLock,
+  cancelNativeGameSession,
+  completeNativeGameSettlement,
+  createNativeGameSession,
+  getNativeActiveGameSession,
+  getNativeGameCooldownRemaining,
+  getNativeGameSession,
+  isNativeHotStoreReady,
+  listNativeGameRecords,
+  releaseNativeLock,
+} from './hot-d1';
 export { getDailyStats };
 const SESSION_TTL = 5 * 60; // 5分钟
 const COOLDOWN_TTL = 5; // 5秒
@@ -49,6 +61,9 @@ function generateSeed(): string {
  * 检查用户是否在冷却中
  */
 export async function isInCooldown(userId: number): Promise<boolean> {
+  if (await isNativeHotStoreReady()) {
+    return (await getNativeGameCooldownRemaining(userId, 'pachinko')) > 0;
+  }
   const cooldown = await kv.get(COOLDOWN_KEY(userId));
   return cooldown !== null;
 }
@@ -57,6 +72,9 @@ export async function isInCooldown(userId: number): Promise<boolean> {
  * 获取冷却剩余时间（秒）
  */
 export async function getCooldownRemaining(userId: number): Promise<number> {
+  if (await isNativeHotStoreReady()) {
+    return getNativeGameCooldownRemaining(userId, 'pachinko');
+  }
   const ttl = await kv.ttl(COOLDOWN_KEY(userId));
   return ttl > 0 ? ttl : 0;
 }
@@ -67,6 +85,8 @@ export async function getCooldownRemaining(userId: number): Promise<number> {
 export async function startGame(
   userId: number
 ): Promise<{ success: boolean; session?: GameSession; message?: string }> {
+  const useNativeHotStore = await isNativeHotStoreReady();
+
   // 检查冷却
   if (await isInCooldown(userId)) {
     const remaining = await getCooldownRemaining(userId);
@@ -77,24 +97,34 @@ export async function startGame(
   }
 
   // 检查是否有未完成的会话
-  const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
-  if (activeSessionId) {
-    const activeSession = await kv.get<GameSession>(SESSION_KEY(activeSessionId));
-    
-    // 如果会话不存在（已被 TTL 删除），清理 active key
-    if (!activeSession) {
-      await kv.del(ACTIVE_SESSION_KEY(userId));
-    } else if (activeSession.status === 'playing') {
-      // 检查会话是否过期
-      if (Date.now() < activeSession.expiresAt) {
-        return {
-          success: false,
-          message: '你已有正在进行的游戏',
-        };
+  if (useNativeHotStore) {
+    const activeSession = await getNativeActiveGameSession<GameSession>(userId, 'pachinko');
+    if (activeSession?.status === 'playing' && Date.now() < activeSession.expiresAt) {
+      return {
+        success: false,
+        message: '你已有正在进行的游戏',
+      };
+    }
+  } else {
+    const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
+    if (activeSessionId) {
+      const activeSession = await kv.get<GameSession>(SESSION_KEY(activeSessionId));
+      
+      // 如果会话不存在（已被 TTL 删除），清理 active key
+      if (!activeSession) {
+        await kv.del(ACTIVE_SESSION_KEY(userId));
+      } else if (activeSession.status === 'playing') {
+        // 检查会话是否过期
+        if (Date.now() < activeSession.expiresAt) {
+          return {
+            success: false,
+            message: '你已有正在进行的游戏',
+          };
+        }
+        // 会话已过期，删除旧会话
+        await kv.del(SESSION_KEY(activeSessionId));
+        await kv.del(ACTIVE_SESSION_KEY(userId));
       }
-      // 会话已过期，删除旧会话
-      await kv.del(SESSION_KEY(activeSessionId));
-      await kv.del(ACTIVE_SESSION_KEY(userId));
     }
   }
 
@@ -111,8 +141,12 @@ export async function startGame(
   };
 
   // 保存会话
-  await kv.set(SESSION_KEY(session.id), session, { ex: SESSION_TTL });
-  await kv.set(ACTIVE_SESSION_KEY(userId), session.id, { ex: SESSION_TTL });
+  if (useNativeHotStore) {
+    await createNativeGameSession(session);
+  } else {
+    await kv.set(SESSION_KEY(session.id), session, { ex: SESSION_TTL });
+    await kv.set(ACTIVE_SESSION_KEY(userId), session.id, { ex: SESSION_TTL });
+  }
 
   return { success: true, session };
 }
@@ -245,23 +279,37 @@ export async function submitGameResult(
   dailyStats?: Awaited<ReturnType<typeof incrementSharedDailyStats>>;
   message?: string;
 }> {
+  const useNativeHotStore = await isNativeHotStoreReady();
+
   // 幂等锁：防止重复提交
   const lockKey = SUBMIT_LOCK_KEY(result.sessionId);
-  const lockAcquired = await kv.set(lockKey, '1', { ex: SESSION_TTL, nx: true });
-  if (!lockAcquired) {
+  const lockAcquired = useNativeHotStore
+    ? await acquireNativeLock(lockKey, '1', SESSION_TTL)
+    : await kv.set(lockKey, '1', { ex: SESSION_TTL, nx: true });
+  if (lockAcquired !== true && lockAcquired !== 'OK') {
     return { success: false, message: '请勿重复提交' };
   }
 
   // 获取会话
-  const session = await kv.get<GameSession>(SESSION_KEY(result.sessionId));
+  const session = useNativeHotStore
+    ? await getNativeGameSession<GameSession>(result.sessionId)
+    : await kv.get<GameSession>(SESSION_KEY(result.sessionId));
 
   if (!session) {
-    await kv.del(lockKey); // 释放幂等锁，允许重试
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey); // 释放幂等锁，允许重试
+    }
     return { success: false, message: '游戏会话不存在或已过期' };
   }
 
   if (session.userId !== userId) {
-    await kv.del(lockKey); // 释放幂等锁
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey); // 释放幂等锁
+    }
     return { success: false, message: '会话不属于该用户' };
   }
 
@@ -271,22 +319,34 @@ export async function submitGameResult(
 
   // 检查会话是否过期
   if (Date.now() > session.expiresAt) {
-    await kv.del(SESSION_KEY(result.sessionId));
-    await kv.del(lockKey); // 释放幂等锁
+    if (!useNativeHotStore) {
+      await kv.del(SESSION_KEY(result.sessionId));
+      await kv.del(lockKey); // 释放幂等锁
+    } else {
+      await releaseNativeLock(lockKey, '1');
+    }
     return { success: false, message: '游戏会话已过期' };
   }
 
   // 验证游戏结果
   const validation = validateGameResult(result);
   if (!validation.valid) {
-    await kv.del(lockKey); // 释放幂等锁，允许重试
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey); // 释放幂等锁，允许重试
+    }
     return { success: false, message: validation.message };
   }
 
   // 服务端时长校验（使用服务端计算的真实时长）
   const serverDuration = Date.now() - session.startedAt;
   if (serverDuration < MIN_GAME_DURATION) {
-    await kv.del(lockKey); // 释放幂等锁，允许重试
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey); // 释放幂等锁，允许重试
+    }
     return { success: false, message: '游戏时长过短' };
   }
 
@@ -299,7 +359,11 @@ export async function submitGameResult(
       await kv.expire(CHEAT_DAILY_KEY(userId, date), ttlSeconds);
     }
 
-    await kv.del(lockKey);
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey);
+    }
     const lockMessage = suspiciousCount >= MAX_SUSPICIOUS_SUBMITS_PER_DAY
       ? '检测到异常提交行为，今日已限制继续提交'
       : `检测到异常提交行为（${anomalyReason}）`;
@@ -334,15 +398,25 @@ export async function submitGameResult(
 
   const dailyStats = await incrementSharedDailyStats(userId, result.score, pointsResult.dailyEarned);
 
-  // [Perf] 清理会话、冷却与记录写入并行执行，lpush/ltrim 保持顺序
-  await Promise.all([
-    kv.del(SESSION_KEY(result.sessionId)),
-    kv.del(ACTIVE_SESSION_KEY(userId)),
-    kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
-    kv.lpush(RECORDS_KEY(userId), record).then(() =>
-      kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)
-    ),
-  ]);
+  if (useNativeHotStore) {
+    await completeNativeGameSettlement(
+      record,
+      result.sessionId,
+      result.score,
+      pointsResult.dailyEarned,
+      COOLDOWN_TTL,
+    );
+  } else {
+    // [Perf] 清理会话、冷却与记录写入并行执行，lpush/ltrim 保持顺序
+    await Promise.all([
+      kv.del(SESSION_KEY(result.sessionId)),
+      kv.del(ACTIVE_SESSION_KEY(userId)),
+      kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
+      kv.lpush(RECORDS_KEY(userId), record).then(() =>
+        kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)
+      ),
+    ]);
+  }
 
   return {
     success: true,
@@ -360,6 +434,10 @@ export async function getGameRecords(
   userId: number,
   limit: number = 20
 ): Promise<GameRecord[]> {
+  if (await isNativeHotStoreReady()) {
+    return listNativeGameRecords<GameRecord>(userId, 'pachinko', limit);
+  }
+
   const records = await kv.lrange<GameRecord>(RECORDS_KEY(userId), 0, limit - 1);
   return records ?? [];
 }
@@ -368,6 +446,10 @@ export async function getGameRecords(
  * 获取用户当前活跃会话
  */
 export async function getActiveSession(userId: number): Promise<GameSession | null> {
+  if (await isNativeHotStoreReady()) {
+    return getNativeActiveGameSession<GameSession>(userId, 'pachinko');
+  }
+
   const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
   if (!activeSessionId) return null;
   
@@ -385,6 +467,14 @@ export async function getActiveSession(userId: number): Promise<GameSession | nu
  * 取消/放弃当前游戏
  */
 export async function cancelGame(userId: number): Promise<{ success: boolean; message?: string }> {
+  if (await isNativeHotStoreReady()) {
+    const cancelled = await cancelNativeGameSession(userId, 'pachinko', COOLDOWN_TTL);
+    if (!cancelled) {
+      return { success: false, message: '没有正在进行的游戏' };
+    }
+    return { success: true };
+  }
+
   const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
   
   if (!activeSessionId) {

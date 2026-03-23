@@ -6,6 +6,18 @@ import { nanoid } from 'nanoid';
 import { addGamePointsWithLimit } from './points';
 import { getDailyPointsLimit } from './config';
 import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
+import {
+  acquireNativeLock,
+  cancelNativeGameSession,
+  completeNativeGameSettlement,
+  createNativeGameSession,
+  getNativeActiveGameSession,
+  getNativeGameCooldownRemaining,
+  getNativeGameSession,
+  isNativeHotStoreReady,
+  listNativeGameRecords,
+  releaseNativeLock,
+} from './hot-d1';
 export { getDailyStats };
 import { MATCH3_DEFAULT_CONFIG, simulateMatch3Game } from './match3-engine';
 import type { GameSessionStatus } from './types/game';
@@ -63,21 +75,33 @@ function generateSeed(): string {
 }
 
 export async function isInCooldown(userId: number): Promise<boolean> {
+  if (await isNativeHotStoreReady()) {
+    return (await getNativeGameCooldownRemaining(userId, 'match3')) > 0;
+  }
   const cooldown = await kv.get(COOLDOWN_KEY(userId));
   return cooldown !== null;
 }
 
 export async function getCooldownRemaining(userId: number): Promise<number> {
+  if (await isNativeHotStoreReady()) {
+    return getNativeGameCooldownRemaining(userId, 'match3');
+  }
   const ttl = await kv.ttl(COOLDOWN_KEY(userId));
   return ttl > 0 ? ttl : 0;
 }
 
 export async function getMatch3Records(userId: number, limit: number = 20): Promise<Match3GameRecord[]> {
+  if (await isNativeHotStoreReady()) {
+    return listNativeGameRecords<Match3GameRecord>(userId, 'match3', limit);
+  }
   const records = await kv.lrange<Match3GameRecord>(RECORDS_KEY(userId), 0, limit - 1);
   return records ?? [];
 }
 
 export async function getActiveMatch3Session(userId: number): Promise<Match3GameSession | null> {
+  if (await isNativeHotStoreReady()) {
+    return getNativeActiveGameSession<Match3GameSession>(userId, 'match3');
+  }
   const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
   if (!activeSessionId) return null;
 
@@ -93,21 +117,29 @@ export async function startMatch3Game(
   userId: number,
   config?: Partial<Match3Config>
 ): Promise<{ success: boolean; session?: Match3GameSession; message?: string }> {
+  const useNativeHotStore = await isNativeHotStoreReady();
   if (await isInCooldown(userId)) {
     const remaining = await getCooldownRemaining(userId);
     return { success: false, message: `请等待 ${remaining} 秒后再开始游戏` };
   }
 
-  const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
-  if (activeSessionId) {
-    const activeSession = await kv.get<Match3GameSession>(SESSION_KEY(activeSessionId));
-    if (!activeSession) {
-      await kv.del(ACTIVE_SESSION_KEY(userId));
-    } else if (activeSession.status === 'playing' && Date.now() < activeSession.expiresAt) {
+  if (useNativeHotStore) {
+    const activeSession = await getNativeActiveGameSession<Match3GameSession>(userId, 'match3');
+    if (activeSession?.status === 'playing' && Date.now() < activeSession.expiresAt) {
       return { success: false, message: '你已有正在进行的游戏' };
-    } else {
-      await kv.del(SESSION_KEY(activeSessionId));
-      await kv.del(ACTIVE_SESSION_KEY(userId));
+    }
+  } else {
+    const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
+    if (activeSessionId) {
+      const activeSession = await kv.get<Match3GameSession>(SESSION_KEY(activeSessionId));
+      if (!activeSession) {
+        await kv.del(ACTIVE_SESSION_KEY(userId));
+      } else if (activeSession.status === 'playing' && Date.now() < activeSession.expiresAt) {
+        return { success: false, message: '你已有正在进行的游戏' };
+      } else {
+        await kv.del(SESSION_KEY(activeSessionId));
+        await kv.del(ACTIVE_SESSION_KEY(userId));
+      }
     }
   }
 
@@ -124,13 +156,22 @@ export async function startMatch3Game(
     status: 'playing',
   };
 
-  await kv.set(SESSION_KEY(session.id), session, { ex: SESSION_TTL });
-  await kv.set(ACTIVE_SESSION_KEY(userId), session.id, { ex: SESSION_TTL });
+  if (useNativeHotStore) {
+    await createNativeGameSession(session);
+  } else {
+    await kv.set(SESSION_KEY(session.id), session, { ex: SESSION_TTL });
+    await kv.set(ACTIVE_SESSION_KEY(userId), session.id, { ex: SESSION_TTL });
+  }
 
   return { success: true, session };
 }
 
 export async function cancelMatch3Game(userId: number): Promise<{ success: boolean; message?: string }> {
+  if (await isNativeHotStoreReady()) {
+    const cancelled = await cancelNativeGameSession(userId, 'match3', COOLDOWN_TTL);
+    return cancelled ? { success: true } : { success: false, message: '没有正在进行的游戏' };
+  }
+
   const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
   if (!activeSessionId) return { success: false, message: '没有正在进行的游戏' };
 
@@ -172,22 +213,35 @@ export async function submitMatch3Result(
   userId: number,
   payload: Match3GameResultSubmit
 ): Promise<{ success: boolean; record?: Match3GameRecord; pointsEarned?: number; message?: string }> {
+  const useNativeHotStore = await isNativeHotStoreReady();
   const payloadCheck = validateSubmitPayload(payload);
   if (!payloadCheck.ok) return { success: false, message: payloadCheck.message };
 
   const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
-  const lockAcquired = await kv.set(lockKey, '1', { ex: SESSION_TTL, nx: true });
-  if (!lockAcquired) {
+  const lockAcquired = useNativeHotStore
+    ? await acquireNativeLock(lockKey, '1', SESSION_TTL)
+    : await kv.set(lockKey, '1', { ex: SESSION_TTL, nx: true });
+  if (lockAcquired !== true && lockAcquired !== 'OK') {
     return { success: false, message: '请勿重复提交' };
   }
 
-  const session = await kv.get<Match3GameSession>(SESSION_KEY(payload.sessionId));
+  const session = useNativeHotStore
+    ? await getNativeGameSession<Match3GameSession>(payload.sessionId)
+    : await kv.get<Match3GameSession>(SESSION_KEY(payload.sessionId));
   if (!session) {
-    await kv.del(lockKey);
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey);
+    }
     return { success: false, message: '游戏会话不存在或已过期' };
   }
   if (session.userId !== userId) {
-    await kv.del(lockKey);
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey);
+    }
     return { success: false, message: '会话不属于该用户' };
   }
   if (session.status !== 'playing') {
@@ -195,21 +249,33 @@ export async function submitMatch3Result(
     return { success: false, message: '游戏会话已结束' };
   }
   if (Date.now() > session.expiresAt) {
-    await kv.del(SESSION_KEY(payload.sessionId));
-    await kv.del(lockKey);
+    if (!useNativeHotStore) {
+      await kv.del(SESSION_KEY(payload.sessionId));
+      await kv.del(lockKey);
+    } else {
+      await releaseNativeLock(lockKey, '1');
+    }
     return { success: false, message: '游戏会话已过期' };
   }
 
   const serverDuration = Date.now() - session.startedAt;
   if (serverDuration < MIN_GAME_DURATION) {
-    await kv.del(lockKey);
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey);
+    }
     return { success: false, message: '游戏时长过短' };
   }
 
   // 服务端复算
   const sim = simulateMatch3Game(session.seed, session.config, payload.moves, { maxMoves: MAX_MOVES_PER_GAME });
   if (!sim.ok) {
-    await kv.del(lockKey);
+    if (useNativeHotStore) {
+      await releaseNativeLock(lockKey, '1');
+    } else {
+      await kv.del(lockKey);
+    }
     return { success: false, message: sim.message };
   }
 
@@ -238,18 +304,28 @@ export async function submitMatch3Result(
     createdAt: Date.now(),
   };
 
-  // [Perf] 清理会话、冷却、统计并行执行
-  await Promise.all([
-    kv.del(SESSION_KEY(payload.sessionId)),
-    kv.del(ACTIVE_SESSION_KEY(userId)),
-    kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
-    incrementSharedDailyStats(userId, score, pointsResult.dailyEarned),
-    kv.lpush(RECORDS_KEY(userId), record).then(() =>
-      kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)
-    ),
-  ]);
+  if (useNativeHotStore) {
+    await incrementSharedDailyStats(userId, score, pointsResult.dailyEarned);
+    await completeNativeGameSettlement(
+      record,
+      payload.sessionId,
+      score,
+      pointsResult.dailyEarned,
+      COOLDOWN_TTL,
+    );
+  } else {
+    // [Perf] 清理会话、冷却、统计并行执行
+    await Promise.all([
+      kv.del(SESSION_KEY(payload.sessionId)),
+      kv.del(ACTIVE_SESSION_KEY(userId)),
+      kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
+      incrementSharedDailyStats(userId, score, pointsResult.dailyEarned),
+      kv.lpush(RECORDS_KEY(userId), record).then(() =>
+        kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)
+      ),
+    ]);
+  }
 
   return { success: true, record, pointsEarned: pointsResult.pointsEarned };
 }
-
 

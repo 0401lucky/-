@@ -3,6 +3,18 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getTodayDateString, getSecondsUntilMidnight } from "./time";
 import { withUserEconomyLock } from "./economy-lock";
 import { createDefaultUserCards, normalizeUserCards, type UserCards } from "./cards/draw";
+import {
+  getNativeExtraSpinCount,
+  getNativeUserCards,
+  grantNativeCheckinRewards,
+  hasNativeCheckedIn,
+  hasNativeHotStoreBinding,
+  incrementNativeExtraSpinCount,
+  isNativeHotStoreReady,
+  listNativeUsers,
+  setNativeUserCards,
+  upsertNativeUser,
+} from "./hot-d1";
 
 const KV_TIMEOUT_PATTERNS = ["timeout", "timed out", "deadline exceeded", "etimedout", "econnaborted"];
 const KV_NETWORK_PATTERNS = [
@@ -912,6 +924,10 @@ export async function recordUser(userId: number, username: string): Promise<void
   const usersAllKey = 'users:all';
   const now = Date.now();
 
+  if (hasNativeHotStoreBinding()) {
+    await upsertNativeUser(userId, username, now);
+  }
+
   const existing = await kv.get<User>(userKey);
 
   const user: User = existing
@@ -931,6 +947,15 @@ export async function recordUser(userId: number, username: string): Promise<void
 }
 // 获取所有用户
 export async function getAllUsers(): Promise<User[]> {
+  if (await isNativeHotStoreReady()) {
+    const users = await listNativeUsers();
+    return users.map((user) => ({
+      id: user.id,
+      username: user.username,
+      firstSeen: user.firstSeen,
+    }));
+  }
+
   const userIds = await kv.smembers('users:all') as number[];
   if (userIds.length === 0) return [];
 
@@ -990,12 +1015,20 @@ export async function checkDailyLimit(userId: number): Promise<boolean> {
 
 // 额外抽奖次数管理
 export async function getExtraSpinCount(userId: number): Promise<number> {
+  if (await isNativeHotStoreReady()) {
+    return getNativeExtraSpinCount(userId);
+  }
+
   const count = await kv.get<number>(`user:extra_spins:${userId}`);
   return count || 0;
 }
 
 // [C3修复] 原子性增加额外次数
 export async function addExtraSpinCount(userId: number, count: number): Promise<number> {
+  if (await isNativeHotStoreReady()) {
+    return incrementNativeExtraSpinCount(userId, count);
+  }
+
   // 使用 INCRBY 原子增加
   const newCount = await kv.incrby(`user:extra_spins:${userId}`, count);
   return newCount;
@@ -1005,6 +1038,16 @@ export async function addExtraSpinCount(userId: number, count: number): Promise<
 // 返回 { success: boolean, remaining: number }
 export async function tryUseExtraSpin(userId: number): Promise<{ success: boolean; remaining: number }> {
   return withUserEconomyLock(userId, async () => {
+    if (await isNativeHotStoreReady()) {
+      const currentCount = await getNativeExtraSpinCount(userId);
+      if (currentCount <= 0) {
+        return { success: false, remaining: 0 };
+      }
+
+      const remaining = await incrementNativeExtraSpinCount(userId, -1);
+      return { success: true, remaining };
+    }
+
     const key = `user:extra_spins:${userId}`;
     const current = await kv.get<number>(key);
     const currentCount = current ?? 0;
@@ -1025,6 +1068,11 @@ export async function tryUseExtraSpin(userId: number): Promise<{ success: boolea
 
 // [C3修复] 回滚额外次数（失败补偿用）
 export async function rollbackExtraSpin(userId: number): Promise<void> {
+  if (await isNativeHotStoreReady()) {
+    await incrementNativeExtraSpinCount(userId, 1);
+    return;
+  }
+
   await kv.incrby(`user:extra_spins:${userId}`, 1);
 }
 
@@ -1034,6 +1082,9 @@ const CHECKIN_HISTORY_RETENTION_SECONDS = CHECKIN_HISTORY_RETENTION_DAYS * 24 * 
 
 export async function hasCheckedInToday(userId: number): Promise<boolean> {
   const dateStr = getTodayDateString();
+  if (await isNativeHotStoreReady()) {
+    return hasNativeCheckedIn(userId, dateStr);
+  }
   const result = await kv.get(`user:checkin:${userId}:${dateStr}`);
   return !!result;
 }
@@ -1041,6 +1092,15 @@ export async function hasCheckedInToday(userId: number): Promise<boolean> {
 export async function setCheckedInToday(userId: number): Promise<void> {
   const dateStr = getTodayDateString();
   const ttl = CHECKIN_HISTORY_RETENTION_SECONDS;
+  if (await isNativeHotStoreReady()) {
+    await grantNativeCheckinRewards(
+      userId,
+      dateStr,
+      0,
+      normalizeUserCards(await getNativeUserCards(userId)),
+    );
+    return;
+  }
   await kv.set(`user:checkin:${userId}:${dateStr}`, true, { ex: ttl });
 }
 
@@ -1054,6 +1114,31 @@ export async function grantCheckinLocalRewards(
   drawsAvailable: number;
 }> {
   return withUserEconomyLock(userId, async () => {
+    if (await isNativeHotStoreReady()) {
+      const previousCardDataRaw = await getNativeUserCards(userId);
+      const nextCardData = previousCardDataRaw === null
+        ? createDefaultUserCards(1 + cardDraws)
+        : normalizeUserCards(previousCardDataRaw);
+
+      if (previousCardDataRaw !== null) {
+        nextCardData.drawsAvailable = Math.max(0, nextCardData.drawsAvailable + cardDraws);
+      }
+
+      const nativeResult = await grantNativeCheckinRewards(
+        userId,
+        getTodayDateString(),
+        extraSpins,
+        nextCardData,
+      );
+
+      return {
+        granted: nativeResult.granted,
+        alreadyCheckedIn: !nativeResult.granted,
+        extraSpins: nativeResult.extraSpins,
+        drawsAvailable: nativeResult.cards.drawsAvailable,
+      };
+    }
+
     const dateStr = getTodayDateString();
     const ttl = CHECKIN_HISTORY_RETENTION_SECONDS;
     const checkinKey = `user:checkin:${userId}:${dateStr}`;
@@ -1115,6 +1200,21 @@ export async function addCardDraws(
   amount: number
 ): Promise<{ success: boolean; drawsAvailable: number }> {
   return withUserEconomyLock(userId, async () => {
+    if (await isNativeHotStoreReady()) {
+      const cardData = await getNativeUserCards(userId);
+
+      const nextCardData = cardData === null
+        ? createDefaultUserCards(Math.max(0, 1 + amount))
+        : normalizeUserCards(cardData);
+
+      if (cardData !== null) {
+        nextCardData.drawsAvailable = Math.max(0, nextCardData.drawsAvailable + amount);
+      }
+
+      await setNativeUserCards(userId, nextCardData);
+      return { success: true, drawsAvailable: nextCardData.drawsAvailable };
+    }
+
     const cardsKey = `cards:user:${userId}`;
     const cardData = await kv.get<Partial<UserCards>>(cardsKey);
 

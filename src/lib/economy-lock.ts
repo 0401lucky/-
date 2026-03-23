@@ -1,5 +1,10 @@
 import { randomUUID } from "crypto";
 import { kv } from "@/lib/d1-kv";
+import {
+  acquireNativeLock,
+  hasNativeHotStoreBinding,
+  releaseNativeLock,
+} from "./hot-d1";
 
 const DEFAULT_LOCK_TTL_SECONDS = 12;
 const DEFAULT_LOCK_MAX_RETRIES = 20;
@@ -31,19 +36,25 @@ export async function withKvLock<T>(
   const token = `${Date.now()}_${randomUUID()}`;
 
   for (let attempt = 0; attempt < maxRetries; attempt += 1) {
-    const acquired = await kv.set(lockKey, token, {
-      nx: true,
-      ex: ttlSeconds,
-    });
+    const acquired = hasNativeHotStoreBinding()
+      ? await acquireNativeLock(lockKey, token, ttlSeconds)
+      : await kv.set(lockKey, token, {
+        nx: true,
+        ex: ttlSeconds,
+      });
 
-    if (acquired === "OK") {
+    if (acquired === true || acquired === "OK") {
       try {
         return await handler();
       } finally {
         try {
-          const current = await kv.get<string>(lockKey);
-          if (current === token) {
-            await kv.del(lockKey);
+          if (hasNativeHotStoreBinding()) {
+            await releaseNativeLock(lockKey, token);
+          } else {
+            const current = await kv.get<string>(lockKey);
+            if (current === token) {
+              await kv.del(lockKey);
+            }
           }
         } catch (error) {
           console.error("释放分布式锁失败:", { lockKey, error });

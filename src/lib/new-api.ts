@@ -3,6 +3,7 @@ import { maskUserId, maskUsername } from './logging';
 import { getRuntimeEnvValue, sanitizeRuntimeEnvValue } from './runtime-env';
 
 let _newApiUrl: string | null = null;
+const CHECKIN_TIMEOUT_MS = 4000;
 
 const USER_QUOTA_LOCK_PREFIX = 'newapi:quota:credit:lock:';
 const USER_QUOTA_LOCK_TTL_SECONDS = 15;
@@ -175,8 +176,11 @@ export async function getUserFromNewApi(sessionCookie: string): Promise<NewApiUs
 }
 
 export async function checkinToNewApi(sessionCookie: string, userId?: number): Promise<{ success: boolean; message: string; quotaAwarded?: number }> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
   try {
     const baseUrl = getNewApiUrl();
+    const controller = new AbortController();
+    timeout = setTimeout(() => controller.abort(), CHECKIN_TIMEOUT_MS);
     const headers: Record<string, string> = {
       Cookie: sessionCookie,
     };
@@ -189,9 +193,12 @@ export async function checkinToNewApi(sessionCookie: string, userId?: number): P
     const response = await fetch(`${baseUrl}/api/user/checkin`, {
       method: "POST",
       headers,
+      signal: controller.signal,
     });
 
     const data = await response.json();
+    clearTimeout(timeout);
+    timeout = null;
     
     if (data.success) {
       // new-api 返回 { success: true, message: "签到成功", data: { quota_awarded: 12345 } }
@@ -211,8 +218,14 @@ export async function checkinToNewApi(sessionCookie: string, userId?: number): P
     console.error("Checkin error:", error);
     return {
       success: false,
-      message: "服务连接失败",
+      message: error instanceof Error && error.name === "AbortError"
+        ? "签到服务超时，请稍后重试"
+        : "服务连接失败",
     };
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
 }
 

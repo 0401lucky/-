@@ -2,6 +2,15 @@ import { cookies } from "next/headers";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "crypto";
 import { kv } from '@/lib/d1-kv';
 import { getRuntimeEnvValue, sanitizeRuntimeEnvValue } from './runtime-env';
+import {
+  blacklistNativeSession,
+  clearNativeLoginFailures,
+  getNativeLoginFailureState,
+  getNativeSessionRevocationState,
+  hasNativeHotStoreBinding,
+  recordNativeLoginFailure,
+  revokeNativeUserSessions,
+} from './hot-d1';
 
 function sanitizeEnvValue(value: string | undefined): string {
   return sanitizeRuntimeEnvValue(value);
@@ -261,6 +270,11 @@ function isValidSessionData(data: unknown): data is SessionData {
 }
 
 async function isSessionRevoked(sessionData: SessionData): Promise<boolean> {
+  if (hasNativeHotStoreBinding()) {
+    const state = await getNativeSessionRevocationState(sessionData.id, sessionData.jti);
+    return state.blacklisted || (state.revokedAfter > 0 && sessionData.iat <= state.revokedAfter);
+  }
+
   try {
     const [blacklisted, revokedAfterRaw] = await Promise.all([
       kv.get<string>(SESSION_BLACKLIST_KEY(sessionData.jti)),
@@ -312,6 +326,14 @@ export async function revokeSessionToken(token: string): Promise<void> {
   );
 
   try {
+    if (hasNativeHotStoreBinding()) {
+      await blacklistNativeSession(
+        sessionData.jti,
+        Date.now() + ttlSeconds * 1000,
+      );
+      return;
+    }
+
     await kv.set(SESSION_BLACKLIST_KEY(sessionData.jti), "1", { ex: ttlSeconds });
   } catch (error) {
     console.error("KV unavailable while revoking session token, fallback to in-memory blacklist:", error);
@@ -325,6 +347,15 @@ export async function revokeSessionToken(token: string): Promise<void> {
 export async function revokeAllUserSessions(userId: number): Promise<void> {
   const revokedAfter = Date.now();
   try {
+    if (hasNativeHotStoreBinding()) {
+      await revokeNativeUserSessions(
+        userId,
+        revokedAfter,
+        revokedAfter + SESSION_REVOKED_AFTER_TTL_SECONDS * 1000,
+      );
+      return;
+    }
+
     await kv.set(SESSION_REVOKED_AFTER_KEY(userId), String(revokedAfter), {
       ex: SESSION_REVOKED_AFTER_TTL_SECONDS,
     });
@@ -341,6 +372,17 @@ export async function getLoginLockStatus(username: string): Promise<{ locked: bo
   }
 
   try {
+    if (hasNativeHotStoreBinding()) {
+      const state = await getNativeLoginFailureState(normalizedUsername);
+      if (state?.lockUntil && state.lockUntil > Date.now()) {
+        return {
+          locked: true,
+          remainingSeconds: Math.max(1, Math.ceil((state.lockUntil - Date.now()) / 1000)),
+        };
+      }
+      return { locked: false, remainingSeconds: 0 };
+    }
+
     const ttl = await kv.ttl(LOGIN_LOCK_KEY(normalizedUsername));
     if (ttl > 0) {
       return { locked: true, remainingSeconds: ttl };
@@ -360,6 +402,15 @@ export async function recordLoginFailure(username: string): Promise<{ locked: bo
   }
 
   try {
+    if (hasNativeHotStoreBinding()) {
+      return recordNativeLoginFailure(
+        normalizedUsername,
+        LOGIN_FAIL_WINDOW_SECONDS,
+        LOGIN_FAIL_THRESHOLD,
+        LOGIN_LOCK_SECONDS,
+      );
+    }
+
     const lockStatus = await getLoginLockStatus(normalizedUsername);
     if (lockStatus.locked) {
       return { locked: true, remainingSeconds: lockStatus.remainingSeconds, attempts: LOGIN_FAIL_THRESHOLD };
@@ -394,6 +445,11 @@ export async function clearLoginFailures(username: string): Promise<void> {
   }
 
   try {
+    if (hasNativeHotStoreBinding()) {
+      await clearNativeLoginFailures(normalizedUsername);
+      return;
+    }
+
     await Promise.all([
       kv.del(LOGIN_FAIL_KEY(normalizedUsername)),
       kv.del(LOGIN_LOCK_KEY(normalizedUsername)),

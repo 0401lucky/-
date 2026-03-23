@@ -1,6 +1,10 @@
 import { kv } from '@/lib/d1-kv';
 import { NextResponse } from "next/server";
 import { getAuthUser, type AuthUser } from "./auth";
+import {
+  hasNativeHotStoreBinding,
+  incrementNativeRateLimit,
+} from "./hot-d1";
 
 export interface RateLimitConfig {
   /** 时间窗口（秒），默认 60 */
@@ -189,6 +193,10 @@ export async function checkRateLimit(
   const now = Math.floor(Date.now() / 1000);
 
   try {
+    if (hasNativeHotStoreBinding()) {
+      return await incrementNativeRateLimit(key, windowSeconds, maxRequests);
+    }
+
     return await withRateLimitLock(key, async () => {
       const currentCount = await kv.get<number>(key) ?? 0;
       const ttl = await kv.ttl(key);

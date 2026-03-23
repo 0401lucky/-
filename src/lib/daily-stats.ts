@@ -1,6 +1,11 @@
 import { kv } from '@/lib/d1-kv';
 import { getTodayDateString } from './time';
 import type { DailyGameStats } from './types/game';
+import {
+  getNativeDailyStats,
+  incrementNativeDailyStats,
+  isNativeHotStoreReady,
+} from './hot-d1';
 
 const DAILY_STATS_TTL_SECONDS = 48 * 60 * 60;
 const DAILY_STATS_KEY = (userId: number, date: string) => `game:daily:${userId}:${date}`;
@@ -18,6 +23,10 @@ function normalizeStats(raw: Record<string, unknown>, fallback: DailyGameStats):
 
 export async function getDailyStats(userId: number): Promise<DailyGameStats> {
   const date = getTodayDateString();
+  if (await isNativeHotStoreReady()) {
+    return getNativeDailyStats(userId, date);
+  }
+
   const stats = await kv.get<DailyGameStats>(DAILY_STATS_KEY(userId, date));
 
   if (stats) return stats;
@@ -40,6 +49,10 @@ export async function incrementSharedDailyStats(
 ): Promise<DailyGameStats> {
   const date = getTodayDateString();
   const key = DAILY_STATS_KEY(userId, date);
+
+  if (await isNativeHotStoreReady()) {
+    return incrementNativeDailyStats(userId, date, scoreDelta, cumulativePointsEarned, now);
+  }
 
   const fallback: DailyGameStats = {
     userId,
