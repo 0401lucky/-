@@ -4,6 +4,8 @@ import { getRuntimeEnvValue, sanitizeRuntimeEnvValue } from './runtime-env';
 
 let _newApiUrl: string | null = null;
 const CHECKIN_TIMEOUT_MS = 4000;
+const ADMIN_SESSION_CACHE_KEY = 'newapi:admin:session';
+const ADMIN_SESSION_CACHE_TTL_SECONDS = 24 * 60 * 60;
 
 const USER_QUOTA_LOCK_PREFIX = 'newapi:quota:credit:lock:';
 const USER_QUOTA_LOCK_TTL_SECONDS = 15;
@@ -85,6 +87,12 @@ export interface CreditQuotaResult {
   message: string;
   newQuota?: number;
   uncertain?: boolean;
+}
+
+interface CachedAdminSession {
+  cookies: string;
+  adminUserId: number;
+  expiresAt: number;
 }
 
 export async function loginToNewApi(username: string, password: string): Promise<{ success: boolean; message: string; cookies?: string; user?: NewApiUser }> {
@@ -239,9 +247,62 @@ let adminSessionCache: { cookies: string; expiresAt: number } | null = null;
  * 使用环境变量 NEW_API_ADMIN_USERNAME 和 NEW_API_ADMIN_PASSWORD
  */
 export async function getAdminSession(): Promise<string | null> {
+  const cached = await getAdminSessionWithUser();
+  return cached?.cookies ?? null;
+}
+
+async function readCachedAdminSession(): Promise<CachedAdminSession | null> {
+  const now = Date.now();
+  if (adminSessionWithUserCache && adminSessionWithUserCache.expiresAt > now + 5 * 60 * 1000) {
+    return {
+      cookies: adminSessionWithUserCache.cookies,
+      adminUserId: adminSessionWithUserCache.adminUserId,
+      expiresAt: adminSessionWithUserCache.expiresAt,
+    };
+  }
+
+  try {
+    const cached = await kv.get<CachedAdminSession>(ADMIN_SESSION_CACHE_KEY);
+    if (cached && cached.cookies && cached.adminUserId && cached.expiresAt > now + 5 * 60 * 1000) {
+      adminSessionWithUserCache = {
+        cookies: cached.cookies,
+        adminUserId: cached.adminUserId,
+        expiresAt: cached.expiresAt,
+      };
+      adminSessionCache = {
+        cookies: cached.cookies,
+        expiresAt: cached.expiresAt,
+      };
+      return cached;
+    }
+  } catch (error) {
+    console.error('Read cached admin session failed:', error);
+  }
+
+  return null;
+}
+
+async function writeCachedAdminSession(payload: CachedAdminSession): Promise<void> {
+  try {
+    await kv.set(ADMIN_SESSION_CACHE_KEY, payload, { ex: ADMIN_SESSION_CACHE_TTL_SECONDS });
+  } catch (error) {
+    console.error('Write cached admin session failed:', error);
+  }
+}
+
+/**
+ * 获取管理员会话（自动缓存，过期自动刷新）
+ * 使用环境变量 NEW_API_ADMIN_USERNAME 和 NEW_API_ADMIN_PASSWORD
+ */
+async function getAdminSessionSlowPath(): Promise<{ cookies: string; adminUserId: number } | null> {
   // 检查缓存是否有效（提前5分钟过期以保证安全）
   if (adminSessionCache && adminSessionCache.expiresAt > Date.now() + 5 * 60 * 1000) {
-    return adminSessionCache.cookies;
+    if (adminSessionWithUserCache) {
+      return {
+        cookies: adminSessionWithUserCache.cookies,
+        adminUserId: adminSessionWithUserCache.adminUserId,
+      };
+    }
   }
 
   const username = sanitizeEnvValue(getRuntimeEnvValue("NEW_API_ADMIN_USERNAME"));
@@ -266,150 +327,31 @@ export async function getAdminSession(): Promise<string | null> {
     // 尝试使用 session token 方式（如果 new-api 支持）
     return null;
   }
-  
-  // 缓存会话，假设有效期24小时
+  if (!result.user?.id) {
+    console.error('Admin login succeeded but no user ID returned');
+    return null;
+  }
+
+  const expiresAt = Date.now() + ADMIN_SESSION_CACHE_TTL_SECONDS * 1000;
   adminSessionCache = {
     cookies: result.cookies,
-    expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+    expiresAt,
   };
-  return result.cookies;
-}
+  adminSessionWithUserCache = {
+    cookies: result.cookies,
+    adminUserId: result.user.id,
+    expiresAt,
+  };
+  await writeCachedAdminSession({
+    cookies: result.cookies,
+    adminUserId: result.user.id,
+    expiresAt,
+  });
 
-/**
- * 直接为用户充值额度（需要管理员权限）
- * @param userId 目标用户ID（new-api中的用户ID）
- * @param dollars 美元金额
- * @returns 充值结果
- */
-export async function creditQuotaToUser(
-  userId: number,
-  dollars: number
-): Promise<CreditQuotaResult> {
-  const baseUrl = getNewApiUrl();
-  const loginResult = await getAdminSessionWithUser();
-  if (!loginResult) {
-    return { success: false, message: '管理员会话获取失败' };
-  }
-  
-  const { cookies: adminCookies, adminUserId } = loginResult;
-  const lock = await acquireUserQuotaLock(userId);
-  if (!lock) {
-    return { success: false, message: '系统繁忙，充值请求排队中，请稍后重试' };
-  }
-
-  let expectedQuota: number | undefined;
-
-  try {
-    try {
-      // 先获取用户完整信息（必须，因为 PUT 会覆盖所有字段）
-      const userResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
-        headers: {
-          Cookie: adminCookies,
-          'New-Api-User': String(adminUserId),
-        },
-      });
-      const userData = await userResponse.json();
-
-      console.log('Get user response:', { success: userData.success, userId: maskUserId(userId), hasData: !!userData.data });
-
-      if (!userData.success || !userData.data) {
-        return { success: false, message: '获取用户信息失败' };
-      }
-
-      const user = userData.data;
-      const currentQuota = user.quota || 0;
-      // 1 USD = 500000 quota units
-      const quotaToAdd = Math.floor(dollars * 500000);
-      const newQuota = currentQuota + quotaToAdd;
-      expectedQuota = newQuota;
-
-      // 更新用户额度（保留已有字段，不以默认值覆盖缺失字段）
-      const updatePayload = {
-        ...user,
-        id: userId,
-        quota: newQuota,
-      };
-      const sanitizedUpdatePayload = Object.fromEntries(
-        Object.entries(updatePayload).filter(([, value]) => value !== undefined)
-      );
-
-      const updateResponse = await fetch(`${baseUrl}/api/user/`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Cookie: adminCookies,
-          'New-Api-User': String(adminUserId),
-        },
-        body: JSON.stringify(sanitizedUpdatePayload),
-      });
-
-      let updateData;
-      try {
-        updateData = await updateResponse.json();
-      } catch (parseError) {
-        // JSON 解析失败，可能请求已成功但响应异常
-        // 重新获取用户 quota 验证是否成功
-        console.warn('Update response parse failed, verifying with GET:', parseError);
-        const verifyResult = await verifyQuotaUpdate(userId, newQuota, adminCookies, adminUserId);
-        return verifyResult;
-      }
-
-      console.log('Update user response:', { success: updateData.success, message: updateData.message, newQuota });
-
-      if (updateData.success) {
-        return {
-          success: true,
-          message: `成功充值 $${dollars}`,
-          newQuota,
-        };
-      }
-
-      // 部分 new-api 场景会出现“实际已更新，但返回 success=false / 响应异常”的情况
-      // 再次 GET 校验，避免误判为失败导致重复发放
-      const verifyResult = await verifyQuotaUpdate(userId, newQuota, adminCookies, adminUserId);
-      if (verifyResult.success || verifyResult.uncertain) {
-        return verifyResult;
-      }
-      return {
-        success: false,
-        message: updateData.message || '额度更新失败',
-      };
-    } catch (error) {
-      console.error('Credit quota error:', error);
-      // 网络错误或其他异常，但 PUT 可能已经成功执行
-      // 尝试重新获取用户 quota 验证
-      console.warn('Credit quota failed with error, attempting verification...');
-      try {
-        const nextLoginResult = await getAdminSessionWithUser();
-        if (nextLoginResult) {
-          const verifyResult = await verifyQuotaUpdate(
-            userId,
-            expectedQuota,
-            nextLoginResult.cookies,
-            nextLoginResult.adminUserId
-          );
-          if (verifyResult.uncertain) {
-            // 不确定状态，不回滚，让调用方知道
-            return {
-              success: false,
-              message: '充值结果不确定，请稍后检查余额',
-              uncertain: true,
-            };
-          }
-          return verifyResult;
-        }
-      } catch (verifyError) {
-        console.error('Verification also failed:', verifyError);
-      }
-      return {
-        success: false,
-        message: '服务连接失败，结果不确定，请检查余额',
-        uncertain: true,
-      };
-    }
-  } finally {
-    await releaseUserQuotaLock(lock);
-  }
+  return {
+    cookies: result.cookies,
+    adminUserId: result.user.id,
+  };
 }
 
 /**
@@ -463,41 +405,141 @@ async function verifyQuotaUpdate(
 let adminSessionWithUserCache: { cookies: string; adminUserId: number; expiresAt: number } | null = null;
 
 async function getAdminSessionWithUser(): Promise<{ cookies: string; adminUserId: number } | null> {
-  // 检查缓存是否有效（提前5分钟过期以保证安全）
-  if (adminSessionWithUserCache && adminSessionWithUserCache.expiresAt > Date.now() + 5 * 60 * 1000) {
-    return { cookies: adminSessionWithUserCache.cookies, adminUserId: adminSessionWithUserCache.adminUserId };
+  const cached = await readCachedAdminSession();
+  if (cached) {
+    return {
+      cookies: cached.cookies,
+      adminUserId: cached.adminUserId,
+    };
   }
 
-  const username = sanitizeEnvValue(getRuntimeEnvValue("NEW_API_ADMIN_USERNAME"));
-  const password = sanitizeEnvValue(getRuntimeEnvValue("NEW_API_ADMIN_PASSWORD"));
+  return getAdminSessionSlowPath();
+}
 
-  if (!username || !password) {
-    console.error('Admin credentials not configured');
-    return null;
+/**
+ * 直接为用户充值额度（需要管理员权限）
+ * @param userId 目标用户ID（new-api中的用户ID）
+ * @param dollars 美元金额
+ * @returns 充值结果
+ */
+export async function creditQuotaToUser(
+  userId: number,
+  dollars: number
+): Promise<CreditQuotaResult> {
+  const baseUrl = getNewApiUrl();
+  const loginResult = await getAdminSessionWithUser();
+  if (!loginResult) {
+    return { success: false, message: '管理员会话获取失败' };
   }
-
-  const result = await loginToNewApi(username, password);
   
-  if (!result.success) {
-    console.error('Admin login failed:', result.message);
-    return null;
-  }
-  
-  if (!result.cookies || !result.user?.id) {
-    console.error('Admin login succeeded but no cookies or user ID returned');
-    return null;
+  const { cookies: adminCookies, adminUserId } = loginResult;
+  const lock = await acquireUserQuotaLock(userId);
+  if (!lock) {
+    return { success: false, message: '系统繁忙，充值请求排队中，请稍后重试' };
   }
 
-  // 缓存会话，假设有效期24小时
-  adminSessionWithUserCache = {
-    cookies: result.cookies,
-    adminUserId: result.user.id,
-    expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-  };
-  
-  return {
-    cookies: result.cookies,
-    adminUserId: result.user.id,
-  };
+  let expectedQuota: number | undefined;
+
+  try {
+    try {
+      const userResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
+        headers: {
+          Cookie: adminCookies,
+          'New-Api-User': String(adminUserId),
+        },
+      });
+      const userData = await userResponse.json();
+
+      console.log('Get user response:', { success: userData.success, userId: maskUserId(userId), hasData: !!userData.data });
+
+      if (!userData.success || !userData.data) {
+        return { success: false, message: '获取用户信息失败' };
+      }
+
+      const user = userData.data;
+      const currentQuota = user.quota || 0;
+      const quotaToAdd = Math.floor(dollars * 500000);
+      const newQuota = currentQuota + quotaToAdd;
+      expectedQuota = newQuota;
+
+      const updatePayload = {
+        ...user,
+        id: userId,
+        quota: newQuota,
+      };
+      const sanitizedUpdatePayload = Object.fromEntries(
+        Object.entries(updatePayload).filter(([, value]) => value !== undefined)
+      );
+
+      const updateResponse = await fetch(`${baseUrl}/api/user/`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: adminCookies,
+          'New-Api-User': String(adminUserId),
+        },
+        body: JSON.stringify(sanitizedUpdatePayload),
+      });
+
+      let updateData;
+      try {
+        updateData = await updateResponse.json();
+      } catch (parseError) {
+        console.warn('Update response parse failed, verifying with GET:', parseError);
+        const verifyResult = await verifyQuotaUpdate(userId, newQuota, adminCookies, adminUserId);
+        return verifyResult;
+      }
+
+      console.log('Update user response:', { success: updateData.success, message: updateData.message, newQuota });
+
+      if (updateData.success) {
+        return {
+          success: true,
+          message: `成功充值 $${dollars}`,
+          newQuota,
+        };
+      }
+
+      const verifyResult = await verifyQuotaUpdate(userId, newQuota, adminCookies, adminUserId);
+      if (verifyResult.success || verifyResult.uncertain) {
+        return verifyResult;
+      }
+      return {
+        success: false,
+        message: updateData.message || '额度更新失败',
+      };
+    } catch (error) {
+      console.error('Credit quota error:', error);
+      console.warn('Credit quota failed with error, attempting verification...');
+      try {
+        const nextLoginResult = await getAdminSessionWithUser();
+        if (nextLoginResult) {
+          const verifyResult = await verifyQuotaUpdate(
+            userId,
+            expectedQuota,
+            nextLoginResult.cookies,
+            nextLoginResult.adminUserId
+          );
+          if (verifyResult.uncertain) {
+            return {
+              success: false,
+              message: '充值结果不确定，请稍后检查余额',
+              uncertain: true,
+            };
+          }
+          return verifyResult;
+        }
+      } catch (verifyError) {
+        console.error('Verification also failed:', verifyError);
+      }
+      return {
+        success: false,
+        message: '服务连接失败，结果不确定，请检查余额',
+        uncertain: true,
+      };
+    }
+  } finally {
+    await releaseUserQuotaLock(lock);
+  }
 }
 
