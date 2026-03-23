@@ -56,7 +56,7 @@ export default function CropShop({
 
         {actionLoading && (
           <div className="mx-4 mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-center text-sm text-blue-700">
-            正在种植，请稍候...
+            已加入种植队列，正在依次处理...
           </div>
         )}
 
@@ -71,7 +71,7 @@ export default function CropShop({
           {availableCrops.map((crop, index) => {
             const isUnlocked = unlockedCrops.includes(crop.id);
             const canAfford = balance >= crop.seedCost;
-            const disabled = !isUnlocked || !canAfford || actionLoading;
+            const disabled = !isUnlocked || !canAfford;
 
             return (
               <button

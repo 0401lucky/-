@@ -7,7 +7,6 @@ import { CROPS, WATER_MISS_PENALTY } from '@/lib/farm-config';
 
 interface PlotCardProps {
   plot: ComputedPlotState;
-  actionLoading: boolean;
   onPlant: () => void;
   onWater: () => void;
   onHarvest: () => void;
@@ -25,7 +24,6 @@ const stageAnimation: Record<string, string> = {
 
 export default function PlotCard({
   plot,
-  actionLoading,
   onPlant,
   onWater,
   onHarvest,
@@ -40,7 +38,6 @@ export default function PlotCard({
     return (
       <button
         onClick={onPlant}
-        disabled={actionLoading}
         className="aspect-square rounded-2xl border-2 border-dashed border-slate-200/60 bg-white/30 backdrop-blur-sm hover:border-green-400 hover:bg-green-50/50 transition-all flex flex-col items-center justify-center gap-1 group disabled:opacity-50 animate-farm-empty-breath active:scale-95"
       >
         <span className="text-2xl opacity-30 group-hover:opacity-70 transition-all group-hover:scale-110 duration-300">🌱</span>
@@ -78,7 +75,6 @@ export default function PlotCard({
       {plot.hasPest && (
         <button
           onClick={onRemovePest}
-          disabled={actionLoading}
           className="absolute top-1 right-1 z-10 animate-farm-pest"
           title="点击除虫"
         >
@@ -128,7 +124,6 @@ export default function PlotCard({
         {plot.stage === 'mature' && (
           <button
             onClick={onHarvest}
-            disabled={actionLoading}
             className="text-xs bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-2.5 py-1 rounded-full font-medium transition-all disabled:opacity-50 shadow-md shadow-amber-500/25 active:scale-90"
           >
             收获
@@ -137,7 +132,6 @@ export default function PlotCard({
         {plot.needsWater && plot.stage !== 'withered' && plot.stage !== 'mature' && (
           <button
             onClick={onWater}
-            disabled={actionLoading}
             className="text-xs bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white px-2.5 py-1 rounded-full font-medium transition-all disabled:opacity-50 shadow-md shadow-blue-500/25 active:scale-90"
           >
             浇水
@@ -146,7 +140,6 @@ export default function PlotCard({
         {plot.stage === 'withered' && (
           <button
             onClick={onRemoveCrop}
-            disabled={actionLoading}
             className="text-xs bg-gradient-to-r from-red-500 to-rose-500 hover:from-red-600 hover:to-rose-600 text-white px-2.5 py-1 rounded-full font-medium transition-all disabled:opacity-50 shadow-md shadow-red-500/25 active:scale-90"
           >
             铲除

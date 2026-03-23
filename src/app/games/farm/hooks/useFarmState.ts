@@ -45,6 +45,7 @@ interface FarmData {
   useItem: (itemId: string, plotIndex?: number) => Promise<boolean>;
   // 操作状态
   actionLoading: boolean;
+  queuedActions: number;
   lastHarvest: HarvestResult | null;
   clearLastHarvest: () => void;
   lastBatchHarvest: BatchHarvestResult | null;
@@ -87,6 +88,7 @@ export function useFarmState(): FarmData {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [queuedActions, setQueuedActions] = useState(0);
   const [lastHarvest, setLastHarvest] = useState<HarvestResult | null>(null);
   const [lastBatchHarvest, setLastBatchHarvest] = useState<BatchHarvestResult | null>(null);
   const [levelUpInfo, setLevelUpInfo] = useState<LevelUpInfo | null>(null);
@@ -94,22 +96,71 @@ export function useFarmState(): FarmData {
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const statusSyncInFlightRef = useRef(false);
   const actionInFlightRef = useRef(false);
+  const actionQueueRef = useRef<Array<{
+    key?: string;
+    run: () => Promise<unknown>;
+    resolve: (value: unknown) => void;
+    reject: (reason?: unknown) => void;
+  }>>([]);
+  const queuedActionKeysRef = useRef(new Set<string>());
 
-  const beginAction = useCallback(() => {
+  const syncActionState = useCallback(() => {
+    setActionLoading(actionInFlightRef.current || actionQueueRef.current.length > 0);
+    setQueuedActions(actionQueueRef.current.length);
+  }, []);
+
+  const processQueuedActions = useCallback(() => {
     if (actionInFlightRef.current) {
-      return false;
+      return;
+    }
+
+    const next = actionQueueRef.current.shift();
+    if (!next) {
+      syncActionState();
+      return;
     }
 
     actionInFlightRef.current = true;
-    setActionLoading(true);
     setError(null);
-    return true;
-  }, []);
+    syncActionState();
 
-  const endAction = useCallback(() => {
-    actionInFlightRef.current = false;
-    setActionLoading(false);
-  }, []);
+    void next.run()
+      .then(next.resolve)
+      .catch(next.reject)
+      .finally(() => {
+        if (next.key) {
+          queuedActionKeysRef.current.delete(next.key);
+        }
+        actionInFlightRef.current = false;
+        syncActionState();
+        processQueuedActions();
+      });
+  }, [syncActionState]);
+
+  const enqueueAction = useCallback(<T,>(
+    run: () => Promise<T>,
+    options?: { key?: string; duplicateValue: T }
+  ): Promise<T> => {
+    const key = options?.key;
+    if (key && queuedActionKeysRef.current.has(key)) {
+      return Promise.resolve(options.duplicateValue);
+    }
+
+    if (key) {
+      queuedActionKeysRef.current.add(key);
+    }
+
+    return new Promise<T>((resolve, reject) => {
+      actionQueueRef.current.push({
+        key,
+        run,
+        resolve: (value) => resolve(value as T),
+        reject,
+      });
+      syncActionState();
+      processQueuedActions();
+    });
+  }, [processQueuedActions, syncActionState]);
 
   // 客户端每30秒刷新展示状态
   useEffect(() => {
@@ -218,311 +269,279 @@ export function useFarmState(): FarmData {
   }, [farmState, syncStatus]);
 
   const plant = useCallback(async (plotIndex: number, cropId: string): Promise<boolean> => {
-    if (!beginAction()) {
-      return false;
-    }
-    try {
-      const res = await fetch('/api/games/farm/plant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plotIndex, cropId }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        setError(data.message);
+    return enqueueAction(async () => {
+      try {
+        const res = await fetch('/api/games/farm/plant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plotIndex, cropId }),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          setError(data.message);
+          return false;
+        }
+        updateFromResponse(data.data);
+        return true;
+      } catch {
+        setError('网络错误');
         return false;
       }
-      updateFromResponse(data.data);
-      return true;
-    } catch {
-      setError('网络错误');
-      return false;
-    } finally {
-      endAction();
-    }
-  }, [beginAction, endAction, updateFromResponse]);
+    }, { key: `plant:${plotIndex}`, duplicateValue: false });
+  }, [enqueueAction, updateFromResponse]);
 
   const water = useCallback(async (plotIndex: number): Promise<boolean> => {
-    if (!beginAction()) {
-      return false;
-    }
-    try {
-      const res = await fetch('/api/games/farm/water', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plotIndex }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        setError(data.message);
+    return enqueueAction(async () => {
+      try {
+        const res = await fetch('/api/games/farm/water', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plotIndex }),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          setError(data.message);
+          return false;
+        }
+        updateFromResponse(data.data);
+        setError(null);
+        return true;
+      } catch {
+        setError('网络错误');
         return false;
       }
-      updateFromResponse(data.data);
-      setError(null);
-      return true;
-    } catch {
-      setError('网络错误');
-      return false;
-    } finally {
-      endAction();
-    }
-  }, [beginAction, endAction, updateFromResponse]);
+    }, { key: `water:${plotIndex}`, duplicateValue: false });
+  }, [enqueueAction, updateFromResponse]);
 
   const waterAll = useCallback(async (): Promise<number> => {
-    if (!beginAction()) {
-      return 0;
-    }
-    try {
-      const res = await fetch('/api/games/farm/water', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ waterAll: true }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        setError(data.message);
+    return enqueueAction(async () => {
+      try {
+        const res = await fetch('/api/games/farm/water', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ waterAll: true }),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          setError(data.message);
+          return 0;
+        }
+        updateFromResponse(data.data);
+        setError(null);
+        return data.data.wateredCount ?? 0;
+      } catch {
+        setError('网络错误');
         return 0;
       }
-      updateFromResponse(data.data);
-      setError(null);
-      return data.data.wateredCount ?? 0;
-    } catch {
-      setError('网络错误');
-      return 0;
-    } finally {
-      endAction();
-    }
-  }, [beginAction, endAction, updateFromResponse]);
+    }, { key: 'waterAll', duplicateValue: 0 });
+  }, [enqueueAction, updateFromResponse]);
 
   const harvest = useCallback(async (plotIndex: number): Promise<HarvestResult | null> => {
-    if (!beginAction()) {
-      return null;
-    }
-    try {
-      const res = await fetch('/api/games/farm/harvest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plotIndex }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        setError(data.message);
+    return enqueueAction(async () => {
+      try {
+        const res = await fetch('/api/games/farm/harvest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plotIndex }),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          setError(data.message);
+          return null;
+        }
+        updateFromResponse(data.data);
+        setError(null);
+
+        const result: HarvestResult = {
+          harvest: data.data.harvest,
+          pointsEarned: data.data.pointsEarned,
+          newBalance: data.data.newBalance,
+          dailyEarned: data.data.dailyEarned,
+          limitReached: data.data.limitReached,
+          expGained: data.data.expGained,
+        };
+        setLastHarvest(result);
+
+        if (data.data.levelUp && data.data.newLevel) {
+          const TITLES: Record<number, string> = { 1: '新手农夫', 2: '勤劳农夫', 3: '资深农夫', 4: '农场主', 5: '农业大亨' };
+          setLevelUpInfo({
+            newLevel: data.data.newLevel,
+            title: TITLES[data.data.newLevel] || '',
+          });
+        }
+
+        return result;
+      } catch {
+        setError('网络错误');
         return null;
       }
-      updateFromResponse(data.data);
-      setError(null);
-
-      const result: HarvestResult = {
-        harvest: data.data.harvest,
-        pointsEarned: data.data.pointsEarned,
-        newBalance: data.data.newBalance,
-        dailyEarned: data.data.dailyEarned,
-        limitReached: data.data.limitReached,
-        expGained: data.data.expGained,
-      };
-      setLastHarvest(result);
-
-      // 检查升级
-      if (data.data.levelUp && data.data.newLevel) {
-        const TITLES: Record<number, string> = { 1: '新手农夫', 2: '勤劳农夫', 3: '资深农夫', 4: '农场主', 5: '农业大亨' };
-        setLevelUpInfo({
-          newLevel: data.data.newLevel,
-          title: TITLES[data.data.newLevel] || '',
-        });
-      }
-
-      return result;
-    } catch {
-      setError('网络错误');
-      return null;
-    } finally {
-      endAction();
-    }
-  }, [beginAction, endAction, updateFromResponse]);
+    }, { key: `harvest:${plotIndex}`, duplicateValue: null });
+  }, [enqueueAction, updateFromResponse]);
 
   const harvestAllAction = useCallback(async (): Promise<BatchHarvestResult | null> => {
-    if (!beginAction()) {
-      return null;
-    }
-    try {
-      const res = await fetch('/api/games/farm/harvest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ harvestAll: true }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        setError(data.message);
-        return null;
-      }
-      updateFromResponse(data.data);
-      setError(null);
-
-      const result: BatchHarvestResult = {
-        harvests: data.data.harvests,
-        totalPointsEarned: data.data.totalPointsEarned,
-        harvestedCount: data.data.harvestedCount,
-        newBalance: data.data.newBalance,
-        dailyEarned: data.data.dailyEarned,
-        limitReached: data.data.limitReached,
-        expGained: data.data.expGained,
-      };
-      if (result.harvestedCount <= 0) {
-        setError('当前没有成熟作物可收获');
-        return null;
-      }
-      setLastBatchHarvest(result);
-
-      // 检查升级
-      if (data.data.levelUp && data.data.newLevel) {
-        const TITLES: Record<number, string> = { 1: '新手农夫', 2: '勤劳农夫', 3: '资深农夫', 4: '农场主', 5: '农业大亨' };
-        setLevelUpInfo({
-          newLevel: data.data.newLevel,
-          title: TITLES[data.data.newLevel] || '',
+    return enqueueAction(async () => {
+      try {
+        const res = await fetch('/api/games/farm/harvest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ harvestAll: true }),
         });
-      }
+        const data = await res.json();
+        if (!data.success) {
+          setError(data.message);
+          return null;
+        }
+        updateFromResponse(data.data);
+        setError(null);
 
-      return result;
-    } catch {
-      setError('网络错误');
-      return null;
-    } finally {
-      endAction();
-    }
-  }, [beginAction, endAction, updateFromResponse]);
+        const result: BatchHarvestResult = {
+          harvests: data.data.harvests,
+          totalPointsEarned: data.data.totalPointsEarned,
+          harvestedCount: data.data.harvestedCount,
+          newBalance: data.data.newBalance,
+          dailyEarned: data.data.dailyEarned,
+          limitReached: data.data.limitReached,
+          expGained: data.data.expGained,
+        };
+        if (result.harvestedCount <= 0) {
+          setError('当前没有成熟作物可收获');
+          return null;
+        }
+        setLastBatchHarvest(result);
+
+        if (data.data.levelUp && data.data.newLevel) {
+          const TITLES: Record<number, string> = { 1: '新手农夫', 2: '勤劳农夫', 3: '资深农夫', 4: '农场主', 5: '农业大亨' };
+          setLevelUpInfo({
+            newLevel: data.data.newLevel,
+            title: TITLES[data.data.newLevel] || '',
+          });
+        }
+
+        return result;
+      } catch {
+        setError('网络错误');
+        return null;
+      }
+    }, { key: 'harvestAll', duplicateValue: null });
+  }, [enqueueAction, updateFromResponse]);
 
   const removeAllWitheredAction = useCallback(async (): Promise<number> => {
-    if (!beginAction()) {
-      return 0;
-    }
-    try {
-      const res = await fetch('/api/games/farm/remove-crop', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ removeAllWithered: true }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        setError(data.message);
+    return enqueueAction(async () => {
+      try {
+        const res = await fetch('/api/games/farm/remove-crop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ removeAllWithered: true }),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          setError(data.message);
+          return 0;
+        }
+        updateFromResponse(data.data);
+        setError(null);
+        return data.data.removedCount ?? 0;
+      } catch {
+        setError('网络错误');
         return 0;
       }
-      updateFromResponse(data.data);
-      setError(null);
-      return data.data.removedCount ?? 0;
-    } catch {
-      setError('网络错误');
-      return 0;
-    } finally {
-      endAction();
-    }
-  }, [beginAction, endAction, updateFromResponse]);
+    }, { key: 'removeAllWithered', duplicateValue: 0 });
+  }, [enqueueAction, updateFromResponse]);
 
   const removePestAction = useCallback(async (plotIndex: number): Promise<boolean> => {
-    if (!beginAction()) {
-      return false;
-    }
-    try {
-      const res = await fetch('/api/games/farm/remove-pest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plotIndex }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        setError(data.message);
+    return enqueueAction(async () => {
+      try {
+        const res = await fetch('/api/games/farm/remove-pest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plotIndex }),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          setError(data.message);
+          return false;
+        }
+        updateFromResponse(data.data);
+        setError(null);
+        return true;
+      } catch {
+        setError('网络错误');
         return false;
       }
-      updateFromResponse(data.data);
-      setError(null);
-      return true;
-    } catch {
-      setError('网络错误');
-      return false;
-    } finally {
-      endAction();
-    }
-  }, [beginAction, endAction, updateFromResponse]);
+    }, { key: `removePest:${plotIndex}`, duplicateValue: false });
+  }, [enqueueAction, updateFromResponse]);
 
   const removeCropAction = useCallback(async (plotIndex: number): Promise<boolean> => {
-    if (!beginAction()) {
-      return false;
-    }
-    try {
-      const res = await fetch('/api/games/farm/remove-crop', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plotIndex }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        setError(data.message);
+    return enqueueAction(async () => {
+      try {
+        const res = await fetch('/api/games/farm/remove-crop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plotIndex }),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          setError(data.message);
+          return false;
+        }
+        updateFromResponse(data.data);
+        setError(null);
+        return true;
+      } catch {
+        setError('网络错误');
         return false;
       }
-      updateFromResponse(data.data);
-      setError(null);
-      return true;
-    } catch {
-      setError('网络错误');
-      return false;
-    } finally {
-      endAction();
-    }
-  }, [beginAction, endAction, updateFromResponse]);
+    }, { key: `removeCrop:${plotIndex}`, duplicateValue: false });
+  }, [enqueueAction, updateFromResponse]);
 
   // 道具商店操作
   const purchaseItem = useCallback(async (itemId: string, quantity = 1): Promise<boolean> => {
-    if (!beginAction()) {
-      return false;
-    }
-    try {
-      const res = await fetch('/api/games/farm/shop/purchase', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemId, quantity }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        setError(data.message);
+    return enqueueAction(async () => {
+      try {
+        const res = await fetch('/api/games/farm/shop/purchase', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ itemId, quantity }),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          setError(data.message);
+          return false;
+        }
+        updateFromResponse(data.data);
+        setError(null);
+        return true;
+      } catch {
+        setError('网络错误');
         return false;
       }
-      updateFromResponse(data.data);
-      setError(null);
-      return true;
-    } catch {
-      setError('网络错误');
-      return false;
-    } finally {
-      endAction();
-    }
-  }, [beginAction, endAction, updateFromResponse]);
+    });
+  }, [enqueueAction, updateFromResponse]);
 
   const useItemAction = useCallback(async (itemId: string, plotIndex?: number): Promise<boolean> => {
-    if (!beginAction()) {
-      return false;
-    }
-    try {
-      const body: Record<string, unknown> = { itemId };
-      if (plotIndex !== undefined) body.plotIndex = plotIndex;
-      const res = await fetch('/api/games/farm/shop/use-item', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        setError(data.message);
+    return enqueueAction(async () => {
+      try {
+        const body: Record<string, unknown> = { itemId };
+        if (plotIndex !== undefined) body.plotIndex = plotIndex;
+        const res = await fetch('/api/games/farm/shop/use-item', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          setError(data.message);
+          return false;
+        }
+        updateFromResponse(data.data);
+        setError(null);
+        return true;
+      } catch {
+        setError('网络错误');
         return false;
       }
-      updateFromResponse(data.data);
-      setError(null);
-      return true;
-    } catch {
-      setError('网络错误');
-      return false;
-    } finally {
-      endAction();
-    }
-  }, [beginAction, endAction, updateFromResponse]);
+    });
+  }, [enqueueAction, updateFromResponse]);
 
   // 初始加载
   useEffect(() => {
@@ -554,6 +573,7 @@ export function useFarmState(): FarmData {
     purchaseItem,
     useItem: useItemAction,
     actionLoading,
+    queuedActions,
     lastHarvest,
     clearLastHarvest: () => setLastHarvest(null),
     lastBatchHarvest,

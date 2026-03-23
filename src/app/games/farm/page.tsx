@@ -216,11 +216,10 @@ export default function FarmPage() {
 
   const handleCropSelect = useCallback(async (cropId: CropId) => {
     if (plantingPlot === null) return;
-    const ok = await farm.plant(plantingPlot, cropId);
-    if (ok) {
-      setShopOpen(false);
-      setPlantingPlot(null);
-    }
+    const targetPlot = plantingPlot;
+    setShopOpen(false);
+    setPlantingPlot(null);
+    void farm.plant(targetPlot, cropId);
   }, [plantingPlot, farm]);
 
   const handleCloseHarvest = useCallback(() => {
@@ -322,6 +321,14 @@ export default function FarmPage() {
             </div>
           )}
 
+          {farm.actionLoading && (
+            <div className="bg-sky-50/90 backdrop-blur-sm border border-sky-200 text-sky-700 text-sm px-4 py-2 rounded-xl animate-farm-plot-enter">
+              {farm.queuedActions > 0
+                ? `农场操作队列处理中，后面还有 ${farm.queuedActions} 个动作`
+                : '农场操作处理中...'}
+            </div>
+          )}
+
           {/* 快捷操作栏 */}
           <div className="flex gap-2 flex-wrap">
             <button
@@ -346,7 +353,6 @@ export default function FarmPage() {
             {hasWaterNeeded && (
               <button
                 onClick={handleWaterAll}
-                disabled={farm.actionLoading}
                 className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white text-sm font-medium rounded-xl transition-all disabled:opacity-50 shadow-lg shadow-blue-500/25 active:scale-95"
               >
                 <span className="animate-farm-water-drop inline-block" style={{ animationIterationCount: 'infinite', animationDuration: '2s' }}>💧</span>
@@ -356,7 +362,6 @@ export default function FarmPage() {
             {hasMature && (
               <button
                 onClick={handleHarvestAll}
-                disabled={farm.actionLoading}
                 className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-sm font-medium rounded-xl transition-all disabled:opacity-50 shadow-lg shadow-amber-500/25 active:scale-95"
               >
                 <span className="animate-farm-mature inline-block">🌾</span>
@@ -366,7 +371,6 @@ export default function FarmPage() {
             {hasWithered && (
               <button
                 onClick={handleRemoveAllWithered}
-                disabled={farm.actionLoading}
                 className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-red-500 to-rose-500 hover:from-red-600 hover:to-rose-600 text-white text-sm font-medium rounded-xl transition-all disabled:opacity-50 shadow-lg shadow-red-500/25 active:scale-95"
               >
                 <span>🗑️</span>
@@ -383,7 +387,6 @@ export default function FarmPage() {
 
           <FarmGrid
             plots={farm.computedPlots}
-            actionLoading={farm.actionLoading}
             onPlant={handlePlant}
             onWater={(i) => farm.water(i)}
             onHarvest={(i) => farm.harvest(i)}

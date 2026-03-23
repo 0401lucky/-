@@ -7,7 +7,6 @@ import PlotCard from './PlotCard';
 
 interface FarmGridProps {
   plots: ComputedPlotState[];
-  actionLoading: boolean;
   onPlant: (plotIndex: number) => void;
   onWater: (plotIndex: number) => void;
   onHarvest: (plotIndex: number) => void;
@@ -17,7 +16,6 @@ interface FarmGridProps {
 
 export default function FarmGrid({
   plots,
-  actionLoading,
   onPlant,
   onWater,
   onHarvest,
@@ -39,7 +37,6 @@ export default function FarmGrid({
         >
           <PlotCard
             plot={plot}
-            actionLoading={actionLoading}
             onPlant={() => onPlant(plot.index)}
             onWater={() => onWater(plot.index)}
             onHarvest={() => onHarvest(plot.index)}
