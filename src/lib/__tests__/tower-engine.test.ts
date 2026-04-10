@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildTowerFloorView,
   createTowerRng,
+  createInitialTowerPlayerState,
   floorToPoints,
   calculateTowerScore,
   generateFloor,
+  resolveTowerStep,
   simulateTowerGame,
   DIFFICULTY_MODIFIERS,
   type TowerLaneContent,
@@ -458,5 +461,100 @@ describe('tower-engine', () => {
     const floor5 = generateFloor(rng, 5, power, [], opts);
     expect(floor5.isShop).toBe(true);
     expect(floor5.lanes.some(l => resolveLane(l).type === 'shop')).toBe(true);
+  });
+
+  it('buildTowerFloorView 默认不会泄露迷雾内容', () => {
+    const floor = {
+      floor: 1,
+      lanes: [
+        { type: 'mystery' as const, hidden: { type: 'add' as const, value: 3 } },
+        { type: 'monster' as const, value: 2 },
+      ],
+    };
+
+    const masked = buildTowerFloorView(floor, createInitialTowerPlayerState());
+    expect(masked.lanes[0]).toEqual({ type: 'mystery' });
+
+    const eagleEyeState = createInitialTowerPlayerState();
+    eagleEyeState.buffs = ['eagle_eye'];
+    const revealed = buildTowerFloorView(floor, eagleEyeState);
+    expect(revealed.lanes[0]).toEqual({ type: 'add', value: 3 });
+  });
+
+  it('祝福持续 5 层，并从下一层开始扣减', () => {
+    const rng = () => 0;
+    const initial = createInitialTowerPlayerState();
+    initial.power = 100;
+
+    const bossFloor = {
+      floor: 10,
+      isBoss: true,
+      lanes: [{ type: 'boss' as const, value: 10 }],
+    };
+    const blessingStep = resolveTowerStep(rng, bossFloor, 0, initial, 'normal');
+    expect(blessingStep.ok).toBe(true);
+    if (!blessingStep.ok) {
+      throw new Error(blessingStep.message);
+    }
+
+    expect(blessingStep.outcome.newBlessing?.remainingFloors).toBe(5);
+    expect(blessingStep.outcome.state.blessings[0]?.remainingFloors).toBe(5);
+
+    const safeFloor = {
+      floor: 11,
+      lanes: [{ type: 'add' as const, value: 1 }],
+    };
+
+    let state = blessingStep.outcome.state;
+    const remainings: number[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const step = resolveTowerStep(rng, { ...safeFloor, floor: 11 + i }, 0, state, 'normal');
+      expect(step.ok).toBe(true);
+      if (!step.ok) {
+        throw new Error(step.message);
+      }
+      state = step.outcome.state;
+      remainings.push(state.blessings[0]?.remainingFloors ?? 0);
+    }
+
+    expect(remainings).toEqual([4, 3, 2, 1, 0]);
+  });
+
+  it('诅咒持续 3 层，并从下一层开始扣减', () => {
+    const rng = () => 0;
+    const initial = createInitialTowerPlayerState();
+    initial.power = 20;
+
+    const trapFloor = {
+      floor: 16,
+      lanes: [{ type: 'trap' as const, subtype: 'sub' as const, value: 2 }],
+    };
+    const curseStep = resolveTowerStep(rng, trapFloor, 0, initial, 'hard');
+    expect(curseStep.ok).toBe(true);
+    if (!curseStep.ok) {
+      throw new Error(curseStep.message);
+    }
+
+    expect(curseStep.outcome.newCurse?.remainingFloors).toBe(3);
+    expect(curseStep.outcome.state.curses[0]?.remainingFloors).toBe(3);
+
+    const safeFloor = {
+      floor: 17,
+      lanes: [{ type: 'add' as const, value: 1 }],
+    };
+
+    let state = curseStep.outcome.state;
+    const remainings: number[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const step = resolveTowerStep(rng, { ...safeFloor, floor: 17 + i }, 0, state, 'hard');
+      expect(step.ok).toBe(true);
+      if (!step.ok) {
+        throw new Error(step.message);
+      }
+      state = step.outcome.state;
+      remainings.push(state.curses[0]?.remainingFloors ?? 0);
+    }
+
+    expect(remainings).toEqual([2, 1, 0]);
   });
 });

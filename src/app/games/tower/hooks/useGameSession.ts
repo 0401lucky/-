@@ -1,14 +1,27 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import type { TowerDifficulty } from '@/lib/tower-engine';
+import type {
+  ActiveBlessing,
+  ActiveCurse,
+  BuffType,
+  ResolvedLaneContent,
+  TowerDifficulty,
+  TowerFloorView,
+  TowerPlayerState,
+} from '@/lib/tower-engine';
+import type { BlessingType, CurseType } from '@/lib/tower-engine';
 
-interface TowerSession {
+export interface TowerSession {
   sessionId: string;
-  seed: string;
   startedAt: number;
   expiresAt: number;
   difficulty?: TowerDifficulty;
+  floorNumber: number;
+  choicesCount: number;
+  currentFloor: TowerFloorView | null;
+  player: TowerPlayerState;
+  gameOver: boolean;
 }
 
 export interface TowerRecord {
@@ -41,6 +54,23 @@ interface TowerStatus {
   activeSession: TowerSession | null;
 }
 
+export interface TowerStepOutcome {
+  selectedLane: ResolvedLaneContent;
+  gameOver: boolean;
+  blockedByShield: boolean;
+  bossDefeated: boolean;
+  newBuff?: BuffType;
+  newBlessing?: ActiveBlessing;
+  newCurse?: ActiveCurse;
+  expiredBlessings: BlessingType[];
+  expiredCurses: CurseType[];
+}
+
+interface StepResponse {
+  session: TowerSession;
+  outcome: TowerStepOutcome;
+}
+
 interface SubmitResponse {
   record: TowerRecord;
   pointsEarned: number;
@@ -57,14 +87,6 @@ interface ApiResponse<T> {
   success?: boolean;
   data?: T;
   message?: string;
-}
-
-interface StartResponse {
-  sessionId: string;
-  seed: string;
-  startedAt: number;
-  expiresAt: number;
-  difficulty?: TowerDifficulty;
 }
 
 async function parseApiResponse<T>(res: Response): Promise<ApiResponse<T> | null> {
@@ -110,6 +132,11 @@ export function useGameSession() {
       if (data.data.activeSession) {
         setSession(data.data.activeSession);
         setIsRestored(true);
+      } else {
+        setSession(null);
+        setIsRestored(false);
+        hasSubmittedRef.current = false;
+        submitInFlightRef.current = null;
       }
     } catch (err) {
       console.error('Fetch tower status error:', err);
@@ -130,7 +157,7 @@ export function useGameSession() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(difficulty ? { difficulty } : {}),
       });
-      const data = await parseApiResponse<StartResponse>(res);
+      const data = await parseApiResponse<TowerSession>(res);
 
       if (!res.ok) {
         setError(buildHttpErrorMessage(res, data, '开始游戏失败'));
@@ -142,14 +169,7 @@ export function useGameSession() {
         return false;
       }
 
-      setSession({
-        sessionId: data.data.sessionId,
-        seed: data.data.seed,
-        startedAt: data.data.startedAt,
-        expiresAt: data.data.expiresAt,
-        difficulty: data.data.difficulty,
-      });
-
+      setSession(data.data);
       return true;
     } catch {
       setError('网络错误，开始游戏失败');
@@ -160,7 +180,9 @@ export function useGameSession() {
   }, []);
 
   const cancelGame = useCallback(async () => {
-    if (!session) return false;
+    if (!session) {
+      return false;
+    }
 
     setLoading(true);
     try {
@@ -172,35 +194,73 @@ export function useGameSession() {
         return false;
       }
 
-      if (data?.success) {
-        setSession(null);
-        setIsRestored(false);
-        hasSubmittedRef.current = false;
-        submitInFlightRef.current = null;
-        // [Perf] 后台非阻塞刷新
-        fetchStatus();
-        return true;
+      if (!data?.success) {
+        setError(data?.message || '取消游戏失败');
+        return false;
       }
 
-      setError(data?.message || '取消游戏失败');
-      return false;
+      setSession(null);
+      setIsRestored(false);
+      hasSubmittedRef.current = false;
+      submitInFlightRef.current = null;
+      void fetchStatus();
+      return true;
     } catch {
       setError('网络错误，取消游戏失败');
       return false;
     } finally {
       setLoading(false);
     }
-  }, [session, fetchStatus]);
+  }, [fetchStatus, session]);
+
+  const stepGame = useCallback(async (
+    sessionId: string,
+    laneIndex: number,
+  ): Promise<StepResponse | null> => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/games/tower/step', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, laneIndex }),
+      });
+      const data = await parseApiResponse<StepResponse>(res);
+
+      if (!res.ok) {
+        setError(buildHttpErrorMessage(res, data, '选路失败'));
+        return null;
+      }
+
+      if (!data?.success || !data.data) {
+        setError(data?.message || '选路失败');
+        return null;
+      }
+
+      setError(null);
+      setIsRestored(false);
+      return data.data;
+    } catch {
+      setError('网络错误，选路失败');
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const submitResult = useCallback(
-    async (choices: number[]): Promise<SubmitResult | null> => {
-      if (!session) return null;
+    async (): Promise<SubmitResult | null> => {
+      if (!session) {
+        return null;
+      }
 
       if (submitInFlightRef.current) {
         return submitInFlightRef.current;
       }
 
-      if (hasSubmittedRef.current) return null;
+      if (hasSubmittedRef.current) {
+        return null;
+      }
+
       hasSubmittedRef.current = true;
       setLoading(true);
 
@@ -209,7 +269,7 @@ export function useGameSession() {
           const res = await fetch('/api/games/tower/submit', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: session.sessionId, choices }),
+            body: JSON.stringify({ sessionId: session.sessionId }),
           });
           const data = await parseApiResponse<SubmitResponse>(res);
 
@@ -224,8 +284,7 @@ export function useGameSession() {
           setError(null);
           setSession(null);
           setIsRestored(false);
-          // [Perf] 后台非阻塞刷新
-          fetchStatus();
+          void fetchStatus();
           return data.data;
         } catch {
           hasSubmittedRef.current = false;
@@ -240,7 +299,7 @@ export function useGameSession() {
       submitInFlightRef.current = submitPromise;
       return submitPromise;
     },
-    [session, fetchStatus]
+    [fetchStatus, session],
   );
 
   const resetSubmitFlag = useCallback(() => {
@@ -257,6 +316,7 @@ export function useGameSession() {
     fetchStatus,
     startGame,
     cancelGame,
+    stepGame,
     submitResult,
     resetSubmitFlag,
     setError,

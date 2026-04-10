@@ -5,6 +5,7 @@ import { getAuthUser } from '@/lib/auth';
 import { getUserPoints } from '@/lib/points';
 import { getDailyPointsLimit } from '@/lib/config';
 import {
+  buildTowerSessionView,
   getActiveTowerSession,
   getCooldownRemaining,
   getDailyStats,
@@ -50,15 +51,7 @@ export async function GET() {
         dailyLimit: dailyPointsLimit,
         pointsLimitReached,
         records,
-        activeSession: activeSession
-          ? {
-              sessionId: activeSession.id,
-              seed: activeSession.seed,
-              startedAt: activeSession.startedAt,
-              expiresAt: activeSession.expiresAt,
-              difficulty: activeSession.difficulty,
-            }
-          : null,
+        activeSession: activeSession ? buildTowerSessionView(activeSession) : null,
       },
     });
   } catch (error) {

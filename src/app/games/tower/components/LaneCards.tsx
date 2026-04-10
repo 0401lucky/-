@@ -1,6 +1,14 @@
 'use client';
 
-import type { TowerFloor, TowerLaneContent, BuffType, ThemeFloorType, ActiveBlessing, ActiveCurse } from '@/lib/tower-engine';
+import type {
+  TowerFloorView,
+  TowerLaneView,
+  ResolvedLaneContent,
+  BuffType,
+  ThemeFloorType,
+  ActiveBlessing,
+  ActiveCurse,
+} from '@/lib/tower-engine';
 import { BUFF_LABELS, BUFF_DESCRIPTIONS, THEME_ICONS } from '@/lib/tower-engine';
 import {
   HelpCircle, Ghost, Skull, Shield, Plus, X as XIcon, ShoppingBag, Bomb, Wind
@@ -9,13 +17,13 @@ import {
 type AnimState = 'idle' | 'walking' | 'attacking' | 'powerup' | 'death' | 'nextFloor' | 'revealing' | 'shieldBlock' | 'bossDefeated' | 'trapped' | 'shopping';
 
 interface LaneCardsProps {
-  floor: TowerFloor;
+  floor: TowerFloorView;
   playerPower: number;
   onChooseLane: (index: number) => void;
   disabled: boolean;
   selectedLane: number | null;
   animState: AnimState;
-  revealedLane?: TowerLaneContent | null;
+  revealedLane?: ResolvedLaneContent | null;
   hasShield?: boolean;
   shieldCount?: number;
   combo?: number;
@@ -46,9 +54,6 @@ export default function LaneCards({
   curses = [],
 }: LaneCardsProps) {
   const isAnimating = animState !== 'idle';
-  const hasEagleEye = buffs.includes('eagle_eye');
-  const hasInsightEye = blessings.some(b => b.type === 'insight_eye');
-  const canSeeThrough = hasEagleEye || hasInsightEye;
 
   // 计算有效攻击力（用于 hint 显示）
   const hasFlame = blessings.some(b => b.type === 'flame_power');
@@ -96,15 +101,12 @@ export default function LaneCards({
           const isSelected = selectedLane === i;
           const isOther = selectedLane !== null && !isSelected;
 
-          // 鹰眼 buff 或 洞察之眼祝福：迷雾通道变透明
-          const effectiveLane = (canSeeThrough && lane.type === 'mystery') ? lane.hidden : lane;
-
           // 迷雾揭示：选中的迷雾卡片切换为揭示后的内容渲染
           const displayLane = (isSelected && animState === 'revealing' && revealedLane)
             ? revealedLane
             : (isSelected && revealedLane && animState !== 'walking' && animState !== 'idle')
               ? revealedLane
-              : effectiveLane;
+              : lane;
 
           return (
             <button
@@ -129,11 +131,11 @@ export default function LaneCards({
 
               {/* 此处省略部分原有代码，仅调整样式 */}
               <div className={`text-4xl filter drop-shadow-sm transition-transform duration-300 ${getIconAnim(displayLane, isSelected, animState)}`}>
-                {getIcon(displayLane, canSeeThrough)}
+                {getIcon(displayLane)}
               </div>
 
               <div className="font-black text-slate-800 text-lg leading-tight w-full truncate">
-                {getLabel(displayLane, canSeeThrough)}
+                {getLabel(displayLane)}
               </div>
 
               <div className={`text-xs font-bold px-2 py-0.5 rounded-full bg-white/50 backdrop-blur-sm shadow-sm ${getHintColor(displayLane, effectivePower, hasShield)}`}>
@@ -155,9 +157,8 @@ export default function LaneCards({
 }
 
 
-function getIcon(lane: TowerLaneContent, seeThrough?: boolean): React.ReactNode {
+function getIcon(lane: TowerLaneView): React.ReactNode {
   if (lane.type === 'mystery') {
-    if (seeThrough) return getIcon(lane.hidden);
     return <HelpCircle className="w-10 h-10 text-purple-400" />;
   }
   if (lane.type === 'monster') return <Ghost className="w-10 h-10 text-red-500" />;
@@ -170,9 +171,8 @@ function getIcon(lane: TowerLaneContent, seeThrough?: boolean): React.ReactNode 
   return <HelpCircle className="w-10 h-10 text-slate-300" />;
 }
 
-function getLabel(lane: TowerLaneContent, seeThrough?: boolean): string {
+function getLabel(lane: TowerLaneView): string {
   if (lane.type === 'mystery') {
-    if (seeThrough) return getLabel(lane.hidden);
     return '???';
   }
   if (lane.type === 'monster') return `${lane.value}`;
@@ -186,7 +186,7 @@ function getLabel(lane: TowerLaneContent, seeThrough?: boolean): string {
 }
 
 function getHint(
-  lane: TowerLaneContent,
+  lane: TowerLaneView,
   rawPower: number,
   effectivePower: number,
   hasShield?: boolean,
@@ -238,7 +238,7 @@ function getHint(
   return '';
 }
 
-function getHintColor(lane: TowerLaneContent, power: number, hasShield?: boolean): string {
+function getHintColor(lane: TowerLaneView, power: number, hasShield?: boolean): string {
   if (lane.type === 'mystery') return 'text-purple-600';
   if (lane.type === 'boss') {
     if (power > lane.value) return 'text-green-600';
@@ -257,7 +257,7 @@ function getHintColor(lane: TowerLaneContent, power: number, hasShield?: boolean
 }
 
 function getCardStyle(
-  lane: TowerLaneContent,
+  lane: TowerLaneView,
   power: number,
   isSelected: boolean,
   animState: AnimState,
@@ -326,7 +326,7 @@ function getCardStyle(
 }
 
 function getIconAnim(
-  lane: TowerLaneContent,
+  lane: TowerLaneView,
   isSelected: boolean,
   animState: AnimState
 ): string {

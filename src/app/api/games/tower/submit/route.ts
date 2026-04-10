@@ -9,7 +9,7 @@ export const POST = withUserRateLimit('game:submit', async (request: NextRequest
   try {
     const body = (await request.json()) as TowerGameResultSubmit;
 
-    if (!body.sessionId || !Array.isArray(body.choices)) {
+    if (!body.sessionId) {
       return NextResponse.json({ success: false, message: '参数错误' }, { status: 400 });
     }
 

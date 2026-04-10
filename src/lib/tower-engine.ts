@@ -154,6 +154,46 @@ export interface TowerFloor {
   theme?: ThemeFloorType;
 }
 
+export type TowerLaneView = ResolvedLaneContent | { type: 'mystery' };
+
+export interface TowerFloorView {
+  floor: number;
+  lanes: TowerLaneView[];
+  isBoss?: boolean;
+  isShop?: boolean;
+  theme?: ThemeFloorType;
+}
+
+export interface TowerPlayerState {
+  power: number;
+  shield: number;
+  combo: number;
+  maxCombo: number;
+  buffs: BuffType[];
+  blessings: ActiveBlessing[];
+  curses: ActiveCurse[];
+  bossesDefeated: number;
+  usedShield: boolean;
+  themeFloorsVisited: ThemeFloorType[];
+}
+
+export interface TowerStepOutcome {
+  selectedLane: ResolvedLaneContent;
+  state: TowerPlayerState;
+  gameOver: boolean;
+  blockedByShield: boolean;
+  bossDefeated: boolean;
+  newBuff?: BuffType;
+  newBlessing?: ActiveBlessing;
+  newCurse?: ActiveCurse;
+  expiredBlessings: BlessingType[];
+  expiredCurses: CurseType[];
+}
+
+export type TowerStepResult =
+  | { ok: true; outcome: TowerStepOutcome }
+  | { ok: false; message: string };
+
 export interface TowerSimulateResult {
   ok: true;
   floorsClimbed: number;
@@ -733,6 +773,300 @@ function getMaxShield(buffs: BuffType[]): number {
   return hasBuffActive(buffs, 'fortify') ? 2 : 1;
 }
 
+function cloneBlessings(blessings: ActiveBlessing[]): ActiveBlessing[] {
+  return blessings.map((blessing) => ({ ...blessing }));
+}
+
+function cloneCurses(curses: ActiveCurse[]): ActiveCurse[] {
+  return curses.map((curse) => ({ ...curse }));
+}
+
+export function createInitialTowerPlayerState(): TowerPlayerState {
+  return {
+    power: 1,
+    shield: 0,
+    combo: 0,
+    maxCombo: 0,
+    buffs: [],
+    blessings: [],
+    curses: [],
+    bossesDefeated: 0,
+    usedShield: false,
+    themeFloorsVisited: [],
+  };
+}
+
+export function cloneTowerPlayerState(state: TowerPlayerState): TowerPlayerState {
+  return {
+    power: state.power,
+    shield: state.shield,
+    combo: state.combo,
+    maxCombo: state.maxCombo,
+    buffs: [...state.buffs],
+    blessings: cloneBlessings(state.blessings),
+    curses: cloneCurses(state.curses),
+    bossesDefeated: state.bossesDefeated,
+    usedShield: state.usedShield,
+    themeFloorsVisited: [...state.themeFloorsVisited],
+  };
+}
+
+function canRevealMystery(state: Pick<TowerPlayerState, 'buffs' | 'blessings'>): boolean {
+  return hasBuffActive(state.buffs, 'eagle_eye') || state.blessings.some((blessing) => blessing.type === 'insight_eye');
+}
+
+export function buildTowerFloorView(
+  floor: TowerFloor,
+  state: Pick<TowerPlayerState, 'buffs' | 'blessings'>,
+): TowerFloorView {
+  const revealMystery = canRevealMystery(state);
+  return {
+    floor: floor.floor,
+    isBoss: floor.isBoss,
+    isShop: floor.isShop,
+    theme: floor.theme,
+    lanes: floor.lanes.map((lane) => {
+      if (lane.type !== 'mystery') {
+        return lane;
+      }
+      return revealMystery ? lane.hidden : { type: 'mystery' };
+    }),
+  };
+}
+
+function consumeStatusesForNextFloor(
+  blessings: ActiveBlessing[],
+  curses: ActiveCurse[],
+): {
+  blessings: ActiveBlessing[];
+  curses: ActiveCurse[];
+  expiredBlessings: BlessingType[];
+  expiredCurses: CurseType[];
+} {
+  const nextBlessings: ActiveBlessing[] = [];
+  const expiredBlessings: BlessingType[] = [];
+  for (const blessing of blessings) {
+    const remainingFloors = blessing.remainingFloors - 1;
+    if (remainingFloors > 0) {
+      nextBlessings.push({ ...blessing, remainingFloors });
+    } else {
+      expiredBlessings.push(blessing.type);
+    }
+  }
+
+  const nextCurses: ActiveCurse[] = [];
+  const expiredCurses: CurseType[] = [];
+  for (const curse of curses) {
+    const remainingFloors = curse.remainingFloors - 1;
+    if (remainingFloors > 0) {
+      nextCurses.push({ ...curse, remainingFloors });
+    } else {
+      expiredCurses.push(curse.type);
+    }
+  }
+
+  return { blessings: nextBlessings, curses: nextCurses, expiredBlessings, expiredCurses };
+}
+
+function upsertBlessing(blessings: ActiveBlessing[], blessing?: ActiveBlessing): ActiveBlessing[] {
+  if (!blessing) {
+    return blessings;
+  }
+  return [...blessings.filter((item) => item.type !== blessing.type), blessing];
+}
+
+function upsertCurse(curses: ActiveCurse[], curse?: ActiveCurse): ActiveCurse[] {
+  if (!curse) {
+    return curses;
+  }
+  return [...curses.filter((item) => item.type !== curse.type), curse];
+}
+
+export function buildGenerateFloorOptions(
+  difficulty: TowerDifficulty | undefined,
+  state: TowerPlayerState,
+): GenerateFloorOptions | undefined {
+  if (!difficulty) {
+    return undefined;
+  }
+  return {
+    difficulty,
+    blessings: cloneBlessings(state.blessings),
+    curses: cloneCurses(state.curses),
+    bossesDefeated: state.bossesDefeated,
+  };
+}
+
+export function resolveTowerStep(
+  rng: Rng,
+  floor: TowerFloor,
+  laneIndex: number,
+  playerState: TowerPlayerState,
+  difficulty?: TowerDifficulty,
+): TowerStepResult {
+  if (!Number.isInteger(laneIndex) || laneIndex < 0 || laneIndex >= floor.lanes.length) {
+    return { ok: false, message: `第${floor.floor}层通道索引无效: ${laneIndex}` };
+  }
+
+  const workingState = cloneTowerPlayerState(playerState);
+  const activeBlessings = cloneBlessings(workingState.blessings);
+  const activeCurses = cloneCurses(workingState.curses);
+  const hasDifficulty = difficulty !== undefined;
+
+  if (floor.theme) {
+    workingState.themeFloorsVisited.push(floor.theme);
+  }
+
+  let selectedLane = floor.lanes[laneIndex];
+  if (selectedLane.type === 'mystery') {
+    selectedLane = selectedLane.hidden;
+  }
+
+  let blockedByShield = false;
+  let bossDefeated = false;
+  let newBuff: BuffType | undefined;
+  let newBlessing: ActiveBlessing | undefined;
+  let newCurse: ActiveCurse | undefined;
+  let gameOver = false;
+
+  let effectivePower = workingState.power;
+  if (hasDifficulty) {
+    const hasFlame = activeBlessings.some((blessing) => blessing.type === 'flame_power');
+    const hasWeakness = activeCurses.some((curse) => curse.type === 'weakness');
+    if (hasFlame) {
+      effectivePower = Math.floor(effectivePower * 1.5);
+    }
+    if (hasWeakness) {
+      effectivePower = Math.floor(effectivePower * 0.75);
+    }
+  }
+
+  const hasGolden = hasDifficulty && activeBlessings.some((blessing) => blessing.type === 'golden_touch');
+  const comboPercent = getComboPercent(workingState.buffs);
+  const maxShieldCap = getMaxShield(workingState.buffs);
+
+  if (selectedLane.type === 'boss') {
+    if (effectivePower > selectedLane.value) {
+      let gain = selectedLane.value * 2;
+      if (hasGolden) {
+        gain *= 2;
+      }
+      if (hasBuffActive(workingState.buffs, 'lifesteal')) {
+        gain += Math.floor(selectedLane.value * 0.2);
+      }
+      const comboBonus = Math.floor(gain * comboPercent * workingState.combo * 2);
+      workingState.power = Math.min(workingState.power + gain + comboBonus, MAX_POWER);
+      workingState.bossesDefeated += 1;
+      workingState.combo += 1;
+      workingState.maxCombo = Math.max(workingState.maxCombo, workingState.combo);
+      bossDefeated = true;
+
+      if (hasDifficulty) {
+        newBlessing = rollBlessing(rng, activeBlessings) ?? undefined;
+      }
+    } else if (workingState.shield > 0) {
+      workingState.shield -= 1;
+      workingState.usedShield = true;
+      workingState.combo = 0;
+      blockedByShield = true;
+    } else {
+      gameOver = true;
+    }
+  } else if (selectedLane.type === 'monster') {
+    if (effectivePower > selectedLane.value) {
+      let gain = selectedLane.value;
+      if (hasGolden) {
+        gain *= 2;
+      }
+      if (hasBuffActive(workingState.buffs, 'lifesteal')) {
+        gain += Math.floor(selectedLane.value * 0.2);
+      }
+      const comboBonus = Math.floor(gain * comboPercent * workingState.combo);
+      workingState.power = Math.min(workingState.power + gain + comboBonus, MAX_POWER);
+      workingState.combo += 1;
+      workingState.maxCombo = Math.max(workingState.maxCombo, workingState.combo);
+    } else if (workingState.shield > 0) {
+      workingState.shield -= 1;
+      workingState.usedShield = true;
+      workingState.combo = 0;
+      blockedByShield = true;
+    } else {
+      gameOver = true;
+    }
+  } else if (selectedLane.type === 'add') {
+    let value = applyLucky(selectedLane.value, workingState.buffs);
+    if (hasGolden) {
+      value *= 2;
+    }
+    workingState.power = Math.min(workingState.power + value, MAX_POWER);
+    workingState.combo = 0;
+  } else if (selectedLane.type === 'multiply') {
+    let value = hasBuffActive(workingState.buffs, 'lucky') ? selectedLane.value + 1 : selectedLane.value;
+    if (hasGolden) {
+      value *= 2;
+    }
+    workingState.power = Math.min(workingState.power * value, MAX_POWER);
+    workingState.combo = 0;
+  } else if (selectedLane.type === 'shield') {
+    if (workingState.shield >= maxShieldCap) {
+      let value = applyLucky(selectedLane.value, workingState.buffs);
+      if (hasGolden) {
+        value *= 2;
+      }
+      workingState.power = Math.min(workingState.power + value, MAX_POWER);
+    } else {
+      workingState.shield += 1;
+    }
+    workingState.combo = 0;
+  } else if (selectedLane.type === 'shop') {
+    if (!workingState.buffs.includes(selectedLane.buff)) {
+      workingState.buffs.push(selectedLane.buff);
+      newBuff = selectedLane.buff;
+    }
+    workingState.combo = 0;
+  } else if (selectedLane.type === 'trap') {
+    if (selectedLane.subtype === 'sub') {
+      workingState.power = Math.max(1, workingState.power - selectedLane.value);
+    } else {
+      workingState.power = Math.max(1, Math.ceil(workingState.power / selectedLane.value));
+    }
+    workingState.combo = 0;
+
+    if (hasDifficulty) {
+      newCurse = rollCurse(rng) ?? undefined;
+    }
+  }
+
+  let expiredBlessings: BlessingType[] = [];
+  let expiredCurses: CurseType[] = [];
+  if (!gameOver) {
+    const consumed = consumeStatusesForNextFloor(activeBlessings, activeCurses);
+    expiredBlessings = consumed.expiredBlessings;
+    expiredCurses = consumed.expiredCurses;
+    workingState.blessings = upsertBlessing(consumed.blessings, newBlessing);
+    workingState.curses = upsertCurse(consumed.curses, newCurse);
+  } else {
+    workingState.blessings = activeBlessings;
+    workingState.curses = activeCurses;
+  }
+
+  return {
+    ok: true,
+    outcome: {
+      selectedLane,
+      state: workingState,
+      gameOver,
+      blockedByShield,
+      bossDefeated,
+      ...(newBuff ? { newBuff } : {}),
+      ...(newBlessing ? { newBlessing } : {}),
+      ...(newCurse ? { newCurse } : {}),
+      expiredBlessings,
+      expiredCurses,
+    },
+  };
+}
+
 // ---- 游戏模拟/重放验证 ----
 
 export function simulateTowerGame(
@@ -751,22 +1085,10 @@ export function simulateTowerGame(
   }
 
   const rng = seedrandom(seed);
-  let power = 1;
-  let shield = 0;
-  let combo = 0;
-  let maxCombo = 0;
+  let state = createInitialTowerPlayerState();
   let gameOver = false;
   let deathFloor: number | undefined;
   let deathLane: number | undefined;
-  let bossesDefeated = 0;
-  let usedShield = false;
-  const buffs: BuffType[] = [];
-
-  // 难度模式扩展状态
-  const blessings: ActiveBlessing[] = [];
-  const curses: ActiveCurse[] = [];
-  const themeFloorsVisited: ThemeFloorType[] = [];
-  const hasDifficulty = difficulty !== undefined;
 
   for (let i = 0; i < choices.length; i++) {
     const floorNumber = i + 1;
@@ -775,137 +1097,24 @@ export function simulateTowerGame(
       return { ok: false, message: `第${floorNumber}层: 角色已死亡，不应有后续操作` };
     }
 
-    // 递减祝福/诅咒持续时间
-    if (hasDifficulty) {
-      for (const b of blessings) b.remainingFloors--;
-      for (let j = blessings.length - 1; j >= 0; j--) {
-        if (blessings[j].remainingFloors <= 0) blessings.splice(j, 1);
-      }
-      for (const c of curses) c.remainingFloors--;
-      for (let j = curses.length - 1; j >= 0; j--) {
-        if (curses[j].remainingFloors <= 0) curses.splice(j, 1);
-      }
+    const floor = generateFloor(
+      rng,
+      floorNumber,
+      state.power,
+      state.buffs,
+      buildGenerateFloorOptions(difficulty, state),
+    );
+
+    const step = resolveTowerStep(rng, floor, choices[i]!, state, difficulty);
+    if (!step.ok) {
+      return step;
     }
 
-    // 构建楼层生成选项
-    const floorOptions: GenerateFloorOptions | undefined = hasDifficulty ? {
-      difficulty: difficulty!,
-      blessings: blessings.map(b => ({ ...b })),
-      curses: curses.map(c => ({ ...c })),
-      bossesDefeated,
-    } : undefined;
-
-    const floor = generateFloor(rng, floorNumber, power, buffs, floorOptions);
-
-    if (floor.theme) themeFloorsVisited.push(floor.theme);
-
-    const choiceIndex = choices[i];
-    if (!Number.isInteger(choiceIndex) || choiceIndex < 0 || choiceIndex >= floor.lanes.length) {
-      return { ok: false, message: `第${floorNumber}层通道索引无效: ${choiceIndex}` };
-    }
-
-    let lane = floor.lanes[choiceIndex];
-    if (lane.type === 'mystery') {
-      lane = lane.hidden;
-    }
-
-    // 计算有效攻击力（祝福/诅咒影响）
-    let effectivePower = power;
-    if (hasDifficulty) {
-      const hasFlame = blessings.some(b => b.type === 'flame_power');
-      const hasWeakness = curses.some(c => c.type === 'weakness');
-      if (hasFlame) effectivePower = Math.floor(power * 1.5);
-      if (hasWeakness) effectivePower = Math.floor(effectivePower * 0.75);
-    }
-
-    const hasGolden = hasDifficulty && blessings.some(b => b.type === 'golden_touch');
-    const comboPercent = getComboPercent(buffs);
-    const maxShieldCap = getMaxShield(buffs);
-
-    if (lane.type === 'boss') {
-      if (effectivePower > lane.value) {
-        let gain = lane.value * 2;
-        if (hasGolden) gain *= 2;
-        if (hasBuffActive(buffs, 'lifesteal')) {
-          gain += Math.floor(lane.value * 0.2);
-        }
-        const comboBonus = Math.floor(gain * comboPercent * combo * 2);
-        power = Math.min(power + gain + comboBonus, MAX_POWER);
-        bossesDefeated++;
-        combo++;
-        maxCombo = Math.max(maxCombo, combo);
-
-        // Boss 击败后掷祝福
-        if (hasDifficulty) {
-          const blessing = rollBlessing(rng, blessings);
-          if (blessing) blessings.push(blessing);
-        }
-      } else if (shield > 0) {
-        shield--;
-        usedShield = true;
-        combo = 0;
-      } else {
-        gameOver = true;
-        deathFloor = floorNumber;
-        deathLane = choiceIndex;
-      }
-    } else if (lane.type === 'monster') {
-      if (effectivePower > lane.value) {
-        let gain = lane.value;
-        if (hasGolden) gain *= 2;
-        if (hasBuffActive(buffs, 'lifesteal')) {
-          gain += Math.floor(lane.value * 0.2);
-        }
-        const comboBonus = Math.floor(gain * comboPercent * combo);
-        power = Math.min(power + gain + comboBonus, MAX_POWER);
-        combo++;
-        maxCombo = Math.max(maxCombo, combo);
-      } else if (shield > 0) {
-        shield--;
-        usedShield = true;
-        combo = 0;
-      } else {
-        gameOver = true;
-        deathFloor = floorNumber;
-        deathLane = choiceIndex;
-      }
-    } else if (lane.type === 'add') {
-      let v = applyLucky(lane.value, buffs);
-      if (hasGolden) v *= 2;
-      power = Math.min(power + v, MAX_POWER);
-      combo = 0;
-    } else if (lane.type === 'multiply') {
-      let v = hasBuffActive(buffs, 'lucky') ? lane.value + 1 : lane.value;
-      if (hasGolden) v *= 2;
-      power = Math.min(power * v, MAX_POWER);
-      combo = 0;
-    } else if (lane.type === 'shield') {
-      if (shield >= maxShieldCap) {
-        let v = applyLucky(lane.value, buffs);
-        if (hasGolden) v *= 2;
-        power = Math.min(power + v, MAX_POWER);
-      } else {
-        shield++;
-      }
-      combo = 0;
-    } else if (lane.type === 'shop') {
-      if (!buffs.includes(lane.buff)) {
-        buffs.push(lane.buff);
-      }
-      combo = 0;
-    } else if (lane.type === 'trap') {
-      if (lane.subtype === 'sub') {
-        power = Math.max(1, power - lane.value);
-      } else {
-        power = Math.max(1, Math.ceil(power / lane.value));
-      }
-      combo = 0;
-
-      // 踩陷阱后掷诅咒
-      if (hasDifficulty) {
-        const curse = rollCurse(rng);
-        if (curse) curses.push(curse);
-      }
+    state = step.outcome.state;
+    if (step.outcome.gameOver) {
+      gameOver = true;
+      deathFloor = floorNumber;
+      deathLane = choices[i];
     }
   }
 
@@ -914,21 +1123,21 @@ export function simulateTowerGame(
   return {
     ok: true,
     floorsClimbed,
-    finalPower: power,
+    finalPower: state.power,
     gameOver,
     deathFloor,
     deathLane,
-    finalShield: shield,
-    bossesDefeated,
-    maxCombo,
-    finalCombo: combo,
-    finalBuffs: [...buffs],
-    usedShield,
-    ...(hasDifficulty ? {
+    finalShield: state.shield,
+    bossesDefeated: state.bossesDefeated,
+    maxCombo: state.maxCombo,
+    finalCombo: state.combo,
+    finalBuffs: [...state.buffs],
+    usedShield: state.usedShield,
+    ...(difficulty !== undefined ? {
       difficulty,
-      blessings: blessings.map(b => ({ ...b })),
-      curses: curses.map(c => ({ ...c })),
-      themeFloorsVisited,
+      blessings: cloneBlessings(state.blessings),
+      curses: cloneCurses(state.curses),
+      themeFloorsVisited: [...state.themeFloorsVisited],
     } : {}),
   };
 }

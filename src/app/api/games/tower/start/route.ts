@@ -1,6 +1,6 @@
 // src/app/api/games/tower/start/route.ts
 
-import { startTowerGame } from '@/lib/tower';
+import { buildTowerSessionView, startTowerGame } from '@/lib/tower';
 import { createStartRoute, fail } from '@/lib/game-route-factory';
 import type { TowerDifficulty } from '@/lib/tower-engine';
 
@@ -29,13 +29,7 @@ export const { POST } = createStartRoute(
     }
 
     const session = result.session!;
-    return {
-      sessionId: session.id,
-      seed: session.seed,
-      startedAt: session.startedAt,
-      expiresAt: session.expiresAt,
-      difficulty: session.difficulty,
-    };
+    return { ...buildTowerSessionView(session) };
   },
   { unauthorizedMessage: '请先登录', logLabel: 'tower game' },
 );
