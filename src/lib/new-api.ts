@@ -462,23 +462,19 @@ export async function creditQuotaToUser(
       const newQuota = currentQuota + quotaToAdd;
       expectedQuota = newQuota;
 
-      const updatePayload = {
-        ...user,
-        id: userId,
-        quota: newQuota,
-      };
-      const sanitizedUpdatePayload = Object.fromEntries(
-        Object.entries(updatePayload).filter(([, value]) => value !== undefined)
-      );
-
-      const updateResponse = await fetch(`${baseUrl}/api/user/`, {
-        method: 'PUT',
+      const updateResponse = await fetch(`${baseUrl}/api/user/manage`, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Cookie: adminCookies,
           'New-Api-User': String(adminUserId),
         },
-        body: JSON.stringify(sanitizedUpdatePayload),
+        body: JSON.stringify({
+          id: userId,
+          action: 'add_quota',
+          mode: 'add',
+          value: quotaToAdd,
+        }),
       });
 
       let updateData;
@@ -490,7 +486,12 @@ export async function creditQuotaToUser(
         return verifyResult;
       }
 
-      console.log('Update user response:', { success: updateData.success, message: updateData.message, newQuota });
+      console.log('Manage user quota response:', {
+        success: updateData.success,
+        message: updateData.message,
+        quotaToAdd,
+        newQuota,
+      });
 
       if (updateData.success) {
         return {
