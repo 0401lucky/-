@@ -120,7 +120,7 @@ describe('auth security hardening', () => {
 
     const fifth = await recordLoginFailure('Alice');
     expect(fifth.locked).toBe(true);
-    expect(fifth.remainingSeconds).toBe(15 * 60);
+    expect(fifth.remainingSeconds).toBe(120);
 
     mockKvTtl.mockResolvedValueOnce(120);
     const status = await getLoginLockStatus('Alice');

@@ -42,7 +42,7 @@ const SESSION_REVOKED_AFTER_TTL_SECONDS = 180 * 24 * 60 * 60;
 const LOGIN_FAIL_KEY = (username: string) => `auth:login:fail:${username}`;
 const LOGIN_LOCK_KEY = (username: string) => `auth:login:lock:${username}`;
 const LOGIN_FAIL_THRESHOLD = 5;
-const LOGIN_LOCK_SECONDS = 15 * 60;
+const LOGIN_LOCK_SECONDS = 2 * 60;
 const LOGIN_FAIL_WINDOW_SECONDS = 15 * 60;
 const FALLBACK_SWEEP_INTERVAL = 100;
 
