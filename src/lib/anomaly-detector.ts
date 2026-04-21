@@ -3,6 +3,18 @@ import { getAllUsers } from './kv';
 import { getUserPoints } from './points';
 import { getActiveAlerts, triggerAlert, resolveAlert, getDailyStats } from './metrics';
 
+const DASHBOARD_OVERVIEW_CACHE_KEY = 'dashboard:overview:cache';
+const DASHBOARD_ALERTS_CACHE_KEY_PREFIX = 'dashboard:alerts:cache:';
+const DASHBOARD_OVERVIEW_CACHE_TTL_SECONDS = 2 * 60;
+const DASHBOARD_ALERTS_CACHE_TTL_SECONDS = 20;
+
+type CachedSnapshot<T> = {
+  createdAt: number;
+  data: T;
+};
+
+const inFlightDashboardTasks = new Map<string, Promise<unknown>>();
+
 const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 const RECENT_SCAN_LIMIT = 200;
 const POINTS_SPIKE_THRESHOLD = 5000;
@@ -55,6 +67,62 @@ export interface DashboardOverview {
     warning: number;
     critical: number;
   };
+}
+
+interface AlertsSnapshot {
+  active: AlertItem[];
+  history: AlertItem[];
+}
+
+function getAlertsCacheKey(historyLimit: number): string {
+  return `${DASHBOARD_ALERTS_CACHE_KEY_PREFIX}${historyLimit}`;
+}
+
+function isCacheFresh(createdAt: number, maxAgeMs: number, now: number): boolean {
+  return Number.isFinite(createdAt) && createdAt > 0 && now - createdAt <= maxAgeMs;
+}
+
+async function readCachedSnapshot<T>(
+  key: string,
+  maxAgeMs: number,
+  now = Date.now()
+): Promise<T | null> {
+  try {
+    const cached = await kv.get<CachedSnapshot<T>>(key);
+    if (!cached || typeof cached !== 'object') {
+      return null;
+    }
+
+    if (!isCacheFresh(Number(cached.createdAt), maxAgeMs, now)) {
+      return null;
+    }
+
+    return cached.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCachedSnapshot<T>(key: string, data: T, ttlSeconds: number): Promise<void> {
+  try {
+    await kv.set(key, { createdAt: Date.now(), data }, { ex: ttlSeconds });
+  } catch {
+    // ignore cache write errors
+  }
+}
+
+async function withInFlightTask<T>(key: string, factory: () => Promise<T>): Promise<T> {
+  const existing = inFlightDashboardTasks.get(key) as Promise<T> | undefined;
+  if (existing) {
+    return existing;
+  }
+
+  const task = factory().finally(() => {
+    inFlightDashboardTasks.delete(key);
+  });
+
+  inFlightDashboardTasks.set(key, task as Promise<unknown>);
+  return task;
 }
 
 function toFiniteNumber(value: unknown): number {
@@ -268,6 +336,35 @@ export async function runAnomalyDetection(options: {
   };
 }
 
+export async function getCachedDashboardOverview(options: {
+  referenceTime?: number;
+  maxAgeMs?: number;
+  forceRefresh?: boolean;
+} = {}): Promise<DashboardOverview> {
+  const now = options.referenceTime ?? Date.now();
+  const maxAgeMs = Math.max(1, Math.floor(options.maxAgeMs ?? DASHBOARD_OVERVIEW_CACHE_TTL_SECONDS * 1000));
+
+  if (!options.forceRefresh) {
+    const cached = await readCachedSnapshot<DashboardOverview>(DASHBOARD_OVERVIEW_CACHE_KEY, maxAgeMs, now);
+    if (cached) {
+      return cached;
+    }
+  }
+
+  return withInFlightTask(DASHBOARD_OVERVIEW_CACHE_KEY, async () => {
+    if (!options.forceRefresh) {
+      const cached = await readCachedSnapshot<DashboardOverview>(DASHBOARD_OVERVIEW_CACHE_KEY, maxAgeMs, now);
+      if (cached) {
+        return cached;
+      }
+    }
+
+    const dashboard = await getDashboardOverview({ referenceTime: now });
+    await writeCachedSnapshot(DASHBOARD_OVERVIEW_CACHE_KEY, dashboard, DASHBOARD_OVERVIEW_CACHE_TTL_SECONDS);
+    return dashboard;
+  });
+}
+
 export async function getDashboardOverview(options: { referenceTime?: number } = {}): Promise<DashboardOverview> {
   const now = options.referenceTime ?? Date.now();
   const todayStartAt = getChinaDayStartUtc(now);
@@ -347,10 +444,38 @@ export async function getDashboardOverview(options: { referenceTime?: number } =
   };
 }
 
-export async function getAlertsSnapshot(options: { historyLimit?: number } = {}): Promise<{
-  active: AlertItem[];
-  history: AlertItem[];
-}> {
+export async function getCachedAlertsSnapshot(options: {
+  historyLimit?: number;
+  maxAgeMs?: number;
+  forceRefresh?: boolean;
+} = {}): Promise<AlertsSnapshot> {
+  const historyLimit = Math.max(1, Math.min(200, Math.floor(toFiniteNumber(options.historyLimit ?? 50))));
+  const cacheKey = getAlertsCacheKey(historyLimit);
+  const now = Date.now();
+  const maxAgeMs = Math.max(1, Math.floor(options.maxAgeMs ?? DASHBOARD_ALERTS_CACHE_TTL_SECONDS * 1000));
+
+  if (!options.forceRefresh) {
+    const cached = await readCachedSnapshot<AlertsSnapshot>(cacheKey, maxAgeMs, now);
+    if (cached) {
+      return cached;
+    }
+  }
+
+  return withInFlightTask(cacheKey, async () => {
+    if (!options.forceRefresh) {
+      const cached = await readCachedSnapshot<AlertsSnapshot>(cacheKey, maxAgeMs, now);
+      if (cached) {
+        return cached;
+      }
+    }
+
+    const snapshot = await getAlertsSnapshot({ historyLimit });
+    await writeCachedSnapshot(cacheKey, snapshot, DASHBOARD_ALERTS_CACHE_TTL_SECONDS);
+    return snapshot;
+  });
+}
+
+export async function getAlertsSnapshot(options: { historyLimit?: number } = {}): Promise<AlertsSnapshot> {
   const active = await getActiveAlerts();
   const historyLimit = Math.max(1, Math.min(200, Math.floor(toFiniteNumber(options.historyLimit ?? 50))));
   const historyRaw = await kv.lrange<unknown>('alerts:history', 0, historyLimit - 1);

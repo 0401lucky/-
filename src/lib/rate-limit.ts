@@ -141,6 +141,7 @@ export const RATE_LIMITS = {
 
   // 兑换码相关
   'project:claim': { windowSeconds: 60, maxRequests: 10, prefix: 'ratelimit:project:claim' },
+  'raffle:join': { windowSeconds: 60, maxRequests: 12, prefix: 'ratelimit:raffle:join' },
 
   // 商店相关
   'store:exchange': { windowSeconds: 60, maxRequests: 20, prefix: 'ratelimit:store:exchange' },

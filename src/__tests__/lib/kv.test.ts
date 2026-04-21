@@ -23,6 +23,7 @@ vi.mock('@/lib/d1-kv', () => ({
 
 vi.mock('../../lib/economy-lock', () => ({
   withUserEconomyLock: vi.fn(async (_userId: number, handler: () => Promise<unknown>) => handler()),
+  withKvLock: vi.fn(async (_lockKey: string, handler: () => Promise<unknown>) => handler()),
 }));
 
 describe('kv D1 migration tests', () => {

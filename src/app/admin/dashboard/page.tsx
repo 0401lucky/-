@@ -74,7 +74,7 @@ export default function AdminDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
 
-  const fetchDashboard = useCallback(async (detect = false, silent = false) => {
+  const fetchDashboard = useCallback(async (detect = false, forceRefresh = false, silent = false) => {
     if (silent) {
       setRefreshing(true);
     } else {
@@ -83,7 +83,12 @@ export default function AdminDashboardPage() {
     setError(null);
 
     try {
-      const url = detect ? '/api/admin/dashboard?detect=1' : '/api/admin/dashboard?detect=0';
+      const params = new URLSearchParams();
+      params.set('detect', detect ? '1' : '0');
+      if (forceRefresh) {
+        params.set('refresh', '1');
+      }
+      const url = `/api/admin/dashboard?${params.toString()}`;
       const res = await fetch(url, { cache: 'no-store' });
       const json = await res.json();
 
@@ -101,7 +106,7 @@ export default function AdminDashboardPage() {
   }, []);
 
   useEffect(() => {
-    void fetchDashboard(false, false);
+    void fetchDashboard(false, false, false);
   }, [fetchDashboard]);
 
   const alertLevelClass = useMemo(() => {
@@ -119,7 +124,7 @@ export default function AdminDashboardPage() {
       if (!res.ok || !json.success) {
         throw new Error(json.message || '处理告警失败');
       }
-      await fetchDashboard(false, true);
+      await fetchDashboard(false, true, true);
     } catch (err) {
       setError(err instanceof Error ? err.message : '处理告警失败');
     }
@@ -131,7 +136,7 @@ export default function AdminDashboardPage() {
         <h1 className="text-2xl font-bold text-stone-800">运营仪表盘</h1>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => void fetchDashboard(true, true)}
+            onClick={() => void fetchDashboard(true, true, true)}
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 text-sm"
             disabled={refreshing}
           >
@@ -139,7 +144,7 @@ export default function AdminDashboardPage() {
             运行检测
           </button>
           <button
-            onClick={() => void fetchDashboard(false, true)}
+            onClick={() => void fetchDashboard(false, true, true)}
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-50 text-sm disabled:opacity-50"
             disabled={refreshing}
           >

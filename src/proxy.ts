@@ -28,7 +28,7 @@ function isTrustedNonBrowserRequest(request: NextRequest): boolean {
   return request.headers.has("authorization");
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const response = NextResponse.next();
 
   for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
@@ -68,6 +68,7 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/api/:path*"],
+  matcher: [
+    "/((?!_next/static|_next/image|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml)$).*)",
+  ],
 };
-

@@ -1,7 +1,7 @@
 import { kv } from "@/lib/d1-kv";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getTodayDateString, getSecondsUntilMidnight } from "./time";
-import { withUserEconomyLock } from "./economy-lock";
+import { withKvLock, withUserEconomyLock } from "./economy-lock";
 import { createDefaultUserCards, normalizeUserCards, type UserCards } from "./cards/draw";
 import {
   getNativeExtraSpinCount,
@@ -435,6 +435,17 @@ export async function deleteProject(projectId: string): Promise<void> {
   await kv.lrem("project:list", 0, projectId);
 }
 
+const PROJECT_CLAIM_LOCK_KEY = (projectId: string) => `lock:project:claim:${projectId}`;
+
+async function withProjectClaimLock<T>(projectId: string, handler: () => Promise<T>): Promise<T> {
+  return withKvLock(PROJECT_CLAIM_LOCK_KEY(projectId), handler, {
+    ttlSeconds: 15,
+    maxRetries: 120,
+    retryMs: 20,
+    timeoutMessage: 'PROJECT_CLAIM_BUSY',
+  });
+}
+
 // 兑换码操作
 export async function addCodesToProject(projectId: string, codes: string[]): Promise<number> {
   if (codes.length === 0) return 0;
@@ -460,67 +471,102 @@ export async function getAvailableCodesCount(projectId: string): Promise<number>
 }
 
 export async function claimCode(projectId: string, userId: number, username: string): Promise<{ success: boolean; code?: string; message: string }> {
-  const now = Date.now();
-  const recordId = `claim_${now}_${Math.random().toString(36).slice(2, 8)}`;
+  return withProjectClaimLock(projectId, async () => {
+    const now = Date.now();
+    const recordId = `claim_${now}_${Math.random().toString(36).slice(2, 8)}`;
 
-  const projectKey = `projects:${projectId}`;
-  const codesKey = `codes:available:${projectId}`;
-  const claimKey = `claimed:${projectId}:${userId}`;
-  const recordsKey = `records:${projectId}`;
-  const userClaimedKey = `claimed:user:${userId}`;
+    const projectKey = `projects:${projectId}`;
+    const codesKey = `codes:available:${projectId}`;
+    const claimKey = `claimed:${projectId}:${userId}`;
+    const recordsKey = `records:${projectId}`;
+    const userClaimedKey = `claimed:user:${userId}`;
 
-  // Check existing claim
-  const existing = await kv.get<ClaimRecord>(claimKey);
-  if (existing) {
-    if (existing.code) {
-      return { success: true, code: existing.code, message: '你已经领取过了' };
+    const existing = await kv.get<ClaimRecord>(claimKey);
+    if (existing) {
+      if (existing.code) {
+        return { success: true, code: existing.code, message: '你已经领取过了' };
+      }
+      return { success: false, message: '领取记录异常，请联系管理员' };
     }
-    return { success: false, message: '领取记录异常，请联系管理员' };
-  }
 
-  // Check project
-  const project = await kv.get<Project>(projectKey);
-  if (!project) return { success: false, message: '项目不存在' };
+    const project = await kv.get<Project>(projectKey);
+    if (!project) return { success: false, message: '项目不存在' };
 
-  if (project.status === 'paused') return { success: false, message: '该项目已暂停领取' };
+    if (project.status === 'paused') return { success: false, message: '该项目已暂停领取' };
 
-  const claimedCount = project.claimedCount ?? 0;
-  const maxClaims = project.maxClaims ?? 0;
+    const originalProject: Project = { ...project };
+    const claimedCount = project.claimedCount ?? 0;
+    const maxClaims = project.maxClaims ?? 0;
 
-  if (project.status === 'exhausted' || (maxClaims > 0 && claimedCount >= maxClaims)) {
-    return { success: false, message: '已达到领取上限' };
-  }
+    if (project.status === 'exhausted' || (maxClaims > 0 && claimedCount >= maxClaims)) {
+      return { success: false, message: '已达到领取上限' };
+    }
 
-  // Pop a code
-  const code = await kv.rpop(codesKey);
-  if (!code) {
-    project.status = 'exhausted';
-    await kv.set(projectKey, project);
-    return { success: false, message: '兑换码已领完' };
-  }
+    const rawCode = await kv.rpop(codesKey);
+    if (!rawCode) {
+      project.status = 'exhausted';
+      await kv.set(projectKey, project);
+      return { success: false, message: '兑换码已领完' };
+    }
 
-  // Update project
-  project.claimedCount = claimedCount + 1;
-  if (maxClaims > 0 && project.claimedCount >= maxClaims) {
-    project.status = 'exhausted';
-  }
+    const code = String(rawCode);
+    project.claimedCount = claimedCount + 1;
+    if (maxClaims > 0 && project.claimedCount >= maxClaims) {
+      project.status = 'exhausted';
+    }
 
-  const record: ClaimRecord = {
-    id: recordId,
-    projectId,
-    userId,
-    username,
-    code: String(code),
-    claimedAt: now,
-  };
+    const record: ClaimRecord = {
+      id: recordId,
+      projectId,
+      userId,
+      username,
+      code,
+      claimedAt: now,
+    };
 
-  // Atomic writes
-  await kv.set(claimKey, record);
-  await kv.lpush(recordsKey, record);
-  await kv.set(projectKey, project);
-  await kv.sadd(userClaimedKey, projectId);
+    let claimWritten = false;
+    let recordWritten = false;
+    let projectWritten = false;
+    let userClaimedWritten = false;
 
-  return { success: true, code: String(code), message: '领取成功' };
+    try {
+      await kv.set(claimKey, record);
+      claimWritten = true;
+      await kv.lpush(recordsKey, record);
+      recordWritten = true;
+      await kv.set(projectKey, project);
+      projectWritten = true;
+      await kv.sadd(userClaimedKey, projectId);
+      userClaimedWritten = true;
+
+      return { success: true, code, message: '领取成功' };
+    } catch (error) {
+      if (userClaimedWritten) {
+        await kv.srem(userClaimedKey, projectId).catch((rollbackError) => {
+          console.error('Rollback claimed user index failed:', rollbackError);
+        });
+      }
+      if (projectWritten) {
+        await kv.set(projectKey, originalProject).catch((rollbackError) => {
+          console.error('Rollback project claim counter failed:', rollbackError);
+        });
+      }
+      if (recordWritten) {
+        await kv.lrem(recordsKey, 1, record).catch((rollbackError) => {
+          console.error('Rollback project claim record list failed:', rollbackError);
+        });
+      }
+      if (claimWritten) {
+        await kv.del(claimKey).catch((rollbackError) => {
+          console.error('Rollback project claim key failed:', rollbackError);
+        });
+      }
+      await kv.lpush(codesKey, code).catch((rollbackError) => {
+        console.error('Rollback project claim code restore failed:', rollbackError);
+      });
+      throw error;
+    }
+  });
 }
 
 /**
@@ -531,64 +577,96 @@ export async function reserveDirectClaim(
   userId: number,
   username: string
 ): Promise<{ success: boolean; message: string; record?: ClaimRecord }> {
-  const now = Date.now();
-  const recordId = `claim_${now}_${Math.random().toString(36).slice(2, 8)}`;
+  return withProjectClaimLock(projectId, async () => {
+    const now = Date.now();
+    const recordId = `claim_${now}_${Math.random().toString(36).slice(2, 8)}`;
 
-  const projectKey = `projects:${projectId}`;
-  const claimKey = `claimed:${projectId}:${userId}`;
-  const recordsKey = `records:${projectId}`;
-  const userClaimedKey = `claimed:user:${userId}`;
+    const projectKey = `projects:${projectId}`;
+    const claimKey = `claimed:${projectId}:${userId}`;
+    const recordsKey = `records:${projectId}`;
+    const userClaimedKey = `claimed:user:${userId}`;
 
-  // Check existing claim
-  const existing = await kv.get<ClaimRecord>(claimKey);
-  if (existing) {
-    if (existing.creditStatus === 'pending') {
-      return { success: true, message: '领取处理中，请稍后刷新', record: existing };
+    const existing = await kv.get<ClaimRecord>(claimKey);
+    if (existing) {
+      if (existing.creditStatus === 'pending') {
+        return { success: true, message: '领取处理中，请稍后刷新', record: existing };
+      }
+      return { success: true, message: '你已经领取过了', record: existing };
     }
-    return { success: true, message: '你已经领取过了', record: existing };
-  }
 
-  // Check project
-  const project = await kv.get<Project>(projectKey);
-  if (!project) return { success: false, message: '项目不存在' };
+    const project = await kv.get<Project>(projectKey);
+    if (!project) return { success: false, message: '项目不存在' };
 
-  if (project.status === 'paused') return { success: false, message: '该项目已暂停领取' };
+    if (project.status === 'paused') return { success: false, message: '该项目已暂停领取' };
 
-  const dollars = project.directDollars ?? 0;
-  if (dollars <= 0) return { success: false, message: '项目直充金额配置异常，请联系管理员' };
+    const dollars = project.directDollars ?? 0;
+    if (dollars <= 0) return { success: false, message: '项目直充金额配置异常，请联系管理员' };
 
-  const claimedCount = project.claimedCount ?? 0;
-  const maxClaims = project.maxClaims ?? 0;
+    const originalProject: Project = { ...project };
+    const claimedCount = project.claimedCount ?? 0;
+    const maxClaims = project.maxClaims ?? 0;
 
-  if (project.status === 'exhausted' || (maxClaims > 0 && claimedCount >= maxClaims)) {
-    return { success: false, message: '已达到领取上限' };
-  }
+    if (project.status === 'exhausted' || (maxClaims > 0 && claimedCount >= maxClaims)) {
+      return { success: false, message: '已达到领取上限' };
+    }
 
-  // Update project
-  project.claimedCount = claimedCount + 1;
-  if (maxClaims > 0 && project.claimedCount >= maxClaims) {
-    project.status = 'exhausted';
-  }
+    project.claimedCount = claimedCount + 1;
+    if (maxClaims > 0 && project.claimedCount >= maxClaims) {
+      project.status = 'exhausted';
+    }
 
-  const record: ClaimRecord = {
-    id: recordId,
-    projectId,
-    userId,
-    username,
-    code: '',
-    claimedAt: now,
-    directCredit: true,
-    creditedDollars: dollars,
-    creditStatus: 'pending',
-  };
+    const record: ClaimRecord = {
+      id: recordId,
+      projectId,
+      userId,
+      username,
+      code: '',
+      claimedAt: now,
+      directCredit: true,
+      creditedDollars: dollars,
+      creditStatus: 'pending',
+    };
 
-  // Atomic writes
-  await kv.set(claimKey, record);
-  await kv.lpush(recordsKey, record);
-  await kv.set(projectKey, project);
-  await kv.sadd(userClaimedKey, projectId);
+    let claimWritten = false;
+    let recordWritten = false;
+    let projectWritten = false;
+    let userClaimedWritten = false;
 
-  return { success: true, message: 'ok', record };
+    try {
+      await kv.set(claimKey, record);
+      claimWritten = true;
+      await kv.lpush(recordsKey, record);
+      recordWritten = true;
+      await kv.set(projectKey, project);
+      projectWritten = true;
+      await kv.sadd(userClaimedKey, projectId);
+      userClaimedWritten = true;
+
+      return { success: true, message: 'ok', record };
+    } catch (error) {
+      if (userClaimedWritten) {
+        await kv.srem(userClaimedKey, projectId).catch((rollbackError) => {
+          console.error('Rollback direct claim user index failed:', rollbackError);
+        });
+      }
+      if (projectWritten) {
+        await kv.set(projectKey, originalProject).catch((rollbackError) => {
+          console.error('Rollback direct claim project counter failed:', rollbackError);
+        });
+      }
+      if (recordWritten) {
+        await kv.lrem(recordsKey, 1, record).catch((rollbackError) => {
+          console.error('Rollback direct claim record list failed:', rollbackError);
+        });
+      }
+      if (claimWritten) {
+        await kv.del(claimKey).catch((rollbackError) => {
+          console.error('Rollback direct claim key failed:', rollbackError);
+        });
+      }
+      throw error;
+    }
+  });
 }
 
 /**
@@ -629,40 +707,65 @@ export async function rollbackDirectClaim(
   projectId: string,
   userId: number
 ): Promise<{ success: boolean; message: string }> {
-  const projectKey = `projects:${projectId}`;
-  const claimKey = `claimed:${projectId}:${userId}`;
-  const userClaimedKey = `claimed:user:${userId}`;
+  return withProjectClaimLock(projectId, async () => {
+    const projectKey = `projects:${projectId}`;
+    const claimKey = `claimed:${projectId}:${userId}`;
+    const userClaimedKey = `claimed:user:${userId}`;
 
-  // Check existing claim
-  const record = await kv.get<ClaimRecord>(claimKey);
-  if (!record) return { success: true, message: 'ok' };
+    const record = await kv.get<ClaimRecord>(claimKey);
+    if (!record) return { success: true, message: 'ok' };
 
-  // Only rollback pending status
-  if (record.creditStatus && record.creditStatus !== 'pending') {
-    return { success: true, message: 'ok' };
-  }
-
-  // Delete claim record and user index
-  await kv.del(claimKey);
-  await kv.srem(userClaimedKey, projectId);
-
-  // Restore project counter
-  const project = await kv.get<Project>(projectKey);
-  if (project) {
-    const claimedCount = project.claimedCount ?? 0;
-    const maxClaims = project.maxClaims ?? 0;
-
-    project.claimedCount = Math.max(0, claimedCount - 1);
-
-    // Restore status if it was exhausted due to reaching max
-    if (project.status === 'exhausted' && maxClaims > 0 && project.claimedCount < maxClaims) {
-      project.status = 'active';
+    if (record.creditStatus && record.creditStatus !== 'pending') {
+      return { success: true, message: 'ok' };
     }
 
-    await kv.set(projectKey, project);
-  }
+    const project = await kv.get<Project>(projectKey);
+    const originalProject = project ? { ...project } : null;
 
-  return { success: true, message: 'ok' };
+    let claimDeleted = false;
+    let userClaimedRemoved = false;
+    let projectUpdated = false;
+
+    try {
+      await kv.del(claimKey);
+      claimDeleted = true;
+      await kv.srem(userClaimedKey, projectId);
+      userClaimedRemoved = true;
+
+      if (project) {
+        const claimedCount = project.claimedCount ?? 0;
+        const maxClaims = project.maxClaims ?? 0;
+
+        project.claimedCount = Math.max(0, claimedCount - 1);
+
+        if (project.status === 'exhausted' && maxClaims > 0 && project.claimedCount < maxClaims) {
+          project.status = 'active';
+        }
+
+        await kv.set(projectKey, project);
+        projectUpdated = true;
+      }
+
+      return { success: true, message: 'ok' };
+    } catch (error) {
+      if (projectUpdated && originalProject) {
+        await kv.set(projectKey, originalProject).catch((rollbackError) => {
+          console.error('Rollback direct claim project restore failed:', rollbackError);
+        });
+      }
+      if (userClaimedRemoved) {
+        await kv.sadd(userClaimedKey, projectId).catch((rollbackError) => {
+          console.error('Rollback direct claim user index restore failed:', rollbackError);
+        });
+      }
+      if (claimDeleted) {
+        await kv.set(claimKey, record).catch((rollbackError) => {
+          console.error('Rollback direct claim record restore failed:', rollbackError);
+        });
+      }
+      throw error;
+    }
+  });
 }
 
 export async function getClaimRecord(projectId: string, userId: number): Promise<ClaimRecord | null> {

@@ -231,6 +231,13 @@ export const POST = withUserRateLimit(
       }
     }
 
+    if (error instanceof Error && error.message === 'PROJECT_CLAIM_BUSY') {
+      return NextResponse.json(
+        { success: false, message: '当前领取人数较多，请稍后重试' },
+        { status: 429 }
+      );
+    }
+
     console.error("Claim code error:", error);
     return NextResponse.json(
       { success: false, message: "领取失败" },

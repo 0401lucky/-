@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAdmin } from '@/lib/api-guards';
 import { withRateLimit } from '@/lib/rate-limit';
 import {
-  getDashboardOverview,
+  getCachedDashboardOverview,
+  getCachedAlertsSnapshot,
   runAnomalyDetection,
-  getAlertsSnapshot,
 } from '@/lib/anomaly-detector';
 
 export const dynamic = 'force-dynamic';
@@ -16,7 +16,8 @@ export const GET = withAdmin(
       if (limited) return limited;
 
       const { searchParams } = new URL(request.url);
-      const runDetect = searchParams.get('detect') !== '0';
+      const runDetect = searchParams.get('detect') === '1';
+      const forceRefresh = searchParams.get('refresh') === '1' || runDetect;
 
       const detection = runDetect
         ? await runAnomalyDetection({
@@ -25,8 +26,8 @@ export const GET = withAdmin(
           })
         : null;
       const [dashboard, alerts] = await Promise.all([
-        getDashboardOverview(),
-        getAlertsSnapshot({ historyLimit: 20 }),
+        getCachedDashboardOverview({ forceRefresh }),
+        getCachedAlertsSnapshot({ historyLimit: 20, forceRefresh }),
       ]);
 
       return NextResponse.json({

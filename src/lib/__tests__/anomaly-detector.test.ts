@@ -9,6 +9,8 @@ import {
   triggerAlert,
 } from '../metrics';
 import {
+  getCachedAlertsSnapshot,
+  getCachedDashboardOverview,
   getDashboardOverview,
   resolveAlertById,
   runAnomalyDetection,
@@ -135,6 +137,53 @@ describe('anomaly detector', () => {
     expect(result.pointsFlow.todayIn).toBeGreaterThanOrEqual(30);
     expect(result.alerts.warning).toBe(1);
     expect(result.alerts.critical).toBe(1);
+  });
+
+  it('reuses cached dashboard overview when snapshot is fresh', async () => {
+    const now = Date.now();
+    mockKvGet.mockImplementation(async (key: string) => {
+      if (key === 'dashboard:overview:cache') {
+        return {
+          createdAt: now,
+          data: {
+            generatedAt: now,
+            users: { total: 9, dau: 4, mau: 7 },
+            redemption: { todayClaims: 5, todayLotterySpins: 6 },
+            pointsFlow: { todayIn: 10, todayOut: 3, todayNet: 7 },
+            games: { participants: 2, participationRate: 22.22 },
+            alerts: { active: 1, warning: 1, critical: 0 },
+          },
+        };
+      }
+      return null;
+    });
+
+    const result = await getCachedDashboardOverview({ referenceTime: now + 1000 });
+
+    expect(result.users.total).toBe(9);
+    expect(mockGetAllUsers).not.toHaveBeenCalled();
+  });
+
+  it('reuses cached alerts snapshot when fresh', async () => {
+    const now = Date.now();
+    mockKvGet.mockImplementation(async (key: string) => {
+      if (key === 'dashboard:alerts:cache:20') {
+        return {
+          createdAt: now,
+          data: {
+            active: [{ id: 'a1', level: 'warning', name: 'warn', message: 'msg', timestamp: now }],
+            history: [],
+          },
+        };
+      }
+      return null;
+    });
+
+    const result = await getCachedAlertsSnapshot({ historyLimit: 20 });
+
+    expect(result.active).toHaveLength(1);
+    expect(mockGetActiveAlerts).not.toHaveBeenCalled();
+    expect(mockKvLrange).not.toHaveBeenCalled();
   });
 
   it('forwards resolve action', async () => {

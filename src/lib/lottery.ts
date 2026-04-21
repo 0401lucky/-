@@ -10,6 +10,7 @@ import {
 } from "./kv";
 import { getTodayDateString, getSecondsUntilMidnight } from "./time";
 import { withKvLock } from './economy-lock';
+import { secureRandomFloat } from './random';
 
 // 抽奖档位
 export interface LotteryTier {
@@ -570,7 +571,7 @@ function weightedRandomSelect(tiers: LotteryTier[]): LotteryTier | null {
     return null;
   }
   
-  let random = Math.random() * totalWeight;
+  let random = secureRandomFloat() * totalWeight;
 
   for (const tier of tiers) {
     random -= tier.probability;

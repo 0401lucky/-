@@ -8,6 +8,7 @@ import { nanoid } from "nanoid";
 import { creditQuotaToUser } from "./new-api";
 import { maskUserId } from "./logging";
 import { createUserNotification } from './notifications';
+import { withKvLock } from './economy-lock';
 import type {
   Raffle,
   RafflePrize,
@@ -32,6 +33,7 @@ const RAFFLE_ENTRY_COUNT_PREFIX = "raffle:entry_count:";  // 参与计数
 const USER_RAFFLES_PREFIX = "user:raffles:";              // 用户参与的活动
 const USER_RAFFLE_WINS_PREFIX = "user:raffle_wins:";      // 用户中奖记录
 const RAFFLE_DRAW_LOCK_PREFIX = "raffle:draw_lock:";      // 开奖分布式锁
+const RAFFLE_JOIN_LOCK_PREFIX = "raffle:join_lock:";      // 参与/开奖串行锁
 const RAFFLE_DELIVERY_QUEUE_KEY = "raffle:delivery:queue"; // 发奖任务队列
 const RAFFLE_DELIVERY_PROCESSING_QUEUE_KEY = "raffle:delivery:processing"; // 发奖处理中队列
 const RAFFLE_DELIVERY_ENQUEUED_PREFIX = "raffle:delivery:enqueued:"; // 发奖任务去重标记
@@ -44,6 +46,19 @@ const DELIVERY_JOB_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000; // 处理队列任务 
 const DELIVERY_IDEMPOTENCY_PROCESSING_TTL_SECONDS = 15 * 60; // 单笔发奖 processing 锁 15 分钟
 const DELIVERY_IDEMPOTENCY_UNCERTAIN_TTL_SECONDS = 24 * 60 * 60; // uncertain 状态保留 24 小时
 const DELIVERY_IDEMPOTENCY_DELIVERED_TTL_SECONDS = 90 * 24 * 60 * 60; // delivered 幂等状态保留 90 天
+
+function getRaffleJoinLockKey(raffleId: string): string {
+  return `${RAFFLE_JOIN_LOCK_PREFIX}${raffleId}`;
+}
+
+async function withRaffleJoinLock<T>(raffleId: string, handler: () => Promise<T>): Promise<T> {
+  return withKvLock(getRaffleJoinLockKey(raffleId), handler, {
+    ttlSeconds: 15,
+    maxRetries: 120,
+    retryMs: 20,
+    timeoutMessage: 'RAFFLE_JOIN_BUSY',
+  });
+}
 
 // ============ 活动 CRUD ============
 
@@ -296,72 +311,95 @@ export async function getActiveRaffles(): Promise<RaffleListItem[]> {
 // ============ 参与抽奖 ============
 
 /**
- * 参与抽奖（Lua 原子操作）
+ * 参与抽奖（使用活动级串行锁保证一致性）
  */
 export async function joinRaffle(
   raffleId: string,
   userId: number,
   username: string
 ): Promise<JoinRaffleResult> {
-  const raffleKey = `${RAFFLE_PREFIX}${raffleId}`;
-  const entriesKey = `${RAFFLE_ENTRIES_PREFIX}${raffleId}`;
-  const participantsKey = `${RAFFLE_PARTICIPANTS_PREFIX}${raffleId}`;
-  const entryCountKey = `${RAFFLE_ENTRY_COUNT_PREFIX}${raffleId}`;
-  const userRafflesKey = `${USER_RAFFLES_PREFIX}${userId}`;
-  const drawLockKey = `${RAFFLE_DRAW_LOCK_PREFIX}${raffleId}`;
+  return withRaffleJoinLock(raffleId, async () => {
+    const raffleKey = `${RAFFLE_PREFIX}${raffleId}`;
+    const entriesKey = `${RAFFLE_ENTRIES_PREFIX}${raffleId}`;
+    const participantsKey = `${RAFFLE_PARTICIPANTS_PREFIX}${raffleId}`;
+    const entryCountKey = `${RAFFLE_ENTRY_COUNT_PREFIX}${raffleId}`;
+    const userRafflesKey = `${USER_RAFFLES_PREFIX}${userId}`;
+    const drawLockKey = `${RAFFLE_DRAW_LOCK_PREFIX}${raffleId}`;
 
-  const now = Date.now();
-  const entryId = `entry_${now}_${nanoid(8)}`;
+    const now = Date.now();
+    const entryId = `entry_${now}_${nanoid(8)}`;
 
-  // 1. Read raffle
-  const raffle = await kv.get<Raffle>(raffleKey);
-  if (!raffle) return { success: false, message: "活动不存在" };
+    const raffle = await kv.get<Raffle>(raffleKey);
+    if (!raffle) return { success: false, message: "活动不存在" };
 
-  // 2. Check draw lock
-  const drawLockExists = await kv.exists(drawLockKey);
-  if (drawLockExists) return { success: false, message: "活动正在开奖，请稍后再试" };
+    const drawLockExists = await kv.exists(drawLockKey);
+    if (drawLockExists) return { success: false, message: "活动正在开奖，请稍后再试" };
 
-  // 3. Check status
-  if (raffle.status !== "active") {
-    if (raffle.status === "draft") return { success: false, message: "活动尚未开始" };
-    if (raffle.status === "ended") return { success: false, message: "活动已结束" };
-    if (raffle.status === "cancelled") return { success: false, message: "活动已取消" };
-    return { success: false, message: "活动状态异常" };
-  }
+    if (raffle.status !== "active") {
+      if (raffle.status === "draft") return { success: false, message: "活动尚未开始" };
+      if (raffle.status === "ended") return { success: false, message: "活动已结束" };
+      if (raffle.status === "cancelled") return { success: false, message: "活动已取消" };
+      return { success: false, message: "活动状态异常" };
+    }
 
-  // 4. Check if already joined
-  const alreadyJoined = await kv.sismember(participantsKey, userId);
-  if (alreadyJoined === 1) return { success: false, message: "您已经参与过了" };
+    const alreadyJoined = await kv.sismember(participantsKey, userId);
+    if (alreadyJoined === 1) return { success: false, message: "您已经参与过了" };
 
-  // 5. Assign entry number
-  const entryNumber = await kv.incr(entryCountKey);
+    const entryNumber = await kv.incr(entryCountKey);
+    const entry: RaffleEntry = {
+      id: entryId,
+      raffleId,
+      userId,
+      username,
+      entryNumber,
+      createdAt: now,
+    };
 
-  // 6. Create entry
-  const entry: RaffleEntry = {
-    id: entryId,
-    raffleId,
-    userId,
-    username,
-    entryNumber,
-    createdAt: now,
-  };
+    const originalRaffle: Raffle = { ...raffle };
+    let entryWritten = false;
+    let participantWritten = false;
+    let userRaffleWritten = false;
+    let raffleUpdated = false;
 
-  // 7. Atomic writes
-  await Promise.all([
-    kv.lpush(entriesKey, entry),
-    kv.sadd(participantsKey, userId),
-    kv.sadd(userRafflesKey, raffleId),
-  ]);
+    try {
+      await kv.lpush(entriesKey, entry);
+      entryWritten = true;
+      await kv.sadd(participantsKey, userId);
+      participantWritten = true;
+      await kv.sadd(userRafflesKey, raffleId);
+      userRaffleWritten = true;
 
-  // 8. Update raffle
-  raffle.participantsCount = (raffle.participantsCount ?? 0) + 1;
-  raffle.updatedAt = now;
-  await kv.set(raffleKey, raffle);
+      raffle.participantsCount = (raffle.participantsCount ?? 0) + 1;
+      raffle.updatedAt = now;
+      await kv.set(raffleKey, raffle);
+      raffleUpdated = true;
 
-  // 9. Check auto-draw
-  const shouldDraw = raffle.triggerType === "threshold" && raffle.participantsCount >= (raffle.threshold ?? Infinity);
-
-  return { success: true, message: "参与成功", entry, shouldDraw };
+      const shouldDraw = raffle.triggerType === "threshold" && raffle.participantsCount >= (raffle.threshold ?? Infinity);
+      return { success: true, message: "参与成功", entry, shouldDraw };
+    } catch (error) {
+      if (raffleUpdated) {
+        await kv.set(raffleKey, originalRaffle).catch((rollbackError) => {
+          console.error('Rollback raffle participant counter failed:', rollbackError);
+        });
+      }
+      if (userRaffleWritten) {
+        await kv.srem(userRafflesKey, raffleId).catch((rollbackError) => {
+          console.error('Rollback user raffle index failed:', rollbackError);
+        });
+      }
+      if (participantWritten) {
+        await kv.srem(participantsKey, userId).catch((rollbackError) => {
+          console.error('Rollback raffle participant membership failed:', rollbackError);
+        });
+      }
+      if (entryWritten) {
+        await kv.lrem(entriesKey, 1, entry).catch((rollbackError) => {
+          console.error('Rollback raffle entry list failed:', rollbackError);
+        });
+      }
+      throw error;
+    }
+  });
 }
 
 /**
@@ -741,86 +779,99 @@ export async function executeRaffleDraw(
   const waitForDelivery = options?.waitForDelivery ?? true;
   const queueOnAsync = options?.queueOnAsync ?? true;
 
-  // 1. 获取分布式锁
   const lockToken = await acquireDrawLock(raffleId);
   if (!lockToken) {
     return { success: false, message: "正在开奖中，请稍后" };
   }
 
   try {
-    // 2. 获取活动信息（双重检查）
-    const raffle = await getRaffle(raffleId);
-    if (!raffle) {
-      return { success: false, message: "活动不存在" };
-    }
+    const preparation = await withRaffleJoinLock(raffleId, async () => {
+      const raffle = await getRaffle(raffleId);
+      if (!raffle) {
+        return { success: false as const, message: "活动不存在", winners: [] as RaffleWinner[] };
+      }
 
-    if (raffle.status !== "active") {
-      return { success: false, message: "活动状态不是进行中" };
-    }
+      if (raffle.status !== "active") {
+        return { success: false as const, message: "活动状态不是进行中", winners: [] as RaffleWinner[] };
+      }
 
-    // 3. 获取所有参与记录
-    const entriesKey = `${RAFFLE_ENTRIES_PREFIX}${raffleId}`;
-    const entries = await kv.lrange<RaffleEntry>(entriesKey, 0, -1);
+      const entriesKey = `${RAFFLE_ENTRIES_PREFIX}${raffleId}`;
+      const entries = await kv.lrange<RaffleEntry>(entriesKey, 0, -1);
 
-    if (entries.length === 0) {
-      // 无人参与，直接结束
+      if (entries.length === 0) {
+        const updated: Raffle = {
+          ...raffle,
+          status: "ended",
+          drawnAt: Date.now(),
+          winners: [],
+          winnersCount: 0,
+          updatedAt: Date.now(),
+        };
+        await Promise.all([
+          kv.set(`${RAFFLE_PREFIX}${raffleId}`, updated),
+          kv.srem(RAFFLE_ACTIVE_KEY, raffleId),
+        ]);
+
+        return {
+          success: true as const,
+          message: "无人参与，活动已结束",
+          winners: [] as RaffleWinner[],
+        };
+      }
+
+      const shuffled = shuffleArray(entries);
+      const winners: RaffleWinner[] = [];
+      let winnerIndex = 0;
+
+      for (const prize of raffle.prizes) {
+        for (let i = 0; i < prize.quantity && winnerIndex < shuffled.length; i++) {
+          const entry = shuffled[winnerIndex];
+          winners.push({
+            entryId: entry.id,
+            userId: entry.userId,
+            username: entry.username,
+            prizeId: prize.id,
+            prizeName: prize.name,
+            dollars: prize.dollars,
+            rewardStatus: "pending",
+          });
+          winnerIndex++;
+        }
+      }
+
+      const now = Date.now();
       const updated: Raffle = {
         ...raffle,
         status: "ended",
-        drawnAt: Date.now(),
-        winners: [],
-        winnersCount: 0,
-        updatedAt: Date.now(),
+        drawnAt: now,
+        winners,
+        winnersCount: winners.length,
+        updatedAt: now,
       };
+
       await Promise.all([
         kv.set(`${RAFFLE_PREFIX}${raffleId}`, updated),
         kv.srem(RAFFLE_ACTIVE_KEY, raffleId),
       ]);
 
-      return { success: true, message: "无人参与，活动已结束", winners: [] };
+      return {
+        success: true as const,
+        message: `开奖成功，共 ${winners.length} 人中奖`,
+        winners,
+      };
+    });
+
+    if (!preparation.success) {
+      return { success: false, message: preparation.message };
     }
 
-    // 4. 洗牌随机打乱
-    const shuffled = shuffleArray(entries);
+    const winners = preparation.winners;
 
-    // 5. 按奖品顺序抽取中奖者
-    const winners: RaffleWinner[] = [];
-    let winnerIndex = 0;
-
-    for (const prize of raffle.prizes) {
-      for (let i = 0; i < prize.quantity && winnerIndex < shuffled.length; i++) {
-        const entry = shuffled[winnerIndex];
-        winners.push({
-          entryId: entry.id,
-          userId: entry.userId,
-          username: entry.username,
-          prizeId: prize.id,
-          prizeName: prize.name,
-          dollars: prize.dollars,
-          rewardStatus: "pending",
-        });
-        winnerIndex++;
-      }
+    if (winners.length === 0) {
+      return { success: true, message: preparation.message, winners: [] };
     }
-
-    // 6. 更新活动状态
-    const now = Date.now();
-    const updated: Raffle = {
-      ...raffle,
-      status: "ended",
-      drawnAt: now,
-      winners,
-      winnersCount: winners.length,
-      updatedAt: now,
-    };
-
-    await Promise.all([
-      kv.set(`${RAFFLE_PREFIX}${raffleId}`, updated),
-      kv.srem(RAFFLE_ACTIVE_KEY, raffleId),
-    ]);
 
     if (!waitForDelivery) {
-      // 自动开奖路径：先确保开奖结果落库，再入队处理，避免 Serverless fire-and-forget 丢失
       let enqueueFailed = false;
       if (queueOnAsync) {
         try {
@@ -842,7 +893,6 @@ export async function executeRaffleDraw(
       };
     }
 
-    // 手动开奖路径：等待奖励发放结果
     const deliveryResults = await deliverRewards(raffleId, winners);
 
     return {
@@ -852,7 +902,6 @@ export async function executeRaffleDraw(
       deliveryResults,
     };
   } finally {
-    // 释放锁
     await releaseDrawLock(raffleId, lockToken);
   }
 }

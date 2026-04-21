@@ -35,6 +35,10 @@ vi.mock('../new-api', () => ({
   creditQuotaToUser: vi.fn(),
 }));
 
+vi.mock('../economy-lock', () => ({
+  withKvLock: vi.fn(async (_lockKey: string, handler: () => Promise<unknown>) => handler()),
+}));
+
 vi.mock('../notifications', () => ({
   createUserNotification: vi.fn(),
 }));
