@@ -1,243 +1,370 @@
-# 兑换码分发系统
+# 兑换码分发与活动平台
 
-一个基于 Next.js 的兑换码分发网站，支持通过 new-api 用户体系登录，可部署到 Vercel。
+一个以 **Next.js 16 + Cloudflare Workers/OpenNext** 为主部署形态的活动平台，最初用于兑换码分发，现已扩展为包含 **项目领取、直充、抽奖、多人抽奖、积分商城、卡牌、小游戏、公告、反馈墙、通知与管理后台** 的完整应用。
 
-## 功能特性
+> 当前仓库是 **Cloudflare-first** 方案：
+> - 主运行时：Cloudflare Workers
+> - 主数据存储：Cloudflare D1
+> - 图片与增量缓存：Cloudflare R2
+> - 非 Cloudflare 运行时保留了部分 `@vercel/kv` 兼容回退逻辑，但**完整功能以 Cloudflare 部署为准**。
 
-- **项目管理**: 创建多个兑换码项目，每个项目独立管理
-- **用户认证**: 集成 new-api 用户登录系统
-- **领取限制**: 每个用户在每个项目只能领取一次
-- **批量导入**: 支持从 .txt 文件批量导入兑换码
-- **状态控制**: 支持暂停/恢复项目领取
-- **分发记录**: 查看详细的兑换码分发记录
+---
+
+## 功能概览
+
+### 核心业务
+- **项目领取**：支持兑换码发放 / 直充额度发放
+- **新人福利**：支持新用户专属项目资格
+- **积分体系**：签到、游戏、兑换、流水记录
+- **积分商城**：兑换抽奖次数、卡牌抽数、直充额度等
+- **单人抽奖**：档位概率、库存、直充模式
+- **多人抽奖**：参与、开奖、异步发奖队列、重试
+- **卡牌系统**：抽卡、库存、碎片、奖励、专辑页
+- **小游戏**：老虎机、弹珠台、塔防爬塔、记忆翻牌、连连看、消消乐、农场
+- **反馈墙**：用户反馈、管理员回复、图片外链化
+- **公告与通知**：公告管理、奖励通知、未读状态
+- **管理后台**：项目、用户、奖励、抽奖、卡牌、反馈、仪表盘、配置
+
+### 已落地的安全/稳定性措施
+- HMAC 签名 Session
+- Session 吊销与全量失效
+- 登录失败锁定 + 速率限制
+- 登录重定向安全校验
+- 项目领取与多人抽奖参与的并发锁保护
+- API 来源校验
+- 页面/API 统一安全响应头
+- 多人抽奖发奖幂等与队列恢复
+
+---
 
 ## 技术栈
 
-- **框架**: Next.js 16 (App Router)
-- **样式**: Tailwind CSS
-- **数据库**: Cloudflare D1（默认）/ Vercel KV (Redis)（自动适配）
-- **部署**: Vercel / Cloudflare Workers
+- **框架**：Next.js 16（App Router）
+- **语言**：TypeScript
+- **UI**：React 19 + Tailwind CSS 4
+- **运行时**：Cloudflare Workers（通过 `@opennextjs/cloudflare`）
+- **数据层**：Cloudflare D1（主） / `@vercel/kv` 兼容回退（辅）
+- **对象存储**：Cloudflare R2
+  - OpenNext 增量缓存 Bucket
+  - 反馈图片 Bucket
+  - 卡牌图片 Bucket
+- **测试**：Vitest
+- **代码检查**：ESLint
 
-## 部署到 Vercel
+---
 
-### 1. 推送代码到 GitHub
+## 当前部署形态
 
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin <your-repo-url>
-git push -u origin main
-```
+### Cloudflare 绑定（以 `wrangler.jsonc` 为准）
+- `KV_DB`：D1 数据库
+- `NEXT_INC_CACHE_R2_BUCKET`：OpenNext 增量缓存
+- `FEEDBACK_IMAGES`：反馈图片存储
+- `CARD_IMAGES`：卡牌图片存储
+- `ASSETS`：静态资源
+- `WORKER_SELF_REFERENCE`：Worker 自引用，用于 Cron 调本服务
+- `IMAGES`：Cloudflare Images 绑定
 
-### 2. 在 Vercel 导入项目
+### Worker 包装器
+`worker-wrapper.mjs` 额外处理两件事：
+1. 转发正常请求给 OpenNext 产物
+2. 响应 Cron，调用 `/api/internal/raffle/delivery` 处理多人抽奖发奖队列
 
-1. 访问 [vercel.com](https://vercel.com)
-2. 点击 "Import Project"
-3. 选择你的 GitHub 仓库
+---
 
-### 3. 配置 Vercel KV
+## 环境要求
 
-1. 在 Vercel 项目设置中，进入 "Storage"
-2. 点击 "Create" -> "KV"
-3. 创建一个新的 KV 数据库
-4. 连接到你的项目
+- Node.js **20 / 22 / 25** 均可，推荐 **LTS**
+- npm 10+
+- Cloudflare 部署需要：
+  - Wrangler 4+
+  - D1 / R2 已创建
 
-### 4. 配置环境变量
-
-在 Vercel 项目设置的 "Environment Variables" 中添加：
-
-| 变量名 | 值 | 说明 |
-|--------|-----|------|
-| `NEW_API_URL` | `https://your-new-api-domain.com` | new-api 服务地址 |
-| `ADMIN_USERNAMES` | `lucky` | 管理员用户名列表，逗号分隔 |
-| `SESSION_SECRET` | `random-long-secret` | Session 签名密钥（生产环境必填，建议 ≥32 位随机字符串） |
-| `NEW_API_ADMIN_USERNAME` | `admin` | new-api 管理员账号（用于商店直充/同步用户等管理员能力） |
-| `NEW_API_ADMIN_PASSWORD` | `password` | new-api 管理员密码 |
-| `CRON_SECRET` | `random-long-secret` | 发奖队列内部任务鉴权（Vercel Cron Bearer Token） |
-| `BLOB_READ_WRITE_TOKEN` | `vercel_blob_rw_xxx` | 反馈图片外链上传到 Vercel Blob（需在 Storage 中创建并连接 Blob） |
-
-> KV 相关的环境变量 (`KV_REST_API_URL`, `KV_REST_API_TOKEN`) 会在连接 KV 数据库后自动配置。
-
-### 5. 部署
-
-点击 "Deploy"，等待部署完成即可。
-
-## 部署到 Cloudflare Workers
-
-> 当前项目已接入 OpenNext Cloudflare 适配器（`@opennextjs/cloudflare` + `wrangler`）。
-
-### 1. 前置准备
-
-1. 安装 Node.js LTS（推荐 20 或 22）。
-2. 安装依赖：`npm install`
-3. 登录 Cloudflare：`npx wrangler login`
-
-### 2. 准备缓存 Bucket（与 `wrangler.jsonc` 对齐）
-
-```bash
-npx wrangler r2 bucket create cache
-```
-
-### 3. 配置生产环境变量
-
-在 Cloudflare Worker 的 Variables/Secrets 中配置（名称保持和项目代码一致）：
-
-- `KV_REST_API_URL`
-- `KV_REST_API_TOKEN`
-- `KV_REST_API_READ_ONLY_TOKEN`（可选）
-- `NEW_API_URL`
-- `ADMIN_USERNAMES`
-- `SESSION_SECRET`
-- `NEW_API_ADMIN_USERNAME`（可选）
-- `NEW_API_ADMIN_PASSWORD`（可选）
-- `RAFFLE_DELIVERY_CRON_SECRET`（或 `CRON_SECRET`）
-- `BLOB_READ_WRITE_TOKEN`（可选）
-
-> 说明：项目已迁移到 Cloudflare D1（绑定名 `KV_DB`），无需再配置 `KV_REST_*`。
->
-> 兼容说明：在非 Cloudflare 环境（如 Vercel）运行时，会自动回退到 Vercel KV（需配置 `KV_REST_API_URL` + `KV_REST_API_TOKEN`）。
-
-### 4. 部署
-
-```bash
-npm run deploy
-```
-
-### 5. 本地预览（可选）
-
-```bash
-npm run preview
-```
-
-> OpenNext 在 Windows 原生环境可能不稳定，建议在 WSL 中执行 `preview/build/deploy`。
-
-### 6. 定时任务说明
-
-已在 `wrangler.jsonc` 中配置 Cloudflare Cron（默认 UTC `0 3 * * *`），  
-由 `worker-wrapper.mjs` 自动调用 `/api/internal/raffle/delivery`。
+---
 
 ## 本地开发
 
-### 安装依赖
+### 1. 安装依赖
 
 ```bash
 npm install
 ```
 
-### 配置环境变量
+### 2. 配置环境变量
 
-复制 `.env.local` 文件并填写配置：
+建议在本地创建 `.env.local`。
 
 ```env
-NEW_API_URL=https://your-new-api-domain.com
-ADMIN_USERNAMES=lucky
-SESSION_SECRET=change-me-to-a-long-random-string
+# 必填：new-api 服务地址
+NEW_API_URL=https://your-new-api.example.com
 
-# 可选：用于商店直充/用户同步等管理员能力
+# 必填：至少 32 位随机字符串
+SESSION_SECRET=replace-with-a-long-random-secret-at-least-32-chars
+
+# 必填：管理员用户名白名单，逗号分隔
+ADMIN_USERNAMES=admin,lucky
+
+# 可选：后台执行直充 / 用户同步等管理员能力
 NEW_API_ADMIN_USERNAME=your-admin-username
 NEW_API_ADMIN_PASSWORD=your-admin-password
 
-# 可选：用于多人抽奖发奖队列定时任务鉴权
-CRON_SECRET=your-cron-secret
+# 可选：发奖队列内部任务鉴权（二选一即可）
+RAFFLE_DELIVERY_CRON_SECRET=replace-with-a-random-secret
+# CRON_SECRET=replace-with-a-random-secret
 
-# 可选：用于反馈图片外链上传
-BLOB_READ_WRITE_TOKEN=your-blob-read-write-token
+# 可选：发奖队列单次处理任务数（1~20）
+RAFFLE_DELIVERY_CRON_MAX_JOBS=20
 
-# 本地开发需要 Vercel KV 配置
-# 可以从 Vercel 项目设置中复制
-KV_REST_API_URL=your-kv-url
-KV_REST_API_TOKEN=your-kv-token
+# 可选：用于 Proxy 中的来源校验
+NEXT_PUBLIC_BASE_URL=https://your-domain.example.com
+
+# 可选：R2 公网域名前缀，用于反馈图片外链 URL
+R2_PUBLIC_URL=https://r2.example.com
+
+# 仅在非 Cloudflare 运行时 / Vercel 回退模式下需要
+KV_REST_API_URL=your-vercel-kv-url
+KV_REST_API_TOKEN=your-vercel-kv-token
+
+# 仅旧版反馈图片迁移脚本需要
+BLOB_READ_WRITE_TOKEN=vercel_blob_rw_xxx
 ```
 
-### 启动开发服务器
+### 3. 启动开发服务器
 
 ```bash
 npm run dev
 ```
 
-访问 http://localhost:3000
+访问：<http://localhost:3000>
 
-### 代码检查
+### 本地开发说明
+- 本项目已调用 `initOpenNextCloudflareForDev()`，本地开发会读取 Cloudflare 相关配置。
+- 如果你本地主要跑的是普通 Node/Next 环境，请准备 `KV_REST_API_URL` 与 `KV_REST_API_TOKEN` 作为存储回退。
+- 如果你本地直接模拟 Cloudflare，可结合 `.dev.vars` / Wrangler 绑定使用。
+
+---
+
+## 常用脚本
+
+| 命令 | 说明 |
+| --- | --- |
+| `npm run dev` | 本地开发 |
+| `npm run build` | Next 生产构建 |
+| `npm run start` | 启动 Next 生产服务 |
+| `npm run lint` | ESLint 检查 |
+| `npm run typecheck` | TypeScript 检查 |
+| `npm test` | 运行 Vitest |
+| `npm run preview` | OpenNext Cloudflare 本地预览 |
+| `npm run deploy` | 部署到 Cloudflare Workers |
+| `npm run upload` | OpenNext Cloudflare 上传 |
+| `npm run cf-typegen` | 重新生成 Cloudflare 类型声明 |
+| `npm run migrate:feedback-images` | 旧版反馈图片迁移 dry-run |
+| `npm run migrate:feedback-images:execute` | 执行旧版反馈图片迁移 |
+
+---
+
+## 部署到 Cloudflare Workers（推荐）
+
+### 1. 登录 Cloudflare
 
 ```bash
-npm run lint
+npx wrangler login
 ```
 
-> Next.js 16 已移除 `next lint` 子命令，本项目使用 ESLint CLI（`eslint .`）进行检查。
+### 2. 创建 R2 Buckets
 
-## 使用说明
-
-### 反馈图片外链化迁移（一次性）
-
-1. 先执行 dry-run（只统计不写入）：
+`wrangler.jsonc` 默认配置了以下 Bucket 名称：
 
 ```bash
-npm run migrate:feedback-images
+npx wrangler r2 bucket create cache
+npx wrangler r2 bucket create feedback-images
+npx wrangler r2 bucket create card-images
 ```
 
-2. 确认统计结果后执行正式迁移：
+### 3. 创建 / 绑定 D1
+
+当前 `wrangler.jsonc` 中绑定名为：
+- `KV_DB`
+
+如果你在新账号/新环境部署，需要按自己的 D1 实际信息更新 `wrangler.jsonc` 中的：
+- `database_name`
+- `database_id`
+
+### 4. 配置 Secrets / Variables
+
+至少配置这些变量：
+- `NEW_API_URL`
+- `SESSION_SECRET`
+- `ADMIN_USERNAMES`
+- `RAFFLE_DELIVERY_CRON_SECRET` 或 `CRON_SECRET`
+
+按需配置：
+- `NEW_API_ADMIN_USERNAME`
+- `NEW_API_ADMIN_PASSWORD`
+- `RAFFLE_DELIVERY_CRON_MAX_JOBS`
+- `R2_PUBLIC_URL`
+- `NEXT_PUBLIC_BASE_URL`
+
+### 5. 部署
 
 ```bash
-npm run migrate:feedback-images:execute
+npm run deploy
 ```
 
-3. 如需详细日志：
+### 6. 本地预览（可选）
 
 ```bash
-node scripts/migrate-feedback-images-to-blob.mjs --execute --verbose
+npm run preview
 ```
 
-> 建议在低峰期执行，避免迁移期间反馈留言高并发写入。
+> Windows 原生环境下 OpenNext 相关构建偶尔不稳定，建议在 **WSL** 中执行 `preview / build / deploy`。
 
-### 管理员操作
+---
 
-1. 使用管理员账号登录
-2. 点击右上角 "管理后台"
-3. 创建新项目：
-   - 输入项目名称（如 "5刀福利"）
-   - 设置限领人数
-   - 上传兑换码 .txt 文件（每行一个兑换码）
-4. 管理项目：
-   - 暂停/恢复领取
-   - 追加兑换码
-   - 查看分发记录
+## Vercel / 非 Cloudflare 运行说明
 
-### 用户操作
+代码中保留了以下兼容能力：
+- `@vercel/kv` 读写回退
+- 普通 Next 运行方式
 
-1. 访问首页查看可领取的项目
-2. 点击项目进入详情页
-3. 登录后点击 "立即领取" 获取兑换码
-4. 复制兑换码使用
+但请注意：
+- `FEEDBACK_IMAGES`、`CARD_IMAGES` 等 **R2 绑定能力是 Cloudflare 专用**
+- `worker-wrapper.mjs` 的 **Cron + Worker 自调用** 也是 Cloudflare 专用
+- 因此如果你需要 **完整功能**，请使用 Cloudflare 部署
 
-## 项目结构
+如果只是临时在 Vercel / 普通 Node 环境运行核心业务，请至少保证：
+- `KV_REST_API_URL`
+- `KV_REST_API_TOKEN`
 
-```
+---
 
 ## 多人抽奖发奖队列
 
-- 多人抽奖开奖后会先落库中奖名单，再将“直充发奖”写入 KV 队列。
-- 队列由 `wrangler.jsonc` 的 Cron 每日触发（路径：`/api/internal/raffle/delivery`，默认 UTC 03:00）。
-- 发奖处理策略：单任务最多处理 20 位中奖者，发奖并发上限 5；失败和超时 pending 可重试。
-src/
-├── app/
-│   ├── page.tsx              # 首页 - 项目列表
-│   ├── login/page.tsx        # 登录页
-│   ├── project/[id]/page.tsx # 项目详情 - 领取页
-│   ├── admin/
-│   │   ├── page.tsx          # 管理后台
-│   │   └── project/[id]/     # 项目详情 - 分发记录
-│   └── api/
-│       ├── auth/             # 认证 API
-│       ├── projects/         # 项目 API
-│       └── admin/            # 管理 API
-├── lib/
-│   ├── auth.ts               # 认证工具
-│   ├── kv.ts                 # Vercel KV 操作
-│   ├── new-api.ts            # new-api 客户端
-│   └── utils.ts              # 工具函数
-└── components/               # UI 组件
+### 触发方式
+- Cloudflare Cron 通过 `wrangler.jsonc` 配置：
+  - 默认 `0 3 * * *`（UTC）
+- `worker-wrapper.mjs` 会自动调用：
+  - `POST /api/internal/raffle/delivery`
+
+### 鉴权
+内部接口要求：
+- `Authorization: Bearer <RAFFLE_DELIVERY_CRON_SECRET>`
+- 或 `x-raffle-delivery-secret`
+
+### 可调参数
+- `RAFFLE_DELIVERY_CRON_MAX_JOBS`：单次 Cron 最多处理多少个队列任务，范围 `1~20`
+
+### 特性
+- 发奖幂等保护
+- processing / delivered / uncertain 状态
+- 处理中任务超时恢复
+- pending 奖励延迟重试
+
+---
+
+## 反馈图片与卡牌图片
+
+### 反馈图片
+- 运行时使用 `FEEDBACK_IMAGES` R2 Bucket
+- 可选 `R2_PUBLIC_URL`，用于返回公网可访问地址
+- 若未绑定 `FEEDBACK_IMAGES`，外链化会失败
+
+### 卡牌图片
+- 运行时使用 `CARD_IMAGES` R2 Bucket
+- Worker 层对 `/images/*` 做了缓存与 ETag 处理
+- 若未绑定 `CARD_IMAGES`，图片请求会返回 `503`
+
+---
+
+## 质量门
+
+当前仓库已通过：
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
 ```
+
+---
+
+## 项目结构（简化）
+
+```text
+src/
+├─ app/
+│  ├─ admin/                 # 管理后台页面
+│  ├─ api/                   # API 路由
+│  ├─ cards/                 # 卡牌页面
+│  ├─ games/                 # 小游戏页面
+│  ├─ lottery/               # 单人抽奖
+│  ├─ raffle/                # 多人抽奖
+│  ├─ feedback/              # 反馈墙
+│  └─ store/                 # 积分商城
+├─ components/               # 通用 UI 组件
+├─ lib/
+│  ├─ auth.ts                # 认证、Session、吊销
+│  ├─ rate-limit.ts          # 限流
+│  ├─ kv.ts                  # 业务数据访问
+│  ├─ d1-kv.ts               # D1 兼容 KV 层
+│  ├─ new-api.ts             # new-api 集成
+│  ├─ lottery.ts             # 单人抽奖逻辑
+│  ├─ raffle.ts              # 多人抽奖逻辑
+│  ├─ points.ts              # 积分系统
+│  ├─ store.ts               # 商店逻辑
+│  ├─ rewards.ts             # 奖励批次
+│  ├─ anomaly-detector.ts    # 仪表盘与异常检测
+│  └─ ...
+├─ proxy.ts                  # Next 16 Proxy（安全头 / 来源校验）
+└─ __tests__/                # 测试
+```
+
+---
+
+## 安全与运维提示
+
+### 生产环境务必配置
+- `SESSION_SECRET`：必须为高强度随机字符串，建议至少 32 位
+- `ADMIN_USERNAMES`：必须明确配置管理员白名单
+
+### 如果构建时看到这条警告
+```text
+ADMIN_USERNAMES not set in production, no admin users configured!
+```
+说明你没有给生产构建环境设置管理员名单。
+
+### 登录跳转
+项目已限制登录后的跳转目标为**站内安全路径**，避免开放跳转问题。
+
+### 并发保护
+以下关键路径已做锁保护：
+- 项目领取
+- 直充预占
+- 多人抽奖参与
+
+---
+
+## 旧版反馈图片迁移脚本
+
+仓库仍保留一个历史迁移脚本：
+- `scripts/migrate-feedback-images-to-blob.mjs`
+
+用途：
+- 处理旧数据迁移到外部对象存储
+
+使用前请确认：
+- 已配置 `KV_REST_API_URL`
+- 已配置 `KV_REST_API_TOKEN`
+- 已配置 `BLOB_READ_WRITE_TOKEN`
+
+示例：
+
+```bash
+npm run migrate:feedback-images
+npm run migrate:feedback-images:execute
+```
+
+---
 
 ## License
 
