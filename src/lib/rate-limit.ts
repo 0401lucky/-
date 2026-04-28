@@ -1,6 +1,7 @@
 import { kv } from '@/lib/d1-kv';
 import { NextResponse } from "next/server";
 import { getAuthUser, type AuthUser } from "./auth";
+import { enforceTrustedApiRequest } from "./request-security";
 import {
   hasNativeHotStoreBinding,
   incrementNativeRateLimit,
@@ -278,6 +279,11 @@ export function withAuthenticatedUser<TRequest extends Request = Request, TConte
   } = options;
 
   return async (request: TRequest, context: TContext): Promise<NextResponse> => {
+    const blocked = enforceTrustedApiRequest(request);
+    if (blocked) {
+      return blocked;
+    }
+
     const user = await getAuthUser();
     if (!user) {
       return NextResponse.json(
@@ -339,7 +345,6 @@ export async function withRateLimit(
   }
   return null;
 }
-
 
 
 

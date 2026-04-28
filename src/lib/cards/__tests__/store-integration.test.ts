@@ -42,8 +42,15 @@ describe('Card Draw Store Integration', () => {
     mockAddPoints.mockResolvedValue({ success: true, balance: CARD_DRAW_PRICE + 100 });
   });
 
+  function createTrustedRequest(): Request {
+    return new Request('http://localhost/api/cards/purchase', {
+      method: 'POST',
+      headers: { 'sec-fetch-site': 'same-origin' },
+    });
+  }
+
   it('should successfully purchase a card draw with sufficient points', async () => {
-    const response = await purchasePOST();
+    const response = await purchasePOST(createTrustedRequest());
     const data = await response.json();
 
     expect(data.success).toBe(true);
@@ -56,7 +63,7 @@ describe('Card Draw Store Integration', () => {
   it('should fail to purchase with insufficient points', async () => {
     mockDeductPoints.mockResolvedValueOnce({ success: false, balance: 500, message: '积分不足' });
 
-    const response = await purchasePOST();
+    const response = await purchasePOST(createTrustedRequest());
     const data = await response.json();
 
     expect(data.success).toBe(false);
@@ -68,7 +75,7 @@ describe('Card Draw Store Integration', () => {
   it('should require authentication', async () => {
     mockGetAuthUser.mockResolvedValue(null);
 
-    const response = await purchasePOST();
+    const response = await purchasePOST(createTrustedRequest());
     const data = await response.json();
 
     expect(response.status).toBe(401);

@@ -9,6 +9,7 @@ import {
   deleteFarmShopItem,
   getFarmShopPurchaseCounts,
 } from '@/lib/farm-shop';
+import { enforceTrustedApiRequest } from '@/lib/request-security';
 import type { FarmItemEffectType, FarmItemMode, FarmShopItem } from '@/lib/types/farm-shop';
 
 function jsonResponse(
@@ -138,6 +139,11 @@ export async function GET() {
  * POST - 创建道具
  */
 export async function POST(request: NextRequest) {
+  const blocked = enforceTrustedApiRequest(request);
+  if (blocked) {
+    return blocked;
+  }
+
   const auth = await checkAdmin();
   if (!auth.authorized) return auth.response;
 
@@ -240,6 +246,11 @@ export async function POST(request: NextRequest) {
  * PUT - 更新道具
  */
 export async function PUT(request: NextRequest) {
+  const blocked = enforceTrustedApiRequest(request);
+  if (blocked) {
+    return blocked;
+  }
+
   const auth = await checkAdmin();
   if (!auth.authorized) return auth.response;
 
@@ -388,6 +399,11 @@ export async function PUT(request: NextRequest) {
  * DELETE - 删除道具
  */
 export async function DELETE(request: NextRequest) {
+  const blocked = enforceTrustedApiRequest(request);
+  if (blocked) {
+    return blocked;
+  }
+
   const auth = await checkAdmin();
   if (!auth.authorized) return auth.response;
 

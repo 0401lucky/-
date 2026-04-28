@@ -13,7 +13,10 @@ function createMockRequest(body: object = {}): NextRequest {
   return new NextRequest('http://localhost/api/cards/draw', {
     method: 'POST',
     body: JSON.stringify(body),
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'sec-fetch-site': 'same-origin',
+    },
   });
 }
 

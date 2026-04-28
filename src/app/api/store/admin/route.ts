@@ -10,6 +10,7 @@ import {
   updateStoreItem,
   deleteStoreItem,
 } from '@/lib/store';
+import { enforceTrustedApiRequest } from '@/lib/request-security';
 import type { StoreItemType } from '@/lib/types/store';
 
 const STORE_ITEM_PURCHASE_COUNTS_KEY = 'store:item:purchase_counts';
@@ -96,6 +97,11 @@ export async function GET() {
  * POST - 创建商品
  */
 export async function POST(request: NextRequest) {
+  const blocked = enforceTrustedApiRequest(request);
+  if (blocked) {
+    return blocked;
+  }
+
   const auth = await checkAdmin();
   if (!auth.authorized) {
     return auth.response;
@@ -160,6 +166,11 @@ export async function POST(request: NextRequest) {
  * PUT - 更新商品
  */
 export async function PUT(request: NextRequest) {
+  const blocked = enforceTrustedApiRequest(request);
+  if (blocked) {
+    return blocked;
+  }
+
   const auth = await checkAdmin();
   if (!auth.authorized) {
     return auth.response;
@@ -256,6 +267,11 @@ export async function PUT(request: NextRequest) {
  * DELETE - 删除商品
  */
 export async function DELETE(request: NextRequest) {
+  const blocked = enforceTrustedApiRequest(request);
+  if (blocked) {
+    return blocked;
+  }
+
   const auth = await checkAdmin();
   if (!auth.authorized) {
     return auth.response;

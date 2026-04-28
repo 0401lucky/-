@@ -6,6 +6,7 @@ import {
 } from "@/lib/feedback";
 import { normalizeFeedbackImages } from "@/lib/feedback-image";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { enforceTrustedApiRequest } from "@/lib/request-security";
 
 const MAX_MESSAGE_LENGTH = 1000;
 
@@ -14,6 +15,11 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const blocked = enforceTrustedApiRequest(request);
+    if (blocked) {
+      return blocked;
+    }
+
     const user = await getAuthUser();
     if (!user) {
       return NextResponse.json(

@@ -3,6 +3,7 @@ import { getAuthUser } from "@/lib/auth";
 import { drawCard, getUserCardData } from "@/lib/cards/draw";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { CardConfig } from "@/lib/cards/types";
+import { enforceTrustedApiRequest } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,11 @@ interface DrawResult {
 
 export async function POST(request: NextRequest) {
   try {
+    const blocked = enforceTrustedApiRequest(request);
+    if (blocked) {
+      return blocked;
+    }
+
     const user = await getAuthUser();
     if (!user) {
       return NextResponse.json(

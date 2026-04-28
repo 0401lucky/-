@@ -4,8 +4,14 @@ import { CARD_DRAW_PRICE } from '@/lib/cards/constants';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { addCardDraws } from '@/lib/kv';
 import { addPoints, deductPoints } from '@/lib/points';
+import { enforceTrustedApiRequest } from '@/lib/request-security';
 
-export async function POST() {
+export async function POST(request: Request) {
+  const blocked = enforceTrustedApiRequest(request);
+  if (blocked) {
+    return blocked;
+  }
+
   const user = await getAuthUser();
   if (!user) {
     return NextResponse.json({ success: false, message: '未登录' }, { status: 401 });

@@ -6,6 +6,7 @@
 import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { processQueuedRaffleDeliveries } from "@/lib/raffle";
+import { enforceTrustedApiRequest } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
 
@@ -102,5 +103,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const blocked = enforceTrustedApiRequest(request);
+  if (blocked) {
+    return blocked;
+  }
+
   return handle(request);
 }

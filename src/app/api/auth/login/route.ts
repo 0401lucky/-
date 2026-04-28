@@ -9,6 +9,7 @@ import {
 } from "@/lib/auth";
 import { hasNativeHotStoreBinding, upsertNativeUser } from "@/lib/hot-d1";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+import { enforceTrustedApiRequest } from "@/lib/request-security";
 
 const TRUSTED_IP_HEADERS = ["cf-connecting-ip", "true-client-ip", "x-real-ip"] as const;
 
@@ -85,6 +86,11 @@ function getClientIp(request: NextRequest): string {
 
 export async function POST(request: NextRequest) {
   try {
+    const blocked = enforceTrustedApiRequest(request);
+    if (blocked) {
+      return blocked;
+    }
+
     const { username, password } = await request.json();
     const normalizedUsername = String(username ?? "").trim().toLowerCase();
 

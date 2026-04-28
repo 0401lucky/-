@@ -134,7 +134,10 @@ describe('Feedback API Permission & Flow', () => {
     const response = await adminDetailPATCH(
       new NextRequest('http://localhost/api/admin/feedback/fb-2', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'sec-fetch-site': 'same-origin',
+        },
         body: JSON.stringify({ status: 'resolved' }),
       }),
       { params: Promise.resolve({ id: 'fb-2' }) }
@@ -184,7 +187,10 @@ describe('Feedback API Permission & Flow', () => {
     const response = await adminReplyPOST(
       new NextRequest('http://localhost/api/admin/feedback/fb-3/messages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'sec-fetch-site': 'same-origin',
+        },
         body: JSON.stringify({ content: '我们已收到，会尽快处理' }),
       }),
       { params: Promise.resolve({ id: 'fb-3' }) }

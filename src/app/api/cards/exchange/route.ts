@@ -2,11 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import { exchangeFragmentsForCard } from "@/lib/cards/fragments";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { enforceTrustedApiRequest } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
+    const blocked = enforceTrustedApiRequest(request);
+    if (blocked) {
+      return blocked;
+    }
+
     const user = await getAuthUser();
     if (!user) {
       return NextResponse.json(

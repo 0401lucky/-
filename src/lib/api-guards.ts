@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthUser, type AuthUser } from "./auth";
+import { enforceTrustedApiRequest } from "./request-security";
 
 export interface AuthGuardOptions {
   unauthorizedMessage?: string;
@@ -51,6 +52,11 @@ export function withAuth<TRequest extends Request = Request, TContext = unknown>
   } = options;
 
   return (async (request: TRequest, context?: TContext): Promise<NextResponse> => {
+    const blocked = enforceTrustedApiRequest(request);
+    if (blocked) {
+      return blocked;
+    }
+
     const user = await getAuthUser();
     if (!user) {
       return NextResponse.json(

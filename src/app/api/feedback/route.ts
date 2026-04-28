@@ -11,6 +11,7 @@ import {
   type FeedbackImage,
 } from "@/lib/feedback-image";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { enforceTrustedApiRequest } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
 
@@ -102,6 +103,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const blocked = enforceTrustedApiRequest(request);
+    if (blocked) {
+      return blocked;
+    }
+
     const user = await getAuthUser();
     if (!user) {
       return NextResponse.json(

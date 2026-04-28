@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { revokeSessionToken } from "@/lib/auth";
+import { enforceTrustedApiRequest } from "@/lib/request-security";
 
-export async function POST() {
+export async function POST(request: Request) {
+  const blocked = enforceTrustedApiRequest(request);
+  if (blocked) {
+    return blocked;
+  }
+
   const cookieStore = await cookies();
   const appSession = cookieStore.get("app_session")?.value;
   const legacySession = cookieStore.get("session")?.value;
