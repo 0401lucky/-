@@ -229,7 +229,7 @@ export async function exchangeItem(
   userId: number,
   itemId: string,
   quantity: number = 1
-): Promise<{ success: boolean; message: string; log?: ExchangeLog; uncertain?: boolean }> {
+): Promise<{ success: boolean; message: string; log?: ExchangeLog; uncertain?: boolean; drawsAvailable?: number }> {
   if (!Number.isSafeInteger(quantity) || quantity < 1) {
     return { success: false, message: '数量参数错误' };
   }
@@ -319,6 +319,7 @@ export async function exchangeItem(
   let rewardSuccess = false;
   let rewardMessage = '';
   let rewardUncertain = false;
+  let drawsAvailable: number | undefined;
 
   try {
     if (item.type === 'lottery_spin') {
@@ -330,6 +331,7 @@ export async function exchangeItem(
       // 增加卡牌抽奖次数
       const result = await addCardDraws(userId, totalValue);
       rewardSuccess = result.success;
+      drawsAvailable = result.drawsAvailable;
       rewardMessage = result.success 
         ? `获得 ${totalValue} 次卡牌抽奖机会` 
         : '卡牌抽奖次数增加失败';
@@ -456,6 +458,7 @@ export async function exchangeItem(
     success: true, 
     message: rewardMessage,
     log,
+    drawsAvailable,
   };
 }
 

@@ -88,7 +88,7 @@ describe('Checkin and Card Draw Integration', () => {
       // grantCheckinLocalRewards flow:
       //   1. kv.set(checkinKey, '1', {nx, ex}) -> 'OK' (not checked in yet)
       //   2. kv.get(cardsKey) -> null (no card data)
-      //   3. kv.set(cardsKey, newCardData) -> saves card data with drawsAvailable: 1+5=6
+      //   3. kv.set(cardsKey, newCardData) -> saves card data with drawsAvailable: 1+1=2
       //   4. kv.incrby(extraSpinsKey, 1) -> returns 1
       mockKvGet.mockImplementation(async (key: string) => {
         if (key.includes('user:checkin')) return null;

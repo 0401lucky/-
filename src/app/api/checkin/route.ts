@@ -3,12 +3,13 @@ import { getAuthUser } from "@/lib/auth";
 import { checkinToNewApi } from "@/lib/new-api";
 import { grantCheckinLocalRewards, hasCheckedInToday, getExtraSpinCount } from "@/lib/kv";
 import { isNativeHotStoreReady } from "@/lib/hot-d1";
+import { getUserCardData } from "@/lib/cards/draw";
 import { cookies } from "next/headers";
 import { withUserRateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
-const CARD_DRAWS_PER_CHECKIN = 5;
+const CARD_DRAWS_PER_CHECKIN = 1;
 const CHECKIN_SUCCESS_MESSAGE = `签到成功！获得1次额外抽奖机会和${CARD_DRAWS_PER_CHECKIN}次卡牌抽卡机会`;
 
 export async function GET() {
@@ -18,15 +19,20 @@ export async function GET() {
       return NextResponse.json({ checkedIn: false }, { status: 401 });
     }
 
-    const [checkedIn, extraSpins] = await Promise.all([
+    const [checkedIn, extraSpins, cardData] = await Promise.all([
       hasCheckedInToday(user.id),
-      getExtraSpinCount(user.id)
+      getExtraSpinCount(user.id),
+      getUserCardData(String(user.id)),
     ]);
     
-    return NextResponse.json({ checkedIn, extraSpins });
+    return NextResponse.json({
+      checkedIn,
+      extraSpins,
+      drawsAvailable: cardData.drawsAvailable,
+    });
   } catch (error) {
     console.error("Check status error:", error);
-    return NextResponse.json({ checkedIn: false, extraSpins: 0 }, { status: 500 });
+    return NextResponse.json({ checkedIn: false, extraSpins: 0, drawsAvailable: 0 }, { status: 500 });
   }
 }
 
@@ -88,6 +94,7 @@ export const POST = withUserRateLimit(
             message: CHECKIN_SUCCESS_MESSAGE,
             quotaDisplay: "已在主站领取",
             extraSpins: localRewards.extraSpins,
+            drawsAvailable: localRewards.drawsAvailable,
           });
         }
         
@@ -122,6 +129,7 @@ export const POST = withUserRateLimit(
         quotaAwarded,
         quotaDisplay: `$${quotaDisplay}`,
         extraSpins: localRewards.extraSpins,
+        drawsAvailable: localRewards.drawsAvailable,
       });
 
     } catch (error) {

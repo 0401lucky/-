@@ -79,7 +79,11 @@ function StoreContent() {
       const data = await res.json();
 
       if (data.success) {
-        setMessage({ type: 'success', text: data.message || '兑换成功！' });
+        const drawsAvailable = data.data?.drawsAvailable;
+        const successText = typeof drawsAvailable === 'number'
+          ? `${data.message || '兑换成功！'}，当前剩余 ${drawsAvailable} 次卡牌抽卡`
+          : data.message || '兑换成功！';
+        setMessage({ type: 'success', text: successText });
         setBalance(data.data?.newBalance ?? balance);
         setQuantityItem(null);
         setQuantity(1);

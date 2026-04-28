@@ -5,6 +5,12 @@ import { RARITY_PROBABILITIES, RARITY_LEVELS, FRAGMENT_VALUES } from "./constant
 import { getGuaranteedRarity, normalizePityCounters, type PityCounters } from "./pity";
 import { secureRandomFloat, secureRandomIndex } from "../random";
 import { withUserEconomyLock } from "../economy-lock";
+import {
+  deleteNativeUserCards,
+  getNativeUserCards,
+  isNativeHotStoreReady,
+  setNativeUserCards,
+} from "@/lib/hot-d1";
 
 export interface UserCards {
   inventory: string[];
@@ -96,13 +102,115 @@ export function normalizeUserCards(data: Partial<UserCards> | null | undefined):
   };
 }
 
+function getUserCardsKey(userId: string): string {
+  return `cards:user:${userId}`;
+}
+
+function parseNativeUserId(userId: string): number | null {
+  const parsed = Number(userId);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
+function mergeUserCards(primary: Partial<UserCards>, secondary: Partial<UserCards>): UserCards {
+  const a = normalizeUserCards(primary);
+  const b = normalizeUserCards(secondary);
+  const pityLegendaryRare = Math.max(a.pityLegendaryRare ?? 0, b.pityLegendaryRare ?? 0);
+
+  return {
+    inventory: uniqueStrings([...a.inventory, ...b.inventory]),
+    fragments: Math.max(a.fragments, b.fragments),
+    pityRare: Math.max(a.pityRare ?? 0, b.pityRare ?? 0),
+    pityEpic: Math.max(a.pityEpic ?? 0, b.pityEpic ?? 0),
+    pityLegendary: Math.max(a.pityLegendary ?? 0, b.pityLegendary ?? 0),
+    pityLegendaryRare,
+    pityCounter: pityLegendaryRare,
+    drawsAvailable: Math.max(a.drawsAvailable, b.drawsAvailable),
+    collectionRewards: uniqueStrings([...a.collectionRewards, ...b.collectionRewards]),
+  };
+}
+
+function isSameUserCards(a: UserCards, b: UserCards): boolean {
+  return JSON.stringify(normalizeUserCards(a)) === JSON.stringify(normalizeUserCards(b));
+}
+
+async function shouldUseNativeCards(userId: string): Promise<number | null> {
+  const nativeUserId = parseNativeUserId(userId);
+  if (nativeUserId === null) {
+    return null;
+  }
+
+  return (await isNativeHotStoreReady()) ? nativeUserId : null;
+}
+
 export async function getUserCardData(userId: string): Promise<UserCards> {
-  const data = await kv.get<UserCards>(`cards:user:${userId}`);
-  return normalizeUserCards(data || null);
+  const nativeUserId = await shouldUseNativeCards(userId);
+  if (nativeUserId !== null) {
+    const legacyKey = getUserCardsKey(userId);
+    const [nativeData, legacyData] = await Promise.all([
+      getNativeUserCards(nativeUserId),
+      kv.get<Partial<UserCards>>(legacyKey),
+    ]);
+
+    if (nativeData !== null && legacyData !== null && legacyData !== undefined) {
+      // 故障期间两边可能分叉：native 有新增次数，旧 KV 有实际抽到的卡。
+      const merged = mergeUserCards(nativeData, legacyData);
+      const normalizedNative = normalizeUserCards(nativeData);
+      const normalizedLegacy = normalizeUserCards(legacyData);
+      if (!isSameUserCards(merged, normalizedNative) || !isSameUserCards(merged, normalizedLegacy)) {
+        await Promise.all([
+          setNativeUserCards(nativeUserId, merged),
+          kv.set(legacyKey, merged),
+        ]);
+      }
+      return merged;
+    }
+
+    if (nativeData !== null) {
+      return normalizeUserCards(nativeData);
+    }
+
+    // 读穿旧 KV，避免热路径开启后未迁移用户看不到原有卡牌数据。
+    const normalized = normalizeUserCards(legacyData);
+    if (legacyData !== null && legacyData !== undefined) {
+      await Promise.all([
+        setNativeUserCards(nativeUserId, normalized),
+        kv.set(legacyKey, normalized),
+      ]);
+    }
+    return normalized;
+  }
+
+  const data = await kv.get<UserCards>(getUserCardsKey(userId));
+  return normalizeUserCards(data);
 }
 
 export async function updateUserCardData(userId: string, data: UserCards): Promise<void> {
-  await kv.set(`cards:user:${userId}`, normalizeUserCards(data));
+  const normalized = normalizeUserCards(data);
+  const nativeUserId = await shouldUseNativeCards(userId);
+  if (nativeUserId !== null) {
+    await Promise.all([
+      setNativeUserCards(nativeUserId, normalized),
+      kv.set(getUserCardsKey(userId), normalized),
+    ]);
+    return;
+  }
+
+  await kv.set(getUserCardsKey(userId), normalized);
+}
+
+export async function deleteUserCardData(userId: string): Promise<void> {
+  const nativeUserId = await shouldUseNativeCards(userId);
+  if (nativeUserId !== null) {
+    await deleteNativeUserCards(nativeUserId);
+  }
+  await kv.del(getUserCardsKey(userId));
 }
 
 /**
@@ -163,8 +271,8 @@ async function reserveDraw(userKey: string): Promise<{
   pityCounters?: PityCounters;
   status: string;
 }> {
-  const data = await kv.get<UserCards>(userKey);
-  const userData = normalizeUserCards(data);
+  const userId = userKey.replace(/^cards:user:/, "");
+  const userData = await getUserCardData(userId);
 
   if (userData.drawsAvailable <= 0) {
     return { success: false, status: "no_draws" };
@@ -177,7 +285,7 @@ async function reserveDraw(userKey: string): Promise<{
   userData.pityLegendaryRare = (userData.pityLegendaryRare ?? 0) + 1;
   userData.pityCounter = userData.pityLegendaryRare;
 
-  await kv.set(userKey, userData);
+  await updateUserCardData(userId, userData);
 
   return {
     success: true,
@@ -201,8 +309,8 @@ async function finalizeDraw(
   rarity: string,
   fragmentValue: number,
 ): Promise<{ success: boolean; status: string; fragmentsAdded: number }> {
-  const data = await kv.get<UserCards>(userKey);
-  const userData = normalizeUserCards(data);
+  const userId = userKey.replace(/^cards:user:/, "");
+  const userData = await getUserCardData(userId);
 
   const isDuplicate = userData.inventory.includes(cardId);
 
@@ -232,7 +340,7 @@ async function finalizeDraw(
   }
   userData.pityCounter = userData.pityLegendaryRare ?? 0;
 
-  await kv.set(userKey, userData);
+  await updateUserCardData(userId, userData);
 
   return {
     success: true,
@@ -246,11 +354,8 @@ async function finalizeDraw(
  * Restores one draw and reverts pity increments from Phase 1.
  */
 async function rollbackReservedDraw(userKey: string): Promise<void> {
-  const data = await kv.get<UserCards>(userKey);
-  if (!data) {
-    throw new Error("Rollback reserve draw failed: missing user data");
-  }
-  const userData = normalizeUserCards(data);
+  const userId = userKey.replace(/^cards:user:/, "");
+  const userData = await getUserCardData(userId);
 
   userData.drawsAvailable += 1;
   userData.pityRare = Math.max(0, (userData.pityRare ?? 0) - 1);
@@ -259,7 +364,7 @@ async function rollbackReservedDraw(userKey: string): Promise<void> {
   userData.pityLegendaryRare = Math.max(0, (userData.pityLegendaryRare ?? 0) - 1);
   userData.pityCounter = userData.pityLegendaryRare ?? 0;
 
-  await kv.set(userKey, userData);
+  await updateUserCardData(userId, userData);
 }
 
 /**

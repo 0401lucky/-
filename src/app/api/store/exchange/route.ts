@@ -36,6 +36,7 @@ export const POST = withUserRateLimit('store:exchange', async (request, user) =>
       data: {
         log: result.log,
         newBalance,
+        drawsAvailable: result.drawsAvailable,
       },
     });
   } catch (error) {

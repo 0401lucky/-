@@ -8,6 +8,7 @@ import { Check, CalendarDays, Gift, ChevronLeft, Loader2, PartyPopper, Sparkles 
 interface CheckinResult {
   quotaDisplay?: string;
   extraSpins?: number;
+  drawsAvailable?: number;
 }
 
 export default function CheckinPage() {
@@ -16,6 +17,7 @@ export default function CheckinPage() {
   const [submitting, setSubmitting] = useState(false);
   const [checkedIn, setCheckedIn] = useState(false);
   const [extraSpins, setExtraSpins] = useState(0);
+  const [cardDraws, setCardDraws] = useState(0);
   const [checkinResult, setCheckinResult] = useState<CheckinResult | null>(null);
 
   const checkStatus = useCallback(async () => {
@@ -36,7 +38,8 @@ export default function CheckinPage() {
       if (statusRes.ok) {
         const statusData = await statusRes.json();
         setCheckedIn(statusData.checkedIn);
-        setExtraSpins(statusData.extraSpins || 0);
+        setExtraSpins(statusData.extraSpins ?? 0);
+        setCardDraws(statusData.drawsAvailable ?? 0);
       }
     } catch (error) {
       console.error('Failed to fetch status:', error);
@@ -61,10 +64,12 @@ export default function CheckinPage() {
 
       if (data.success) {
         setCheckedIn(true);
-        setExtraSpins(data.extraSpins || extraSpins + 1);
+        setExtraSpins(data.extraSpins ?? extraSpins + 1);
+        setCardDraws(data.drawsAvailable ?? cardDraws + 1);
         setCheckinResult({
           quotaDisplay: data.quotaDisplay,
           extraSpins: data.extraSpins,
+          drawsAvailable: data.drawsAvailable,
         });
         // [Perf] 动态导入彩带特效，减少首屏 JS 体积
         import('canvas-confetti').then(({ default: confetti }) => {
@@ -126,9 +131,9 @@ export default function CheckinPage() {
               {checkedIn ? '今日已签到' : '每日签到'}
             </h1>
             <p className="text-stone-500 text-sm">
-              {checkedIn 
-                ? '明天记得再来哦！' 
-                : '签到可获得一次额外抽奖机会'}
+              {checkedIn
+                ? '明天记得再来哦！'
+                : '签到可获得额外抽奖机会和卡牌抽卡机会'}
             </p>
             
             {/* 显示奖励信息 */}
@@ -148,6 +153,13 @@ export default function CheckinPage() {
               <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-100 text-orange-700 rounded-full text-sm font-medium">
                 <Gift className="w-3.5 h-3.5" />
                 剩余 {extraSpins} 次额外抽奖
+              </div>
+            )}
+
+            {cardDraws > 0 && (
+              <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-pink-100 text-pink-700 rounded-full text-sm font-medium">
+                <Sparkles className="w-3.5 h-3.5" />
+                剩余 {cardDraws} 次卡牌抽卡
               </div>
             )}
           </div>

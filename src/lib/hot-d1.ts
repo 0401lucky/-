@@ -729,6 +729,14 @@ export async function setNativeUserCards(userId: number, cards: UserCards): Prom
     .run();
 }
 
+export async function deleteNativeUserCards(userId: number): Promise<void> {
+  await ensureHotSchema();
+  await getHotDb()
+    .prepare("DELETE FROM native_user_cards WHERE user_id = ?")
+    .bind(userId)
+    .run();
+}
+
 export async function hasNativeCheckedIn(userId: number, dateStr: string): Promise<boolean> {
   await ensureHotSchema();
   const row = await getHotDb()

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
-import { kv } from '@/lib/d1-kv';
+import { deleteUserCardData } from "@/lib/cards/draw";
 
 export const POST = withAdmin(async (request: NextRequest) => {
   try {
@@ -14,9 +14,8 @@ export const POST = withAdmin(async (request: NextRequest) => {
       );
     }
 
-    // Reset card data by deleting the key
-    // getUserCardData handles missing keys by returning default state
-    await kv.del(`cards:user:${userId}`);
+    // 重置卡牌数据，兼容旧 KV 和 native 热路径。
+    await deleteUserCardData(String(userId));
 
     return NextResponse.json({
       success: true,

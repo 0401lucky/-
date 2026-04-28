@@ -3,12 +3,21 @@ import { drawCard, getUserCardData, updateUserCardData, selectCardByProbability,
 import { kv } from '@/lib/d1-kv';
 import { CARDS } from '../config';
 import { FRAGMENT_VALUES } from '../constants';
+import { getNativeUserCards, isNativeHotStoreReady, setNativeUserCards } from '@/lib/hot-d1';
 
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
     get: vi.fn(),
     set: vi.fn(),
+    del: vi.fn(),
   },
+}));
+
+vi.mock('@/lib/hot-d1', () => ({
+  deleteNativeUserCards: vi.fn(),
+  getNativeUserCards: vi.fn(),
+  isNativeHotStoreReady: vi.fn(),
+  setNativeUserCards: vi.fn(),
 }));
 
 vi.mock('../../economy-lock', () => ({
@@ -31,10 +40,16 @@ describe('Card Draw System', () => {
 
   const mockKvGet = vi.mocked(kv.get);
   const mockKvSet = vi.mocked(kv.set);
+  const mockGetNativeUserCards = vi.mocked(getNativeUserCards);
+  const mockIsNativeHotStoreReady = vi.mocked(isNativeHotStoreReady);
+  const mockSetNativeUserCards = vi.mocked(setNativeUserCards);
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockKvSet.mockResolvedValue('OK');
+    mockIsNativeHotStoreReady.mockResolvedValue(false);
+    mockGetNativeUserCards.mockResolvedValue(null);
+    mockSetNativeUserCards.mockResolvedValue(undefined);
   });
 
   describe('getUserCardData', () => {
@@ -51,6 +66,58 @@ describe('Card Draw System', () => {
       const data = await getUserCardData(userId);
       expect(data).toEqual(storedData);
     });
+
+    it('should read card data from native hot store when enabled', async () => {
+      const nativeData = { ...getFreshMockData(), drawsAvailable: 8 };
+      mockIsNativeHotStoreReady.mockResolvedValue(true);
+      mockGetNativeUserCards.mockResolvedValue(nativeData);
+      mockKvGet.mockResolvedValue(null);
+
+      const data = await getUserCardData('123');
+
+      expect(data).toEqual(nativeData);
+      expect(mockGetNativeUserCards).toHaveBeenCalledWith(123);
+      expect(kv.get).toHaveBeenCalledWith('cards:user:123');
+      expect(mockSetNativeUserCards).not.toHaveBeenCalled();
+    });
+
+    it('should seed native hot store from legacy KV when native card data is missing', async () => {
+      const legacyData = { ...getFreshMockData(), drawsAvailable: 6 };
+      mockIsNativeHotStoreReady.mockResolvedValue(true);
+      mockGetNativeUserCards.mockResolvedValue(null);
+      mockKvGet.mockResolvedValue(legacyData);
+
+      const data = await getUserCardData('123');
+
+      expect(data).toEqual(legacyData);
+      expect(kv.get).toHaveBeenCalledWith('cards:user:123');
+      expect(mockSetNativeUserCards).toHaveBeenCalledWith(123, legacyData);
+    });
+
+    it('should merge split native and legacy card data', async () => {
+      const nativeData = { ...getFreshMockData(), drawsAvailable: 9, inventory: ['animal-s1-common-仓鼠'] };
+      const legacyData = { ...getFreshMockData(), drawsAvailable: 2, inventory: ['animal-s1-rare-柴犬'], fragments: 20 };
+      mockIsNativeHotStoreReady.mockResolvedValue(true);
+      mockGetNativeUserCards.mockResolvedValue(nativeData);
+      mockKvGet.mockResolvedValue(legacyData);
+
+      const data = await getUserCardData('123');
+
+      expect(data.drawsAvailable).toBe(9);
+      expect(data.fragments).toBe(20);
+      expect(data.inventory).toEqual(expect.arrayContaining([
+        'animal-s1-common-仓鼠',
+        'animal-s1-rare-柴犬',
+      ]));
+      expect(mockSetNativeUserCards).toHaveBeenCalledWith(123, expect.objectContaining({
+        drawsAvailable: 9,
+        fragments: 20,
+      }));
+      expect(kv.set).toHaveBeenCalledWith('cards:user:123', expect.objectContaining({
+        drawsAvailable: 9,
+        fragments: 20,
+      }));
+    });
   });
 
   describe('updateUserCardData', () => {
@@ -58,6 +125,16 @@ describe('Card Draw System', () => {
       const newData = { ...getFreshMockData(), inventory: ['animal-s1-common-仓鼠'] };
       await updateUserCardData(userId, newData);
       expect(kv.set).toHaveBeenCalledWith(`cards:user:${userId}`, newData);
+    });
+
+    it('should store data in native hot store when enabled', async () => {
+      const newData = { ...getFreshMockData(), drawsAvailable: 9 };
+      mockIsNativeHotStoreReady.mockResolvedValue(true);
+
+      await updateUserCardData('123', newData);
+
+      expect(mockSetNativeUserCards).toHaveBeenCalledWith(123, newData);
+      expect(kv.set).toHaveBeenCalledWith('cards:user:123', newData);
     });
   });
 

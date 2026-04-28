@@ -1,7 +1,7 @@
-import { kv } from '@/lib/d1-kv';
 import { CARDS } from "./config";
 import { Rarity } from "./types";
 import { FRAGMENT_VALUES, EXCHANGE_PRICES } from "./constants";
+import { getUserCardData, updateUserCardData } from "./draw";
 
 /**
  * Returns the fragment value for a given rarity when a duplicate card is obtained.
@@ -27,22 +27,18 @@ export async function handleDuplicateCard(userId: string, cardId: string): Promi
   if (!card) throw new Error("Invalid card ID");
 
   const fragmentValue = getFragmentValue(card.rarity);
-  const userKey = `cards:user:${userId}`;
-
-  const data = await kv.get<{ inventory?: string[]; fragments?: number; pityCounter?: number; drawsAvailable?: number; collectionRewards?: Record<string, unknown> }>(userKey);
-  const userData = data ?? { inventory: [], fragments: 0, pityCounter: 0, drawsAvailable: 1, collectionRewards: {} };
-  if (!userData.inventory) userData.inventory = [];
+  const userData = await getUserCardData(userId);
 
   const isDuplicate = userData.inventory.includes(cardId);
 
   if (isDuplicate) {
     userData.fragments = (userData.fragments ?? 0) + fragmentValue;
-    await kv.set(userKey, userData);
+    await updateUserCardData(userId, userData);
     return { isDuplicate: true, fragmentsAdded: fragmentValue };
   }
 
   userData.inventory.push(cardId);
-  await kv.set(userKey, userData);
+  await updateUserCardData(userId, userData);
   return { isDuplicate: false, fragmentsAdded: 0 };
 }
 
@@ -58,11 +54,7 @@ export async function exchangeFragmentsForCard(userId: string, cardId: string): 
   }
 
   const price = getExchangePrice(card.rarity);
-  const userKey = `cards:user:${userId}`;
-
-  const data = await kv.get<{ inventory?: string[]; fragments?: number; pityCounter?: number; drawsAvailable?: number; collectionRewards?: Record<string, unknown> }>(userKey);
-  const userData = data ?? { inventory: [], fragments: 0, pityCounter: 0, drawsAvailable: 1, collectionRewards: {} };
-  if (!userData.inventory) userData.inventory = [];
+  const userData = await getUserCardData(userId);
 
   const hasCard = userData.inventory.includes(cardId);
   if (hasCard) {
@@ -75,6 +67,6 @@ export async function exchangeFragmentsForCard(userId: string, cardId: string): 
 
   userData.fragments = (userData.fragments ?? 0) - price;
   userData.inventory.push(cardId);
-  await kv.set(userKey, userData);
+  await updateUserCardData(userId, userData);
   return { success: true };
 }

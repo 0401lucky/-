@@ -2,7 +2,13 @@ import { kv } from "@/lib/d1-kv";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getTodayDateString, getSecondsUntilMidnight } from "./time";
 import { withKvLock, withUserEconomyLock } from "./economy-lock";
-import { createDefaultUserCards, normalizeUserCards, type UserCards } from "./cards/draw";
+import {
+  createDefaultUserCards,
+  getUserCardData,
+  normalizeUserCards,
+  updateUserCardData,
+  type UserCards,
+} from "./cards/draw";
 import {
   getNativeExtraSpinCount,
   getNativeUserCards,
@@ -12,7 +18,6 @@ import {
   incrementNativeExtraSpinCount,
   isNativeHotStoreReady,
   listNativeUsers,
-  setNativeUserCards,
   upsertNativeUser,
 } from "./hot-d1";
 
@@ -1218,14 +1223,8 @@ export async function grantCheckinLocalRewards(
 }> {
   return withUserEconomyLock(userId, async () => {
     if (await isNativeHotStoreReady()) {
-      const previousCardDataRaw = await getNativeUserCards(userId);
-      const nextCardData = previousCardDataRaw === null
-        ? createDefaultUserCards(1 + cardDraws)
-        : normalizeUserCards(previousCardDataRaw);
-
-      if (previousCardDataRaw !== null) {
-        nextCardData.drawsAvailable = Math.max(0, nextCardData.drawsAvailable + cardDraws);
-      }
+      const nextCardData = await getUserCardData(String(userId));
+      nextCardData.drawsAvailable = Math.max(0, nextCardData.drawsAvailable + cardDraws);
 
       const nativeResult = await grantNativeCheckinRewards(
         userId,
@@ -1303,34 +1302,10 @@ export async function addCardDraws(
   amount: number
 ): Promise<{ success: boolean; drawsAvailable: number }> {
   return withUserEconomyLock(userId, async () => {
-    if (await isNativeHotStoreReady()) {
-      const cardData = await getNativeUserCards(userId);
+    const nextCardData = await getUserCardData(String(userId));
+    nextCardData.drawsAvailable = Math.max(0, nextCardData.drawsAvailable + amount);
 
-      const nextCardData = cardData === null
-        ? createDefaultUserCards(Math.max(0, 1 + amount))
-        : normalizeUserCards(cardData);
-
-      if (cardData !== null) {
-        nextCardData.drawsAvailable = Math.max(0, nextCardData.drawsAvailable + amount);
-      }
-
-      await setNativeUserCards(userId, nextCardData);
-      return { success: true, drawsAvailable: nextCardData.drawsAvailable };
-    }
-
-    const cardsKey = `cards:user:${userId}`;
-    const cardData = await kv.get<Partial<UserCards>>(cardsKey);
-
-    const nextCardData = cardData === null
-      ? createDefaultUserCards(Math.max(0, 1 + amount))
-      : normalizeUserCards(cardData);
-
-    if (cardData !== null) {
-      nextCardData.drawsAvailable = Math.max(0, nextCardData.drawsAvailable + amount);
-    }
-
-    await kv.set(cardsKey, nextCardData);
+    await updateUserCardData(String(userId), nextCardData);
     return { success: true, drawsAvailable: nextCardData.drawsAvailable };
   });
 }
-
