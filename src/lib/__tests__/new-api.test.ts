@@ -44,8 +44,8 @@ describe('creditQuotaToUser', () => {
     vi.clearAllMocks();
 
     process.env.NEW_API_URL = 'https://newapi.example.com';
-    process.env.NEW_API_ADMIN_USERNAME = 'admin';
-    process.env.NEW_API_ADMIN_PASSWORD = 'secret';
+    process.env.NEW_API_ADMIN_ACCESS_TOKEN = 'token-abc';
+    process.env.NEW_API_ADMIN_USER_ID = '900';
 
     kvMock.set.mockResolvedValue('OK');
     kvMock.get.mockResolvedValue(null);
@@ -54,19 +54,13 @@ describe('creditQuotaToUser', () => {
 
   afterEach(() => {
     delete process.env.NEW_API_URL;
-    delete process.env.NEW_API_ADMIN_USERNAME;
-    delete process.env.NEW_API_ADMIN_PASSWORD;
+    delete process.env.NEW_API_ADMIN_ACCESS_TOKEN;
+    delete process.env.NEW_API_ADMIN_USER_ID;
     vi.unstubAllGlobals();
   });
 
-  it('uses /api/user/manage to add quota on current new-api', async () => {
+  it('uses /api/user/manage to add quota with access token headers', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(createJsonResponse({
-        success: true,
-        data: { id: 900, username: 'admin' },
-      }, {
-        headers: { 'set-cookie': 'session=admin-session; Path=/; HttpOnly' },
-      }))
       .mockResolvedValueOnce(createJsonResponse({
         success: true,
         data: {
@@ -96,12 +90,29 @@ describe('creditQuotaToUser', () => {
       newQuota: 1002000,
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
     expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
+      1,
+      'https://newapi.example.com/api/user/123',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'token-abc',
+          'New-Api-User': '900',
+        }),
+      }),
+    );
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
       'https://newapi.example.com/api/user/manage',
       expect.objectContaining({
         method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'token-abc',
+          'New-Api-User': '900',
+          'Content-Type': 'application/json',
+        }),
         body: JSON.stringify({
           id: 123,
           action: 'add_quota',
@@ -117,12 +128,6 @@ describe('creditQuotaToUser', () => {
 
   it('verifies quota by GET when manage API returns failure', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(createJsonResponse({
-        success: true,
-        data: { id: 900, username: 'admin' },
-      }, {
-        headers: { 'set-cookie': 'session=admin-session; Path=/; HttpOnly' },
-      }))
       .mockResolvedValueOnce(createJsonResponse({
         success: true,
         data: {
@@ -159,15 +164,30 @@ describe('creditQuotaToUser', () => {
       newQuota: 500000,
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock).toHaveBeenNthCalledWith(
-      4,
+      3,
       'https://newapi.example.com/api/user/123',
       expect.objectContaining({
         headers: expect.objectContaining({
+          Authorization: 'token-abc',
           'New-Api-User': '900',
         }),
       }),
     );
+  });
+
+  it('returns failure when access token env is missing', async () => {
+    delete process.env.NEW_API_ADMIN_ACCESS_TOKEN;
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { creditQuotaToUser } = await import('../new-api');
+    const result = await creditQuotaToUser(123, 1);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('NEW_API_ADMIN_ACCESS_TOKEN');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

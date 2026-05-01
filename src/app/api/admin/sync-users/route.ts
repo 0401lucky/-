@@ -1,21 +1,12 @@
 import { NextResponse } from "next/server";
 import { getAllProjects, getProjectRecords, type User } from "@/lib/kv";
-import { loginToNewApi, getNewApiUrl, type NewApiUser } from "@/lib/new-api";
+import { getAdminAuthHeaders, getNewApiUrl, type NewApiUser } from "@/lib/new-api";
 import type { LotteryRecord } from "@/lib/lottery";
 import { kv } from '@/lib/d1-kv';
 import { withAdmin } from "@/lib/api-guards";
 import { maskUserId } from "@/lib/logging";
 
 export const dynamic = "force-dynamic";
-
-function sanitizeEnvValue(value: string | undefined): string {
-  if (!value) return "";
-
-  return value
-    .replace(/\\r\\n|\\n|\\r/g, "")
-    .replace(/[\r\n]/g, "")
-    .trim();
-}
 
 /**
  * 从现有领取记录中同步用户数据
@@ -80,80 +71,74 @@ export const POST = withAdmin(
         baseUrl = null;
       }
 
-      const adminUsername = sanitizeEnvValue(process.env.NEW_API_ADMIN_USERNAME);
-      const adminPassword = sanitizeEnvValue(process.env.NEW_API_ADMIN_PASSWORD);
-      if (baseUrl && adminUsername && adminPassword) {
-        const adminLogin = await loginToNewApi(adminUsername, adminPassword);
-        if (adminLogin.success && adminLogin.cookies && adminLogin.user?.id) {
-          const adminCookies = adminLogin.cookies;
-          const adminUserId = adminLogin.user.id;
-          const strictBaseUrl = baseUrl;
+      const adminHeaders = (() => {
+        try {
+          return getAdminAuthHeaders();
+        } catch {
+          return null;
+        }
+      })();
+      if (baseUrl && adminHeaders) {
+        const strictBaseUrl = baseUrl;
 
-          const userIdsRaw = (await kv.smembers('users:all')) as Array<string | number>;
-          const userIds = userIdsRaw
-            .map((v) => (typeof v === 'number' ? v : parseInt(String(v), 10)))
-            .filter((id) => Number.isFinite(id) && id > 0);
+        const userIdsRaw = (await kv.smembers('users:all')) as Array<string | number>;
+        const userIds = userIdsRaw
+          .map((v) => (typeof v === 'number' ? v : parseInt(String(v), 10)))
+          .filter((id) => Number.isFinite(id) && id > 0);
 
-          const syncOne = async (userId: number) => {
-            try {
-              const response = await fetch(`${strictBaseUrl}/api/user/${userId}`, {
-                headers: {
-                  Cookie: adminCookies,
-                  'New-Api-User': String(adminUserId),
-                },
-              });
+        const syncOne = async (userId: number) => {
+          try {
+            const response = await fetch(`${strictBaseUrl}/api/user/${userId}`, {
+              headers: adminHeaders,
+            });
 
-              if (!response.ok) {
-                newApiFailed += 1;
-                return;
-              }
-
-              const data = (await response.json()) as { success?: boolean; data?: NewApiUser };
-              if (!data?.success || !data.data) {
-                newApiFailed += 1;
-                return;
-              }
-
-              const remoteUser = data.data;
-              const existing = await kv.get<User>(`user:${userId}`);
-              if (existing && existing.username !== remoteUser.username) {
-                await kv.set(`user:${userId}`, { ...existing, username: remoteUser.username });
-                newApiUpdated += 1;
-              } else if (!existing) {
-                await kv.set(`user:${userId}`, {
-                  id: userId,
-                  username: remoteUser.username,
-                  firstSeen: Date.now(),
-                });
-                newApiUpdated += 1;
-              }
-
-              // new-api：status==1 为启用，其他为禁用/注销
-              if (remoteUser.status !== 1) {
-                await kv.srem('users:all', userId);
-                newApiRemoved += 1;
-              }
-            } catch (err) {
-              console.error('Sync new-api user failed:', { userId: maskUserId(userId), err });
+            if (!response.ok) {
               newApiFailed += 1;
+              return;
             }
-          };
 
-          const CONCURRENCY = 10;
-          for (let i = 0; i < userIds.length; i += CONCURRENCY) {
-            const batch = userIds.slice(i, i + CONCURRENCY);
-            await Promise.all(batch.map(syncOne));
+            const data = (await response.json()) as { success?: boolean; data?: NewApiUser };
+            if (!data?.success || !data.data) {
+              newApiFailed += 1;
+              return;
+            }
+
+            const remoteUser = data.data;
+            const existing = await kv.get<User>(`user:${userId}`);
+            if (existing && existing.username !== remoteUser.username) {
+              await kv.set(`user:${userId}`, { ...existing, username: remoteUser.username });
+              newApiUpdated += 1;
+            } else if (!existing) {
+              await kv.set(`user:${userId}`, {
+                id: userId,
+                username: remoteUser.username,
+                firstSeen: Date.now(),
+              });
+              newApiUpdated += 1;
+            }
+
+            // new-api：status==1 为启用，其他为禁用/注销
+            if (remoteUser.status !== 1) {
+              await kv.srem('users:all', userId);
+              newApiRemoved += 1;
+            }
+          } catch (err) {
+            console.error('Sync new-api user failed:', { userId: maskUserId(userId), err });
+            newApiFailed += 1;
           }
-        } else {
-          newApiNote = `new-api 管理员登录失败：${adminLogin.message || 'unknown error'}`;
-          console.error('new-api admin login failed:', adminLogin.message);
+        };
+
+        const CONCURRENCY = 10;
+        for (let i = 0; i < userIds.length; i += CONCURRENCY) {
+          const batch = userIds.slice(i, i + CONCURRENCY);
+          await Promise.all(batch.map(syncOne));
         }
       } else if (!baseUrl) {
         newApiNote = '未配置 NEW_API_URL，已跳过 new-api 同步';
         console.warn('NEW_API_URL not set, skip new-api sync');
       } else {
-        newApiNote = '未配置 new-api 管理员账号，已跳过 new-api 同步';
-        console.warn('NEW_API_ADMIN_USERNAME/NEW_API_ADMIN_PASSWORD not set, skip new-api sync');
+        newApiNote = '未配置 NEW_API_ADMIN_ACCESS_TOKEN / NEW_API_ADMIN_USER_ID，已跳过 new-api 同步';
+        console.warn('NEW_API_ADMIN_ACCESS_TOKEN / NEW_API_ADMIN_USER_ID not set, skip new-api sync');
       }
 
       const messageParts = [

@@ -4,8 +4,6 @@ import { getRuntimeEnvValue, sanitizeRuntimeEnvValue } from './runtime-env';
 
 let _newApiUrl: string | null = null;
 const CHECKIN_TIMEOUT_MS = 4000;
-const ADMIN_SESSION_CACHE_KEY = 'newapi:admin:session';
-const ADMIN_SESSION_CACHE_TTL_SECONDS = 24 * 60 * 60;
 
 const USER_QUOTA_LOCK_PREFIX = 'newapi:quota:credit:lock:';
 const USER_QUOTA_LOCK_TTL_SECONDS = 15;
@@ -89,19 +87,13 @@ export interface CreditQuotaResult {
   uncertain?: boolean;
 }
 
-interface CachedAdminSession {
-  cookies: string;
-  adminUserId: number;
-  expiresAt: number;
-}
-
 export async function loginToNewApi(username: string, password: string): Promise<{ success: boolean; message: string; cookies?: string; user?: NewApiUser }> {
   try {
     const baseUrl = getNewApiUrl();
     const safeUsername = sanitizeEnvValue(username);
     const safePassword = sanitizeEnvValue(password);
     console.log("Attempting login to new-api", { endpoint: `${baseUrl}/api/user/login`, username: maskUsername(safeUsername) });
-    
+
     const response = await fetch(`${baseUrl}/api/user/login`, {
       method: "POST",
       headers: {
@@ -110,37 +102,27 @@ export async function loginToNewApi(username: string, password: string): Promise
       body: JSON.stringify({ username: safeUsername, password: safePassword }),
     });
 
-    // 尝试多种方式获取 cookie
     let cookies = response.headers.get("set-cookie") || "";
-    
-    // 如果 set-cookie 为空，尝试从 headers 遍历获取
+
     if (!cookies) {
       const setCookieHeader = response.headers.getSetCookie?.();
       if (setCookieHeader && setCookieHeader.length > 0) {
         cookies = setCookieHeader.join("; ");
       }
     }
-    
+
     const data = await response.json();
 
-    console.log("Login response:", { 
-      success: data.success, 
+    console.log("Login response:", {
+      success: data.success,
       message: data.message,
-      hasCookies: !!cookies, 
+      hasCookies: !!cookies,
       cookiesLength: cookies.length,
       hasData: !!data.data,
       userId: maskUserId(data.data?.id)
     });
 
     if (data.success) {
-      // 如果没有 cookies，但登录成功了，尝试构造 session cookie
-      // new-api 的 session 通常存储在 data.data 或响应中
-      if (!cookies && data.data) {
-        // 某些 new-api 版本会在登录成功后返回 session token
-        // 这里我们可以尝试用用户信息来验证后续请求
-        console.log("No cookies received, attempting alternative session method");
-      }
-      
       return {
         success: true,
         message: "登录成功",
@@ -172,7 +154,7 @@ export async function getUserFromNewApi(sessionCookie: string): Promise<NewApiUs
     });
 
     const data = await response.json();
-    
+
     if (data.success && data.data) {
       return data.data;
     }
@@ -192,12 +174,11 @@ export async function checkinToNewApi(sessionCookie: string, userId?: number): P
     const headers: Record<string, string> = {
       Cookie: sessionCookie,
     };
-    
-    // 添加 New-Api-User header（new-api 要求用户ID，必须是数字）
+
     if (userId !== undefined) {
       headers["New-Api-User"] = String(userId);
     }
-    
+
     const response = await fetch(`${baseUrl}/api/user/checkin`, {
       method: "POST",
       headers,
@@ -207,9 +188,8 @@ export async function checkinToNewApi(sessionCookie: string, userId?: number): P
     const data = await response.json();
     clearTimeout(timeout);
     timeout = null;
-    
+
     if (data.success) {
-      // new-api 返回 { success: true, message: "签到成功", data: { quota_awarded: 12345 } }
       const quotaAwarded = data.data?.quota_awarded || data.data?.QuotaAwarded || 0;
       return {
         success: true,
@@ -237,158 +217,61 @@ export async function checkinToNewApi(sessionCookie: string, userId?: number): P
   }
 }
 
-// ============ 管理员接口 ============
-
-// 管理员会话缓存（内存中，服务重启后失效）
-let adminSessionCache: { cookies: string; expiresAt: number } | null = null;
-
-/**
- * 获取管理员会话（自动缓存，过期自动刷新）
- * 使用环境变量 NEW_API_ADMIN_USERNAME 和 NEW_API_ADMIN_PASSWORD
- */
-export async function getAdminSession(): Promise<string | null> {
-  const cached = await getAdminSessionWithUser();
-  return cached?.cookies ?? null;
-}
-
-async function readCachedAdminSession(): Promise<CachedAdminSession | null> {
-  const now = Date.now();
-  if (adminSessionWithUserCache && adminSessionWithUserCache.expiresAt > now + 5 * 60 * 1000) {
-    return {
-      cookies: adminSessionWithUserCache.cookies,
-      adminUserId: adminSessionWithUserCache.adminUserId,
-      expiresAt: adminSessionWithUserCache.expiresAt,
-    };
-  }
-
-  try {
-    const cached = await kv.get<CachedAdminSession>(ADMIN_SESSION_CACHE_KEY);
-    if (cached && cached.cookies && cached.adminUserId && cached.expiresAt > now + 5 * 60 * 1000) {
-      adminSessionWithUserCache = {
-        cookies: cached.cookies,
-        adminUserId: cached.adminUserId,
-        expiresAt: cached.expiresAt,
-      };
-      adminSessionCache = {
-        cookies: cached.cookies,
-        expiresAt: cached.expiresAt,
-      };
-      return cached;
-    }
-  } catch (error) {
-    console.error('Read cached admin session failed:', error);
-  }
-
-  return null;
-}
-
-async function writeCachedAdminSession(payload: CachedAdminSession): Promise<void> {
-  try {
-    await kv.set(ADMIN_SESSION_CACHE_KEY, payload, { ex: ADMIN_SESSION_CACHE_TTL_SECONDS });
-  } catch (error) {
-    console.error('Write cached admin session failed:', error);
-  }
-}
+// ============ 管理员接口（access token 模式） ============
+//
+// new-api 自 2025 年起 /api 路由统一鉴权：
+// - middleware/auth.go authHelper 在 session 不存在时回退检查 Authorization header
+// - model/user.go ValidateAccessToken 直接以整串 Authorization 值匹配 user.access_token 列
+// - 任何模式下都强制要求 New-Api-User header 与认证用户 ID 一致
+// 在 Cloudflare Workers / Edge Runtime 中 set-cookie 经常被边缘层吞掉，
+// 因此放弃账号密码登录拿 cookie，改用「系统访问令牌」直签头部。
 
 /**
- * 获取管理员会话（自动缓存，过期自动刷新）
- * 使用环境变量 NEW_API_ADMIN_USERNAME 和 NEW_API_ADMIN_PASSWORD
+ * 构造管理员 access token 请求 header。
+ * 必需环境变量：
+ *   NEW_API_ADMIN_ACCESS_TOKEN —— 在 new-api「个人设置 → 系统访问令牌」生成的 32 位 UUID
+ *   NEW_API_ADMIN_USER_ID     —— 该令牌所属用户的数字 ID（管理员）
  */
-async function getAdminSessionSlowPath(): Promise<{ cookies: string; adminUserId: number } | null> {
-  // 检查缓存是否有效（提前5分钟过期以保证安全）
-  if (adminSessionCache && adminSessionCache.expiresAt > Date.now() + 5 * 60 * 1000) {
-    if (adminSessionWithUserCache) {
-      return {
-        cookies: adminSessionWithUserCache.cookies,
-        adminUserId: adminSessionWithUserCache.adminUserId,
-      };
-    }
+export function getAdminAuthHeaders(): Record<string, string> {
+  const token = sanitizeEnvValue(getRuntimeEnvValue("NEW_API_ADMIN_ACCESS_TOKEN"));
+  const adminUserId = sanitizeEnvValue(getRuntimeEnvValue("NEW_API_ADMIN_USER_ID"));
+  if (!token) {
+    throw new Error("NEW_API_ADMIN_ACCESS_TOKEN is not set");
   }
-
-  const username = sanitizeEnvValue(getRuntimeEnvValue("NEW_API_ADMIN_USERNAME"));
-  const password = sanitizeEnvValue(getRuntimeEnvValue("NEW_API_ADMIN_PASSWORD"));
-
-  if (!username || !password) {
-    console.error('Admin credentials not configured. Please set NEW_API_ADMIN_USERNAME and NEW_API_ADMIN_PASSWORD.');
-    return null;
+  if (!adminUserId) {
+    throw new Error("NEW_API_ADMIN_USER_ID is not set");
   }
-
-  console.log('Attempting admin login to new-api', { username: maskUsername(username) });
-  
-  const result = await loginToNewApi(username, password);
-  
-  if (!result.success) {
-    console.error('Admin login failed:', result.message);
-    return null;
-  }
-  
-  if (!result.cookies) {
-    console.error('Admin login succeeded but no cookies returned. This might be a Vercel/Edge environment issue.');
-    // 尝试使用 session token 方式（如果 new-api 支持）
-    return null;
-  }
-  if (!result.user?.id) {
-    console.error('Admin login succeeded but no user ID returned');
-    return null;
-  }
-
-  const expiresAt = Date.now() + ADMIN_SESSION_CACHE_TTL_SECONDS * 1000;
-  adminSessionCache = {
-    cookies: result.cookies,
-    expiresAt,
-  };
-  adminSessionWithUserCache = {
-    cookies: result.cookies,
-    adminUserId: result.user.id,
-    expiresAt,
-  };
-  await writeCachedAdminSession({
-    cookies: result.cookies,
-    adminUserId: result.user.id,
-    expiresAt,
-  });
-
   return {
-    cookies: result.cookies,
-    adminUserId: result.user.id,
+    Authorization: token,
+    "New-Api-User": adminUserId,
   };
 }
 
-/**
- * 验证 quota 更新是否成功（用于处理响应丢失/超时的情况）
- */
 async function verifyQuotaUpdate(
   userId: number,
   expectedQuota: number | undefined,
-  adminCookies: string,
-  adminUserId: number
+  authHeaders: Record<string, string>
 ): Promise<{ success: boolean; message: string; newQuota?: number; uncertain?: boolean }> {
   try {
     const baseUrl = getNewApiUrl();
     const verifyResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
-      headers: { 
-        Cookie: adminCookies,
-        'New-Api-User': String(adminUserId),
-      },
+      headers: authHeaders,
     });
     const verifyData = await verifyResponse.json();
-    
+
     if (verifyData.success && verifyData.data) {
       const currentQuota = verifyData.data.quota || 0;
-      
+
       if (expectedQuota !== undefined && currentQuota >= expectedQuota) {
-        // quota 已经是期望值或更高，说明充值成功了
         return { success: true, message: '充值已确认成功', newQuota: currentQuota };
       } else if (expectedQuota === undefined) {
-        // 无法确定是否成功，返回 uncertain
-        return { 
-          success: false, 
+        return {
+          success: false,
           message: '无法确认充值结果',
           newQuota: currentQuota,
-          uncertain: true 
+          uncertain: true,
         };
       } else {
-        // quota 低于期望值，确认失败
         return { success: false, message: '充值确认失败' };
       }
     }
@@ -400,39 +283,27 @@ async function verifyQuotaUpdate(
 }
 
 /**
- * 获取管理员会话（包含管理员用户ID，用于 New-Api-User header）
- */
-let adminSessionWithUserCache: { cookies: string; adminUserId: number; expiresAt: number } | null = null;
-
-async function getAdminSessionWithUser(): Promise<{ cookies: string; adminUserId: number } | null> {
-  const cached = await readCachedAdminSession();
-  if (cached) {
-    return {
-      cookies: cached.cookies,
-      adminUserId: cached.adminUserId,
-    };
-  }
-
-  return getAdminSessionSlowPath();
-}
-
-/**
- * 直接为用户充值额度（需要管理员权限）
- * @param userId 目标用户ID（new-api中的用户ID）
- * @param dollars 美元金额
- * @returns 充值结果
+ * 直接为用户充值额度（管理员级 access token）。
+ * @param userId  目标用户在 new-api 中的 ID
+ * @param dollars 充值金额（美元，最终乘以 500000 转 quota）
  */
 export async function creditQuotaToUser(
   userId: number,
   dollars: number
 ): Promise<CreditQuotaResult> {
   const baseUrl = getNewApiUrl();
-  const loginResult = await getAdminSessionWithUser();
-  if (!loginResult) {
-    return { success: false, message: '管理员会话获取失败' };
+
+  let authHeaders: Record<string, string>;
+  try {
+    authHeaders = getAdminAuthHeaders();
+  } catch (error) {
+    console.error('Admin access token not configured:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '管理员凭证未配置',
+    };
   }
-  
-  const { cookies: adminCookies, adminUserId } = loginResult;
+
   const lock = await acquireUserQuotaLock(userId);
   if (!lock) {
     return { success: false, message: '系统繁忙，充值请求排队中，请稍后重试' };
@@ -443,10 +314,7 @@ export async function creditQuotaToUser(
   try {
     try {
       const userResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
-        headers: {
-          Cookie: adminCookies,
-          'New-Api-User': String(adminUserId),
-        },
+        headers: authHeaders,
       });
       const userData = await userResponse.json();
 
@@ -465,9 +333,8 @@ export async function creditQuotaToUser(
       const updateResponse = await fetch(`${baseUrl}/api/user/manage`, {
         method: 'POST',
         headers: {
+          ...authHeaders,
           'Content-Type': 'application/json',
-          Cookie: adminCookies,
-          'New-Api-User': String(adminUserId),
         },
         body: JSON.stringify({
           id: userId,
@@ -482,8 +349,7 @@ export async function creditQuotaToUser(
         updateData = await updateResponse.json();
       } catch (parseError) {
         console.warn('Update response parse failed, verifying with GET:', parseError);
-        const verifyResult = await verifyQuotaUpdate(userId, newQuota, adminCookies, adminUserId);
-        return verifyResult;
+        return await verifyQuotaUpdate(userId, newQuota, authHeaders);
       }
 
       console.log('Manage user quota response:', {
@@ -501,7 +367,7 @@ export async function creditQuotaToUser(
         };
       }
 
-      const verifyResult = await verifyQuotaUpdate(userId, newQuota, adminCookies, adminUserId);
+      const verifyResult = await verifyQuotaUpdate(userId, newQuota, authHeaders);
       if (verifyResult.success || verifyResult.uncertain) {
         return verifyResult;
       }
@@ -511,25 +377,16 @@ export async function creditQuotaToUser(
       };
     } catch (error) {
       console.error('Credit quota error:', error);
-      console.warn('Credit quota failed with error, attempting verification...');
       try {
-        const nextLoginResult = await getAdminSessionWithUser();
-        if (nextLoginResult) {
-          const verifyResult = await verifyQuotaUpdate(
-            userId,
-            expectedQuota,
-            nextLoginResult.cookies,
-            nextLoginResult.adminUserId
-          );
-          if (verifyResult.uncertain) {
-            return {
-              success: false,
-              message: '充值结果不确定，请稍后检查余额',
-              uncertain: true,
-            };
-          }
-          return verifyResult;
+        const verifyResult = await verifyQuotaUpdate(userId, expectedQuota, authHeaders);
+        if (verifyResult.uncertain) {
+          return {
+            success: false,
+            message: '充值结果不确定，请稍后检查余额',
+            uncertain: true,
+          };
         }
+        return verifyResult;
       } catch (verifyError) {
         console.error('Verification also failed:', verifyError);
       }
@@ -543,4 +400,3 @@ export async function creditQuotaToUser(
     await releaseUserQuotaLock(lock);
   }
 }
-
