@@ -1,12 +1,13 @@
-import { kv } from '@/lib/d1-kv';
 import { CARDS, getCardsByAlbum, getAlbumById } from "./config";
 import { COLLECTION_REWARDS } from "./constants";
 import { Rarity } from "./types";
-import { createDefaultUserCards, normalizeUserCards, UserCards } from "./draw";
-import { nanoid } from "nanoid";
+import { getUserCardData, normalizeUserCards, updateUserCardData, UserCards } from "./draw";
 import { getAlbumReward } from "./albumRewards";
-import type { PointsLog } from "../types/store";
 import { withUserEconomyLock } from "../economy-lock";
+import {
+  addPointsInsideUserEconomyLock,
+  applyPointsDeltaInsideUserEconomyLock,
+} from "../points";
 
 export type RewardType = Rarity | 'full_set';
 
@@ -25,8 +26,6 @@ export interface ClaimResult {
   pointsAwarded?: number;
   newBalance?: number;
 }
-
-const USER_POINTS_LOG_MAX = 100;
 
 /**
  * Get all cards of a specific rarity (optionally filtered by album)
@@ -150,9 +149,11 @@ export async function claimCollectionReward(
   }
 
   const rewardKey = getRewardKey(rewardType, albumId);
-  const userKey = `cards:user:${userId}`;
-  const pointsKey = `points:${userId}`;
-  const pointsLogKey = `points_log:${userId}`;
+  const numericUserId = Number(userId);
+
+  if (!Number.isSafeInteger(numericUserId) || numericUserId <= 0) {
+    return { success: false, message: "无效的用户ID" };
+  }
 
   // Get dynamic reward points: tier rewards use album-specific or constants, full_set uses album reward
   let points: number;
@@ -169,8 +170,7 @@ export async function claimCollectionReward(
   }
 
   return withUserEconomyLock(userId, async () => {
-    const data = await kv.get<Partial<UserCards>>(userKey);
-    const userData = data === null ? createDefaultUserCards() : normalizeUserCards(data);
+    const userData = await getUserCardData(userId);
 
     if (userData.collectionRewards.includes(rewardKey)) {
       return { success: false, message: "该奖励已领取" };
@@ -189,25 +189,6 @@ export async function claimCollectionReward(
       collectionRewards: [...userData.collectionRewards, rewardKey],
     };
 
-    let newBalance: number | null = null;
-    try {
-      newBalance = await kv.incrby(pointsKey, pointsToAward);
-      if (!Number.isFinite(newBalance)) {
-        throw new Error("奖励积分写入异常");
-      }
-      await kv.set(userKey, nextUserData);
-    } catch (error) {
-      if (newBalance !== null && Number.isFinite(newBalance)) {
-        try {
-          await kv.decrby(pointsKey, pointsToAward);
-        } catch (rollbackError) {
-          console.error("Claim reward points rollback failed:", rollbackError);
-        }
-      }
-      console.error("Claim reward failed:", error);
-      return { success: false, message: "奖励发放异常，请稍后重试" };
-    }
-
     const rarityNames: Record<RewardType, string> = {
       common: '普通',
       rare: '稀有',
@@ -219,20 +200,33 @@ export async function claimCollectionReward(
 
     const description = `集齐${rarityNames[rewardType]}卡牌奖励`;
 
-    const log: PointsLog = {
-      id: nanoid(),
-      amount: pointsToAward,
-      source: 'card_collection',
-      description,
-      balance: Math.floor(newBalance),
-      createdAt: Date.now(),
-    };
-
+    let newBalance = 0;
+    let pointsGranted = false;
     try {
-      await kv.lpush(pointsLogKey, log);
-      await kv.ltrim(pointsLogKey, 0, USER_POINTS_LOG_MAX - 1);
+      const pointsResult = await addPointsInsideUserEconomyLock(
+        numericUserId,
+        pointsToAward,
+        'card_collection',
+        description,
+      );
+      newBalance = pointsResult.balance;
+      pointsGranted = true;
+      await updateUserCardData(userId, nextUserData);
     } catch (error) {
-      console.error("Claim reward log write failed:", error);
+      if (pointsGranted) {
+        try {
+          await applyPointsDeltaInsideUserEconomyLock(
+            numericUserId,
+            -pointsToAward,
+            'card_collection',
+            `${description}回滚`,
+          );
+        } catch (rollbackError) {
+          console.error("Claim reward points rollback failed:", rollbackError);
+        }
+      }
+      console.error("Claim reward failed:", error);
+      return { success: false, message: "奖励发放异常，请稍后重试" };
     }
 
     return {

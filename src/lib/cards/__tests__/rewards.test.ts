@@ -1,4 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock('@/lib/d1-kv', () => ({
+  kv: {
+    get: vi.fn(),
+    set: vi.fn(),
+    incrby: vi.fn(),
+    decrby: vi.fn(),
+    lpush: vi.fn(),
+    ltrim: vi.fn(),
+  },
+}));
+
+vi.mock('../../economy-lock', () => ({
+  withUserEconomyLock: vi.fn(async (_userId: string, handler: () => Promise<unknown>) => handler()),
+}));
+
+vi.mock('../../points', () => ({
+  addPointsInsideUserEconomyLock: vi.fn(),
+  applyPointsDeltaInsideUserEconomyLock: vi.fn(),
+}));
+
 import {
   getCardsByRarity,
   countOwnedByRarity,
@@ -7,10 +28,16 @@ import {
   getRewardKey,
   isRewardClaimed,
   getAlbumRewardStatuses,
+  claimCollectionReward,
 } from "../rewards";
 import { ALBUMS, getCardsByAlbum } from "../config";
 import { COLLECTION_REWARDS } from "../constants";
 import type { UserCards } from "../draw";
+import { kv } from '@/lib/d1-kv';
+import {
+  addPointsInsideUserEconomyLock,
+  applyPointsDeltaInsideUserEconomyLock,
+} from "../../points";
 
 // Helper to create mock user data
 function createMockUserData(inventory: string[] = [], claimedRewards: string[] = []): UserCards {
@@ -27,8 +54,20 @@ function createMockUserData(inventory: string[] = [], claimedRewards: string[] =
 const testAlbumId = ALBUMS[0].id;
 
 describe("Rewards System", () => {
+  const mockKvGet = vi.mocked(kv.get);
+  const mockKvSet = vi.mocked(kv.set);
+  const mockKvIncrby = vi.mocked(kv.incrby);
+  const mockAddPoints = vi.mocked(addPointsInsideUserEconomyLock);
+  const mockRollbackPoints = vi.mocked(applyPointsDeltaInsideUserEconomyLock);
+
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.spyOn(console, "error").mockImplementation(() => {});
+    mockKvGet.mockResolvedValue(null);
+    mockKvSet.mockResolvedValue('OK');
+    mockKvIncrby.mockResolvedValue(9999);
+    mockAddPoints.mockResolvedValue({ success: true, balance: 12345 });
+    mockRollbackPoints.mockResolvedValue({ success: true, balance: 11945 });
   });
 
   afterEach(() => {
@@ -207,6 +246,44 @@ describe("Rewards System", () => {
       const commonStatus = statuses.find((s: { type: string }) => s.type === "common");
       expect(commonStatus?.ownedCount).toBe(2);
       expect(commonStatus?.totalCount).toBe(5);
+    });
+  });
+
+  describe("claimCollectionReward", () => {
+    it("should grant points through the unified points service after full collection", async () => {
+      const inventory = getCardsByRarity("common", testAlbumId);
+      const userData = createMockUserData(inventory);
+      mockKvGet.mockResolvedValueOnce(userData);
+
+      const result = await claimCollectionReward("123", "common", testAlbumId);
+
+      expect(result).toEqual({
+        success: true,
+        pointsAwarded: COLLECTION_REWARDS.common,
+        newBalance: 12345,
+      });
+      expect(mockAddPoints).toHaveBeenCalledWith(
+        123,
+        COLLECTION_REWARDS.common,
+        'card_collection',
+        '集齐普通卡牌奖励',
+      );
+      expect(mockKvSet).toHaveBeenCalledWith('cards:user:123', expect.objectContaining({
+        collectionRewards: [`album:${testAlbumId}:common`],
+      }));
+      expect(mockKvIncrby).not.toHaveBeenCalled();
+    });
+
+    it("should reject duplicate reward claims without adding points", async () => {
+      const rewardKey = `album:${testAlbumId}:common`;
+      const inventory = getCardsByRarity("common", testAlbumId);
+      mockKvGet.mockResolvedValueOnce(createMockUserData(inventory, [rewardKey]));
+
+      const result = await claimCollectionReward("123", "common", testAlbumId);
+
+      expect(result).toEqual({ success: false, message: "该奖励已领取" });
+      expect(mockAddPoints).not.toHaveBeenCalled();
+      expect(mockKvSet).not.toHaveBeenCalled();
     });
   });
 

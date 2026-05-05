@@ -37,6 +37,50 @@ export async function getUserPoints(userId: number): Promise<number> {
 }
 
 /**
+ * 已持有用户经济锁时增加积分。
+ * 只允许在 withUserEconomyLock 回调内部调用，避免同一用户重复抢锁导致超时。
+ */
+export async function addPointsInsideUserEconomyLock(
+  userId: number,
+  amount: number,
+  source: PointsSource,
+  description: string
+): Promise<{ success: true; balance: number }> {
+  if (amount <= 0) {
+    throw new Error('Amount must be positive');
+  }
+
+  if (await isNativeHotStoreReady()) {
+    const logId = nanoid();
+    const result = await applyNativePointsDelta(
+      userId,
+      amount,
+      source,
+      description,
+      logId,
+    );
+    await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
+    return { success: true, balance: result.balance };
+  }
+
+  const newBalance = await kv.incrby(POINTS_KEY(userId), amount);
+
+  const log: PointsLog = {
+    id: nanoid(),
+    amount,
+    source,
+    description,
+    balance: newBalance,
+    createdAt: Date.now(),
+  };
+
+  await kv.lpush(POINTS_LOG_KEY(userId), log);
+  await kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1);
+
+  return { success: true, balance: newBalance };
+}
+
+/**
  * 增加积分（原子操作）
  */
 export async function addPoints(
@@ -49,36 +93,9 @@ export async function addPoints(
     throw new Error('Amount must be positive');
   }
 
-  return withUserEconomyLock(userId, async () => {
-    if (await isNativeHotStoreReady()) {
-      const logId = nanoid();
-      const result = await applyNativePointsDelta(
-        userId,
-        amount,
-        source,
-        description,
-        logId,
-      );
-      await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
-      return { success: true, balance: result.balance };
-    }
-
-    const newBalance = await kv.incrby(POINTS_KEY(userId), amount);
-
-    const log: PointsLog = {
-      id: nanoid(),
-      amount,
-      source,
-      description,
-      balance: newBalance,
-      createdAt: Date.now(),
-    };
-
-    await kv.lpush(POINTS_LOG_KEY(userId), log);
-    await kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1);
-
-    return { success: true, balance: newBalance };
-  });
+  return withUserEconomyLock(userId, async () => (
+    addPointsInsideUserEconomyLock(userId, amount, source, description)
+  ));
 }
 
 /**
@@ -252,6 +269,73 @@ export async function deductPoints(
 }
 
 /**
+ * 已持有用户经济锁时原子化调整积分。
+ * 只允许在 withUserEconomyLock 回调内部调用。
+ */
+export async function applyPointsDeltaInsideUserEconomyLock(
+  userId: number,
+  delta: number,
+  source: PointsSource,
+  description: string
+): Promise<{ success: boolean; balance: number; message?: string }> {
+  if (!Number.isSafeInteger(delta)) {
+    throw new Error('Delta must be an integer');
+  }
+
+  if (delta === 0) {
+    const balance = await getUserPoints(userId);
+    return { success: true, balance };
+  }
+
+  if (typeof description !== 'string' || description.trim() === '') {
+    throw new Error('Description is required');
+  }
+
+  const now = Date.now();
+  const logId = nanoid();
+
+  if (await isNativeHotStoreReady()) {
+    const result = await applyNativePointsDelta(
+      userId,
+      delta,
+      source,
+      description.trim(),
+      logId,
+      now,
+    );
+    if (!result.success) {
+      return result;
+    }
+    await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
+    return { success: true, balance: result.balance };
+  }
+
+  const pointsKey = POINTS_KEY(userId);
+  const logKey = POINTS_LOG_KEY(userId);
+  const currentRaw = await kv.get<number>(pointsKey);
+  const current = currentRaw ?? 0;
+
+  if (delta < 0 && current < (-delta)) {
+    return { success: false, balance: current, message: '积分不足' };
+  }
+
+  const newBalance = await kv.incrby(pointsKey, delta);
+
+  const log: PointsLog = {
+    id: logId,
+    amount: delta,
+    source,
+    description: description.trim(),
+    balance: newBalance,
+    createdAt: now,
+  };
+  await kv.lpush(logKey, log);
+  await kv.ltrim(logKey, 0, MAX_LOG_ENTRIES - 1);
+
+  return { success: true, balance: newBalance };
+}
+
+/**
  * 原子化调整积分（可正可负，负数时确保不会扣成负数）
  * 适用于“挑战模式”等需要一次性结算净输赢的场景
  */
@@ -274,50 +358,9 @@ export async function applyPointsDelta(
     throw new Error('Description is required');
   }
 
-  const now = Date.now();
-  const logId = nanoid();
-
-  return withUserEconomyLock(userId, async () => {
-    if (await isNativeHotStoreReady()) {
-      const result = await applyNativePointsDelta(
-        userId,
-        delta,
-        source,
-        description.trim(),
-        logId,
-        now,
-      );
-      if (!result.success) {
-        return result;
-      }
-      await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
-      return { success: true, balance: result.balance };
-    }
-
-    const pointsKey = POINTS_KEY(userId);
-    const logKey = POINTS_LOG_KEY(userId);
-    const currentRaw = await kv.get<number>(pointsKey);
-    const current = currentRaw ?? 0;
-
-    if (delta < 0 && current < (-delta)) {
-      return { success: false, balance: current, message: '积分不足' };
-    }
-
-    const newBalance = await kv.incrby(pointsKey, delta);
-
-    const log: PointsLog = {
-      id: logId,
-      amount: delta,
-      source,
-      description: description.trim(),
-      balance: newBalance,
-      createdAt: now,
-    };
-    await kv.lpush(logKey, log);
-    await kv.ltrim(logKey, 0, MAX_LOG_ENTRIES - 1);
-
-    return { success: true, balance: newBalance };
-  });
+  return withUserEconomyLock(userId, async () => (
+    applyPointsDeltaInsideUserEconomyLock(userId, delta, source, description)
+  ));
 }
 
 /**
