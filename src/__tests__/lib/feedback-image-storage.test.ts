@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { externalizeFeedbackImages } from '@/lib/feedback-image-storage';
 
 // Mock getCloudflareContext to provide a fake R2 binding
@@ -16,15 +16,13 @@ vi.mock('@opennextjs/cloudflare', () => ({
 }));
 
 describe('externalizeFeedbackImages', () => {
-  const originalR2Url = process.env.R2_PUBLIC_URL;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.R2_PUBLIC_URL = 'https://r2.example.com';
+    vi.stubEnv('R2_PUBLIC_URL', 'https://r2.example.com');
   });
 
-  afterAll(() => {
-    process.env.R2_PUBLIC_URL = originalR2Url;
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('会把 base64 图片上传并替换为外链 URL', async () => {
@@ -59,6 +57,30 @@ describe('externalizeFeedbackImages', () => {
     expect(result[0].size).toBe(5);
   });
 
+  it('未配置 R2_PUBLIC_URL 时会返回站内图片读取路径', async () => {
+    vi.stubEnv('R2_PUBLIC_URL', '');
+    mockR2Put.mockResolvedValue(undefined);
+
+    const result = await externalizeFeedbackImages(
+      [
+        {
+          dataUrl: 'data:image/png;base64,aGVsbG8=',
+          mimeType: 'image/png',
+          size: 5,
+          name: 'test.png',
+        },
+      ],
+      {
+        feedbackId: 'fb-1',
+        messageId: 'msg-1',
+        role: 'user',
+      }
+    );
+
+    expect(mockR2Put).toHaveBeenCalledTimes(1);
+    expect(result[0].dataUrl).toMatch(/^\/api\/feedback\/images\/feedback\/\d{8}\/user\//);
+  });
+
   it('非 dataUrl 图片不会重复上传', async () => {
     const image = {
       dataUrl: 'https://example.com/already-uploaded.png',
@@ -77,25 +99,85 @@ describe('externalizeFeedbackImages', () => {
     expect(result[0]).toEqual(image);
   });
 
-  it('缺少 R2 binding 时会报错', async () => {
-    // Temporarily override the mock to return no binding
+  it('缺少 R2 binding 时保留内联图片，避免阻断反馈提交', async () => {
     mockGetCloudflareContext.mockReturnValueOnce({ env: {} } as ReturnType<typeof mockGetCloudflareContext>);
 
-    await expect(
-      externalizeFeedbackImages(
-        [
-          {
-            dataUrl: 'data:image/png;base64,aGVsbG8=',
-            mimeType: 'image/png',
-            size: 5,
-          },
-        ],
-        {
-          feedbackId: 'fb-3',
-          messageId: 'msg-3',
-          role: 'user',
-        }
-      )
-    ).rejects.toThrow('R2 binding FEEDBACK_IMAGES not available');
+    const image = {
+      dataUrl: 'data:image/png;base64,aGVsbG8=',
+      mimeType: 'image/png',
+      size: 5,
+      name: 'local.png',
+    };
+
+    const result = await externalizeFeedbackImages([image], {
+      feedbackId: 'fb-3',
+      messageId: 'msg-3',
+      role: 'user',
+    });
+
+    expect(mockR2Put).not.toHaveBeenCalled();
+    expect(result[0]).toEqual(image);
+  });
+
+  it('Cloudflare 上下文读取失败时保留内联图片', async () => {
+    mockGetCloudflareContext.mockImplementationOnce(() => {
+      throw new Error('context unavailable');
+    });
+
+    const image = {
+      dataUrl: 'data:image/png;base64,aGVsbG8=',
+      mimeType: 'image/png',
+      size: 5,
+      name: 'context.png',
+    };
+
+    const result = await externalizeFeedbackImages([image], {
+      feedbackId: 'fb-4',
+      messageId: 'msg-4',
+      role: 'user',
+    });
+
+    expect(mockR2Put).not.toHaveBeenCalled();
+    expect(result[0]).toEqual(image);
+  });
+
+  it('R2 上传失败时保留内联图片', async () => {
+    mockR2Put.mockRejectedValueOnce(new Error('upload failed'));
+
+    const image = {
+      dataUrl: 'data:image/png;base64,aGVsbG8=',
+      mimeType: 'image/png',
+      size: 5,
+      name: 'upload.png',
+    };
+
+    const result = await externalizeFeedbackImages([image], {
+      feedbackId: 'fb-5',
+      messageId: 'msg-5',
+      role: 'user',
+    });
+
+    expect(mockR2Put).toHaveBeenCalledTimes(1);
+    expect(result[0]).toEqual(image);
+  });
+
+  it('生产环境缺少 R2 binding 时同样不阻断反馈提交', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    mockGetCloudflareContext.mockReturnValueOnce({ env: {} } as ReturnType<typeof mockGetCloudflareContext>);
+
+    const image = {
+      dataUrl: 'data:image/png;base64,aGVsbG8=',
+      mimeType: 'image/png',
+      size: 5,
+    };
+
+    const result = await externalizeFeedbackImages([image], {
+      feedbackId: 'fb-6',
+      messageId: 'msg-6',
+      role: 'user',
+    });
+
+    expect(mockR2Put).not.toHaveBeenCalled();
+    expect(result[0]).toEqual(image);
   });
 });

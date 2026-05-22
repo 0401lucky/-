@@ -35,7 +35,7 @@
 | 限流 | `src/lib/rate-limit.ts` | 站内通知、公告、排行榜统一限流 |
 | 指标与告警 | `src/lib/metrics.ts` | F9/F10 直接基于现有计数器/告警模型 |
 | 日志脱敏 | `src/lib/logging.ts` | 新日志统一脱敏输出 |
-| 现有榜单 | `src/app/api/lottery/ranking/route.ts`、`src/app/api/games/slot/ranking/route.ts` | 扩展为统一榜单聚合层 |
+| 现有榜单 | `src/app/api/lottery/ranking/route.ts` | 扩展为统一榜单聚合层 |
 | 游戏日统计 | `src/lib/daily-stats.ts` | F5/F8/F9 作为核心数据源 |
 | 反馈会话 | `src/lib/feedback.ts` | F1 反馈回复通知直接接入 |
 
@@ -79,7 +79,7 @@
 ## M7：统一排行榜（F5 + F7 + F8）
 
 - [x] D1. 统一榜单聚合层（按 game/day/week/month）
-- [x] D2. 接入四个游戏榜单（slot/linkgame/match3/pachinko）
+- [x] D2. 接入游戏榜单（linkgame/match3 等当前保留游戏）
 - [x] D3. 新增积分总榜接口
 - [x] D4. 新增签到连续天数榜接口
 - [x] D5. 前端新增“排行榜中心”页面

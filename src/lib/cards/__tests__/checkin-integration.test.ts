@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { POST as checkinPOST } from '@/app/api/checkin/route';
+import { POST as makeupPOST } from '@/app/api/checkin/makeup/route';
 import { POST as drawPOST } from '@/app/api/cards/draw/route';
 import { kv } from '@/lib/d1-kv';
 import { getAuthUser } from '@/lib/auth';
@@ -15,7 +16,7 @@ function createMockRequest(body: object = {}): NextRequest {
     body: JSON.stringify(body),
     headers: {
       'Content-Type': 'application/json',
-      'sec-fetch-site': 'same-origin',
+      origin: 'http://localhost',
     },
   });
 }
@@ -23,9 +24,33 @@ function createMockRequest(body: object = {}): NextRequest {
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
     get: vi.fn(),
+    mget: vi.fn(),
     set: vi.fn(),
+    del: vi.fn(),
     incrby: vi.fn(),
+    decrby: vi.fn(),
+    expire: vi.fn(),
+    lpush: vi.fn(),
+    ltrim: vi.fn(),
   },
+}));
+
+vi.mock('@/lib/hot-d1', () => ({
+  getNativeExtraSpinCount: vi.fn(async () => 0),
+  getNativeUserCards: vi.fn(async () => null),
+  grantNativeCheckinRewards: vi.fn(async () => ({
+    granted: true,
+    extraSpins: 1,
+    cards: { drawsAvailable: 1 },
+  })),
+  hasNativeCheckedIn: vi.fn(async () => false),
+  hasNativeHotStoreBinding: vi.fn(() => false),
+  incrementNativeExtraSpinCount: vi.fn(async (_userId: number, increment: number) => increment),
+  isNativeHotStoreReady: vi.fn(async () => false),
+  listNativeCheckinDates: vi.fn(async () => []),
+  listNativeUsers: vi.fn(async () => []),
+  setNativeUserCards: vi.fn(async () => undefined),
+  upsertNativeUser: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/lib/auth', () => ({
@@ -70,8 +95,13 @@ describe('Checkin and Card Draw Integration', () => {
   const mockCheckRateLimit = vi.mocked(checkRateLimit);
   const mockCheckinToNewApi = vi.mocked(checkinToNewApi);
   const mockKvGet = vi.mocked(kv.get);
+  const mockKvMget = vi.mocked(kv.mget);
   const mockKvSet = vi.mocked(kv.set);
+  const mockKvDecrby = vi.mocked(kv.decrby);
   const mockKvIncrby = vi.mocked(kv.incrby);
+  const mockKvExpire = vi.mocked(kv.expire);
+  const mockKvLpush = vi.mocked(kv.lpush);
+  const mockKvLtrim = vi.mocked(kv.ltrim);
   const mockCookies = cookies as unknown as ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -81,18 +111,22 @@ describe('Checkin and Card Draw Integration', () => {
       get: vi.fn().mockReturnValue({ value: 'mock_session' }),
     });
     mockCheckRateLimit.mockResolvedValue({ success: true, remaining: 10, resetAt: 0 });
+    mockKvMget.mockImplementation(async (...keys: string[]) => keys.map(() => null));
     mockKvSet.mockResolvedValue('OK');
+    mockKvDecrby.mockResolvedValue(0);
     mockKvIncrby.mockResolvedValue(1);
+    mockKvExpire.mockResolvedValue(1);
+    mockKvLpush.mockResolvedValue(1);
+    mockKvLtrim.mockResolvedValue(undefined);
   });
 
-  describe('Checkin awarding draws', () => {
-    it('should award 1 card draw on successful checkin', async () => {
+  describe('Checkin rewards', () => {
+    it('should not award card draws on successful checkin', async () => {
       // Setup: Not checked in yet
       // grantCheckinLocalRewards flow:
       //   1. kv.set(checkinKey, '1', {nx, ex}) -> 'OK' (not checked in yet)
       //   2. kv.get(cardsKey) -> null (no card data)
-      //   3. kv.set(cardsKey, newCardData) -> saves card data with drawsAvailable: 1+1=2
-      //   4. kv.incrby(extraSpinsKey, 1) -> returns 1
+      //   3. kv.incrby(extraSpinsKey, 1) -> returns 1
       mockKvGet.mockImplementation(async (key: string) => {
         if (key.includes('user:checkin')) return null;
         // cards:user key returns null (new user, no card data)
@@ -108,9 +142,10 @@ describe('Checkin and Card Draw Integration', () => {
       const data = await response.json();
 
       expect(data.success).toBe(true);
+      expect(data.cardDrawsAwarded).toBeUndefined();
 
-      // Verify kv.set was called (checkin mark + card data)
-      expect(kv.set).toHaveBeenCalled();
+      // 只写入签到标记，不写入卡牌抽卡次数
+      expect(mockKvSet.mock.calls.some(([key]) => String(key).includes('cards:user'))).toBe(false);
       // Verify kv.incrby was called for extra spins
       expect(kv.incrby).toHaveBeenCalled();
     });
@@ -171,6 +206,37 @@ describe('Checkin and Card Draw Integration', () => {
       expect(data.success).toBe(false);
       expect(data.message).toContain('已经签到过了');
       expect(kv.incrby).not.toHaveBeenCalled();
+    });
+
+    it('should allow makeup checkin in local KV environment', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-20T04:00:00.000Z'));
+
+      try {
+        mockKvMget.mockImplementation(async (...keys: string[]) =>
+          keys.map((key) => (key.endsWith(':2026-05-18') ? '1' : null))
+        );
+        mockKvGet.mockImplementation(async (key: string) => {
+          if (key.includes('user:makeup_cards')) return 1;
+          if (key.includes('cards:user')) return null;
+          if (key.includes('user:extra_spins')) return 0;
+          return null;
+        });
+        mockKvSet.mockResolvedValue('OK');
+        mockKvDecrby.mockResolvedValue(0);
+        mockKvIncrby.mockResolvedValue(1);
+
+        const response = await makeupPOST(createMockRequest({ date: '2026-05-19' }), undefined as any);
+        const data = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(data.success).toBe(true);
+        expect(data.message).not.toContain('当前环境不支持补签功能');
+        expect(mockKvSet.mock.calls.some(([key]) => String(key).includes('user:checkin:123:2026-05-19'))).toBe(true);
+        expect(data.cardDrawsAwarded).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

@@ -23,8 +23,7 @@ export const POST = withAdmin(async () => {
       keysToDelete.map(async (key) => {
         try {
           return await kv.del(key);
-        } catch (e) {
-          console.log(`Failed to delete ${key}:`, e);
+        } catch {
           return 0;
         }
       })

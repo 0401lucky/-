@@ -112,7 +112,7 @@ export function CardGrid({ cards, inventory, fragments = 0, onExchange }: CardGr
             placeholder="搜索卡牌..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-400 transition-all"
+            className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all"
           />
         </div>
 
@@ -122,7 +122,7 @@ export function CardGrid({ cards, inventory, fragments = 0, onExchange }: CardGr
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value as FilterRarity)}
-              className="appearance-none pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-orange-200 cursor-pointer min-w-[140px]"
+              className="appearance-none pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200 cursor-pointer min-w-[140px]"
             >
               <option value="all">全部卡牌</option>
               <option value="owned">已拥有</option>
@@ -140,7 +140,7 @@ export function CardGrid({ cards, inventory, fragments = 0, onExchange }: CardGr
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as SortOption)}
-              className="appearance-none pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-orange-200 cursor-pointer min-w-[140px]"
+              className="appearance-none pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200 cursor-pointer min-w-[140px]"
             >
               <option value="rarity_desc">稀有度 ↓</option>
               <option value="rarity_asc">稀有度 ↑</option>
@@ -155,18 +155,18 @@ export function CardGrid({ cards, inventory, fragments = 0, onExchange }: CardGr
       {/* Progress Bar */}
       <div className="flex items-center justify-between px-2">
         <div className="flex items-center gap-2 text-slate-600 font-bold">
-          <LayoutGrid className="w-5 h-5 text-orange-500" />
+          <LayoutGrid className="w-5 h-5 text-blue-500" />
           <span>收集进度</span>
         </div>
         <div className="flex items-center gap-2">
            <span className="text-2xl font-black text-slate-800">{stats.owned}</span>
            <span className="text-slate-400 font-medium">/ {stats.total}</span>
-           <span className="px-2 py-0.5 bg-orange-100 text-orange-600 text-xs font-bold rounded-full">{stats.percentage}%</span>
+           <span className="px-2 py-0.5 bg-blue-100 text-blue-600 text-xs font-bold rounded-full">{stats.percentage}%</span>
         </div>
       </div>
       <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
-        <div 
-          className="h-full bg-gradient-to-r from-orange-400 to-red-500 transition-all duration-1000 ease-out"
+        <div
+          className="h-full bg-gradient-to-r from-sky-400 to-blue-600 transition-all duration-1000 ease-out"
           style={{ width: `${stats.percentage}%` }}
         ></div>
       </div>
@@ -255,7 +255,7 @@ const CardItem = React.memo(function CardItem({
         <h3 className="text-white font-bold text-sm truncate drop-shadow-md">{card.name}</h3>
 
         {isOwned && (
-          <div className="absolute top-2 right-2 flex items-center justify-center w-6 h-6 bg-orange-500 text-white text-xs font-bold rounded-full shadow-lg border border-white">
+          <div className="absolute top-2 right-2 flex items-center justify-center w-6 h-6 bg-blue-500 text-white text-xs font-bold rounded-full shadow-lg border border-white">
             {count}
           </div>
         )}

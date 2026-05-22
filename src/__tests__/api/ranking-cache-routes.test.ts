@@ -5,6 +5,7 @@ const {
   mockGetAllGamesLeaderboard,
   mockGetPointsLeaderboard,
   mockGetCheckinStreakLeaderboard,
+  mockGetMonthlyPeakHistory,
   mockListRankingSettlementHistory,
   mockWithAuthenticatedUser,
   mockWithUserRateLimit,
@@ -22,6 +23,7 @@ const {
     mockGetAllGamesLeaderboard: vi.fn(),
     mockGetPointsLeaderboard: vi.fn(),
     mockGetCheckinStreakLeaderboard: vi.fn(),
+    mockGetMonthlyPeakHistory: vi.fn(),
     mockListRankingSettlementHistory: vi.fn(),
     mockWithAuthenticatedUser: vi.fn(
       (handler: (request: Request, user: unknown, context: unknown) => Promise<Response>) => {
@@ -39,6 +41,7 @@ vi.mock('@/lib/rankings', () => ({
   getAllGamesLeaderboard: mockGetAllGamesLeaderboard,
   getPointsLeaderboard: mockGetPointsLeaderboard,
   getCheckinStreakLeaderboard: mockGetCheckinStreakLeaderboard,
+  getMonthlyPeakHistory: mockGetMonthlyPeakHistory,
 }));
 
 vi.mock('@/lib/ranking-settlement', () => ({
@@ -88,6 +91,11 @@ describe('Ranking cache route handlers', () => {
       limit: 5,
       total: 0,
       items: [],
+    });
+    mockGetMonthlyPeakHistory.mockResolvedValue({
+      generatedAt: 1,
+      months: [],
+      topLimit: 10,
     });
   });
 
@@ -144,5 +152,19 @@ describe('Ranking cache route handlers', () => {
     expect(response.headers.get('cache-control')).toBe('private, max-age=15, stale-while-revalidate=45');
     expect(data.success).toBe(true);
     expect(mockListRankingSettlementHistory).toHaveBeenCalledWith('monthly', { page: 2, limit: 5 });
+  });
+
+  it('历史月榜巅峰接口返回近 12 个月月榜快照', async () => {
+    const response = await historyGET(
+      new NextRequest('http://localhost/api/rankings/history?mode=monthly-peaks&months=12&limit=10'),
+      undefined as never
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('private, max-age=15, stale-while-revalidate=45');
+    expect(data.success).toBe(true);
+    expect(mockGetMonthlyPeakHistory).toHaveBeenCalledWith({ months: 12, topLimit: 10 });
+    expect(mockListRankingSettlementHistory).not.toHaveBeenCalled();
   });
 });

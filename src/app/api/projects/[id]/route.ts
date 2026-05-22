@@ -10,9 +10,9 @@ import {
   reserveDirectClaim,
   finalizeDirectClaim,
   rollbackDirectClaim,
+  creditDirectProjectPoints,
 } from "@/lib/kv";
 import { getAuthUser } from "@/lib/auth";
-import { creditQuotaToUser } from "@/lib/new-api";
 import { withUserRateLimit } from "@/lib/rate-limit";
 
 export async function GET(
@@ -45,6 +45,7 @@ export async function GET(
         code: claimRecord.code,
         claimedAt: claimRecord.claimedAt,
         directCredit: claimRecord.directCredit,
+        creditedPoints: claimRecord.creditedPoints,
         creditedDollars: claimRecord.creditedDollars,
         creditStatus: claimRecord.creditStatus,
         creditMessage: claimRecord.creditMessage,
@@ -83,10 +84,11 @@ export const POST = withUserRateLimit(
 
     if (
       project.rewardType === "direct" &&
-      (!Number.isFinite(project.directDollars) || (project.directDollars as number) <= 0)
+      (!Number.isFinite(project.directPoints ?? project.directDollars)
+        || Number(project.directPoints ?? project.directDollars) <= 0)
     ) {
       return NextResponse.json(
-        { success: false, message: "项目直充金额配置异常，请联系管理员" },
+        { success: false, message: "项目直充积分配置异常，请联系管理员" },
         { status: 500 }
       );
     }
@@ -121,7 +123,7 @@ export const POST = withUserRateLimit(
       reservedProjectId = id;
     }
 
-    // 直充项目：先原子预占名额，再调用 new-api 直充，最后落库/回滚
+    // 直充积分项目：先原子预占名额，再发放站内积分，最后落库/回滚
     if (project.rewardType === "direct") {
 
       const reserveResult = await reserveDirectClaim(id, user.id, user.username);
@@ -141,6 +143,7 @@ export const POST = withUserRateLimit(
           success: true,
           message: reserveResult.message,
           directCredit: true,
+          creditedPoints: existing.creditedPoints,
           creditedDollars: existing.creditedDollars,
           creditStatus: "success",
         });
@@ -150,8 +153,9 @@ export const POST = withUserRateLimit(
         await recordUser(user.id, user.username);
         return NextResponse.json({
           success: true,
-          message: existing.creditMessage || "充值结果不确定，请稍后检查余额。如有问题请联系管理员",
+          message: existing.creditMessage || "积分发放结果不确定，请稍后检查余额。如有问题请联系管理员",
           directCredit: true,
+          creditedPoints: existing.creditedPoints,
           creditedDollars: existing.creditedDollars,
           creditStatus: "uncertain",
           uncertain: true,
@@ -162,37 +166,23 @@ export const POST = withUserRateLimit(
           success: true,
           message: reserveResult.message,
           directCredit: true,
+          creditedPoints: existing.creditedPoints,
           creditedDollars: existing.creditedDollars,
           creditStatus: "pending",
         });
       }
 
-      const creditResult = await creditQuotaToUser(user.id, project.directDollars as number) as {
-        success: boolean;
-        message: string;
-        newQuota?: number;
-        uncertain?: boolean;
-      };
-
-      if (creditResult.uncertain) {
-        await finalizeDirectClaim(id, user.id, "uncertain", creditResult.message);
-        await confirmReservedNewUserBenefit();
-        await recordUser(user.id, user.username);
-        return NextResponse.json({
-          success: true,
-          message: "充值结果不确定，请稍后检查余额。如有问题请联系管理员",
-          directCredit: true,
-          creditedDollars: project.directDollars,
-          creditStatus: "uncertain",
-          uncertain: true,
-        });
-      }
+      const creditResult = await creditDirectProjectPoints(
+        id,
+        user.id,
+        `福利项目领取: ${project.name}`
+      );
 
       if (!creditResult.success) {
         await rollbackDirectClaim(id, user.id);
         await rollbackReservedNewUserBenefit();
         return NextResponse.json(
-          { success: false, message: creditResult.message || "充值失败，请稍后重试" },
+          { success: false, message: creditResult.message || "积分发放失败，请稍后重试" },
           { status: 400 }
         );
       }
@@ -202,8 +192,9 @@ export const POST = withUserRateLimit(
       await recordUser(user.id, user.username);
       return NextResponse.json({
         success: true,
-        message: `领取成功！已直充 $${project.directDollars} 到您的账户`,
+        message: creditResult.message,
         directCredit: true,
+        creditedPoints: creditResult.points,
         creditedDollars: project.directDollars,
         creditStatus: "success",
       });

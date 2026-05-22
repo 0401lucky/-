@@ -1,7 +1,7 @@
 // src/lib/types/game.ts
 
 /** 游戏类型 */
-export type GameType = 'pachinko' | 'memory' | 'slot' | 'match3' | 'linkgame' | 'tower' | 'farm';
+export type GameType = 'memory' | 'match3' | 'linkgame' | 'farm' | 'whack_mole' | 'roguelite' | 'minesweeper';
 
 /** 连连看难度 */
 export type LinkGameDifficulty = 'easy' | 'normal' | 'hard';
@@ -185,46 +185,6 @@ export interface MemoryGameRecord {
 
 /** 游戏会话状态 */
 export type GameSessionStatus = 'playing' | 'completed' | 'expired';
-
-/** 游戏会话 */
-export interface GameSession {
-  id: string;
-  userId: number;
-  gameType: GameType;
-  seed: string;              // 随机种子
-  startedAt: number;         // 开始时间戳
-  expiresAt: number;         // 过期时间戳（5分钟后）
-  status: GameSessionStatus;
-}
-
-/** 弹珠发射参数 */
-export interface BallLaunch {
-  angle: number;             // 发射角度 (-30 ~ +30)
-  power: number;             // 发射力度 (0.5 ~ 1.0)
-  slotScore: number;         // 落入槽位分数
-  duration: number;          // 该弹珠从发射到落槽的时间(ms)
-}
-
-/** 游戏结果提交 */
-export interface GameResultSubmit {
-  sessionId: string;
-  score: number;             // 总得分
-  duration: number;          // 总游戏时长(ms)
-  balls: BallLaunch[];       // 每颗弹珠的详细数据
-}
-
-/** 游戏记录 */
-export interface GameRecord {
-  id: string;
-  userId: number;
-  sessionId: string;
-  gameType: GameType;
-  score: number;             // 游戏得分
-  pointsEarned: number;      // 实际获得积分（可能因上限被截断）
-  duration: number;          // 游戏时长
-  balls: number[];           // 每颗弹珠得分 [20, 40, 10, 80, 20]
-  createdAt: number;
-}
 
 /** 每日统计 */
 export interface DailyGameStats {

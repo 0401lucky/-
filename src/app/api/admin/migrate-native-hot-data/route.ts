@@ -32,7 +32,7 @@ export const POST = withAdmin(async (request: NextRequest) => {
       success: true,
       message: dryRun
         ? `预演完成：总用户 ${result.users} 人，本批 ${result.migratedUsers} 人，积分流水 ${result.pointsLogs} 条，签到 ${result.checkins} 条，游戏记录 ${result.gameRecords} 条。`
-        : `迁移批次完成：总用户 ${result.users} 人，本批 ${result.migratedUsers} 人，积分流水 ${result.pointsLogs} 条，签到 ${result.checkins} 条，游戏记录 ${result.gameRecords} 条，今日老虎机榜 ${result.slotRankingUsers} 人。`,
+        : `迁移批次完成：总用户 ${result.users} 人，本批 ${result.migratedUsers} 人，积分流水 ${result.pointsLogs} 条，签到 ${result.checkins} 条，游戏记录 ${result.gameRecords} 条。`,
       result,
     });
   } catch (error) {

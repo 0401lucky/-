@@ -28,11 +28,17 @@ export const POST = withUserRateLimit(
       });
 
       if (result.record) {
-        const rewardText = result.record.directCredit
-          ? "获得 " + result.record.tierValue + " 美金额度（已直充）"
-          : "获得 " +
-            result.record.tierName +
-            (result.record.code ? "（兑换码已发放）" : "");
+        const record = result.record;
+        let rewardText: string;
+        if (typeof record.pointsAwarded === 'number') {
+          rewardText = record.pointsAwarded > 0
+            ? `获得 ${record.tierName}（+${record.pointsAwarded} 积分已到账）`
+            : `本次未中奖：${record.tierName}`;
+        } else if (record.directCredit) {
+          rewardText = `获得 ${record.tierValue} 美金额度（已直充）`;
+        } else {
+          rewardText = `获得 ${record.tierName}${record.code ? '（兑换码已发放）' : ''}`;
+        }
 
         void createUserNotification({
           userId: user.id,
@@ -40,10 +46,11 @@ export const POST = withUserRateLimit(
           title: "抽奖中奖通知",
           content: rewardText,
           data: {
-            lotteryRecordId: result.record.id,
-            tierName: result.record.tierName,
-            tierValue: result.record.tierValue,
-            directCredit: result.record.directCredit === true,
+            lotteryRecordId: record.id,
+            tierName: record.tierName,
+            tierValue: record.tierValue,
+            directCredit: record.directCredit === true,
+            pointsAwarded: record.pointsAwarded,
           },
         }).catch((notifyError) => {
           console.error("Create lottery notification failed:", notifyError);

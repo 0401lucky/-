@@ -212,11 +212,10 @@ describe("Rewards System", () => {
       const statuses = await getAlbumRewardStatuses(userData, testAlbumId);
 
       const commonStatus = statuses.find((s: { type: string }) => s.type === "common");
-      expect(commonStatus?.points).toBe(COLLECTION_REWARDS.common);
+      expect(commonStatus?.points).toBe(ALBUMS[0].tierRewards?.common);
 
       const fullSetStatus = statuses.find((s: { type: string }) => s.type === "full_set");
-      // full_set uses dynamic reward from config (default 10000 for animal-s1)
-      expect(fullSetStatus?.points).toBe(10000);
+      expect(fullSetStatus?.points).toBe(ALBUMS[0].reward);
     });
 
     it("should show eligible when tier is complete", async () => {
@@ -256,15 +255,16 @@ describe("Rewards System", () => {
       mockKvGet.mockResolvedValueOnce(userData);
 
       const result = await claimCollectionReward("123", "common", testAlbumId);
+      const expectedReward = 4;
 
       expect(result).toEqual({
         success: true,
-        pointsAwarded: COLLECTION_REWARDS.common,
+        pointsAwarded: expectedReward,
         newBalance: 12345,
       });
       expect(mockAddPoints).toHaveBeenCalledWith(
         123,
-        COLLECTION_REWARDS.common,
+        expectedReward,
         'card_collection',
         '集齐普通卡牌奖励',
       );

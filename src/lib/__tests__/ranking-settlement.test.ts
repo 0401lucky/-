@@ -7,6 +7,7 @@ import {
 import { getAllGamesLeaderboardByRange } from '../rankings';
 import { addPoints } from '../points';
 import { createUserNotification } from '../notifications';
+import { grantPeakFirstAchievement } from '../user-achievements';
 
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
@@ -32,6 +33,10 @@ vi.mock('../notifications', () => ({
   createUserNotification: vi.fn(),
 }));
 
+vi.mock('../user-achievements', () => ({
+  grantPeakFirstAchievement: vi.fn(),
+}));
+
 describe('ranking-settlement', () => {
   const mockKvSet = vi.mocked(kv.set);
   const mockKvGet = vi.mocked(kv.get);
@@ -44,6 +49,7 @@ describe('ranking-settlement', () => {
   const mockGetAllGamesLeaderboardByRange = vi.mocked(getAllGamesLeaderboardByRange);
   const mockAddPoints = vi.mocked(addPoints);
   const mockCreateUserNotification = vi.mocked(createUserNotification);
+  const mockGrantPeakFirstAchievement = vi.mocked(grantPeakFirstAchievement);
 
   const kvStore = new Map<string, unknown>();
   const zsetStore = new Map<string, Array<{ member: string; score: number }>>();
@@ -141,6 +147,12 @@ describe('ranking-settlement', () => {
       content: 'ok',
       createdAt: Date.now(),
     });
+    mockGrantPeakFirstAchievement.mockResolvedValue({
+      id: 'peak_first',
+      source: 'ranking_monthly',
+      grantedAt: Date.now(),
+      expiresAt: Date.now() + 1000,
+    });
   });
 
   it('settles ranking once and prevents duplicate settlement', async () => {
@@ -234,5 +246,29 @@ describe('ranking-settlement', () => {
     expect(retried.record.status).toBe('success');
     expect(retried.record.summary.failed).toBe(0);
     expect(retried.record.summary.granted).toBe(2);
+  });
+
+  it('月榜结算时为第一名颁发巅峰第一成就', async () => {
+    const referenceTime = new Date('2026-03-02T12:00:00.000Z').getTime();
+
+    const result = await settleRankingPeriod({
+      period: 'monthly',
+      operator: { id: 1, username: 'admin' },
+      topN: 2,
+      rewardPoints: [100, 50],
+      referenceTime,
+    });
+
+    expect(result.record.status).toBe('success');
+    expect(mockGrantPeakFirstAchievement).toHaveBeenCalledTimes(1);
+    expect(mockGrantPeakFirstAchievement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 1001,
+        periodLabel: expect.any(String),
+        periodStart: expect.any(Number),
+        periodEnd: expect.any(Number),
+        grantedAt: expect.any(Number),
+      })
+    );
   });
 });

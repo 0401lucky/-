@@ -7,7 +7,6 @@ import { addGamePointsWithLimit } from './points';
 import { getDailyPointsLimit } from './config';
 import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
 import {
-  acquireNativeLock,
   cancelNativeGameSession,
   completeNativeGameSettlement,
   createNativeGameSession,
@@ -16,8 +15,8 @@ import {
   getNativeGameSession,
   isNativeHotStoreReady,
   listNativeGameRecords,
-  releaseNativeLock,
 } from './hot-d1';
+import { acquireGameLock, releaseGameLock } from './game-locks';
 export { getDailyStats };
 import { MATCH3_DEFAULT_CONFIG, simulateMatch3Game } from './match3-engine';
 import type { GameSessionStatus } from './types/game';
@@ -31,6 +30,7 @@ const COOLDOWN_TTL = 5; // 5秒
 const MIN_GAME_DURATION = 10_000; // 10秒
 const MAX_RECORD_ENTRIES = 50;
 const MAX_MOVES_PER_GAME = 250;
+const START_LOCK_TTL = 3;
 
 // Key 格式
 const SESSION_KEY = (sessionId: string) => `match3:session:${sessionId}`;
@@ -38,6 +38,7 @@ const ACTIVE_SESSION_KEY = (userId: number) => `match3:active:${userId}`;
 const RECORDS_KEY = (userId: number) => `match3:records:${userId}`;
 const COOLDOWN_KEY = (userId: number) => `match3:cooldown:${userId}`;
 const SUBMIT_LOCK_KEY = (sessionId: string) => `match3:submit:${sessionId}`;
+const START_LOCK_KEY = (userId: number) => `match3:start:${userId}`;
 
 export interface Match3GameSession {
   id: string;
@@ -113,11 +114,31 @@ export async function getActiveMatch3Session(userId: number): Promise<Match3Game
   return session;
 }
 
+async function isCurrentActiveSession(
+  userId: number,
+  sessionId: string,
+  useNativeHotStore: boolean,
+): Promise<boolean> {
+  if (useNativeHotStore) {
+    const activeSession = await getNativeActiveGameSession<Match3GameSession>(userId, 'match3');
+    return activeSession?.id === sessionId;
+  }
+
+  return (await kv.get<string>(ACTIVE_SESSION_KEY(userId))) === sessionId;
+}
+
 export async function startMatch3Game(
   userId: number,
   config?: Partial<Match3Config>
 ): Promise<{ success: boolean; session?: Match3GameSession; message?: string }> {
   const useNativeHotStore = await isNativeHotStoreReady();
+  const startLockKey = START_LOCK_KEY(userId);
+  const startLockToken = await acquireGameLock(startLockKey, START_LOCK_TTL, useNativeHotStore);
+  if (!startLockToken) {
+    return { success: false, message: '操作过于频繁，请稍后再试' };
+  }
+
+  try {
   if (await isInCooldown(userId)) {
     const remaining = await getCooldownRemaining(userId);
     return { success: false, message: `请等待 ${remaining} 秒后再开始游戏` };
@@ -164,6 +185,9 @@ export async function startMatch3Game(
   }
 
   return { success: true, session };
+  } finally {
+    await releaseGameLock(startLockKey, startLockToken, useNativeHotStore);
+  }
 }
 
 export async function cancelMatch3Game(userId: number): Promise<{ success: boolean; message?: string }> {
@@ -209,6 +233,10 @@ function validateSubmitPayload(payload: Match3GameResultSubmit): { ok: true } | 
   return { ok: true };
 }
 
+export function calculateMatch3PointReward(score: number): number {
+  return Math.max(0, Math.floor(score / 10));
+}
+
 export async function submitMatch3Result(
   userId: number,
   payload: Match3GameResultSubmit
@@ -218,76 +246,65 @@ export async function submitMatch3Result(
   if (!payloadCheck.ok) return { success: false, message: payloadCheck.message };
 
   const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
-  const lockAcquired = useNativeHotStore
-    ? await acquireNativeLock(lockKey, '1', SESSION_TTL)
-    : await kv.set(lockKey, '1', { ex: SESSION_TTL, nx: true });
-  if (lockAcquired !== true && lockAcquired !== 'OK') {
+  const lockToken = await acquireGameLock(lockKey, SESSION_TTL, useNativeHotStore);
+  if (!lockToken) {
     return { success: false, message: '请勿重复提交' };
   }
+
+  const releaseLock = async () => {
+    await releaseGameLock(lockKey, lockToken, useNativeHotStore);
+  };
 
   const session = useNativeHotStore
     ? await getNativeGameSession<Match3GameSession>(payload.sessionId)
     : await kv.get<Match3GameSession>(SESSION_KEY(payload.sessionId));
   if (!session) {
-    if (useNativeHotStore) {
-      await releaseNativeLock(lockKey, '1');
-    } else {
-      await kv.del(lockKey);
-    }
+    await releaseLock();
     return { success: false, message: '游戏会话不存在或已过期' };
   }
   if (session.userId !== userId) {
-    if (useNativeHotStore) {
-      await releaseNativeLock(lockKey, '1');
-    } else {
-      await kv.del(lockKey);
-    }
+    await releaseLock();
     return { success: false, message: '会话不属于该用户' };
   }
+  if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
+    await releaseLock();
+    return { success: false, message: '游戏会话已不是当前活跃局' };
+  }
   if (session.status !== 'playing') {
-    await kv.del(lockKey);
+    await releaseLock();
     return { success: false, message: '游戏会话已结束' };
   }
   if (Date.now() > session.expiresAt) {
     if (!useNativeHotStore) {
       await kv.del(SESSION_KEY(payload.sessionId));
-      await kv.del(lockKey);
-    } else {
-      await releaseNativeLock(lockKey, '1');
     }
+    await releaseLock();
     return { success: false, message: '游戏会话已过期' };
   }
 
   const serverDuration = Date.now() - session.startedAt;
   if (serverDuration < MIN_GAME_DURATION) {
-    if (useNativeHotStore) {
-      await releaseNativeLock(lockKey, '1');
-    } else {
-      await kv.del(lockKey);
-    }
+    await releaseLock();
     return { success: false, message: '游戏时长过短' };
   }
 
   // 服务端复算
   const sim = simulateMatch3Game(session.seed, session.config, payload.moves, { maxMoves: MAX_MOVES_PER_GAME });
   if (!sim.ok) {
-    if (useNativeHotStore) {
-      await releaseNativeLock(lockKey, '1');
-    } else {
-      await kv.del(lockKey);
-    }
+    await releaseLock();
     return { success: false, message: sim.message };
   }
 
   const score = sim.score;
+  const pointReward = calculateMatch3PointReward(score);
   const dailyPointsLimit = await getDailyPointsLimit();
 
   const pointsResult = await addGamePointsWithLimit(
     userId,
-    score,
+    pointReward,
     dailyPointsLimit,
     'game_play',
-    `消消乐得分 ${score}`
+    `消消乐得分 ${score}，福利积分 ${pointReward}`
   );
 
   const record: Match3GameRecord = {

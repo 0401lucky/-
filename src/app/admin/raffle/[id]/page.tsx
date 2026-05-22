@@ -640,7 +640,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
             {/* 操作按钮 */}
             <div className="flex items-center gap-2">
               <Link
-                href={`/raffle/${id}`}
+                href={`/project/${id}?type=raffle`}
                 target="_blank"
                 className="flex items-center gap-2 px-4 py-2 text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-xl font-medium transition-colors"
               >

@@ -2,6 +2,7 @@ import { kv } from "@/lib/d1-kv";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getTodayDateString, getSecondsUntilMidnight } from "./time";
 import { withKvLock, withUserEconomyLock } from "./economy-lock";
+import { addPoints } from "./points";
 import {
   createDefaultUserCards,
   getUserCardData,
@@ -9,6 +10,7 @@ import {
   updateUserCardData,
   type UserCards,
 } from "./cards/draw";
+import { formatDateKey } from "./checkin-rules";
 import {
   getNativeExtraSpinCount,
   getNativeUserCards,
@@ -319,10 +321,12 @@ export interface Project {
   /**
    * 项目奖励类型：
    * - code: 发放兑换码（默认）
-   * - direct: 直充到 new-api 账户额度
+   * - direct: 直充站内积分
    */
   rewardType?: "code" | "direct";
-  /** rewardType=direct 时每人直充金额（美元） */
+  /** rewardType=direct 时每人直充积分 */
+  directPoints?: number;
+  /** 历史字段：旧版 rewardType=direct 时每人直充金额（美元），仅保留兼容读取 */
   directDollars?: number;
   newUserOnly?: boolean;  // 仅限新人资格用户（独立资格，不受抽奖影响）
   pinned?: boolean; // 置顶项目
@@ -346,7 +350,9 @@ export interface ClaimRecord {
   claimedAt: number;
   /** 是否直充项目 */
   directCredit?: boolean;
-  /** 直充金额（美元） */
+  /** 直充积分 */
+  creditedPoints?: number;
+  /** 历史字段：直充金额（美元），仅保留兼容读取 */
   creditedDollars?: number;
   /** 直充状态：pending=处理中，success=成功，uncertain=不确定 */
   creditStatus?: "pending" | "success" | "uncertain";
@@ -604,8 +610,10 @@ export async function reserveDirectClaim(
 
     if (project.status === 'paused') return { success: false, message: '该项目已暂停领取' };
 
-    const dollars = project.directDollars ?? 0;
-    if (dollars <= 0) return { success: false, message: '项目直充金额配置异常，请联系管理员' };
+    const points = Number(project.directPoints ?? project.directDollars ?? 0);
+    if (!Number.isSafeInteger(points) || points <= 0) {
+      return { success: false, message: '项目直充积分配置异常，请联系管理员' };
+    }
 
     const originalProject: Project = { ...project };
     const claimedCount = project.claimedCount ?? 0;
@@ -628,7 +636,8 @@ export async function reserveDirectClaim(
       code: '',
       claimedAt: now,
       directCredit: true,
-      creditedDollars: dollars,
+      creditedPoints: points,
+      creditedDollars: project.directDollars,
       creditStatus: 'pending',
     };
 
@@ -703,6 +712,49 @@ export async function finalizeDirectClaim(
   await kv.lpush(recordsKey, record);
 
   return { success: true, message: 'ok', record };
+}
+
+/**
+ * 直充积分项目：完成积分发放。
+ *
+ * 历史 directDollars 项目会按同数值兜底为积分处理，避免继续调用旧美元额度接口。
+ */
+export async function creditDirectProjectPoints(
+  projectId: string,
+  userId: number,
+  description: string
+): Promise<{ success: boolean; message: string; points?: number; balance?: number }> {
+  const record = await kv.get<ClaimRecord>(`claimed:${projectId}:${userId}`);
+  if (!record) return { success: false, message: '领取记录不存在' };
+
+  if (record.creditStatus === 'success') {
+    return {
+      success: true,
+      message: record.creditMessage || '积分已发放',
+      points: record.creditedPoints,
+    };
+  }
+
+  const points = Number(record.creditedPoints ?? record.creditedDollars ?? 0);
+  if (!Number.isSafeInteger(points) || points <= 0) {
+    return { success: false, message: '项目直充积分配置异常，请联系管理员' };
+  }
+
+  try {
+    const result = await addPoints(userId, points, 'reward_claim', description);
+    await finalizeDirectClaim(projectId, userId, 'success', `已发放 ${points} 积分`);
+    return {
+      success: true,
+      message: `领取成功！已发放 ${points} 积分`,
+      points,
+      balance: result.balance,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '积分发放失败，请稍后重试',
+    };
+  }
 }
 
 /**
@@ -1188,6 +1240,36 @@ export async function rollbackExtraSpin(userId: number): Promise<void> {
 const CHECKIN_HISTORY_RETENTION_DAYS = 400;
 const CHECKIN_HISTORY_RETENTION_SECONDS = CHECKIN_HISTORY_RETENTION_DAYS * 24 * 60 * 60;
 
+function shiftDateKey(dateKey: string, days: number): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return [
+    String(date.getUTCFullYear()).padStart(4, '0'),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+export async function listLocalCheckinDates(
+  userId: number,
+  days: number = CHECKIN_HISTORY_RETENTION_DAYS,
+  today: Date = new Date(),
+): Promise<string[]> {
+  const count = Math.max(1, Math.min(CHECKIN_HISTORY_RETENTION_DAYS, Math.floor(days)));
+  const dates: string[] = [];
+  let cursor = formatDateKey(today);
+
+  for (let i = 0; i < count; i += 1) {
+    dates.push(cursor);
+    cursor = shiftDateKey(cursor, -1);
+  }
+
+  const keys = dates.map((date) => `user:checkin:${userId}:${date}`);
+  const values = await kv.mget<unknown>(...keys);
+  return dates.filter((_, index) => values[index] !== null && values[index] !== undefined);
+}
+
 export async function hasCheckedInToday(userId: number): Promise<boolean> {
   const dateStr = getTodayDateString();
   if (await isNativeHotStoreReady()) {
@@ -1214,7 +1296,11 @@ export async function setCheckedInToday(userId: number): Promise<void> {
 
 export async function grantCheckinLocalRewards(
   userId: number,
-  { extraSpins = 1, cardDraws = 1 }: { extraSpins?: number; cardDraws?: number } = {}
+  {
+    extraSpins = 1,
+    cardDraws = 0,
+    signDate,
+  }: { extraSpins?: number; cardDraws?: number; signDate?: string } = {}
 ): Promise<{
   granted: boolean;
   alreadyCheckedIn: boolean;
@@ -1222,13 +1308,29 @@ export async function grantCheckinLocalRewards(
   drawsAvailable: number;
 }> {
   return withUserEconomyLock(userId, async () => {
+    const dateStr = signDate ?? getTodayDateString();
+    const cardDrawsToGrant = Math.max(0, Math.floor(cardDraws));
+
     if (await isNativeHotStoreReady()) {
-      const nextCardData = await getUserCardData(String(userId));
-      nextCardData.drawsAvailable = Math.max(0, nextCardData.drawsAvailable + cardDraws);
+      const previousCardDataRaw = await getNativeUserCards(userId);
+      let nextCardData: UserCards | null = null;
+
+      if (cardDrawsToGrant > 0) {
+        nextCardData = previousCardDataRaw === null
+          ? createDefaultUserCards(1 + cardDrawsToGrant)
+          : normalizeUserCards(previousCardDataRaw);
+
+        if (previousCardDataRaw !== null) {
+          nextCardData.drawsAvailable = Math.max(
+            0,
+            nextCardData.drawsAvailable + cardDrawsToGrant,
+          );
+        }
+      }
 
       const nativeResult = await grantNativeCheckinRewards(
         userId,
-        getTodayDateString(),
+        dateStr,
         extraSpins,
         nextCardData,
       );
@@ -1241,7 +1343,6 @@ export async function grantCheckinLocalRewards(
       };
     }
 
-    const dateStr = getTodayDateString();
     const ttl = CHECKIN_HISTORY_RETENTION_SECONDS;
     const checkinKey = `user:checkin:${userId}:${dateStr}`;
     const extraSpinsKey = `user:extra_spins:${userId}`;
@@ -1260,30 +1361,44 @@ export async function grantCheckinLocalRewards(
     }
 
     const previousCardDataRaw = await kv.get<Partial<UserCards>>(cardsKey);
-    const nextCardData = previousCardDataRaw === null
-      ? createDefaultUserCards(1 + cardDraws)
-      : normalizeUserCards(previousCardDataRaw);
+    let nextCardData: UserCards | null = null;
 
-    if (previousCardDataRaw !== null) {
-      nextCardData.drawsAvailable = Math.max(0, nextCardData.drawsAvailable + cardDraws);
+    if (cardDrawsToGrant > 0) {
+      nextCardData = previousCardDataRaw === null
+        ? createDefaultUserCards(1 + cardDrawsToGrant)
+        : normalizeUserCards(previousCardDataRaw);
+
+      if (previousCardDataRaw !== null) {
+        nextCardData.drawsAvailable = Math.max(
+          0,
+          nextCardData.drawsAvailable + cardDrawsToGrant,
+        );
+      }
     }
 
     try {
-      await kv.set(cardsKey, nextCardData);
+      if (nextCardData) {
+        await kv.set(cardsKey, nextCardData);
+      }
       const newSpins = await kv.incrby(extraSpinsKey, extraSpins);
 
       return {
         granted: true,
         alreadyCheckedIn: false,
         extraSpins: newSpins,
-        drawsAvailable: nextCardData.drawsAvailable,
+        drawsAvailable: nextCardData?.drawsAvailable
+          ?? (previousCardDataRaw === null
+            ? createDefaultUserCards().drawsAvailable
+            : normalizeUserCards(previousCardDataRaw).drawsAvailable),
       };
     } catch (error) {
       try {
-        if (previousCardDataRaw === null) {
-          await kv.del(cardsKey);
-        } else {
-          await kv.set(cardsKey, normalizeUserCards(previousCardDataRaw));
+        if (nextCardData) {
+          if (previousCardDataRaw === null) {
+            await kv.del(cardsKey);
+          } else {
+            await kv.set(cardsKey, normalizeUserCards(previousCardDataRaw));
+          }
         }
         await kv.del(checkinKey);
       } catch (rollbackError) {

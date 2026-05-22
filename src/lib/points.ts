@@ -99,13 +99,13 @@ export async function addPoints(
 }
 
 /**
- * 原子化游戏积分发放（带每日上限限制）
- * 使用 Lua 脚本确保: 读取今日已得 → 计算可发放 → 增加余额 → 更新今日已得 全部原子完成
+ * 原子化游戏积分发放。
+ * v2 取消每日封顶，仍记录今日累计值用于展示与统计。
  */
 export async function addGamePointsWithLimit(
   userId: number,
   score: number,
-  dailyLimit: number,
+  _dailyLimit: number,
   source: PointsSource,
   description: string
 ): Promise<{ 
@@ -130,7 +130,7 @@ export async function addGamePointsWithLimit(
       pointsEarned: 0,
       balance,
       dailyEarned,
-      limitReached: dailyEarned >= dailyLimit,
+      limitReached: false,
     };
   }
 
@@ -143,7 +143,7 @@ export async function addGamePointsWithLimit(
       const result = await addNativeGamePointsWithLimit(
         userId,
         score,
-        dailyLimit,
+        Number.MAX_SAFE_INTEGER,
         source,
         description,
         nanoid(),
@@ -151,52 +151,36 @@ export async function addGamePointsWithLimit(
       if (result.pointsEarned > 0) {
         await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
       }
-      return result;
+      return { ...result, limitReached: false };
     }
 
-    const dailyEarnedRaw = await kv.get<number>(dailyEarnedKey);
-    const dailyEarned = dailyEarnedRaw ?? 0;
-    const remaining = Math.max(0, dailyLimit - dailyEarned);
-    const grant = Math.min(score, remaining);
+    const grant = score;
+    const [balance, newDailyEarned] = await Promise.all([
+      kv.incrby(pointsKey, grant),
+      kv.incrby(dailyEarnedKey, grant),
+    ]);
 
-    let balance: number;
-    let newDailyEarned = dailyEarned;
+    const log: PointsLog = {
+      id: nanoid(),
+      amount: grant,
+      source,
+      description,
+      balance,
+      createdAt: Date.now(),
+    };
 
-    if (grant > 0) {
-      const [nextBalance, nextDailyEarned] = await Promise.all([
-        kv.incrby(pointsKey, grant),
-        kv.incrby(dailyEarnedKey, grant),
-      ]);
-      balance = nextBalance;
-      newDailyEarned = nextDailyEarned;
-
-      const log: PointsLog = {
-        id: nanoid(),
-        amount: grant,
-        source,
-        description,
-        balance,
-        createdAt: Date.now(),
-      };
-
-      await Promise.all([
-        kv.expire(dailyEarnedKey, DAILY_EARNED_TTL),
-        kv.lpush(POINTS_LOG_KEY(userId), log),
-      ]);
-      kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1).catch(() => {});
-    } else {
-      const currentBalance = await kv.get<number>(pointsKey);
-      balance = currentBalance ?? 0;
-    }
-
-    const limitReached = newDailyEarned >= dailyLimit;
+    await Promise.all([
+      kv.expire(dailyEarnedKey, DAILY_EARNED_TTL),
+      kv.lpush(POINTS_LOG_KEY(userId), log),
+    ]);
+    kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1).catch(() => {});
 
     return {
       success: true,
       pointsEarned: grant,
       balance,
       dailyEarned: newDailyEarned,
-      limitReached,
+      limitReached: false,
     };
   });
 }
@@ -276,19 +260,20 @@ export async function applyPointsDeltaInsideUserEconomyLock(
   userId: number,
   delta: number,
   source: PointsSource,
-  description: string
+  description: string,
+  options: { recordZero?: boolean } = {},
 ): Promise<{ success: boolean; balance: number; message?: string }> {
   if (!Number.isSafeInteger(delta)) {
     throw new Error('Delta must be an integer');
   }
 
-  if (delta === 0) {
-    const balance = await getUserPoints(userId);
-    return { success: true, balance };
-  }
-
   if (typeof description !== 'string' || description.trim() === '') {
     throw new Error('Description is required');
+  }
+
+  if (delta === 0 && !options.recordZero) {
+    const balance = await getUserPoints(userId);
+    return { success: true, balance };
   }
 
   const now = Date.now();
@@ -319,7 +304,7 @@ export async function applyPointsDeltaInsideUserEconomyLock(
     return { success: false, balance: current, message: '积分不足' };
   }
 
-  const newBalance = await kv.incrby(pointsKey, delta);
+  const newBalance = delta === 0 ? current : await kv.incrby(pointsKey, delta);
 
   const log: PointsLog = {
     id: logId,
@@ -343,23 +328,24 @@ export async function applyPointsDelta(
   userId: number,
   delta: number,
   source: PointsSource,
-  description: string
+  description: string,
+  options: { recordZero?: boolean } = {},
 ): Promise<{ success: boolean; balance: number; message?: string }> {
   if (!Number.isSafeInteger(delta)) {
     throw new Error('Delta must be an integer');
-  }
-
-  if (delta === 0) {
-    const balance = await getUserPoints(userId);
-    return { success: true, balance };
   }
 
   if (typeof description !== 'string' || description.trim() === '') {
     throw new Error('Description is required');
   }
 
+  if (delta === 0 && !options.recordZero) {
+    const balance = await getUserPoints(userId);
+    return { success: true, balance };
+  }
+
   return withUserEconomyLock(userId, async () => (
-    applyPointsDeltaInsideUserEconomyLock(userId, delta, source, description)
+    applyPointsDeltaInsideUserEconomyLock(userId, delta, source, description, options)
   ));
 }
 

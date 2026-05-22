@@ -199,12 +199,12 @@ export const Board = memo(function Board({
       `}</style>
       
       <div
-        className="relative w-full max-w-[420px] mx-auto bg-slate-900/5 rounded-3xl p-4 sm:p-5 backdrop-blur-sm border border-white/20 shadow-inner"
+        className="relative w-full max-w-[560px] mx-auto bg-slate-900/5 rounded-3xl p-3 sm:p-4 backdrop-blur-sm border border-white/20 shadow-inner"
         role="group"
         aria-label="Match3 board"
       >
         <div
-          className="grid gap-2 relative z-10"
+          className="grid gap-1.5 sm:gap-2 relative z-10"
           style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
         >
           {board.map((tile, index) => {

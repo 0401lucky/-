@@ -22,7 +22,7 @@ export const GET = withAuthenticatedUser(
             pointsEarned: dailyStats.pointsEarned,
           },
           dailyLimit,
-          pointsLimitReached: dailyStats.pointsEarned >= dailyLimit,
+          pointsLimitReached: false,
         },
       });
     } catch (error) {

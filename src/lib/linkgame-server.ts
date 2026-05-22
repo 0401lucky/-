@@ -7,7 +7,6 @@ import { addGamePointsWithLimit } from './points';
 import { getDailyPointsLimit } from './config';
 import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
 import {
-  acquireNativeLock,
   cancelNativeGameSession,
   completeNativeGameSettlement,
   createNativeGameSession,
@@ -16,18 +15,17 @@ import {
   getNativeGameSession,
   isNativeHotStoreReady,
   listNativeGameRecords,
-  releaseNativeLock,
 } from './hot-d1';
+import { acquireGameLock, releaseGameLock } from './game-locks';
 export { getDailyStats };
 import {
   generateTileLayout,
   LINKGAME_DIFFICULTY_CONFIG,
   canMatch,
   removeMatch,
-  canTripleMatch,
-  removeTripleMatch,
   checkGameComplete,
   calculateScore,
+  calculateLinkGamePointReward,
   indexOf,
   shuffleBoard,
 } from './linkgame';
@@ -45,6 +43,7 @@ const SESSION_TTL = 5 * 60; // 5分钟
 const COOLDOWN_TTL = 5; // 5秒
 const MIN_GAME_DURATION = 5000; // 5秒
 const MAX_RECORD_ENTRIES = 50;
+const START_LOCK_TTL = 3;
 
 // Key 格式
 const SESSION_KEY = (sessionId: string) => `linkgame:session:${sessionId}`;
@@ -52,6 +51,7 @@ const ACTIVE_SESSION_KEY = (userId: number) => `linkgame:active:${userId}`;
 const RECORDS_KEY = (userId: number) => `linkgame:records:${userId}`;
 const COOLDOWN_KEY = (userId: number) => `linkgame:cooldown:${userId}`;
 const SUBMIT_LOCK_KEY = (sessionId: string) => `linkgame:submit:${sessionId}`;
+const START_LOCK_KEY = (userId: number) => `linkgame:start:${userId}`;
 
 // ============ 工具函数 ============
 
@@ -82,6 +82,19 @@ export async function getCooldownRemaining(userId: number): Promise<number> {
   }
   const ttl = await kv.ttl(COOLDOWN_KEY(userId));
   return ttl > 0 ? ttl : 0;
+}
+
+async function isCurrentActiveSession(
+  userId: number,
+  sessionId: string,
+  useNativeHotStore: boolean,
+): Promise<boolean> {
+  if (useNativeHotStore) {
+    const activeSession = await getNativeActiveGameSession<LinkGameSession>(userId, 'linkgame');
+    return activeSession?.id === sessionId;
+  }
+
+  return (await kv.get<string>(ACTIVE_SESSION_KEY(userId))) === sessionId;
 }
 
 // ============ 纯验证函数（可单独测试） ============
@@ -208,33 +221,7 @@ export function validateLinkGameResult(
     }
 
     if (pos3 && typeof pos3 === 'object') {
-      if (!Number.isInteger(pos3.row) || !Number.isInteger(pos3.col)) {
-        return { ok: false, message: '位置3坐标必须为整数' };
-      }
-      if (pos3.row < 0 || pos3.row >= rows || pos3.col < 0 || pos3.col >= cols) {
-        return { ok: false, message: '位置3超出边界' };
-      }
-      const idx3 = indexOf(pos3, cols);
-      if (idx3 === idx1 || idx3 === idx2) {
-        return { ok: false, message: '不能选择相同位置' };
-      }
-      if (board[idx3] === null) {
-        return { ok: false, message: '位置3没有瓦片' };
-      }
-
-      const serverCanTripleMatch = canTripleMatch(board, pos1, pos2, pos3, cols);
-      if (matched !== serverCanTripleMatch) {
-        return { ok: false, message: '三消匹配结果不一致' };
-      }
-
-      if (matched) {
-        board = removeTripleMatch(board, pos1, pos2, pos3, cols);
-        matchedPairs += 2;
-        currentStreak++;
-        maxStreak = Math.max(maxStreak, currentStreak);
-      } else {
-        currentStreak = 0;
-      }
+      return { ok: false, message: '三连模式已停用' };
     } else {
       const serverCanMatch = canMatch(board, pos1, pos2, cols);
       if (matched !== serverCanMatch) {
@@ -278,6 +265,13 @@ export async function startLinkGame(
   difficulty: LinkGameDifficulty
 ): Promise<{ success: boolean; session?: LinkGameSession; message?: string }> {
   const useNativeHotStore = await isNativeHotStoreReady();
+  const startLockKey = START_LOCK_KEY(userId);
+  const startLockToken = await acquireGameLock(startLockKey, START_LOCK_TTL, useNativeHotStore);
+  if (!startLockToken) {
+    return { success: false, message: '操作过于频繁，请稍后再试' };
+  }
+
+  try {
   // 检查冷却
   if (await isInCooldown(userId)) {
     const remaining = await getCooldownRemaining(userId);
@@ -342,6 +336,9 @@ export async function startLinkGame(
   }
 
   return { success: true, session };
+  } finally {
+    await releaseGameLock(startLockKey, startLockToken, useNativeHotStore);
+  }
 }
 
 /**
@@ -396,12 +393,14 @@ export async function submitLinkGameResult(
   const useNativeHotStore = await isNativeHotStoreReady();
   // 幂等锁
   const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
-  const lockAcquired = useNativeHotStore
-    ? await acquireNativeLock(lockKey, '1', SESSION_TTL)
-    : await kv.set(lockKey, '1', { ex: SESSION_TTL, nx: true });
-  if (lockAcquired !== true && lockAcquired !== 'OK') {
+  const lockToken = await acquireGameLock(lockKey, SESSION_TTL, useNativeHotStore);
+  if (!lockToken) {
     return { success: false, message: '请勿重复提交' };
   }
+
+  const releaseLock = async () => {
+    await releaseGameLock(lockKey, lockToken, useNativeHotStore);
+  };
 
   // 获取会话
   const session = useNativeHotStore
@@ -409,57 +408,44 @@ export async function submitLinkGameResult(
     : await kv.get<LinkGameSession>(SESSION_KEY(payload.sessionId));
 
   if (!session) {
-    if (useNativeHotStore) {
-      await releaseNativeLock(lockKey, '1');
-    } else {
-      await kv.del(lockKey);
-    }
+    await releaseLock();
     return { success: false, message: '游戏会话不存在或已过期' };
   }
 
   if (session.userId !== userId) {
-    if (useNativeHotStore) {
-      await releaseNativeLock(lockKey, '1');
-    } else {
-      await kv.del(lockKey);
-    }
+    await releaseLock();
     return { success: false, message: '会话不属于该用户' };
   }
 
+  if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
+    await releaseLock();
+    return { success: false, message: '游戏会话已不是当前活跃局' };
+  }
+
   if (session.status !== 'playing') {
-    await kv.del(lockKey);
+    await releaseLock();
     return { success: false, message: '游戏会话已结束' };
   }
 
   if (Date.now() > session.expiresAt) {
     if (!useNativeHotStore) {
       await kv.del(SESSION_KEY(payload.sessionId));
-      await kv.del(lockKey);
-    } else {
-      await releaseNativeLock(lockKey, '1');
     }
+    await releaseLock();
     return { success: false, message: '游戏会话已过期' };
   }
 
   // 验证结果
   const validation = validateLinkGameResult(session, payload);
   if (!validation.ok) {
-    if (useNativeHotStore) {
-      await releaseNativeLock(lockKey, '1');
-    } else {
-      await kv.del(lockKey);
-    }
+    await releaseLock();
     return { success: false, message: validation.message };
   }
 
   // 服务端时长校验
   const serverDuration = Date.now() - session.startedAt;
   if (serverDuration < MIN_GAME_DURATION) {
-    if (useNativeHotStore) {
-      await releaseNativeLock(lockKey, '1');
-    } else {
-      await kv.del(lockKey);
-    }
+    await releaseLock();
     return { success: false, message: '游戏时长过短' };
   }
 
@@ -486,16 +472,17 @@ export async function submitLinkGameResult(
       shufflePenalty: config.shufflePenalty,
     });
   }
+  const pointReward = calculateLinkGamePointReward(score);
   // 获取动态配置的每日积分上限
   const dailyPointsLimit = await getDailyPointsLimit();
 
   // 使用原子化积分发放
   const pointsResult = await addGamePointsWithLimit(
     userId,
-    score,
+    pointReward,
     dailyPointsLimit,
     'game_play',
-    `连连看得分 ${score}`
+    `连连看得分 ${score}，福利积分 ${pointReward}`
   );
   const pointsEarned = pointsResult.pointsEarned;
 

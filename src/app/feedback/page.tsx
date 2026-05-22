@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import {
@@ -12,14 +11,15 @@ import {
   type FeedbackImage,
 } from '@/lib/feedback-image';
 import {
-  ArrowLeft,
+  ChevronRight,
   Loader2,
-  LogOut,
   MessageSquareText,
-  Send,
+  Plus,
+  ThumbsUp,
   User,
-  LayoutDashboard,
 } from 'lucide-react';
+import SiteSidebar from '@/components/SiteSidebar';
+import type { PublicAchievement } from '@/lib/profile-achievements';
 
 type FeedbackStatus = 'open' | 'processing' | 'resolved' | 'closed';
 type FeedbackRole = 'user' | 'admin';
@@ -35,12 +35,21 @@ interface FeedbackItem {
   id: string;
   userId: number;
   username: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  equippedAchievement?: PublicAchievement | null;
   contact?: string;
+  anonymous?: boolean;
   status: FeedbackStatus;
   createdAt: number;
   updatedAt: number;
   latestMessageRole?: FeedbackRole | null;
   latestMessageAt?: number | null;
+  firstMessage?: FeedbackMessage | null;
+  latestAdminReply?: FeedbackMessage | null;
+  replyCount?: number;
+  likeCount?: number;
+  likedByMe?: boolean;
 }
 
 interface FeedbackMessage {
@@ -57,11 +66,6 @@ interface DraftImage extends FeedbackImage {
   id: string;
 }
 
-interface FeedbackDetailResponse {
-  feedback: FeedbackItem;
-  messages: FeedbackMessage[];
-}
-
 const STATUS_LABEL: Record<FeedbackStatus, string> = {
   open: '待处理',
   processing: '处理中',
@@ -69,32 +73,66 @@ const STATUS_LABEL: Record<FeedbackStatus, string> = {
   closed: '已关闭',
 };
 
-const STATUS_CLASS: Record<FeedbackStatus, string> = {
-  open: 'bg-orange-50 text-orange-600 border-orange-200',
-  processing: 'bg-blue-50 text-blue-600 border-blue-200',
-  resolved: 'bg-emerald-50 text-emerald-600 border-emerald-200',
-  closed: 'bg-stone-100 text-stone-500 border-stone-200',
+const WALL_STATUS_CLASS: Record<FeedbackStatus, string> = {
+  open: 'status-pending',
+  processing: 'status-processing',
+  resolved: 'status-resolved',
+  closed: 'status-closed',
 };
 
-function getFeedbackReadStorageKey(userId: number): string {
-  return `feedback:read-admin-reply:${userId}`;
+const TARGET_FEEDBACK_IMAGE_BYTES = 384 * 1024;
+const MAX_FEEDBACK_IMAGE_DIMENSION = 1280;
+const MAX_FEEDBACK_SOURCE_IMAGE_BYTES = 8 * 1024 * 1024;
+const COMPRESSIBLE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const FEEDBACK_PAGE_SIZE = 5;
+const COMMENT_PAGE_SIZE = 5;
+
+function formatFeedbackTime(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (diff < hour) return `${Math.max(1, Math.floor(diff / minute))} 分钟前`;
+  if (diff < day) return `${Math.floor(diff / hour)} 小时前`;
+  if (diff < day * 7) return `${Math.floor(diff / day)} 天前`;
+
+  return new Date(timestamp).toLocaleDateString('zh-CN');
 }
 
-function parseReadMap(raw: string | null): Record<string, number> {
-  if (!raw) return {};
+function resolveFeedbackAuthorName(feedback: FeedbackItem): string {
+  return feedback.displayName?.trim() || feedback.username || '用户';
+}
 
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const next: Record<string, number> = {};
-    Object.entries(parsed).forEach(([feedbackId, value]) => {
-      if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-        next[feedbackId] = value;
-      }
-    });
-    return next;
-  } catch {
-    return {};
+function FeedbackAuthorAvatar({ feedback }: { feedback: FeedbackItem }) {
+  const name = resolveFeedbackAuthorName(feedback);
+  const initial = (name[0] || '?').toUpperCase();
+
+  if (feedback.avatarUrl) {
+    return (
+      <div className="fb-avatar">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={feedback.avatarUrl} alt={name} className="fb-avatar-img" />
+      </div>
+    );
   }
+
+  return (
+    <div className="fb-avatar" aria-label={name}>
+      {initial || <User />}
+    </div>
+  );
+}
+
+function FeedbackAchievementBadge({ achievement }: { achievement?: PublicAchievement | null }) {
+  if (!achievement) return null;
+
+  return (
+    <span className="fb-achievement-badge" title={achievement.desc}>
+      <span aria-hidden>{achievement.emoji}</span>
+      {achievement.name}
+    </span>
+  );
 }
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -106,29 +144,123 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(new Error('读取图片失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function loadImageFromFile(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new window.Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('图片加载失败'));
+    };
+    image.src = url;
+  });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality: number): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), mimeType, quality);
+  });
+}
+
+async function prepareFeedbackImage(file: File): Promise<{
+  dataUrl: string;
+  mimeType: string;
+  size: number;
+}> {
+  const sourceMimeType = file.type.toLowerCase();
+  if (file.size <= TARGET_FEEDBACK_IMAGE_BYTES || !COMPRESSIBLE_IMAGE_TYPES.has(sourceMimeType)) {
+    return {
+      dataUrl: await fileToDataUrl(file),
+      mimeType: sourceMimeType,
+      size: file.size,
+    };
+  }
+
+  const image = await loadImageFromFile(file);
+  const scale = Math.min(
+    1,
+    MAX_FEEDBACK_IMAGE_DIMENSION / Math.max(image.naturalWidth, image.naturalHeight)
+  );
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('图片压缩失败');
+  }
+
+  // PNG 截图通常体积较大，统一转成白底 JPEG，降低 JSON 请求体大小。
+  const outputMimeType = sourceMimeType === 'image/png' ? 'image/jpeg' : sourceMimeType;
+  if (outputMimeType === 'image/jpeg') {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+  }
+  ctx.drawImage(image, 0, 0, width, height);
+
+  const qualities = [0.82, 0.72, 0.62, 0.52, 0.42, 0.34];
+  let bestBlob: Blob | null = null;
+  for (const quality of qualities) {
+    const blob = await canvasToBlob(canvas, outputMimeType, quality);
+    if (!blob) continue;
+    bestBlob = blob;
+    if (blob.size <= TARGET_FEEDBACK_IMAGE_BYTES) {
+      break;
+    }
+  }
+
+  if (!bestBlob) {
+    throw new Error('图片压缩失败');
+  }
+
+  return {
+    dataUrl: await blobToDataUrl(bestBlob),
+    mimeType: bestBlob.type || outputMimeType,
+    size: bestBlob.size,
+  };
+}
+
 export default function FeedbackPage() {
   const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [replying, setReplying] = useState(false);
 
   const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>([]);
   const [listPage, setListPage] = useState(1);
   const [listHasMore, setListHasMore] = useState(false);
-  const [listLoadingMore, setListLoadingMore] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedDetail, setSelectedDetail] =
-    useState<FeedbackDetailResponse | null>(null);
+  const [listTotal, setListTotal] = useState(0);
+  const [listTotalPages, setListTotalPages] = useState(1);
   const [filterStatus, setFilterStatus] = useState<'all' | FeedbackStatus>('all');
-  const [readByFeedback, setReadByFeedback] = useState<Record<string, number>>({});
+  const [viewMode, setViewMode] = useState<'wall' | 'compose' | 'detail'>('wall');
+  const [selectedFeedback, setSelectedFeedback] = useState<FeedbackItem | null>(null);
+  const [selectedMessages, setSelectedMessages] = useState<FeedbackMessage[]>([]);
+  const [commentPage, setCommentPage] = useState(1);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [replyContent, setReplyContent] = useState('');
+  const [replyImages, setReplyImages] = useState<DraftImage[]>([]);
+  const [replySubmitting, setReplySubmitting] = useState(false);
+  const [likeSubmittingId, setLikeSubmittingId] = useState<string | null>(null);
 
   const [content, setContent] = useState('');
   const [contact, setContact] = useState('');
-  const [replyContent, setReplyContent] = useState('');
   const [draftImages, setDraftImages] = useState<DraftImage[]>([]);
-  const [replyImages, setReplyImages] = useState<DraftImage[]>([]);
+  const [isAnonymous, setIsAnonymous] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -163,23 +295,28 @@ export default function FeedbackPage() {
           continue;
         }
 
-        if (file.size > MAX_FEEDBACK_IMAGE_BYTES) {
-          setError(`单张图片不能超过 ${MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB`);
+        if (file.size > MAX_FEEDBACK_SOURCE_IMAGE_BYTES) {
+          setError(`单张原图不能超过 ${MAX_FEEDBACK_SOURCE_IMAGE_BYTES / 1024 / 1024}MB`);
           continue;
         }
 
         try {
-          const dataUrl = await fileToDataUrl(file);
+          const prepared = await prepareFeedbackImage(file);
+          if (prepared.size > MAX_FEEDBACK_IMAGE_BYTES) {
+            setError(`压缩后图片仍超过 ${MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB，请换一张更小的图片`);
+            continue;
+          }
+
           newImages.push({
             id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-            dataUrl,
-            mimeType,
-            size: file.size,
+            dataUrl: prepared.dataUrl,
+            mimeType: prepared.mimeType,
+            size: prepared.size,
             name: file.name,
           });
         } catch (error) {
-          console.error('Read image failed:', error);
-          setError('读取图片失败，请重试');
+          console.error('Prepare image failed:', error);
+          setError('处理图片失败，请换一张图片重试');
         }
       }
 
@@ -190,51 +327,12 @@ export default function FeedbackPage() {
     [draftImages, replyImages]
   );
 
-  const markFeedbackRead = useCallback(
-    (feedbackId: string, readAt: number) => {
-      if (!user || !Number.isFinite(readAt) || readAt <= 0) {
-        return;
-      }
-
-      setReadByFeedback((prev) => {
-        const previousReadAt = prev[feedbackId] ?? 0;
-        const nextReadAt = Math.max(previousReadAt, readAt);
-        if (nextReadAt === previousReadAt) {
-          return prev;
-        }
-
-        const next = {
-          ...prev,
-          [feedbackId]: nextReadAt,
-        };
-
-        localStorage.setItem(
-          getFeedbackReadStorageKey(user.id),
-          JSON.stringify(next)
-        );
-
-        return next;
-      });
-    },
-    [user]
-  );
-
   const handleDraftFileChange = async (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
     const files = Array.from(event.target.files ?? []);
     if (files.length > 0) {
       await appendImages(files, 'draft');
-    }
-    event.target.value = '';
-  };
-
-  const handleReplyFileChange = async (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const files = Array.from(event.target.files ?? []);
-    if (files.length > 0) {
-      await appendImages(files, 'reply');
     }
     event.target.value = '';
   };
@@ -251,6 +349,20 @@ export default function FeedbackPage() {
     }
   };
 
+  const removeDraftImage = (id: string) => {
+    setDraftImages((prev) => prev.filter((image) => image.id !== id));
+  };
+
+  const handleReplyFileChange = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length > 0) {
+      await appendImages(files, 'reply');
+    }
+    event.target.value = '';
+  };
+
   const handleReplyPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(event.clipboardData.items)
       .filter((item) => item.type.startsWith('image/'))
@@ -263,31 +375,23 @@ export default function FeedbackPage() {
     }
   };
 
-  const removeDraftImage = (id: string) => {
-    setDraftImages((prev) => prev.filter((image) => image.id !== id));
-  };
-
   const removeReplyImage = (id: string) => {
     setReplyImages((prev) => prev.filter((image) => image.id !== id));
   };
 
   const loadFeedbackList = useCallback(
-    async (options: { page?: number; append?: boolean } = {}) => {
+    async (options: { page?: number } = {}) => {
       const page = options.page ?? 1;
-      const append = options.append ?? false;
 
-      if (append) {
-        setListLoadingMore(true);
-      } else {
-        setListLoading(true);
-      }
+      setListLoading(true);
       setError(null);
 
       try {
         const statusQuery =
           filterStatus === 'all' ? '' : `&status=${encodeURIComponent(filterStatus)}`;
         const response = await fetch(
-          `/api/feedback?page=${page}&limit=30${statusQuery}`
+          `/api/feedback?scope=wall&page=${page}&limit=${FEEDBACK_PAGE_SIZE}${statusQuery}`,
+          { cache: 'no-store' }
         );
 
         if (response.status === 401) {
@@ -304,6 +408,8 @@ export default function FeedbackPage() {
         const items = (data.items as FeedbackItem[]) ?? [];
         const pagination = (data.pagination ?? {}) as {
           page?: number;
+          total?: number;
+          totalPages?: number;
           hasMore?: boolean;
         };
 
@@ -311,85 +417,26 @@ export default function FeedbackPage() {
           typeof pagination.page === 'number' ? pagination.page : page
         );
         setListHasMore(Boolean(pagination.hasMore));
-
-        if (append) {
-          setFeedbackList((prev) => {
-            const merged = new Map(prev.map((item) => [item.id, item]));
-            items.forEach((item) => {
-              merged.set(item.id, item);
-            });
-            return Array.from(merged.values());
-          });
-          setSelectedId((prev) => prev ?? items[0]?.id ?? null);
-          return;
-        }
-
+        setListTotal(typeof pagination.total === 'number' ? pagination.total : items.length);
+        setListTotalPages(Math.max(1, typeof pagination.totalPages === 'number' ? pagination.totalPages : 1));
         setFeedbackList(items);
-        setSelectedId((prev) => {
-          if (prev && items.some((item) => item.id === prev)) {
-            return prev;
-          }
-          return items[0]?.id ?? null;
-        });
       } catch (fetchError) {
         console.error('Load feedback list failed:', fetchError);
         setError('获取反馈列表失败，请稍后重试');
       } finally {
-        if (append) {
-          setListLoadingMore(false);
-        } else {
-          setListLoading(false);
-        }
+        setListLoading(false);
       }
     },
     [filterStatus, router]
   );
 
-  const handleLoadMore = useCallback(async () => {
-    if (listLoading || listLoadingMore || !listHasMore) {
+  const goToFeedbackPage = useCallback(async (nextPage: number) => {
+    if (listLoading) {
       return;
     }
-    await loadFeedbackList({ page: listPage + 1, append: true });
-  }, [listHasMore, listLoading, listLoadingMore, listPage, loadFeedbackList]);
-
-  const loadFeedbackDetail = useCallback(async (feedbackId: string) => {
-    setDetailLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch(`/api/feedback/${feedbackId}`);
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        setError(data.message || '获取反馈详情失败');
-        setSelectedDetail(null);
-        return;
-      }
-
-      const messages = (data.messages as FeedbackMessage[]) ?? [];
-
-      setSelectedDetail({
-        feedback: data.feedback as FeedbackItem,
-        messages,
-      });
-
-      const latestAdminReplyAt = messages.reduce((latest, message) => {
-        if (message.role !== 'admin') {
-          return latest;
-        }
-        return Math.max(latest, message.createdAt);
-      }, 0);
-
-      if (latestAdminReplyAt > 0) {
-        markFeedbackRead(feedbackId, latestAdminReplyAt);
-      }
-    } catch (fetchError) {
-      console.error('Load feedback detail failed:', fetchError);
-      setError('获取反馈详情失败，请稍后重试');
-      setSelectedDetail(null);
-    } finally {
-      setDetailLoading(false);
-    }
-  }, [markFeedbackRead]);
+    const safePage = Math.min(Math.max(1, nextPage), listTotalPages);
+    await loadFeedbackList({ page: safePage });
+  }, [listLoading, listTotalPages, loadFeedbackList]);
 
   useEffect(() => {
     let cancelled = false;
@@ -432,48 +479,15 @@ export default function FeedbackPage() {
 
   useEffect(() => {
     if (!user) {
-      setReadByFeedback({});
-      return;
-    }
-
-    const raw = localStorage.getItem(getFeedbackReadStorageKey(user.id));
-    setReadByFeedback(parseReadMap(raw));
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) {
       setFeedbackList([]);
-      setSelectedId(null);
       setListPage(1);
       setListHasMore(false);
+      setListTotal(0);
+      setListTotalPages(1);
       return;
     }
-    void loadFeedbackList({ page: 1, append: false });
+    void loadFeedbackList({ page: 1 });
   }, [user, filterStatus, loadFeedbackList]);
-
-  useEffect(() => {
-    if (!selectedId) {
-      setSelectedDetail(null);
-      return;
-    }
-    void loadFeedbackDetail(selectedId);
-  }, [selectedId, loadFeedbackDetail]);
-
-  useEffect(() => {
-    setReplyContent('');
-    setReplyImages([]);
-  }, [selectedId]);
-
-  const handleLogout = async () => {
-    try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-      setUser(null);
-      router.push('/');
-      router.refresh();
-    } catch (logoutError) {
-      console.error('Logout failed', logoutError);
-    }
-  };
 
   const handleSubmitFeedback = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -495,6 +509,7 @@ export default function FeedbackPage() {
         body: JSON.stringify({
           content: trimmedContent,
           contact: contact.trim() || undefined,
+          anonymous: isAnonymous,
           images: draftImages.map((image) => ({
             dataUrl: image.dataUrl,
             mimeType: image.mimeType,
@@ -514,15 +529,10 @@ export default function FeedbackPage() {
       setContent('');
       setContact('');
       setDraftImages([]);
-
-      if (data.feedback?.id && typeof data.feedback?.updatedAt === 'number') {
-        markFeedbackRead(data.feedback.id as string, data.feedback.updatedAt as number);
-      }
+      setIsAnonymous(false);
+      setViewMode('wall');
 
       await loadFeedbackList();
-      if (data.feedback?.id) {
-        setSelectedId(data.feedback.id as string);
-      }
     } catch (submitError) {
       console.error('Submit feedback failed:', submitError);
       setError('提交反馈失败，请稍后重试');
@@ -531,26 +541,134 @@ export default function FeedbackPage() {
     }
   };
 
-  const handleReply = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleOpenCompose = () => {
+    setError(null);
+    setSuccess(null);
+    setSelectedFeedback(null);
+    setSelectedMessages([]);
+    setCommentPage(1);
+    setViewMode('compose');
+  };
 
-    if (!selectedId) {
-      setError('请先选择一条反馈');
+  const handleBackToWall = () => {
+    setError(null);
+    setSelectedFeedback(null);
+    setSelectedMessages([]);
+    setCommentPage(1);
+    setReplyContent('');
+    setReplyImages([]);
+    setViewMode('wall');
+  };
+
+  const updateFeedbackLikeState = (
+    feedbackId: string,
+    state: { likeCount: number; likedByMe: boolean }
+  ) => {
+    setFeedbackList((prev) =>
+      prev.map((item) =>
+        item.id === feedbackId ? { ...item, ...state } : item
+      )
+    );
+    setSelectedFeedback((prev) =>
+      prev?.id === feedbackId ? { ...prev, ...state } : prev
+    );
+  };
+
+  const handleToggleLike = async (
+    feedbackId: string,
+    event?: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    event?.stopPropagation();
+    if (likeSubmittingId) {
+      return;
+    }
+
+    setLikeSubmittingId(feedbackId);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/feedback/${feedbackId}/like`, {
+        method: 'POST',
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        setError(data.message || '点赞失败');
+        return;
+      }
+
+      updateFeedbackLikeState(feedbackId, {
+        likeCount: Number(data.likeCount ?? 0),
+        likedByMe: Boolean(data.likedByMe),
+      });
+    } catch (likeError) {
+      console.error('Toggle feedback like failed:', likeError);
+      setError('点赞失败，请稍后重试');
+    } finally {
+      setLikeSubmittingId(null);
+    }
+  };
+
+  const handleOpenDetail = async (feedbackId: string) => {
+    setViewMode('detail');
+    setDetailLoading(true);
+    setError(null);
+    setSuccess(null);
+    setReplyContent('');
+    setReplyImages([]);
+    setCommentPage(1);
+
+    try {
+      const response = await fetch(`/api/feedback/${feedbackId}`, { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        setError(data.message || '获取反馈详情失败');
+        setViewMode('wall');
+        return;
+      }
+
+      const feedback = data.feedback as FeedbackItem;
+      const messages = (data.messages as FeedbackMessage[]) ?? [];
+      const nextReplyCount = Math.max(0, messages.length - 1);
+      setSelectedFeedback({
+        ...feedback,
+        replyCount: nextReplyCount,
+      });
+      setSelectedMessages(messages);
+      setCommentPage(1);
+      setFeedbackList((prev) =>
+        prev.map((item) =>
+          item.id === feedback.id
+            ? { ...item, ...feedback, replyCount: nextReplyCount }
+            : item
+        )
+      );
+    } catch (detailError) {
+      console.error('Load feedback detail failed:', detailError);
+      setError('获取反馈详情失败，请稍后重试');
+      setViewMode('wall');
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const handleSubmitReply = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedFeedback) {
       return;
     }
 
     const trimmedContent = replyContent.trim();
     if (!trimmedContent && replyImages.length === 0) {
-      setError('请填写留言内容或上传图片');
+      setError('请填写评论内容或上传图片');
       return;
     }
 
-    setReplying(true);
+    setReplySubmitting(true);
     setError(null);
     setSuccess(null);
 
     try {
-      const response = await fetch(`/api/feedback/${selectedId}/messages`, {
+      const response = await fetch(`/api/feedback/${selectedFeedback.id}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -566,509 +684,1699 @@ export default function FeedbackPage() {
 
       const data = await response.json();
       if (!response.ok || !data.success) {
-        setError(data.message || '留言失败');
+        setError(data.message || '评论失败');
         return;
       }
 
+      const nextMessages = [
+        ...selectedMessages,
+        data.feedbackMessage as FeedbackMessage,
+      ];
+      const nextReplyCount = Math.max(0, nextMessages.length - 1);
+      const nextFeedback = {
+        ...selectedFeedback,
+        ...(data.feedback as Partial<FeedbackItem>),
+        replyCount: nextReplyCount,
+      };
+
+      setSelectedFeedback(nextFeedback);
+      setSelectedMessages(nextMessages);
+      setFeedbackList((prev) =>
+        prev.map((item) =>
+          item.id === selectedFeedback.id
+            ? { ...item, ...nextFeedback, replyCount: nextReplyCount }
+            : item
+        )
+      );
       setReplyContent('');
       setReplyImages([]);
-      setSuccess('留言成功');
-
-      if (data.feedback?.id && typeof data.feedback?.updatedAt === 'number') {
-        markFeedbackRead(data.feedback.id as string, data.feedback.updatedAt as number);
-      }
-
-      await Promise.all([
-        loadFeedbackList(),
-        loadFeedbackDetail(selectedId),
-      ]);
+      setCommentPage(Math.max(1, Math.ceil(nextReplyCount / COMMENT_PAGE_SIZE)));
+      setSuccess('评论已发布');
     } catch (replyError) {
-      console.error('Reply feedback failed:', replyError);
-      setError('留言失败，请稍后重试');
+      console.error('Submit feedback reply failed:', replyError);
+      setError('评论失败，请稍后重试');
     } finally {
-      setReplying(false);
+      setReplySubmitting(false);
     }
   };
 
+  const commentMessages = selectedMessages.slice(1);
+  const commentTotalPages = Math.max(1, Math.ceil(commentMessages.length / COMMENT_PAGE_SIZE));
+  const safeCommentPage = Math.min(commentPage, commentTotalPages);
+  const visibleComments = commentMessages.slice(
+    (safeCommentPage - 1) * COMMENT_PAGE_SIZE,
+    safeCommentPage * COMMENT_PAGE_SIZE
+  );
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#fafaf9] flex items-center justify-center">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_15%_50%,rgba(255,228,230,0.8),transparent_48%),radial-gradient(circle_at_85%_30%,rgba(224,231,255,0.8),transparent_48%),radial-gradient(circle_at_50%_90%,rgba(254,243,199,0.8),transparent_48%)] blur-3xl" />
         <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
       </div>
     );
   }
 
-  const unreadCount = feedbackList.filter((item) => {
-    if (item.latestMessageRole !== 'admin') {
-      return false;
-    }
-
-    const latestAdminReplyAt = item.latestMessageAt ?? 0;
-    const readAt = readByFeedback[item.id] ?? 0;
-    return latestAdminReplyAt > readAt;
-  }).length;
-
   return (
-    <div className="min-h-screen bg-[#fafaf9] overflow-x-hidden">
-      <nav className="sticky top-0 z-50 glass border-b border-white/50 transition-all duration-300">
-        <div className="max-w-[1200px] mx-auto px-4 sm:px-6">
-          <div className="flex justify-between items-center h-[72px]">
-            <div className="flex items-center gap-4 min-w-0">
-              <Link
-                href="/"
-                className="flex items-center gap-2 text-stone-500 hover:text-stone-800 transition-colors"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                <span className="text-sm font-medium hidden sm:inline">首页</span>
-              </Link>
-              <div className="w-px h-5 bg-stone-300 hidden sm:block" />
-              <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-                <div className="w-9 h-9 bg-orange-100 rounded-xl flex items-center justify-center border border-orange-200">
-                  <MessageSquareText className="w-5 h-5 text-orange-600" />
-                </div>
-                <span className="text-lg sm:text-xl font-bold text-stone-800 truncate">反馈墙</span>
-              </div>
+    <div className="feedback-wall-page">
+      <div className="feedback-mesh-bg" />
+
+      <div className="feedback-layout">
+        <SiteSidebar activeNav="feedback" />
+
+        <main className="feedback-panel-right">
+          <div className="feedback-header">
+            <div>
+              <h2 className="feedback-section-title">
+                <MessageSquareText />
+                用户反馈墙
+              </h2>
+              <p className="feedback-header-subtitle">您的每一个声音，都在帮助我们变得更好。</p>
             </div>
+            <button type="button" onClick={handleOpenCompose} className="feedback-btn-primary">
+              <Plus />
+              我要反馈
+            </button>
+          </div>
 
-            <div className="flex items-center gap-2 sm:gap-4">
-              {user?.isAdmin && (
-                <Link
-                  href="/admin"
-                  className="flex items-center gap-2 px-2.5 py-2 sm:px-4 sm:py-2 bg-stone-100 text-stone-600 rounded-xl text-sm font-semibold hover:bg-orange-50 hover:text-orange-600 transition-all duration-300 border border-stone-200"
-                  title="后台管理"
-                >
-                  <LayoutDashboard className="w-4 h-4" />
-                  <span className="hidden sm:inline">后台管理</span>
-                </Link>
-              )}
+          {(error || success) && (
+            <div className="feedback-alert-stack">
+              {error && <div className="feedback-alert error">{error}</div>}
+              {success && <div className="feedback-alert success">{success}</div>}
+            </div>
+          )}
 
-              {user ? (
-                <div className="flex items-center gap-3 pl-2 sm:pl-4 sm:border-l sm:border-stone-200">
-                  <div className="w-9 h-9 rounded-full bg-white flex items-center justify-center border border-stone-100 shadow-sm">
-                    <User className="w-4 h-4 text-stone-500" />
-                  </div>
-                  <span className="hidden md:block font-semibold text-stone-700 text-sm">
-                    {user.displayName || user.username}
-                  </span>
-                  <button
-                    onClick={handleLogout}
-                    className="p-2 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all duration-200"
-                    title="退出登录"
-                  >
-                    <LogOut className="w-4 h-4" />
+          {viewMode === 'compose' && (
+            <section id="feedback-form" className="feedback-card composer-card composer-only">
+              <div className="composer-title-row">
+                <div>
+                  <h3>提交新反馈</h3>
+                  <p>选择公开后会展示在反馈墙，匿名反馈仅管理员可见。</p>
+                </div>
+                <div className="composer-actions">
+                  <label className={`anonymous-toggle ${isAnonymous ? 'is-active' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={isAnonymous}
+                      onChange={(event) => setIsAnonymous(event.target.checked)}
+                    />
+                    匿名提交
+                  </label>
+                  <button type="button" onClick={handleBackToWall} className="feedback-btn-ghost">
+                    返回反馈墙
                   </button>
                 </div>
-              ) : (
-                <Link
-                  href="/login?redirect=/feedback"
-                  className="px-6 py-2.5 gradient-warm text-white rounded-xl text-sm font-bold shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 hover:-translate-y-0.5 transition-all duration-300"
-                >
-                  登录
-                </Link>
-              )}
-            </div>
-          </div>
-        </div>
-      </nav>
-
-      <main className="max-w-[1200px] mx-auto px-4 sm:px-6 py-10">
-        <div className="mb-6 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-stone-800">我的反馈</h1>
-            <p className="text-stone-500 mt-2 text-sm sm:text-base">
-              这里仅展示你自己的反馈记录，管理员会在同一会话回复你。
-            </p>
-          </div>
-          <div className="text-xs font-medium text-stone-500 bg-stone-100 px-3 py-2 rounded-lg">
-            可见范围：仅本人 + 管理员
-          </div>
-        </div>
-
-        {(error || success) && (
-          <div className="mb-6 space-y-3">
-            {error && (
-              <div className="px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm font-medium">
-                {error}
               </div>
-            )}
-            {success && (
-              <div className="px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-600 text-sm font-medium">
-                {success}
-              </div>
-            )}
-          </div>
-        )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6">
-          <div className="space-y-6">
-            <section className="glass rounded-2xl border border-white/70 p-5">
-              <h2 className="text-lg font-bold text-stone-800 mb-4">提交新反馈</h2>
-              <form className="space-y-4" onSubmit={handleSubmitFeedback}>
-                <div>
-                  <label className="block text-xs font-bold text-stone-500 uppercase tracking-wide mb-2">
-                    联系方式（可选）
+              <form className="composer-form" onSubmit={handleSubmitFeedback}>
+                <input
+                  value={contact}
+                  onChange={(event) => setContact(event.target.value)}
+                  maxLength={100}
+                  placeholder="联系方式（可选，例如 QQ / 邮箱 / 手机号）"
+                  className="feedback-input"
+                />
+                <textarea
+                  value={content}
+                  onChange={(event) => setContent(event.target.value)}
+                  onPaste={handleDraftPaste}
+                  rows={8}
+                  maxLength={1000}
+                  placeholder="请描述你遇到的问题或建议"
+                  className="feedback-textarea"
+                />
+
+                <div className="composer-meta-row">
+                  <label htmlFor="feedback-create-images" className="feedback-upload-btn">
+                    上传图片
                   </label>
                   <input
-                    value={contact}
-                    onChange={(event) => setContact(event.target.value)}
-                    maxLength={100}
-                    placeholder="例如 QQ / 邮箱 / 手机号"
-                    className="w-full px-3 py-2.5 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none text-sm"
+                    id="feedback-create-images"
+                    type="file"
+                    accept={FEEDBACK_IMAGE_ACCEPT}
+                    multiple
+                    className="hidden"
+                    onChange={handleDraftFileChange}
                   />
+                  <div className="feedback-counter">
+                    {content.length}/1000 · {draftImages.length}/{MAX_FEEDBACK_IMAGES} 张
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-stone-500 uppercase tracking-wide mb-2">
-                    反馈内容
-                  </label>
-                  <textarea
-                    value={content}
-                    onChange={(event) => setContent(event.target.value)}
-                    onPaste={handleDraftPaste}
-                    rows={5}
-                    maxLength={1000}
-                    placeholder="请描述你遇到的问题或建议"
-                    className="w-full px-3 py-2.5 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none text-sm resize-y"
-                  />
-                  <div className="mt-1 flex items-center justify-between gap-3">
-                    <label
-                      htmlFor="feedback-create-images"
-                      className="px-3 py-1.5 rounded-lg border border-stone-200 bg-white text-xs text-stone-600 font-medium cursor-pointer hover:border-orange-300 hover:text-orange-600 transition-colors"
-                    >
-                      上传图片
-                    </label>
-                    <input
-                      id="feedback-create-images"
-                      type="file"
-                      accept={FEEDBACK_IMAGE_ACCEPT}
-                      multiple
-                      className="hidden"
-                      onChange={handleDraftFileChange}
-                    />
-                    <div className="text-right text-xs text-stone-400">
-                      {content.length}/1000 · {draftImages.length}/{MAX_FEEDBACK_IMAGES} 张
-                    </div>
-                  </div>
-
-                  <div className="mt-1 text-xs text-stone-400">
-                    支持粘贴截图，格式：PNG/JPG/WEBP/GIF，单张 ≤ {MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB
-                  </div>
-
-                  {draftImages.length > 0 && (
-                    <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      {draftImages.map((image) => (
-                        <div key={image.id} className="relative border border-stone-200 rounded-lg overflow-hidden bg-white">
-                          <Image
-                            src={image.dataUrl}
-                            alt={image.name || '反馈图片'}
-                            width={160}
-                            height={80}
-                            unoptimized
-                            className="w-full h-20 object-cover"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeDraftImage(image.id)}
-                            className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white text-xs leading-5"
-                            aria-label="移除图片"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                <div className="feedback-help">
+                  支持粘贴截图，格式：PNG/JPG/WEBP/GIF，原图单张 ≤ {MAX_FEEDBACK_SOURCE_IMAGE_BYTES / 1024 / 1024}MB，提交前会自动压缩
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-full py-2.5 rounded-xl gradient-warm text-white font-bold text-sm shadow-lg shadow-orange-500/20 hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {submitting ? '提交中...' : '提交反馈'}
+                {draftImages.length > 0 && (
+                  <div className="feedback-image-grid">
+                    {draftImages.map((image) => (
+                      <div key={image.id} className="feedback-image-preview">
+                        <Image
+                          src={image.dataUrl}
+                          alt={image.name || '反馈图片'}
+                          width={160}
+                          height={90}
+                          unoptimized
+                          className="feedback-preview-image"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeDraftImage(image.id)}
+                          className="feedback-image-remove"
+                          aria-label="移除图片"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <button type="submit" disabled={submitting} className="feedback-submit-btn">
+                  {submitting && <Loader2 />}
+                  {submitting ? '提交中...' : isAnonymous ? '匿名提交' : '公开提交'}
                 </button>
               </form>
             </section>
+          )}
 
-            <section className="glass rounded-2xl border border-white/70 p-5">
-              <div className="flex items-center justify-between mb-4 gap-3">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-bold text-stone-800">反馈列表</h2>
-                  {unreadCount > 0 && (
-                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-red-50 text-red-600 border border-red-200 text-xs font-semibold">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                      {unreadCount} 条新回复
-                    </span>
-                  )}
-                </div>
-                <select
-                  value={filterStatus}
-                  onChange={(event) =>
-                    setFilterStatus(event.target.value as 'all' | FeedbackStatus)
-                  }
-                  className="px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm text-stone-700"
-                >
-                  <option value="all">全部状态</option>
-                  <option value="open">待处理</option>
-                  <option value="processing">处理中</option>
-                  <option value="resolved">已解决</option>
-                  <option value="closed">已关闭</option>
-                </select>
-              </div>
+          {viewMode === 'detail' && (
+            <section className="feedback-detail-view">
+              <button type="button" onClick={handleBackToWall} className="detail-back">
+                <ChevronRight />
+                返回反馈墙
+              </button>
 
-              {listLoading ? (
-                <div className="py-10 flex items-center justify-center text-orange-500">
-                  <Loader2 className="w-5 h-5 animate-spin" />
+              {detailLoading ? (
+                <div className="feedback-empty">
+                  <Loader2 className="spin-icon" />
                 </div>
-              ) : feedbackList.length === 0 ? (
-                <div className="py-8 text-center text-sm text-stone-400 border border-dashed border-stone-200 rounded-xl">
-                  暂无反馈记录
-                </div>
-              ) : (
-                <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
-                  {feedbackList.map((item) => {
-                    const latestAdminReplyAt = item.latestMessageAt ?? 0;
-                    const readAt = readByFeedback[item.id] ?? 0;
-                    const hasUnreadReply =
-                      item.latestMessageRole === 'admin' && latestAdminReplyAt > readAt;
+              ) : selectedFeedback ? (
+                <>
+                  <article className="feedback-card wall-card detail-card">
+                    <div className="fb-header">
+                      <div className="fb-user">
+                        <FeedbackAuthorAvatar feedback={selectedFeedback} />
+                        <div>
+                          <div className="fb-name-line">
+                            <h4 className="fb-name">{resolveFeedbackAuthorName(selectedFeedback)}</h4>
+                            <FeedbackAchievementBadge achievement={selectedFeedback.equippedAchievement} />
+                          </div>
+                          <p className="fb-time">
+                            {formatFeedbackTime(selectedFeedback.createdAt)} · #{selectedFeedback.id}
+                          </p>
+                        </div>
+                      </div>
+                      <div className={`fb-status ${WALL_STATUS_CLASS[selectedFeedback.status]}`}>
+                        {STATUS_LABEL[selectedFeedback.status]}
+                      </div>
+                    </div>
 
-                    return (
+                    <div className="fb-content">
+                      {selectedMessages[0]?.content && <p>{selectedMessages[0].content}</p>}
+                      {selectedMessages[0]?.images && selectedMessages[0].images.length > 0 && (
+                        <div className="wall-image-grid">
+                          {selectedMessages[0].images.map((image, index) => (
+                            <a
+                              key={`${selectedMessages[0].id}-${index}`}
+                              href={image.dataUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <Image
+                                src={image.dataUrl}
+                                alt={image.name || `反馈图片${index + 1}`}
+                                width={320}
+                                height={180}
+                                unoptimized
+                                className="wall-feedback-image"
+                              />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="fb-footer">
                       <button
-                        key={item.id}
                         type="button"
-                        onClick={() => setSelectedId(item.id)}
-                        className={`w-full text-left p-3 rounded-xl border transition-colors ${
-                          selectedId === item.id
-                            ? 'bg-orange-50 border-orange-200'
-                            : 'bg-white border-stone-200 hover:border-orange-200 hover:bg-orange-50/40'
-                        }`}
+                        onClick={(event) => void handleToggleLike(selectedFeedback.id, event)}
+                        disabled={likeSubmittingId === selectedFeedback.id}
+                        className={`fb-action-btn like-btn ${selectedFeedback.likedByMe ? 'active' : ''}`}
                       >
-                        <div className="flex items-center justify-between gap-2 mb-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-stone-500 font-medium">#{item.id}</span>
-                            {hasUnreadReply && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200 text-[11px] font-semibold">
-                                <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                                新回复
-                              </span>
+                        <ThumbsUp />
+                        {selectedFeedback.likeCount ?? 0} 点赞
+                      </button>
+                      <div className="fb-action-btn">
+                        <MessageSquareText />
+                        {selectedFeedback.replyCount ?? 0} 条评论
+                      </div>
+                    </div>
+                  </article>
+
+                  <div className="feedback-card comments-card">
+                  <div className="comments-title-row">
+                    <h3>评论</h3>
+                      <span>{commentMessages.length} 条</span>
+                  </div>
+
+                  <div className="comment-list">
+                      {commentMessages.length === 0 ? (
+                        <div className="feedback-empty small">暂无评论</div>
+                      ) : (
+                        visibleComments.map((message) => (
+                          <div key={message.id} className={`comment-bubble ${message.role}`}>
+                            <div className="comment-meta">
+                              <span>{message.role === 'admin' ? '管理员回复' : message.createdBy}</span>
+                              <span>{formatFeedbackTime(message.createdAt)}</span>
+                            </div>
+                            {message.content && <p>{message.content}</p>}
+                            {message.images && message.images.length > 0 && (
+                              <div className="wall-image-grid compact">
+                                {message.images.map((image, index) => (
+                                  <a
+                                    key={`${message.id}-${index}`}
+                                    href={image.dataUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    <Image
+                                      src={image.dataUrl}
+                                      alt={image.name || `评论图片${index + 1}`}
+                                      width={180}
+                                      height={100}
+                                      unoptimized
+                                      className="wall-feedback-image"
+                                    />
+                                  </a>
+                                ))}
+                              </div>
                             )}
                           </div>
-                          <span
-                            className={`text-xs px-2 py-1 rounded-full border ${STATUS_CLASS[item.status]}`}
-                          >
-                            {STATUS_LABEL[item.status]}
-                          </span>
-                        </div>
-                        <div className="text-xs text-stone-400">
-                          更新于 {new Date(item.updatedAt).toLocaleString('zh-CN')}
-                        </div>
-                      </button>
-                    );
-                  })}
+                        ))
+                      )}
+                    </div>
 
-                  <div className="pt-1">
-                    {listHasMore ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void handleLoadMore();
-                        }}
-                        disabled={listLoadingMore}
-                        className="w-full px-3 py-2 rounded-lg border border-stone-200 bg-white text-xs font-semibold text-stone-600 hover:border-orange-300 hover:text-orange-600 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                      >
-                        {listLoadingMore && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                        {listLoadingMore ? '加载中...' : '加载更多'}
-                      </button>
-                    ) : (
-                      <div className="text-center text-xs text-stone-400 py-1">暂无更多</div>
+                    {commentMessages.length > COMMENT_PAGE_SIZE && (
+                      <div className="feedback-pagination compact">
+                        <button
+                          type="button"
+                          className="feedback-page-btn"
+                          onClick={() => setCommentPage((prev) => Math.max(1, prev - 1))}
+                          disabled={safeCommentPage <= 1}
+                          aria-label="上一页评论"
+                        >
+                          <ChevronRight />
+                          上一页
+                        </button>
+                        <span className="feedback-page-indicator">
+                          <strong>{safeCommentPage}</strong>
+                          <span>/</span>
+                          {commentTotalPages}
+                        </span>
+                        <button
+                          type="button"
+                          className="feedback-page-btn"
+                          onClick={() => setCommentPage((prev) => Math.min(commentTotalPages, prev + 1))}
+                          disabled={safeCommentPage >= commentTotalPages}
+                          aria-label="下一页评论"
+                        >
+                          下一页
+                          <ChevronRight />
+                        </button>
+                      </div>
                     )}
+
+                    <form className="comment-form" onSubmit={handleSubmitReply}>
+                      <textarea
+                        value={replyContent}
+                        onChange={(event) => setReplyContent(event.target.value)}
+                        onPaste={handleReplyPaste}
+                        rows={4}
+                        maxLength={1000}
+                        placeholder="写下你的评论"
+                        className="feedback-textarea"
+                      />
+                      {replyImages.length > 0 && (
+                        <div className="feedback-image-grid">
+                          {replyImages.map((image) => (
+                            <div key={image.id} className="feedback-image-preview">
+                              <Image
+                                src={image.dataUrl}
+                                alt={image.name || '评论图片'}
+                                width={160}
+                                height={90}
+                                unoptimized
+                                className="feedback-preview-image"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeReplyImage(image.id)}
+                                className="feedback-image-remove"
+                                aria-label="移除图片"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="composer-meta-row">
+                        <label htmlFor="feedback-reply-images" className="feedback-upload-btn">
+                          上传图片
+                        </label>
+                        <input
+                          id="feedback-reply-images"
+                          type="file"
+                          accept={FEEDBACK_IMAGE_ACCEPT}
+                          multiple
+                          className="hidden"
+                          onChange={handleReplyFileChange}
+                        />
+                        <div className="feedback-counter">
+                          {replyContent.length}/1000 · {replyImages.length}/{MAX_FEEDBACK_IMAGES} 张
+                        </div>
+                      </div>
+                      <button type="submit" disabled={replySubmitting} className="feedback-submit-btn">
+                        {replySubmitting && <Loader2 />}
+                        {replySubmitting ? '发布中...' : '发布评论'}
+                      </button>
+                    </form>
                   </div>
-                </div>
+                </>
+              ) : (
+                <div className="feedback-empty">反馈不存在</div>
               )}
             </section>
-          </div>
+          )}
 
-          <section className="glass rounded-2xl border border-white/70 p-5 min-h-[640px] flex flex-col">
-            {!selectedId ? (
-              <div className="flex-1 flex items-center justify-center text-sm text-stone-400 border border-dashed border-stone-200 rounded-xl">
-                请选择一条反馈查看详情
+          {viewMode === 'wall' && (
+            <>
+              <div className="feedback-filters">
+                {[
+                  ['all', '全部反馈'],
+                  ['open', '待处理'],
+                  ['processing', '处理中'],
+                  ['resolved', '已解决'],
+                  ['closed', '已关闭'],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setFilterStatus(value as 'all' | FeedbackStatus)}
+                    className={`filter-tab ${filterStatus === value ? 'active' : ''}`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-            ) : detailLoading && !selectedDetail ? (
-              <div className="flex-1 flex items-center justify-center text-orange-500">
-                <Loader2 className="w-6 h-6 animate-spin" />
-              </div>
-            ) : selectedDetail ? (
-              <>
-                <div className="pb-4 border-b border-stone-200">
-                  <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                    <h2 className="text-lg font-bold text-stone-800">反馈会话 #{selectedDetail.feedback.id}</h2>
-                    <span
-                      className={`text-xs px-2 py-1 rounded-full border ${STATUS_CLASS[selectedDetail.feedback.status]}`}
-                    >
-                      {STATUS_LABEL[selectedDetail.feedback.status]}
-                    </span>
+
+              <div className="feedback-list">
+                {listLoading ? (
+                  <div className="feedback-empty">
+                    <Loader2 className="spin-icon" />
                   </div>
-                  {selectedDetail.feedback.contact && (
-                    <p className="text-sm text-stone-500">
-                      联系方式：{selectedDetail.feedback.contact}
-                    </p>
-                  )}
-                </div>
+                ) : feedbackList.length === 0 ? (
+                  <div className="feedback-empty">暂无公开反馈</div>
+                ) : (
+                  feedbackList.map((item) => {
+                    const message = item.firstMessage;
+                    const reply = item.latestAdminReply;
 
-                <div className="flex-1 overflow-y-auto py-4 space-y-3">
-                  {selectedDetail.messages.length === 0 ? (
-                    <div className="text-sm text-stone-400 text-center py-8 border border-dashed border-stone-200 rounded-xl">
-                      暂无会话内容
-                    </div>
-                  ) : (
-                    selectedDetail.messages.map((message) => (
-                      <div
-                        key={message.id}
-                        className={`flex ${
-                          message.role === 'user' ? 'justify-end' : 'justify-start'
-                        }`}
+                    return (
+                      <article
+                        key={item.id}
+                        className="feedback-card wall-card"
+                        onClick={() => void handleOpenDetail(item.id)}
                       >
-                        <div
-                          className={`max-w-[85%] rounded-2xl px-4 py-3 border ${
-                            message.role === 'user'
-                              ? 'bg-orange-50 border-orange-200 text-stone-700'
-                              : 'bg-stone-50 border-stone-200 text-stone-700'
-                          }`}
-                        >
-                          <div className="text-xs text-stone-400 mb-1 flex items-center gap-2">
-                            <span>{message.role === 'user' ? '我' : '管理员'}</span>
-                            <span>·</span>
-                            <span>{new Date(message.createdAt).toLocaleString('zh-CN')}</span>
+                        <div className="fb-header">
+                          <div className="fb-user">
+                            <FeedbackAuthorAvatar feedback={item} />
+                            <div>
+                              <div className="fb-name-line">
+                                <h4 className="fb-name">{resolveFeedbackAuthorName(item)}</h4>
+                                <FeedbackAchievementBadge achievement={item.equippedAchievement} />
+                              </div>
+                              <p className="fb-time">
+                                {formatFeedbackTime(item.createdAt)} · #{item.id}
+                              </p>
+                            </div>
                           </div>
-                          {message.content && (
-                            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                              {message.content}
-                            </p>
-                          )}
-                          {message.images && message.images.length > 0 && (
-                            <div className="mt-2 grid grid-cols-2 gap-2">
+                          <div className={`fb-status ${WALL_STATUS_CLASS[item.status]}`}>
+                            {STATUS_LABEL[item.status]}
+                          </div>
+                        </div>
+
+                        <div className="fb-content">
+                          <h3>{message?.content?.split('\n')[0] || '图片反馈'}</h3>
+                          {message?.content && <p>{message.content}</p>}
+                          {message?.images && message.images.length > 0 && (
+                            <div className="wall-image-grid">
                               {message.images.map((image, index) => (
                                 <a
                                   key={`${message.id}-${index}`}
                                   href={image.dataUrl}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="block"
+                                  onClick={(event) => event.stopPropagation()}
                                 >
                                   <Image
                                     src={image.dataUrl}
                                     alt={image.name || `反馈图片${index + 1}`}
-                                    width={400}
-                                    height={280}
+                                    width={320}
+                                    height={180}
                                     unoptimized
-                                    className="w-full h-28 object-cover rounded-lg border border-stone-200"
+                                    className="wall-feedback-image"
                                   />
                                 </a>
                               ))}
                             </div>
                           )}
+
+                          {reply && (
+                            <div className="official-reply">
+                              <div className="reply-header">
+                                <span className="admin-badge">管理员回复</span>
+                                <span className="reply-time">{formatFeedbackTime(reply.createdAt)}</span>
+                              </div>
+                              {reply.content && <p>{reply.content}</p>}
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))
-                  )}
-                </div>
 
-                <form onSubmit={handleReply} className="pt-4 border-t border-stone-200 space-y-3">
-                  <textarea
-                    value={replyContent}
-                    onChange={(event) => setReplyContent(event.target.value)}
-                    onPaste={handleReplyPaste}
-                    rows={3}
-                    maxLength={1000}
-                    disabled={selectedDetail.feedback.status === 'closed'}
-                    placeholder={
-                      selectedDetail.feedback.status === 'closed'
-                        ? '当前反馈已关闭，无法继续留言'
-                        : '继续补充说明...'
-                    }
-                    className="w-full px-3 py-2.5 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none text-sm resize-y disabled:opacity-70"
-                  />
-
-                  <div className="flex items-center justify-between gap-3">
-                    <label
-                      htmlFor="feedback-reply-images"
-                      className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                        selectedDetail.feedback.status === 'closed'
-                          ? 'border-stone-200 text-stone-300 cursor-not-allowed'
-                          : 'border-stone-200 bg-white text-stone-600 cursor-pointer hover:border-orange-300 hover:text-orange-600'
-                      }`}
-                    >
-                      上传图片
-                    </label>
-                    <input
-                      id="feedback-reply-images"
-                      type="file"
-                      accept={FEEDBACK_IMAGE_ACCEPT}
-                      multiple
-                      className="hidden"
-                      onChange={handleReplyFileChange}
-                      disabled={selectedDetail.feedback.status === 'closed'}
-                    />
-                    <div className="text-xs text-stone-400">
-                      {replyContent.length}/1000 · {replyImages.length}/{MAX_FEEDBACK_IMAGES} 张
-                    </div>
-                  </div>
-
-                  <div className="text-xs text-stone-400">
-                    支持粘贴截图，格式：PNG/JPG/WEBP/GIF，单张 ≤ {MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB
-                  </div>
-
-                  {replyImages.length > 0 && (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      {replyImages.map((image) => (
-                        <div key={image.id} className="relative border border-stone-200 rounded-lg overflow-hidden bg-white">
-                          <Image
-                            src={image.dataUrl}
-                            alt={image.name || '留言图片'}
-                            width={160}
-                            height={80}
-                            unoptimized
-                            className="w-full h-20 object-cover"
-                          />
+                        <div className="fb-footer">
                           <button
                             type="button"
-                            onClick={() => removeReplyImage(image.id)}
-                            className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white text-xs leading-5"
-                            aria-label="移除图片"
+                            onClick={(event) => void handleToggleLike(item.id, event)}
+                            disabled={likeSubmittingId === item.id}
+                            className={`fb-action-btn like-btn ${item.likedByMe ? 'active' : ''}`}
                           >
-                            ×
+                            <ThumbsUp />
+                            {item.likeCount ?? 0} 点赞
+                          </button>
+                          <button
+                            type="button"
+                            className="fb-action-btn"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handleOpenDetail(item.id);
+                            }}
+                          >
+                            <MessageSquareText />
+                            {item.replyCount ?? 0} 条评论
                           </button>
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      </article>
+                    );
+                  })
+                )}
 
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs text-stone-400">支持文字 + 图片混合发送</div>
+                {listTotalPages > 1 && (
+                  <div className="feedback-pagination">
                     <button
-                      type="submit"
-                      disabled={replying || selectedDetail.feedback.status === 'closed'}
-                      className="px-4 py-2.5 rounded-xl bg-stone-900 text-white text-sm font-semibold hover:bg-stone-800 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+                      type="button"
+                      className="feedback-page-btn"
+                      onClick={() => void goToFeedbackPage(listPage - 1)}
+                      disabled={listLoading || listPage <= 1}
+                      aria-label="上一页反馈"
                     >
-                      {replying ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Send className="w-4 h-4" />
-                      )}
-                      {replying ? '发送中...' : '发送留言'}
+                      <ChevronRight />
+                      上一页
+                    </button>
+                    <span className="feedback-page-indicator">
+                      <strong>{listPage}</strong>
+                      <span>/</span>
+                      {listTotalPages}
+                      <em>共 {listTotal} 条</em>
+                    </span>
+                    <button
+                      type="button"
+                      className="feedback-page-btn"
+                      onClick={() => void goToFeedbackPage(listPage + 1)}
+                      disabled={listLoading || !listHasMore}
+                      aria-label="下一页反馈"
+                    >
+                      下一页
+                      <ChevronRight />
                     </button>
                   </div>
-                </form>
-              </>
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-sm text-stone-400 border border-dashed border-stone-200 rounded-xl">
-                反馈详情加载失败，请重新选择
+                )}
               </div>
-            )}
-          </section>
-        </div>
-      </main>
+            </>
+          )}
+        </main>
+      </div>
+
+      <style jsx global>{`
+        .feedback-wall-page {
+          --text-main: #0f172a;
+          --text-light: #64748b;
+          --card-bg: rgba(255, 255, 255, 0.65);
+          --card-border: rgba(255, 255, 255, 1);
+          --card-shadow: 0 24px 48px rgba(15, 23, 42, 0.05);
+          --radius-xl: 32px;
+          --c-orange: #f97316;
+          --c-red: #f43f5e;
+          --c-blue: #3b82f6;
+          --c-green: #10b981;
+          background-color: #f8fafc;
+          color: var(--text-main);
+          font-family: 'Outfit', 'Noto Sans SC', sans-serif;
+          height: 100vh;
+          position: relative;
+          isolation: isolate;
+          overflow: hidden;
+          -webkit-font-smoothing: antialiased;
+        }
+
+        .feedback-wall-page a {
+          color: inherit;
+          text-decoration: none;
+        }
+
+        .feedback-mesh-bg {
+          position: fixed;
+          inset: 0;
+          z-index: -1;
+          background-image:
+            radial-gradient(circle at 15% 50%, rgba(255, 228, 230, 0.8) 0%, transparent 50%),
+            radial-gradient(circle at 85% 30%, rgba(224, 231, 255, 0.8) 0%, transparent 50%),
+            radial-gradient(circle at 50% 90%, rgba(254, 243, 199, 0.8) 0%, transparent 50%),
+            radial-gradient(circle at 50% 10%, rgba(243, 232, 255, 0.8) 0%, transparent 50%);
+          filter: blur(60px);
+          animation: feedback-fluid 15s infinite alternate ease-in-out;
+        }
+
+        @keyframes feedback-fluid {
+          0% { transform: scale(1) rotate(0deg); }
+          50% { transform: scale(1.05) rotate(2deg); }
+          100% { transform: scale(1.1) rotate(-2deg); }
+        }
+
+        .feedback-layout {
+          display: flex;
+          height: 100vh;
+          max-width: 1600px;
+          margin: 0 auto;
+          overflow: hidden;
+        }
+
+        .feedback-panel-left {
+          width: 40%;
+          padding: 4rem 5rem;
+          position: sticky;
+          top: 0;
+          height: 100vh;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+        }
+
+        .feedback-brand,
+        .feedback-nav-item,
+        .feedback-user-profile,
+        .fb-user,
+        .fb-footer,
+        .feedback-header,
+        .composer-title-row,
+        .composer-meta-row,
+        .reply-header,
+        .fb-footer {
+          display: flex;
+          align-items: center;
+        }
+
+        .feedback-brand {
+          gap: 12px;
+          font-size: 24px;
+          font-weight: 800;
+          letter-spacing: -0.5px;
+        }
+
+        .feedback-brand-icon {
+          width: 40px;
+          height: 40px;
+          background: linear-gradient(135deg, #ff7a00, #ff004c);
+          border-radius: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 10px 20px rgba(255, 122, 0, 0.3);
+        }
+
+        .feedback-brand-icon svg,
+        .feedback-nav-item svg,
+        .feedback-section-title svg,
+        .feedback-btn-primary svg,
+        .feedback-btn-ghost svg,
+        .detail-back svg,
+        .fb-action-btn svg,
+        .feedback-submit-btn svg {
+          width: 20px;
+          height: 20px;
+        }
+
+        .feedback-brand-icon svg {
+          color: #ffffff;
+          width: 24px;
+          height: 24px;
+        }
+
+        .feedback-hero-content {
+          margin-top: -5vh;
+        }
+
+        .feedback-hero-title {
+          font-size: 64px;
+          font-weight: 800;
+          line-height: 1.1;
+          letter-spacing: -2px;
+          margin: 0 0 24px;
+        }
+
+        .feedback-hero-title span {
+          background: linear-gradient(135deg, #ff5a00, #ff0080);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+
+        .feedback-nav-list {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .feedback-nav-item {
+          gap: 16px;
+          padding: 16px 24px;
+          background: rgba(255, 255, 255, 0.4);
+          border: 1px solid rgba(255, 255, 255, 0.6);
+          border-radius: 20px;
+          font-size: 16px;
+          font-weight: 600;
+          color: var(--text-main);
+          cursor: pointer;
+          transition: all 0.3s ease;
+          backdrop-filter: blur(10px);
+          width: fit-content;
+          min-width: 200px;
+        }
+
+        .feedback-nav-item:hover,
+        .feedback-nav-item.active {
+          background: rgba(255, 255, 255, 0.9);
+          transform: translateX(8px);
+          box-shadow: 0 10px 20px rgba(0, 0, 0, 0.03);
+          color: var(--c-orange);
+        }
+
+        .feedback-user-profile {
+          gap: 16px;
+          padding: 16px;
+          background: #ffffff;
+          border-radius: 999px;
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+          width: fit-content;
+          cursor: pointer;
+          transition: transform 0.2s;
+        }
+
+        .feedback-user-profile:hover {
+          transform: scale(1.02);
+        }
+
+        .feedback-avatar {
+          width: 48px;
+          height: 48px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+          flex-shrink: 0;
+        }
+
+        .feedback-user-info h4 {
+          font-size: 16px;
+          font-weight: 700;
+          margin: 0 0 2px;
+        }
+
+        .feedback-user-info p {
+          font-size: 13px;
+          color: var(--text-light);
+          margin: 0;
+        }
+
+        .feedback-profile-arrow {
+          color: #64748b;
+          margin-left: auto;
+        }
+
+        .feedback-panel-right {
+          width: 60%;
+          padding: 4rem 5rem 4rem 0;
+          display: flex;
+          flex-direction: column;
+          gap: 24px;
+          max-width: 900px;
+          min-width: 0;
+          height: 100vh;
+          overflow-y: auto;
+          overflow-x: hidden;
+          -webkit-overflow-scrolling: touch;
+          scrollbar-gutter: stable;
+        }
+
+        .feedback-header {
+          justify-content: space-between;
+          gap: 24px;
+          margin-bottom: 8px;
+        }
+
+        .feedback-section-title {
+          font-size: 24px;
+          font-weight: 800;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin: 0 0 4px;
+        }
+
+        .feedback-section-title svg {
+          color: var(--c-orange);
+        }
+
+        .feedback-header-subtitle,
+        .composer-title-row p,
+        .feedback-help,
+        .feedback-counter,
+        .fb-time,
+        .reply-time {
+          color: var(--text-light);
+        }
+
+        .feedback-header-subtitle {
+          font-size: 14px;
+          margin: 0;
+        }
+
+        .feedback-btn-primary,
+        .feedback-submit-btn {
+          border: 0;
+          background: linear-gradient(135deg, #ff7a00, #ff004c);
+          color: #ffffff;
+          font-weight: 700;
+          cursor: pointer;
+          box-shadow: 0 10px 20px rgba(255, 122, 0, 0.3);
+          transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .feedback-btn-primary {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 12px 24px;
+          font-size: 15px;
+          border-radius: 999px;
+          white-space: nowrap;
+        }
+
+        .feedback-btn-ghost,
+        .detail-back {
+          border: 1px solid rgba(255, 255, 255, 0.85);
+          background: rgba(255, 255, 255, 0.62);
+          color: var(--text-main);
+          font-weight: 800;
+          cursor: pointer;
+          transition: all 0.25s ease;
+        }
+
+        .feedback-btn-ghost {
+          padding: 10px 14px;
+          border-radius: 999px;
+          font-size: 13px;
+          white-space: nowrap;
+        }
+
+        .feedback-btn-ghost:hover,
+        .detail-back:hover {
+          background: #ffffff;
+          transform: translateY(-1px);
+        }
+
+        .feedback-btn-primary:hover,
+        .feedback-submit-btn:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 15px 30px rgba(255, 122, 0, 0.4);
+        }
+
+        .feedback-alert-stack {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .feedback-alert {
+          border-radius: 20px;
+          padding: 14px 18px;
+          border: 1px solid #ffffff;
+          font-size: 14px;
+          font-weight: 700;
+          background: rgba(255, 255, 255, 0.72);
+          backdrop-filter: blur(20px);
+        }
+
+        .feedback-alert.error { color: #dc2626; }
+        .feedback-alert.success { color: #059669; }
+
+        .feedback-card {
+          background: var(--card-bg);
+          backdrop-filter: blur(30px);
+          -webkit-backdrop-filter: blur(30px);
+          border: 1px solid var(--card-border);
+          border-radius: var(--radius-xl);
+          padding: 28px;
+          box-shadow: var(--card-shadow);
+          transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+          position: relative;
+          overflow: hidden;
+        }
+
+        .wall-card {
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+          cursor: pointer;
+        }
+
+        .wall-card:hover {
+          transform: translateY(-4px);
+          box-shadow: 0 30px 50px rgba(15, 23, 42, 0.08);
+        }
+
+        .composer-card {
+          scroll-margin-top: 24px;
+        }
+
+        .composer-only {
+          min-height: calc(100dvh - 12rem);
+        }
+
+        .composer-actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+
+        .composer-title-row {
+          justify-content: space-between;
+          gap: 16px;
+          margin-bottom: 20px;
+        }
+
+        .composer-title-row h3 {
+          font-size: 20px;
+          font-weight: 800;
+          margin: 0 0 6px;
+        }
+
+        .composer-title-row p {
+          font-size: 13px;
+          line-height: 1.5;
+          margin: 0;
+        }
+
+        .anonymous-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 14px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.7);
+          border: 1px solid rgba(255, 255, 255, 0.9);
+          color: var(--text-light);
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .anonymous-toggle.is-active {
+          color: #ffffff;
+          background: var(--text-main);
+          border-color: var(--text-main);
+        }
+
+        .anonymous-toggle input {
+          width: 16px;
+          height: 16px;
+          accent-color: #f97316;
+        }
+
+        .composer-form {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .feedback-input,
+        .feedback-textarea {
+          width: 100%;
+          border: 1px solid rgba(255, 255, 255, 0.9);
+          background: rgba(255, 255, 255, 0.72);
+          border-radius: 18px;
+          padding: 14px 16px;
+          outline: none;
+          color: var(--text-main);
+          font-size: 14px;
+          box-shadow: inset 0 2px 8px rgba(15, 23, 42, 0.03);
+        }
+
+        .feedback-textarea {
+          resize: vertical;
+          min-height: 120px;
+        }
+
+        .feedback-input:focus,
+        .feedback-textarea:focus {
+          background: #ffffff;
+          border-color: rgba(249, 115, 22, 0.35);
+          box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.12);
+        }
+
+        .composer-meta-row {
+          justify-content: space-between;
+          gap: 12px;
+        }
+
+        .feedback-upload-btn,
+        .filter-tab,
+        .fb-action-btn,
+        .feedback-load-more {
+          background: rgba(255, 255, 255, 0.6);
+          border: 1px solid rgba(255, 255, 255, 0.8);
+          color: var(--text-light);
+          cursor: pointer;
+          transition: all 0.25s ease;
+          font-weight: 700;
+        }
+
+        .feedback-upload-btn {
+          padding: 8px 16px;
+          border-radius: 999px;
+          font-size: 13px;
+        }
+
+        .feedback-upload-btn:hover,
+        .filter-tab:hover,
+        .fb-action-btn:hover,
+        .feedback-load-more:hover {
+          background: #ffffff;
+          color: var(--text-main);
+        }
+
+        .fb-action-btn:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .feedback-counter,
+        .feedback-help {
+          font-size: 12px;
+        }
+
+        .feedback-image-grid,
+        .wall-image-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 10px;
+        }
+
+        .feedback-image-preview {
+          position: relative;
+          border-radius: 14px;
+          overflow: hidden;
+          border: 1px solid #ffffff;
+          background: #ffffff;
+        }
+
+        .feedback-preview-image,
+        .wall-feedback-image {
+          width: 100%;
+          object-fit: cover;
+          display: block;
+        }
+
+        .feedback-preview-image {
+          height: 90px;
+        }
+
+        .wall-feedback-image {
+          height: 120px;
+          border-radius: 14px;
+          border: 1px solid #ffffff;
+        }
+
+        .feedback-image-remove {
+          position: absolute;
+          top: 6px;
+          right: 6px;
+          width: 22px;
+          height: 22px;
+          border-radius: 999px;
+          border: 0;
+          background: rgba(15, 23, 42, 0.72);
+          color: #ffffff;
+          cursor: pointer;
+        }
+
+        .feedback-submit-btn {
+          width: 100%;
+          min-height: 46px;
+          border-radius: 999px;
+          font-size: 15px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+        }
+
+        .feedback-submit-btn:disabled,
+        .feedback-load-more:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+          transform: none;
+        }
+
+        .feedback-filters {
+          display: flex;
+          gap: 12px;
+          overflow-x: auto;
+          scrollbar-width: none;
+          -webkit-overflow-scrolling: touch;
+        }
+
+        .feedback-filters::-webkit-scrollbar {
+          display: none;
+        }
+
+        .filter-tab {
+          padding: 8px 20px;
+          border-radius: 999px;
+          font-size: 14px;
+          white-space: nowrap;
+        }
+
+        .filter-tab.active {
+          background: var(--text-main);
+          color: #ffffff;
+          border-color: var(--text-main);
+        }
+
+        .feedback-list {
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+          width: 100%;
+        }
+
+        .feedback-empty {
+          background: var(--card-bg);
+          border: 1px solid var(--card-border);
+          border-radius: 24px;
+          padding: 40px 24px;
+          text-align: center;
+          color: var(--text-light);
+          font-weight: 700;
+        }
+
+        .feedback-empty.small {
+          padding: 24px 18px;
+        }
+
+        .fb-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 16px;
+        }
+
+        .fb-user {
+          gap: 12px;
+          min-width: 0;
+        }
+
+        .fb-avatar {
+          width: 44px;
+          height: 44px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #64748b;
+          font-weight: 800;
+          flex-shrink: 0;
+          overflow: hidden;
+        }
+
+        .fb-avatar-img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+        }
+
+        .fb-name {
+          font-size: 16px;
+          font-weight: 700;
+          margin: 0;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .fb-name-line {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+          margin-bottom: 2px;
+          flex-wrap: wrap;
+        }
+
+        .fb-achievement-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          max-width: 136px;
+          padding: 3px 8px;
+          border-radius: 999px;
+          background: rgba(251, 191, 36, 0.16);
+          border: 1px solid rgba(251, 191, 36, 0.3);
+          color: #92400e;
+          font-size: 11px;
+          font-weight: 800;
+          line-height: 1.1;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .fb-time {
+          font-size: 13px;
+          margin: 0;
+        }
+
+        .fb-status {
+          padding: 5px 12px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .status-processing { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+        .status-resolved { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+        .status-pending { background: rgba(249, 115, 22, 0.1); color: #f97316; }
+        .status-closed { background: rgba(100, 116, 139, 0.12); color: #64748b; }
+
+        .fb-content h3 {
+          font-size: 18px;
+          font-weight: 800;
+          margin: 0 0 12px;
+          line-height: 1.4;
+        }
+
+        .fb-content p {
+          font-size: 14.5px;
+          color: #475569;
+          line-height: 1.6;
+          margin: 0;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+
+        .official-reply {
+          margin-top: 16px;
+          padding: 16px 20px;
+          background: rgba(255, 122, 0, 0.05);
+          border-left: 3px solid #ff7a00;
+          border-radius: 0 12px 12px 0;
+        }
+
+        .reply-header {
+          gap: 12px;
+          margin-bottom: 8px;
+        }
+
+        .admin-badge {
+          background: #ff7a00;
+          color: #ffffff;
+          padding: 2px 8px;
+          border-radius: 6px;
+          font-size: 11px;
+          font-weight: 800;
+        }
+
+        .official-reply p {
+          color: var(--text-main);
+          font-size: 14px;
+        }
+
+        .fb-footer {
+          gap: 16px;
+        }
+
+        .fb-action-btn {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 16px;
+          border-radius: 999px;
+          font-size: 13px;
+        }
+
+        .like-btn {
+          color: #f43f5e;
+          background: rgba(244, 63, 94, 0.08);
+          border-color: rgba(244, 63, 94, 0.16);
+        }
+
+        .like-btn.active {
+          color: #ffffff;
+          background: linear-gradient(135deg, #f43f5e, #ff7a00);
+          border-color: transparent;
+        }
+
+        .feedback-detail-view {
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+        }
+
+        .detail-back {
+          width: fit-content;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 16px;
+          border-radius: 999px;
+        }
+
+        .detail-back svg {
+          transform: rotate(180deg);
+        }
+
+        .detail-card {
+          cursor: default;
+        }
+
+        .detail-card:hover {
+          transform: none;
+        }
+
+        .comments-card {
+          display: flex;
+          flex-direction: column;
+          gap: 18px;
+        }
+
+        .comments-title-row,
+        .comment-meta {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
+
+        .comments-title-row h3 {
+          margin: 0;
+          font-size: 20px;
+          font-weight: 800;
+        }
+
+        .comments-title-row span,
+        .comment-meta {
+          color: var(--text-light);
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .comment-list,
+        .comment-form {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .comment-bubble {
+          padding: 16px;
+          border-radius: 18px;
+          background: rgba(255, 255, 255, 0.58);
+          border: 1px solid rgba(255, 255, 255, 0.82);
+        }
+
+        .comment-bubble.admin {
+          background: rgba(255, 122, 0, 0.07);
+          border-color: rgba(255, 122, 0, 0.14);
+        }
+
+        .comment-bubble p {
+          margin: 8px 0 0;
+          color: #334155;
+          line-height: 1.6;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+
+        .wall-image-grid.compact {
+          grid-template-columns: repeat(4, 1fr);
+          margin-top: 10px;
+        }
+
+        .feedback-load-more {
+          width: 100%;
+          padding: 12px 18px;
+          border-radius: 999px;
+          font-size: 14px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+        }
+
+        .feedback-pagination {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 12px;
+          padding: 12px 14px;
+          border-radius: 18px;
+          background: rgba(255, 255, 255, 0.58);
+          border: 1px solid rgba(255, 255, 255, 0.86);
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          box-shadow: 0 14px 28px rgba(15, 23, 42, 0.04);
+        }
+
+        .feedback-pagination.compact {
+          padding: 10px 12px;
+          border-radius: 16px;
+          box-shadow: none;
+        }
+
+        .feedback-page-btn {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          min-height: 38px;
+          padding: 8px 16px;
+          border-radius: 999px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          background: rgba(255, 255, 255, 0.82);
+          color: var(--text-main);
+          font-size: 13px;
+          font-weight: 800;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .feedback-page-btn:hover:not(:disabled) {
+          background: var(--text-main);
+          color: #fff;
+          border-color: var(--text-main);
+          transform: translateY(-1px);
+        }
+
+        .feedback-page-btn:disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
+        }
+
+        .feedback-page-btn svg {
+          width: 14px;
+          height: 14px;
+        }
+
+        .feedback-page-btn:first-child svg {
+          transform: rotate(180deg);
+        }
+
+        .feedback-page-indicator {
+          min-width: 104px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 4px;
+          color: var(--text-light);
+          font-size: 13px;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .feedback-page-indicator strong {
+          color: var(--c-orange);
+          font-size: 18px;
+        }
+
+        .feedback-page-indicator em {
+          color: var(--text-light);
+          font-size: 12px;
+          font-style: normal;
+          font-weight: 700;
+          margin-left: 4px;
+        }
+
+        .spin-icon,
+        .feedback-submit-btn svg,
+        .feedback-load-more svg {
+          animation: spin 1s linear infinite;
+        }
+
+        @media (max-width: 1200px) {
+          .feedback-hero-title { font-size: 42px; }
+          .feedback-panel-left { padding: 3rem; }
+          .feedback-panel-right { padding: 3rem 3rem 3rem 0; }
+          .feedback-card { padding: 24px; }
+        }
+
+        @media (max-width: 992px) {
+          .feedback-wall-page {
+            height: 100dvh;
+            overflow: hidden;
+          }
+
+          .feedback-layout {
+            height: 100dvh;
+            flex-direction: column;
+            overflow: hidden;
+          }
+
+          .feedback-panel-left {
+            width: 100%;
+            height: auto;
+            position: relative;
+            padding: 1.5rem 2rem 0;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            text-align: left;
+            z-index: 10;
+          }
+
+          .feedback-brand { font-size: 20px; }
+          .feedback-brand-icon { width: 32px; height: 32px; border-radius: 10px; }
+          .feedback-hero-content { margin-top: 1rem; width: 100%; align-items: flex-start; }
+          .feedback-hero-title { font-size: 36px; margin-bottom: 16px; }
+
+          .feedback-user-profile {
+            position: absolute;
+            top: 1.5rem;
+            right: 2rem;
+            margin: 0;
+            padding: 0;
+            width: auto;
+            background: transparent;
+            border: none;
+            box-shadow: none;
+          }
+
+          .feedback-user-profile .feedback-user-info,
+          .feedback-user-profile svg {
+            display: none;
+          }
+
+          .feedback-user-profile .feedback-avatar {
+            width: 40px;
+            height: 40px;
+            margin: 0;
+          }
+
+          .feedback-nav-list {
+            flex-direction: row;
+            overflow-x: auto;
+            width: 100%;
+            gap: 12px;
+            padding-bottom: 16px;
+            margin-bottom: 0;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+          }
+
+          .feedback-nav-list::-webkit-scrollbar { display: none; }
+
+          .feedback-nav-item {
+            flex: 0 0 auto;
+            min-width: 0;
+            padding: 10px 16px;
+            font-size: 14px;
+          }
+
+          .feedback-nav-item:hover,
+          .feedback-nav-item.active {
+            transform: none;
+          }
+
+          .feedback-panel-right {
+            flex: 1;
+            width: 100%;
+            padding: 1rem 2rem 4rem;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+          }
+
+          .feedback-header,
+          .composer-title-row {
+            flex-direction: column;
+            align-items: flex-start;
+          }
+
+          .feedback-btn-primary {
+            width: 100%;
+            justify-content: center;
+          }
+        }
+
+        @media (max-width: 640px) {
+          .feedback-wall-page {
+            height: auto;
+            min-height: 100dvh;
+            overflow-x: hidden;
+            overflow-y: auto;
+          }
+
+          .feedback-layout {
+            height: auto;
+            min-height: 100dvh;
+            overflow: visible;
+          }
+
+          .feedback-panel-left { padding: 1.5rem 1.5rem 0; }
+          .feedback-user-profile { right: 1.5rem; }
+          .feedback-panel-right {
+            padding: 0.875rem 1rem max(3rem, calc(2rem + env(safe-area-inset-bottom)));
+            gap: 14px;
+            overflow: visible;
+          }
+          .feedback-hero-title { font-size: 32px; line-height: 1.2; }
+          .feedback-header {
+            gap: 14px;
+            margin-bottom: 0;
+          }
+          .feedback-section-title { font-size: 21px; }
+          .feedback-header-subtitle { font-size: 13px; }
+          .feedback-btn-primary {
+            min-height: 44px;
+            border-radius: 16px;
+          }
+          .feedback-card {
+            padding: 16px;
+            border-radius: 20px;
+          }
+          .wall-card { gap: 14px; }
+          .fb-header {
+            flex-direction: row;
+            align-items: flex-start;
+            gap: 12px;
+          }
+          .fb-user { min-width: 0; }
+          .fb-avatar { width: 40px; height: 40px; }
+          .fb-name-line {
+            flex-wrap: wrap;
+            gap: 6px;
+          }
+          .fb-status {
+            position: static;
+            margin-left: auto;
+            flex-shrink: 0;
+          }
+          .fb-content p { font-size: 13.5px; }
+          .composer-title-row,
+          .composer-meta-row,
+          .comments-title-row {
+            gap: 12px;
+          }
+          .composer-actions,
+          .composer-meta-row {
+            width: 100%;
+            justify-content: stretch;
+          }
+          .anonymous-toggle,
+          .feedback-btn-ghost,
+          .feedback-upload-btn {
+            justify-content: center;
+            flex: 1;
+          }
+          .feedback-input,
+          .feedback-textarea {
+            border-radius: 15px;
+            padding: 12px 14px;
+            font-size: 13.5px;
+          }
+          .feedback-image-grid,
+          .wall-image-grid { grid-template-columns: repeat(2, 1fr); }
+          .fb-footer { gap: 10px; }
+          .fb-action-btn { flex: 1; justify-content: center; }
+          .feedback-pagination {
+            gap: 8px;
+            justify-content: space-between;
+            padding: 10px;
+            border-radius: 16px;
+          }
+          .feedback-page-btn {
+            flex: 1;
+            min-height: 38px;
+            padding: 8px 10px;
+            font-size: 12px;
+          }
+          .feedback-page-indicator {
+            min-width: 74px;
+            flex-direction: column;
+            gap: 0;
+            line-height: 1.05;
+            font-size: 11px;
+          }
+          .feedback-page-indicator strong { font-size: 17px; }
+          .feedback-page-indicator em {
+            margin-left: 0;
+            margin-top: 3px;
+            font-size: 10.5px;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .feedback-panel-right { padding: 0.75rem 0.875rem 2.5rem; }
+          .feedback-card { padding: 14px; border-radius: 18px; }
+          .feedback-btn-primary { width: 100%; }
+          .fb-status { font-size: 10.5px; padding: 5px 9px; }
+          .comment-bubble { padding: 12px; border-radius: 16px; }
+        }
+      `}</style>
     </div>
   );
 }

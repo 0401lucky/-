@@ -15,6 +15,7 @@ import {
   shuffleBoard,
   checkGameComplete,
   calculateScore,
+  calculateLinkGamePointReward,
   findMatchPath,
 } from '@/lib/linkgame';
 
@@ -545,6 +546,15 @@ describe('linkgame', () => {
         shufflePenalty: 20,
       });
       expect(score).toBe(33);
+    });
+  });
+
+  describe('calculateLinkGamePointReward', () => {
+    it('should calculate point reward as 1 percent rounded down', () => {
+      expect(calculateLinkGamePointReward(0)).toBe(0);
+      expect(calculateLinkGamePointReward(99)).toBe(0);
+      expect(calculateLinkGamePointReward(211)).toBe(2);
+      expect(calculateLinkGamePointReward(895)).toBe(8);
     });
   });
 

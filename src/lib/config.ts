@@ -22,7 +22,7 @@ export interface SystemConfig {
 
 // 默认配置
 const DEFAULT_CONFIG: SystemConfig = {
-  dailyPointsLimit: 2000,
+  dailyPointsLimit: 5000,
 };
 
 /**

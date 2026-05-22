@@ -1,7 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
 import type { AuthUser } from "@/lib/auth";
-import { getProject, updateProject, deleteProject, addCodesToProject, getProjectRecords } from "@/lib/kv";
+import { getProject, updateProject, deleteProject, getProjectRecords } from "@/lib/kv";
 
 export const GET = withAdmin(async (
   _request: NextRequest,
@@ -122,7 +122,7 @@ export const DELETE = withAdmin(async (
   }
 });
 
-// 追加兑换码
+// 追加直充积分项目名额；历史兑换码项目只读兼容，不再允许追加兑换码
 export const POST = withAdmin(async (
   request: NextRequest,
   _user: AuthUser,
@@ -140,71 +140,43 @@ export const POST = withAdmin(async (
     }
 
     const formData = await request.formData();
-    // 直充项目：追加名额
-    if (project.rewardType === "direct") {
-      const appendClaimsRaw = formData.get("appendClaims") as string | null;
-      const appendClaims = appendClaimsRaw ? parseInt(appendClaimsRaw, 10) : NaN;
-      if (!Number.isFinite(appendClaims) || appendClaims < 1) {
-        return NextResponse.json(
-          { success: false, message: "追加名额必须是正整数（≥1）" },
-          { status: 400 }
-        );
-      }
-
-      const newMaxClaims = project.maxClaims + appendClaims;
-      const updates: Partial<typeof project> = {
-        maxClaims: newMaxClaims,
-        codesCount: newMaxClaims, // 直充项目库存=名额
-      };
-      // exhausted 追加名额后恢复 active（paused 不变）
-      if (project.status === "exhausted" && project.claimedCount < newMaxClaims) {
-        updates.status = "active";
-      }
-
-      await updateProject(id, updates);
-
-      return NextResponse.json({
-        success: true,
-        message: `成功追加 ${appendClaims} 个名额`,
-        appended: appendClaims,
-        maxClaims: newMaxClaims,
-      });
-    }
-
-    // 兑换码项目：追加兑换码
-    const codesFile = formData.get("codes") as File | null;
-
-    if (!codesFile) {
+    if (project.rewardType !== "direct") {
       return NextResponse.json(
-        { success: false, message: "请上传兑换码文件" },
+        { success: false, message: "历史兑换码项目已设为只读，不能继续追加兑换码" },
         { status: 400 }
       );
     }
 
-    const text = await codesFile.text();
-    const codes = text
-      .split(/[\r\n]+/)
-      .map(line => line.trim())
-      .filter(line => line.length > 0);
-
-    if (codes.length === 0) {
+    const appendClaimsRaw = formData.get("appendClaims") as string | null;
+    const appendClaims = appendClaimsRaw ? parseInt(appendClaimsRaw, 10) : NaN;
+    if (!Number.isFinite(appendClaims) || appendClaims < 1) {
       return NextResponse.json(
-        { success: false, message: "文件中没有有效的兑换码" },
+        { success: false, message: "追加名额必须是正整数（≥1）" },
         { status: 400 }
       );
     }
 
-    await addCodesToProject(id, codes);
+    const newMaxClaims = project.maxClaims + appendClaims;
+    const updates: Partial<typeof project> = {
+      maxClaims: newMaxClaims,
+      codesCount: newMaxClaims,
+    };
+    if (project.status === "exhausted" && project.claimedCount < newMaxClaims) {
+      updates.status = "active";
+    }
+
+    await updateProject(id, updates);
 
     return NextResponse.json({
       success: true,
-      message: `成功添加 ${codes.length} 个兑换码`,
-      codesAdded: codes.length,
+      message: `成功追加 ${appendClaims} 个名额`,
+      appended: appendClaims,
+      maxClaims: newMaxClaims,
     });
   } catch (error) {
-    console.error("Add codes error:", error);
+    console.error("Append project claims error:", error);
     return NextResponse.json(
-      { success: false, message: "添加兑换码失败" },
+      { success: false, message: "追加名额失败" },
       { status: 500 }
     );
   }

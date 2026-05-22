@@ -23,12 +23,13 @@ const DEFAULT_DETECTION_CONCURRENCY = 4;
 const MAX_DETECTION_CONCURRENCY = 16;
 
 const GAME_ACTIVITY_KEYS = [
-  (userId: number) => `slot:records:${userId}`,
   (userId: number) => `linkgame:records:${userId}`,
   (userId: number) => `match3:records:${userId}`,
   (userId: number) => `memory:records:${userId}`,
   (userId: number) => `game:records:${userId}`,
-  (userId: number) => `tower:records:${userId}`,
+  (userId: number) => `whack_mole:records:${userId}`,
+  (userId: number) => `roguelite:records:${userId}`,
+  (userId: number) => `minesweeper:records:${userId}`,
 ];
 
 interface AlertItem {

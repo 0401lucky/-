@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { getFeedbackById, getFeedbackMessages } from "@/lib/feedback";
+import {
+  getFeedbackById,
+  getFeedbackLikeState,
+  getFeedbackMessages,
+} from "@/lib/feedback";
+import { attachFeedbackAuthorProfile } from "@/lib/feedback-author";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +32,7 @@ export async function GET(
       );
     }
 
-    if (feedback.userId !== user.id) {
+    if (feedback.anonymous && feedback.userId !== user.id) {
       return NextResponse.json(
         { success: false, message: "无权限访问该反馈" },
         { status: 403 }
@@ -35,10 +40,16 @@ export async function GET(
     }
 
     const messages = await getFeedbackMessages(id);
+    const likeState = await getFeedbackLikeState(id, user.id);
+    const feedbackWithAuthor = await attachFeedbackAuthorProfile(feedback);
 
     return NextResponse.json({
       success: true,
-      feedback,
+      feedback: {
+        ...feedbackWithAuthor,
+        contact: feedback.userId === user.id ? feedback.contact : undefined,
+        ...likeState,
+      },
       messages: [...messages].reverse(),
     });
   } catch (error) {

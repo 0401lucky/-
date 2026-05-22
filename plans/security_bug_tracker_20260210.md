@@ -33,7 +33,6 @@
 |---|---|---|---|---|---|---|---|---|
 | 1 | creditQuotaToUser 读改写竞态，可能覆盖并发充值 | src/lib/new-api.ts:240 | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | 增加分布式锁串行化同用户充值 |
 | 2 | hybrid 降级路径可能导致双重消耗抽奖次数 | src/lib/lottery.ts:942 | 部分成立 | 已修复 | 已验证 | Codex | 2026-02-10 | 改为 hybrid 顶层统一扣次，失败统一回滚 |
-| 3 | 老虎机 bet 模式绕过每日积分上限 | src/lib/slot.ts:271 | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | bet 奖励按每日上限截断并计入统计 |
 
 ## 5. HIGH 追踪（优先级 P1）
 
@@ -46,7 +45,7 @@
 | 8 | 连连看 hintsUsed 信任客户端值 | src/lib/linkgame-server.ts:427 | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | 提示动作入 moves 并由服务端计数 |
 | 9 | tryUseExtraSpin 非原子补偿，存在并发异常 | src/lib/kv.ts:880 | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | 改为 Lua 原子检查并扣减 |
 | 10 | 商店限购 INCR + EXPIRE 非原子 | src/lib/store.ts:253 | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | 改为 Lua 原子占位 + TTL |
-| 11 | 多个敏感端点缺少速率限制接入 | src/app/api/**/route.ts | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | 已接入 lottery/slot/checkin/store/project/game start&submit |
+| 11 | 多个敏感端点缺少速率限制接入 | src/app/api/**/route.ts | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | 已接入 lottery/checkin/store/project/game start&submit |
 
 ## 6. MEDIUM 追踪（优先级 P2）
 
@@ -75,9 +74,7 @@
 | 27 | recordUser 为 GET + SET 读改写，存在竞态 | src/lib/kv.ts:788 | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | 改为 Lua 原子读改写并同步 users:all 索引 |
 | 28 | getSecondsUntilMidnight 边界可能返回 0 | src/lib/time.ts:24 | 部分成立 | 已修复 | 已验证 | Codex | 2026-02-10 | 返回值下限改为 1，避免 EX 0 边界错误 |
 | 29 | Lottery 配置内存缓存 30 秒，多实例不一致 | src/lib/lottery.ts:66 | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | 禁用进程内缓存，配置读取统一以 KV 实时值为准 |
-| 30 | 老虎机 randomInt 取模存在轻微偏差 | src/lib/slot.ts:82 | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | 改为拒绝采样，消除取模偏差 |
 | 31 | Match3 客户端自定义 config 攻击面 | src/app/api/games/match3/start/route.ts:19 | 疑似误报 | 已修复 | 已验证 | Codex | 2026-02-10 | 复核确认无客户端 config 入参，判定误报并关闭 |
-| 32 | 老虎机失败路径仍触发冷却计时 | src/lib/slot.ts:259 | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | 冷却写入改为成功路径提交，失败不再触发冷却 |
 | 33 | lottery 前端存在直接 DOM 与未清理 timeout 问题 | src/app/lottery/page.tsx:699 | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | 去除直接 DOM 操作，复制反馈改为状态驱动并补全 timeout 清理 |
 | 34 | 错误消息中英文混用 | src/app/api/cards/inventory/route.ts:12 | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | inventory 接口错误文案统一为中文 |
 | 35 | API 错误响应结构不统一 | src/app/api/**/route.ts | 已确认 | 已修复 | 已验证 | Codex | 2026-02-10 | route.ts 内 {error} 响应统一为 {success:false,message} |

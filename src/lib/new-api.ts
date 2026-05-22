@@ -283,6 +283,45 @@ async function verifyQuotaUpdate(
 }
 
 /**
+ * 验证 quota 减少是否成功。
+ * 当前余额 <= expectedQuota 视为减扣成功，兼容用户期间继续消耗额度的情况。
+ */
+async function verifyQuotaDeducted(
+  userId: number,
+  expectedQuota: number | undefined,
+  authHeaders: Record<string, string>
+): Promise<{ success: boolean; message: string; newQuota?: number; uncertain?: boolean }> {
+  try {
+    const baseUrl = getNewApiUrl();
+    const verifyResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
+      headers: authHeaders,
+    });
+    const verifyData = await verifyResponse.json();
+
+    if (verifyData.success && verifyData.data) {
+      const currentQuota = verifyData.data.quota || 0;
+
+      if (expectedQuota !== undefined && currentQuota <= expectedQuota) {
+        return { success: true, message: '扣减已确认成功', newQuota: currentQuota };
+      }
+      if (expectedQuota === undefined) {
+        return {
+          success: false,
+          message: '无法确认扣减结果',
+          newQuota: currentQuota,
+          uncertain: true,
+        };
+      }
+      return { success: false, message: '扣减确认失败' };
+    }
+    return { success: false, message: '验证用户信息失败', uncertain: true };
+  } catch (error) {
+    console.error('Verify quota deduct error:', error);
+    return { success: false, message: '验证失败', uncertain: true };
+  }
+}
+
+/**
  * 直接为用户充值额度（管理员级 access token）。
  * @param userId  目标用户在 new-api 中的 ID
  * @param dollars 充值金额（美元，最终乘以 500000 转 quota）
@@ -389,6 +428,123 @@ export async function creditQuotaToUser(
         return verifyResult;
       } catch (verifyError) {
         console.error('Verification also failed:', verifyError);
+      }
+      return {
+        success: false,
+        message: '服务连接失败，结果不确定，请检查余额',
+        uncertain: true,
+      };
+    }
+  } finally {
+    await releaseUserQuotaLock(lock);
+  }
+}
+
+/**
+ * 从指定用户的 new-api 账户扣减额度（积分充值流程使用）。
+ * 使用与充值相同的管理员 access token 和用户级锁，避免并发增减额度交错。
+ */
+export async function deductQuotaFromUser(
+  userId: number,
+  dollars: number
+): Promise<CreditQuotaResult> {
+  const baseUrl = getNewApiUrl();
+
+  let authHeaders: Record<string, string>;
+  try {
+    authHeaders = getAdminAuthHeaders();
+  } catch (error) {
+    console.error('Admin access token not configured:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '管理员凭证未配置',
+    };
+  }
+
+  const lock = await acquireUserQuotaLock(userId);
+  if (!lock) {
+    return { success: false, message: '系统繁忙，扣减请求排队中，请稍后重试' };
+  }
+
+  let expectedQuota: number | undefined;
+
+  try {
+    try {
+      const userResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
+        headers: authHeaders,
+      });
+      const userData = await userResponse.json();
+
+      if (!userData.success || !userData.data) {
+        return { success: false, message: '获取用户信息失败' };
+      }
+
+      const user = userData.data;
+      const currentQuota = user.quota || 0;
+      const quotaToDeduct = Math.floor(dollars * 500000);
+
+      if (quotaToDeduct <= 0) {
+        return { success: false, message: '扣减金额无效' };
+      }
+      if (currentQuota < quotaToDeduct) {
+        return { success: false, message: '账户额度不足，无法兑换为积分' };
+      }
+
+      const newQuota = currentQuota - quotaToDeduct;
+      expectedQuota = newQuota;
+
+      const updateResponse = await fetch(`${baseUrl}/api/user/manage`, {
+        method: 'POST',
+        headers: {
+          ...authHeaders,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: userId,
+          action: 'add_quota',
+          mode: 'sub',
+          value: quotaToDeduct,
+        }),
+      });
+
+      let updateData;
+      try {
+        updateData = await updateResponse.json();
+      } catch (parseError) {
+        console.warn('Deduct response parse failed, verifying with GET:', parseError);
+        return await verifyQuotaDeducted(userId, newQuota, authHeaders);
+      }
+
+      if (updateData.success) {
+        return {
+          success: true,
+          message: `成功扣减 $${dollars}`,
+          newQuota,
+        };
+      }
+
+      const verifyResult = await verifyQuotaDeducted(userId, newQuota, authHeaders);
+      if (verifyResult.success || verifyResult.uncertain) {
+        return verifyResult;
+      }
+      return {
+        success: false,
+        message: updateData.message || '额度扣减失败',
+      };
+    } catch (error) {
+      console.error('Deduct quota error:', error);
+      try {
+        const verifyResult = await verifyQuotaDeducted(userId, expectedQuota, authHeaders);
+        if (verifyResult.uncertain) {
+          return {
+            success: false,
+            message: '扣减结果不确定，请稍后检查余额',
+            uncertain: true,
+          };
+        }
+        return verifyResult;
+      } catch (verifyError) {
+        console.error('Deduct verification also failed:', verifyError);
       }
       return {
         success: false,

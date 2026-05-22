@@ -1,12 +1,42 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  AlertCircle,
+  Boxes,
+  Check,
+  Edit3,
+  Loader2,
+  PackagePlus,
+  Palette,
+  Plus,
+  RefreshCw,
+  Save,
+  Sprout,
+  Tag,
+  Trash2,
+  X,
+} from 'lucide-react';
+
+type StoreItemType = 'lottery_spin' | 'card_draw' | 'makeup_card';
+type AdminTab = 'items' | 'categories' | 'farm';
+
+interface StoreCategory {
+  id: string;
+  name: string;
+  color: string;
+  sortOrder: number;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
 
 interface StoreItem {
   id: string;
   name: string;
   description: string;
-  type: 'lottery_spin' | 'quota_direct' | 'card_draw';
+  type: StoreItemType | 'quota_direct';
+  categoryId?: string;
   pointsCost: number;
   value: number;
   purchaseCount?: number;
@@ -17,463 +47,758 @@ interface StoreItem {
   updatedAt: number;
 }
 
+interface FarmItem {
+  key: string;
+  name: string;
+  emoji: string;
+  category: string;
+  cost: number;
+  description: string;
+  dailyLimit?: number;
+  durationMinutes?: number;
+  speedReduceMinutes?: number;
+  petEffect?: Record<string, number>;
+  override?: {
+    cost?: number;
+    dailyLimit?: number;
+    durationMinutes?: number;
+    speedReduceMinutes?: number;
+    petEffect?: Record<string, number>;
+  };
+}
+
+const itemTypeOptions: Array<{ value: StoreItemType; label: string }> = [
+  { value: 'lottery_spin', label: '抽奖次数' },
+  { value: 'card_draw', label: '卡牌抽卡' },
+  { value: 'makeup_card', label: '补签卡' },
+];
+
+const adminTabs = [
+  { id: 'items', label: '积分商品', Icon: Boxes },
+  { id: 'categories', label: '商品分类', Icon: Tag },
+  { id: 'farm', label: '农场商品', Icon: Sprout },
+] as const;
+
+const emptyItemForm: Partial<StoreItem> = {
+  name: '',
+  description: '',
+  type: 'lottery_spin',
+  pointsCost: 100,
+  value: 1,
+  sortOrder: 0,
+  enabled: true,
+};
+
+const emptyCategoryForm: Partial<StoreCategory> = {
+  name: '',
+  color: '#06b6d4',
+  sortOrder: 10,
+  enabled: true,
+};
+
+function numberOrUndefined(value: string): number | undefined {
+  if (value.trim() === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function getTypeLabel(type: StoreItem['type']) {
+  if (type === 'card_draw') return '卡牌抽卡';
+  if (type === 'makeup_card') return '补签卡';
+  if (type === 'quota_direct') return '历史直充';
+  return '抽奖次数';
+}
+
 export default function AdminStorePage() {
+  const [tab, setTab] = useState<AdminTab>('items');
   const [items, setItems] = useState<StoreItem[]>([]);
+  const [categories, setCategories] = useState<StoreCategory[]>([]);
+  const [farmItems, setFarmItems] = useState<FarmItem[]>([]);
+  const [farmDrafts, setFarmDrafts] = useState<Record<string, Partial<FarmItem>>>({});
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Modal State
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [itemModalOpen, setItemModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<StoreItem | null>(null);
-  const [saving, setSaving] = useState(false);
-  
-  // Form Data
-  const [formData, setFormData] = useState<Partial<StoreItem>>({
-    name: '',
-    description: '',
-    type: 'lottery_spin',
-    pointsCost: 100,
-    value: 1,
-    sortOrder: 0,
-    enabled: true,
-  });
+  const [itemForm, setItemForm] = useState<Partial<StoreItem>>(emptyItemForm);
 
-  const fetchItems = useCallback(async () => {
+  const [categoryForm, setCategoryForm] = useState<Partial<StoreCategory>>(emptyCategoryForm);
+
+  const enabledCategories = useMemo(
+    () => categories.filter((category) => category.enabled),
+    [categories],
+  );
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
     try {
-      const res = await fetch('/api/store/admin');
+      const res = await fetch('/api/store/admin', { cache: 'no-store' });
       const data = await res.json();
-      if (data.success) {
-        setItems(data.data.items || []);
-      } else {
-        setMessage({ type: 'error', text: data.message || '获取商品列表失败' });
+      if (!data.success) {
+        setMessage({ type: 'error', text: data.message || '获取商品配置失败' });
+        return;
       }
-    } catch (err) {
-      setMessage({ type: 'error', text: '网络请求错误' });
-      console.error(err);
+      const nextItems = (data.data.items || []) as StoreItem[];
+      const nextCategories = (data.data.categories || []) as StoreCategory[];
+      const nextFarmItems = (data.data.farmItems || []) as FarmItem[];
+      setItems(nextItems);
+      setCategories(nextCategories);
+      setFarmItems(nextFarmItems);
+      setFarmDrafts(Object.fromEntries(nextFarmItems.map((item) => [item.key, {
+        cost: item.cost,
+        dailyLimit: item.dailyLimit,
+        durationMinutes: item.durationMinutes,
+        speedReduceMinutes: item.speedReduceMinutes,
+        petEffect: item.petEffect ?? item.override?.petEffect,
+      }])));
+    } catch (error) {
+      console.error('Fetch admin store error:', error);
+      setMessage({ type: 'error', text: '网络请求失败' });
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchItems();
-  }, [fetchItems]);
+    void fetchData();
+  }, [fetchData]);
 
-  const handleOpenModal = (item?: StoreItem) => {
-    if (item) {
-      setEditingItem(item);
-      setFormData({ ...item });
-    } else {
-      setEditingItem(null);
-      setFormData({
-        name: '',
-        description: '',
-        type: 'lottery_spin',
-        pointsCost: 100,
-        value: 1,
-        dailyLimit: undefined,
-        sortOrder: 0,
-        enabled: true,
-      });
-    }
-    setIsModalOpen(true);
+  const openItemModal = (item?: StoreItem) => {
+    setEditingItem(item ?? null);
+    setItemForm(item ? { ...item } : {
+      ...emptyItemForm,
+      categoryId: enabledCategories[0]?.id,
+    });
+    setItemModalOpen(true);
     setMessage(null);
   };
 
-  const handleCloseModal = () => {
-    setIsModalOpen(false);
+  const closeItemModal = () => {
+    setItemModalOpen(false);
     setEditingItem(null);
-    setMessage(null);
+    setItemForm(emptyItemForm);
   };
 
-  const validateForm = () => {
-    if (!formData.name?.trim()) return '请输入商品名称';
-    if (!formData.description?.trim()) return '请输入商品描述';
-    if ((formData.pointsCost ?? 0) < 1) return '积分价格必须大于等于1';
-    if ((formData.value ?? 0) <= 0) return '获得数值必须大于0';
-    return null;
+  const saveItem = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!itemForm.name?.trim()) return setMessage({ type: 'error', text: '请输入商品名称' });
+    if (!itemForm.description?.trim()) return setMessage({ type: 'error', text: '请输入商品描述' });
+    if (!itemForm.categoryId) return setMessage({ type: 'error', text: '请选择商品分类' });
+    if (itemForm.type === 'quota_direct') return setMessage({ type: 'error', text: '历史直充商品不能新建或改为该类型' });
+
+    setSaving('item');
+    try {
+      const res = await fetch('/api/store/admin', {
+        method: editingItem ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingItem ? { ...itemForm, id: editingItem.id } : itemForm),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setMessage({ type: 'error', text: data.message || '保存失败' });
+        return;
+      }
+      setMessage({ type: 'success', text: '商品已保存' });
+      closeItemModal();
+      await fetchData();
+    } catch (error) {
+      console.error('Save item error:', error);
+      setMessage({ type: 'error', text: '保存失败' });
+    } finally {
+      setSaving(null);
+    }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const error = validateForm();
-    if (error) {
-      setMessage({ type: 'error', text: error });
+  const toggleItem = async (item: StoreItem) => {
+    if (item.type === 'quota_direct' && !item.enabled) {
+      setMessage({ type: 'error', text: '历史直充商品只能兼容展示，不能重新上架' });
       return;
     }
-
-    setSaving(true);
-    try {
-      const method = editingItem ? 'PUT' : 'POST';
-      const body = editingItem ? { ...formData, id: editingItem.id } : formData;
-
-      const res = await fetch('/api/store/admin', {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-
-      if (data.success) {
-        setMessage({ type: 'success', text: editingItem ? '商品更新成功' : '商品创建成功' });
-        setIsModalOpen(false);
-        fetchItems();
-      } else {
-        setMessage({ type: 'error', text: data.message || '操作失败' });
-      }
-    } catch {
-      setMessage({ type: 'error', text: '网络请求错误' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除这个商品吗？此操作无法撤销。')) return;
-
-    try {
-      const res = await fetch('/api/store/admin', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-      });
-      const data = await res.json();
-
-      if (data.success) {
-        setMessage({ type: 'success', text: '删除成功' });
-        fetchItems();
-      } else {
-        setMessage({ type: 'error', text: data.message || '删除失败' });
-      }
-    } catch {
-      setMessage({ type: 'error', text: '网络请求错误' });
-    }
-  };
-
-  const handleToggleStatus = async (item: StoreItem) => {
+    setSaving(item.id);
     try {
       const res = await fetch('/api/store/admin', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...item, enabled: !item.enabled }),
+        body: JSON.stringify({ id: item.id, enabled: !item.enabled }),
       });
       const data = await res.json();
-
-      if (data.success) {
-        fetchItems();
-      } else {
+      if (!data.success) {
         setMessage({ type: 'error', text: data.message || '状态更新失败' });
+        return;
       }
-    } catch {
-      setMessage({ type: 'error', text: '网络请求错误' });
+      await fetchData();
+    } finally {
+      setSaving(null);
     }
   };
 
+  const deleteItem = async (item: StoreItem) => {
+    if (!confirm(`确定删除「${item.name}」吗？`)) return;
+    setSaving(item.id);
+    try {
+      const res = await fetch('/api/store/admin', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: item.id }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setMessage({ type: 'error', text: data.message || '删除失败' });
+        return;
+      }
+      setMessage({ type: 'success', text: '商品已删除' });
+      await fetchData();
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const saveCategory = async (category?: StoreCategory) => {
+    const payload = category ?? categoryForm;
+    if (!payload.name?.trim()) return setMessage({ type: 'error', text: '请输入分类名称' });
+    setSaving(`category:${payload.id ?? 'new'}`);
+    try {
+      const res = await fetch('/api/store/admin', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: payload.id,
+          name: payload.name,
+          color: payload.color,
+          sortOrder: Number(payload.sortOrder ?? 0),
+          enabled: payload.enabled !== false,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setMessage({ type: 'error', text: data.message || '分类保存失败' });
+        return;
+      }
+      setCategoryForm(emptyCategoryForm);
+      setMessage({ type: 'success', text: '分类已保存，前台筛选会同步更新' });
+      await fetchData();
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const patchFarmDraft = (key: string, patch: Partial<FarmItem>) => {
+    setFarmDrafts((current) => ({
+      ...current,
+      [key]: {
+        ...current[key],
+        ...patch,
+      },
+    }));
+  };
+
+  const patchFarmEffect = (key: string, effectKey: string, value: string) => {
+    const parsed = numberOrUndefined(value);
+    setFarmDrafts((current) => ({
+      ...current,
+      [key]: {
+        ...current[key],
+        petEffect: {
+          ...(current[key]?.petEffect ?? {}),
+          ...(parsed === undefined ? {} : { [effectKey]: parsed }),
+        },
+      },
+    }));
+  };
+
+  const saveFarmItem = async (item: FarmItem) => {
+    setSaving(`farm:${item.key}`);
+    try {
+      const draft = farmDrafts[item.key] ?? {};
+      const res = await fetch('/api/store/admin', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'farm-item',
+          key: item.key,
+          cost: draft.cost,
+          dailyLimit: draft.dailyLimit,
+          durationMinutes: draft.durationMinutes,
+          speedReduceMinutes: draft.speedReduceMinutes,
+          petEffect: draft.petEffect,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setMessage({ type: 'error', text: data.message || '农场商品保存失败' });
+        return;
+      }
+      setMessage({ type: 'success', text: '农场商品配置已保存，购买与使用会读取新配置' });
+      await fetchData();
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[420px] items-center justify-center">
+        <Loader2 className="h-10 w-10 animate-spin text-orange-500" />
+      </div>
+    );
+  }
+
   return (
-    <div>
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
+    <div className="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6">
+      <div className="rounded-[28px] border border-white bg-gradient-to-br from-white via-orange-50 to-cyan-50 p-6 shadow-sm md:p-8">
+        <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-stone-800">商品管理</h1>
-            <p className="text-stone-500 text-sm mt-1">管理积分商城的商品上架、定价与库存</p>
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-black text-orange-600 shadow-sm">
+              <Boxes className="h-3.5 w-3.5" />
+              商品管理
+            </div>
+            <h1 className="text-2xl font-black text-stone-900 md:text-4xl">积分商店与农场商品</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-stone-600">
+              积分商品同步前台商店分类；农场商品只编辑现有物品的价格、限购和已有数值效果。
+            </p>
           </div>
           <button
-            onClick={() => handleOpenModal()}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg font-semibold shadow-md shadow-indigo-200 transition-all active:scale-95"
+            type="button"
+            onClick={() => openItemModal()}
+            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-orange-500 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-orange-600"
           >
-            <span>+</span> 新增商品
+            <PackagePlus className="h-5 w-5" />
+            新增积分商品
           </button>
         </div>
+      </div>
 
-        {/* Global Message */}
-        {message && !isModalOpen && (
-          <div className={`mb-8 p-4 rounded-xl text-center shadow-sm border animate-fade-in ${
-            message.type === 'success' 
-              ? 'bg-green-50 border-green-200 text-green-700' 
-              : 'bg-red-50 border-red-200 text-red-700'
-          }`}>
-            {message.text}
-          </div>
-        )}
+      {message && (
+        <div className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-bold ${
+          message.type === 'success'
+            ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+            : 'border-red-100 bg-red-50 text-red-700'
+        }`}>
+          {message.type === 'success' ? <Check className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
+          {message.text}
+          <button type="button" onClick={() => setMessage(null)} className="ml-auto rounded-lg p-1 hover:bg-white/70">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
-        {/* Content */}
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-24 text-slate-400">
-            <div className="w-10 h-10 border-4 border-slate-200 border-t-indigo-500 rounded-full animate-spin mb-4"></div>
-            <p className="text-slate-500 font-medium">正在加载数据...</p>
-          </div>
-        ) : (
-          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 text-slate-500 text-xs font-bold uppercase tracking-wider border-b border-slate-200">
-                    <th className="p-5 font-semibold">名称 / 描述</th>
-                    <th className="p-5 font-semibold">类型</th>
-                    <th className="p-5 font-semibold">定价 / 价值</th>
-                    <th className="p-5 font-semibold">每日限购</th>
-                    <th className="p-5 font-semibold">已购买</th>
-                    <th className="p-5 font-semibold">排序权重</th>
-                    <th className="p-5 font-semibold">状态</th>
-                    <th className="p-5 font-semibold text-right">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {items.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50 transition-colors group">
+      <div className="flex flex-wrap gap-2 rounded-2xl bg-white p-2 shadow-sm">
+        {adminTabs.map(({ id, label, Icon }) => (
+          <button
+            key={id as string}
+            type="button"
+            onClick={() => setTab(id as AdminTab)}
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-black transition ${
+              tab === id
+                ? 'bg-stone-900 text-white'
+                : 'text-stone-500 hover:bg-stone-100 hover:text-stone-900'
+            }`}
+          >
+            <Icon className="h-4 w-4" />
+            {label}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={fetchData}
+          className="ml-auto inline-flex items-center gap-2 rounded-xl bg-stone-100 px-4 py-2 text-sm font-bold text-stone-600 hover:bg-stone-200"
+        >
+          <RefreshCw className="h-4 w-4" />
+          刷新
+        </button>
+      </div>
+
+      {tab === 'items' && (
+        <section className="overflow-hidden rounded-[28px] border border-white bg-white shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[980px] text-left">
+              <thead className="bg-stone-50 text-xs font-black uppercase text-stone-400">
+                <tr>
+                  <th className="p-5">商品</th>
+                  <th className="p-5">分类</th>
+                  <th className="p-5">类型</th>
+                  <th className="p-5">定价</th>
+                  <th className="p-5">限购</th>
+                  <th className="p-5">状态</th>
+                  <th className="p-5 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-stone-100">
+                {items.map((item) => {
+                  const category = categories.find((cat) => cat.id === item.categoryId);
+                  const isLegacy = item.type === 'quota_direct';
+                  return (
+                    <tr key={item.id} className="hover:bg-stone-50/70">
                       <td className="p-5">
-                        <div className="font-bold text-slate-900 text-base">{item.name}</div>
-                        <div className="text-sm text-slate-500 max-w-[240px] truncate mt-0.5">{item.description}</div>
+                        <div className="font-black text-stone-900">{item.name}</div>
+                        <div className="mt-1 max-w-[320px] truncate text-sm text-stone-500">{item.description}</div>
                       </td>
                       <td className="p-5">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide border ${
-                          item.type === 'lottery_spin' 
-                            ? 'bg-purple-50 text-purple-700 border-purple-100' 
-                            : item.type === 'card_draw'
-                            ? 'bg-amber-50 text-amber-700 border-amber-100'
-                            : 'bg-blue-50 text-blue-700 border-blue-100'
-                        }`}>
-                          {item.type === 'lottery_spin' ? '🎟️ 抽奖次数' : item.type === 'card_draw' ? '🃏 卡牌抽奖' : '💰 直充额度'}
+                        <span className="inline-flex items-center gap-2 rounded-full bg-stone-100 px-3 py-1 text-xs font-black text-stone-700">
+                          <span className="h-2.5 w-2.5 rounded-full" style={{ background: category?.color ?? '#94a3b8' }} />
+                          {category?.name ?? '未分类'}
                         </span>
                       </td>
+                      <td className="p-5 text-sm font-bold text-stone-600">{getTypeLabel(item.type)}</td>
                       <td className="p-5">
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-baseline gap-1">
-                             <span className="text-yellow-600 font-bold">{item.pointsCost}</span>
-                             <span className="text-xs text-slate-400 font-medium">积分</span>
-                          </div>
-                          <div className="text-slate-400 text-xs bg-slate-100 px-1.5 py-0.5 rounded w-fit">
-                             = {item.value} {item.type === 'lottery_spin' ? '次' : 'USD'}
-                          </div>
-                        </div>
+                        <div className="font-black text-orange-600">{item.pointsCost.toLocaleString()} 积分</div>
+                        <div className="text-xs font-semibold text-stone-400">获得 {item.value}</div>
                       </td>
-                      <td className="p-5 text-slate-600 text-sm font-medium">
-                        {item.dailyLimit ? `${item.dailyLimit} 次` : <span className="text-slate-400 font-normal">无限制</span>}
-                      </td>
-                      <td className="p-5 text-slate-600 text-sm font-medium">
-                        {(item.purchaseCount ?? 0).toLocaleString()} 次
-                      </td>
-                      <td className="p-5 text-slate-600 font-mono text-sm">
-                        {item.sortOrder}
+                      <td className="p-5 text-sm font-semibold text-stone-600">
+                        {item.dailyLimit ? `${item.dailyLimit} 次/日` : '不限'}
                       </td>
                       <td className="p-5">
-                        <button 
-                          onClick={() => handleToggleStatus(item)}
-                          className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold border transition-all cursor-pointer ${
-                            item.enabled 
-                              ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' 
-                              : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
-                          }`}
+                        <button
+                          type="button"
+                          disabled={saving === item.id}
+                          onClick={() => toggleItem(item)}
+                          className={`rounded-full px-3 py-1 text-xs font-black ${
+                            item.enabled
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-stone-200 text-stone-500'
+                          } ${isLegacy ? 'cursor-not-allowed opacity-70' : ''}`}
                         >
-                          <span className={`w-2 h-2 rounded-full ${item.enabled ? 'bg-green-500' : 'bg-slate-400'}`}></span>
-                          {item.enabled ? '上架中' : '已下架'}
+                          {isLegacy ? '历史只读' : item.enabled ? '上架中' : '已下架'}
                         </button>
                       </td>
-                      <td className="p-5 text-right">
-                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => handleOpenModal(item)}
-                            className="p-2 text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 rounded-lg transition-colors"
-                            title="编辑"
-                          >
-                            ✎
-                          </button>
-                          <button
-                            onClick={() => handleDelete(item.id)}
-                            className="p-2 text-red-400 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                            title="删除"
-                          >
-                            🗑️
-                          </button>
+                      <td className="p-5">
+                        <div className="flex justify-end gap-2">
+                          {!isLegacy && (
+                            <button
+                              type="button"
+                              onClick={() => openItemModal(item)}
+                              className="rounded-xl bg-blue-50 p-2 text-blue-600 hover:bg-blue-100"
+                              title="编辑"
+                            >
+                              <Edit3 className="h-4 w-4" />
+                            </button>
+                          )}
+                          {!isLegacy && (
+                            <button
+                              type="button"
+                              onClick={() => deleteItem(item)}
+                              className="rounded-xl bg-red-50 p-2 text-red-500 hover:bg-red-100"
+                              title="删除"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
-                  ))}
-                  {items.length === 0 && (
-                    <tr>
-                      <td colSpan={8} className="p-16 text-center">
-                        <div className="text-slate-400 text-4xl mb-4">📦</div>
-                        <p className="text-slate-500 font-medium">暂无商品数据</p>
-                        <p className="text-slate-400 text-sm mt-1">点击右上角新增按钮添加第一个商品</p>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        )}
+        </section>
+      )}
 
-        {/* Edit/Create Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-slide-up transform transition-all">
-            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                {editingItem ? '✏️ 编辑商品' : '✨ 新增商品'}
-              </h2>
-              <button 
-                 onClick={handleCloseModal} 
-                 className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors text-xl"
+      {tab === 'categories' && (
+        <section className="grid gap-5 lg:grid-cols-[360px_1fr]">
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveCategory();
+            }}
+            className="rounded-[28px] border border-white bg-white p-5 shadow-sm"
+          >
+            <h2 className="mb-4 flex items-center gap-2 text-lg font-black text-stone-900">
+              <Plus className="h-5 w-5 text-orange-500" />
+              新增分类
+            </h2>
+            <div className="space-y-4">
+              <input
+                value={categoryForm.name ?? ''}
+                onChange={(event) => setCategoryForm({ ...categoryForm, name: event.target.value })}
+                className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm font-bold outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                placeholder="分类名称"
+              />
+              <div className="flex gap-3">
+                <input
+                  type="color"
+                  value={categoryForm.color ?? '#06b6d4'}
+                  onChange={(event) => setCategoryForm({ ...categoryForm, color: event.target.value })}
+                  className="h-11 w-14 rounded-xl border border-stone-200 p-1"
+                />
+                <input
+                  type="number"
+                  value={categoryForm.sortOrder ?? 10}
+                  onChange={(event) => setCategoryForm({ ...categoryForm, sortOrder: Number(event.target.value) })}
+                  className="min-w-0 flex-1 rounded-xl border border-stone-200 px-3 py-2 text-sm font-bold outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                  placeholder="排序"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm font-bold text-stone-600">
+                <input
+                  type="checkbox"
+                  checked={categoryForm.enabled !== false}
+                  onChange={(event) => setCategoryForm({ ...categoryForm, enabled: event.target.checked })}
+                />
+                启用分类
+              </label>
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-orange-500 px-4 py-3 text-sm font-black text-white hover:bg-orange-600"
               >
-                 ×
+                <Save className="h-4 w-4" />
+                保存分类
               </button>
             </div>
-            
-            <form onSubmit={handleSubmit} className="p-6 space-y-6">
-              {message && isModalOpen && (
-                <div className={`p-3 rounded-lg text-sm text-center border ${
-                  message.type === 'success' ? 'bg-green-50 border-green-100 text-green-700' : 'bg-red-50 border-red-100 text-red-700'
-                }`}>
-                  {message.text}
-                </div>
-              )}
+          </form>
 
-              <div className="grid grid-cols-2 gap-5">
-                <div className="col-span-2">
-                  <label className="block text-slate-700 text-sm font-semibold mb-2">商品名称</label>
+          <div className="rounded-[28px] border border-white bg-white p-5 shadow-sm">
+            <h2 className="mb-4 flex items-center gap-2 text-lg font-black text-stone-900">
+              <Palette className="h-5 w-5 text-cyan-500" />
+              分类列表
+            </h2>
+            <div className="space-y-3">
+              {categories.map((category) => (
+                <div key={category.id} className="grid gap-3 rounded-2xl bg-stone-50 p-3 md:grid-cols-[1fr_92px_90px_84px_90px] md:items-center">
                   <input
-                    type="text"
-                    required
-                    value={formData.name}
-                    onChange={e => setFormData({...formData, name: e.target.value})}
-                    className="w-full bg-white border border-slate-300 rounded-lg px-4 py-2.5 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all placeholder:text-slate-400"
-                    placeholder="例如：高级抽奖券"
+                    value={category.name}
+                    onChange={(event) => setCategories((current) => current.map((cat) => cat.id === category.id ? { ...cat, name: event.target.value } : cat))}
+                    className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-bold outline-none"
                   />
-                </div>
-                
-                <div className="col-span-2">
-                  <label className="block text-slate-700 text-sm font-semibold mb-2">商品描述</label>
-                  <textarea
-                    required
-                    rows={2}
-                    value={formData.description}
-                    onChange={e => setFormData({...formData, description: e.target.value})}
-                    className="w-full bg-white border border-slate-300 rounded-lg px-4 py-2.5 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all resize-none placeholder:text-slate-400"
-                    placeholder="简短描述商品的用途..."
+                  <input
+                    type="color"
+                    value={category.color}
+                    onChange={(event) => setCategories((current) => current.map((cat) => cat.id === category.id ? { ...cat, color: event.target.value } : cat))}
+                    className="h-10 w-full rounded-xl border border-stone-200 bg-white p-1"
                   />
-                </div>
-
-                <div className="col-span-2">
-                   <label className="block text-slate-700 text-sm font-semibold mb-2">商品类型</label>
-                   <div className="grid grid-cols-3 gap-2">
-                     <label className={`cursor-pointer border-2 rounded-lg px-3 py-2 flex items-center gap-2 transition-all ${
-                       formData.type === 'quota_direct'
-                         ? 'bg-blue-50 border-blue-400 text-blue-900'
-                         : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
-                     }`}>
-                       <input type="radio" name="type" value="quota_direct" checked={formData.type === 'quota_direct'} onChange={() => setFormData({...formData, type: 'quota_direct'})} className="hidden" />
-                       <span>💰</span>
-                       <span className="font-medium text-sm">直充额度</span>
-                     </label>
-                     <label className={`cursor-pointer border-2 rounded-lg px-3 py-2 flex items-center gap-2 transition-all ${
-                       formData.type === 'lottery_spin'
-                         ? 'bg-purple-50 border-purple-400 text-purple-900'
-                         : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
-                     }`}>
-                       <input type="radio" name="type" value="lottery_spin" checked={formData.type === 'lottery_spin'} onChange={() => setFormData({...formData, type: 'lottery_spin'})} className="hidden" />
-                       <span>🎟️</span>
-                       <span className="font-medium text-sm">抽奖次数</span>
-                     </label>
-                     <label className={`cursor-pointer border-2 rounded-lg px-3 py-2 flex items-center gap-2 transition-all ${
-                       formData.type === 'card_draw'
-                         ? 'bg-amber-50 border-amber-400 text-amber-900'
-                         : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
-                     }`}>
-                       <input type="radio" name="type" value="card_draw" checked={formData.type === 'card_draw'} onChange={() => setFormData({...formData, type: 'card_draw'})} className="hidden" />
-                       <span>🃏</span>
-                       <span className="font-medium text-sm">卡牌抽奖</span>
-                     </label>
-                   </div>
-                </div>
-
-                <div>
-                  <label className="block text-slate-700 text-sm font-semibold mb-2">积分价格</label>
-                  <div className="relative">
+                  <input
+                    type="number"
+                    value={category.sortOrder}
+                    onChange={(event) => setCategories((current) => current.map((cat) => cat.id === category.id ? { ...cat, sortOrder: Number(event.target.value) } : cat))}
+                    className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-bold outline-none"
+                  />
+                  <label className="flex items-center justify-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-bold text-stone-600">
                     <input
-                      type="number"
-                      min="0"
-                      required
-                      value={formData.pointsCost}
-                      onChange={e => setFormData({...formData, pointsCost: Number(e.target.value)})}
-                      className="w-full bg-white border border-slate-300 rounded-lg pl-4 pr-12 py-2.5 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono"
+                      type="checkbox"
+                      checked={category.enabled}
+                      onChange={(event) => setCategories((current) => current.map((cat) => cat.id === category.id ? { ...cat, enabled: event.target.checked } : cat))}
                     />
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-bold">PTS</span>
+                    启用
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => saveCategory(category)}
+                    disabled={saving === `category:${category.id}`}
+                    className="rounded-xl bg-stone-900 px-3 py-2 text-sm font-black text-white hover:bg-stone-700"
+                  >
+                    保存
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {tab === 'farm' && (
+        <section className="rounded-[28px] border border-white bg-white p-4 shadow-sm md:p-6">
+          <div className="mb-5">
+            <h2 className="text-lg font-black text-stone-900">农场商品</h2>
+            <p className="mt-1 text-sm text-stone-500">
+              这里只覆盖现有农场物品的价格、限购、持续时间、加速分钟和宠物属性变化，不新增物品和效果类型。
+            </p>
+          </div>
+          <div className="space-y-3">
+            {farmItems.map((item) => {
+              const draft = farmDrafts[item.key] ?? item;
+              const petEffect = draft.petEffect ?? item.petEffect ?? {};
+              return (
+                <div key={item.key} className="rounded-2xl bg-stone-50 p-4">
+                  <div className="grid gap-4 lg:grid-cols-[1.4fr_110px_110px_110px_110px_1.4fr_92px] lg:items-start">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">{item.emoji}</span>
+                        <span className="font-black text-stone-900">{item.name}</span>
+                        <span className="rounded-full bg-white px-2 py-0.5 text-xs font-bold text-stone-500">{item.category}</span>
+                      </div>
+                      <p className="mt-1 text-sm text-stone-500">{item.description}</p>
+                    </div>
+                    <label className="text-xs font-bold text-stone-500">
+                      价格
+                      <input
+                        type="number"
+                        min="0"
+                        value={draft.cost ?? 0}
+                        onChange={(event) => patchFarmDraft(item.key, { cost: Math.max(0, Number(event.target.value) || 0) })}
+                        className="mt-1 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-bold text-stone-800 outline-none"
+                      />
+                    </label>
+                    <label className="text-xs font-bold text-stone-500">
+                      日限购
+                      <input
+                        type="number"
+                        min="0"
+                        value={draft.dailyLimit ?? ''}
+                        onChange={(event) => patchFarmDraft(item.key, { dailyLimit: numberOrUndefined(event.target.value) })}
+                        className="mt-1 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-bold text-stone-800 outline-none"
+                        placeholder="不限"
+                      />
+                    </label>
+                    <label className="text-xs font-bold text-stone-500">
+                      持续分钟
+                      <input
+                        type="number"
+                        min="1"
+                        value={draft.durationMinutes ?? ''}
+                        onChange={(event) => patchFarmDraft(item.key, { durationMinutes: numberOrUndefined(event.target.value) })}
+                        className="mt-1 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-bold text-stone-800 outline-none"
+                        placeholder="-"
+                      />
+                    </label>
+                    <label className="text-xs font-bold text-stone-500">
+                      加速分钟
+                      <input
+                        type="number"
+                        min="1"
+                        value={draft.speedReduceMinutes ?? ''}
+                        onChange={(event) => patchFarmDraft(item.key, { speedReduceMinutes: numberOrUndefined(event.target.value) })}
+                        className="mt-1 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-bold text-stone-800 outline-none"
+                        placeholder="-"
+                      />
+                    </label>
+                    <div>
+                      <div className="mb-1 text-xs font-bold text-stone-500">宠物属性变化</div>
+                      {Object.keys(petEffect).length === 0 ? (
+                        <div className="rounded-xl bg-white px-3 py-2 text-xs font-semibold text-stone-400">无宠物属性</div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-2">
+                          {Object.entries(petEffect).map(([effectKey, value]) => (
+                            <label key={effectKey} className="text-[11px] font-bold text-stone-500">
+                              {effectKey}
+                              <input
+                                type="number"
+                                value={value}
+                                onChange={(event) => patchFarmEffect(item.key, effectKey, event.target.value)}
+                                className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2 py-1 text-xs font-bold text-stone-800 outline-none"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={saving === `farm:${item.key}`}
+                      onClick={() => saveFarmItem(item)}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-black text-white hover:bg-emerald-700 disabled:opacity-60"
+                    >
+                      {saving === `farm:${item.key}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      保存
+                    </button>
                   </div>
                 </div>
-
-                <div>
-                  <label className="block text-slate-700 text-sm font-semibold mb-2">获得数值</label>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    required
-                    value={formData.value}
-                    onChange={e => setFormData({...formData, value: Number(e.target.value)})}
-                    className="w-full bg-white border border-slate-300 rounded-lg px-4 py-2.5 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-700 text-sm font-semibold mb-2">每日限购</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={formData.dailyLimit || ''}
-                    onChange={e => {
-                      const val = e.target.value === '' ? undefined : Number(e.target.value);
-                      setFormData({...formData, dailyLimit: val === 0 ? undefined : val});
-                    }}
-                    placeholder="留空为不限"
-                    className="w-full bg-white border border-slate-300 rounded-lg px-4 py-2.5 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all placeholder:text-slate-400"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-700 text-sm font-semibold mb-2">排序权重</label>
-                  <input
-                    type="number"
-                    value={formData.sortOrder}
-                    onChange={e => setFormData({...formData, sortOrder: Number(e.target.value)})}
-                    className="w-full bg-white border border-slate-300 rounded-lg px-4 py-2.5 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 py-2 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                 <label className="flex items-center gap-3 cursor-pointer w-full group">
-                   <div className="relative">
-                     <input 
-                       type="checkbox" 
-                       className="peer sr-only"
-                       checked={formData.enabled} 
-                       onChange={e => setFormData({...formData, enabled: e.target.checked})} 
-                     />
-                     <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
-                   </div>
-                   <span className="text-slate-700 font-medium group-hover:text-slate-900 transition-colors">立即上架销售</span>
-                 </label>
-              </div>
-
-              <div className="flex gap-4 pt-4 border-t border-slate-100 mt-2">
-                <button
-                  type="button"
-                  onClick={handleCloseModal}
-                  className="flex-1 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors font-semibold"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold transition-all shadow-md shadow-indigo-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
-                >
-                  {saving ? '保存中...' : '保存商品'}
-                </button>
-              </div>
-            </form>
+              );
+            })}
           </div>
+        </section>
+      )}
+
+      {itemModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 p-4 backdrop-blur-sm">
+          <form onSubmit={saveItem} className="w-full max-w-xl rounded-[28px] bg-white p-6 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="text-xl font-black text-stone-900">{editingItem ? '编辑积分商品' : '新增积分商品'}</h2>
+              <button type="button" onClick={closeItemModal} className="rounded-xl p-2 text-stone-400 hover:bg-stone-100">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="grid gap-4">
+              <input
+                value={itemForm.name ?? ''}
+                onChange={(event) => setItemForm({ ...itemForm, name: event.target.value })}
+                className="rounded-xl border border-stone-200 px-3 py-2 text-sm font-bold outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                placeholder="商品名称"
+              />
+              <textarea
+                value={itemForm.description ?? ''}
+                onChange={(event) => setItemForm({ ...itemForm, description: event.target.value })}
+                className="min-h-20 resize-none rounded-xl border border-stone-200 px-3 py-2 text-sm font-bold outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                placeholder="商品描述"
+              />
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="text-sm font-bold text-stone-600">
+                  商品类型
+                  <select
+                    value={itemForm.type ?? 'lottery_spin'}
+                    onChange={(event) => setItemForm({ ...itemForm, type: event.target.value as StoreItemType })}
+                    className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 outline-none"
+                  >
+                    {itemTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-sm font-bold text-stone-600">
+                  商品分类
+                  <select
+                    value={itemForm.categoryId ?? ''}
+                    onChange={(event) => setItemForm({ ...itemForm, categoryId: event.target.value })}
+                    className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 outline-none"
+                  >
+                    <option value="">请选择分类</option>
+                    {enabledCategories.map((category) => (
+                      <option key={category.id} value={category.id}>{category.name}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="grid gap-4 md:grid-cols-4">
+                <input
+                  type="number"
+                  min="1"
+                  value={itemForm.pointsCost ?? 1}
+                  onChange={(event) => setItemForm({ ...itemForm, pointsCost: Math.max(1, Number(event.target.value) || 1) })}
+                  className="rounded-xl border border-stone-200 px-3 py-2 text-sm font-bold outline-none"
+                  placeholder="积分价格"
+                />
+                <input
+                  type="number"
+                  min="1"
+                  value={itemForm.value ?? 1}
+                  onChange={(event) => setItemForm({ ...itemForm, value: Math.max(1, Number(event.target.value) || 1) })}
+                  className="rounded-xl border border-stone-200 px-3 py-2 text-sm font-bold outline-none"
+                  placeholder="获得数值"
+                />
+                <input
+                  type="number"
+                  min="0"
+                  value={itemForm.dailyLimit ?? ''}
+                  onChange={(event) => setItemForm({ ...itemForm, dailyLimit: numberOrUndefined(event.target.value) })}
+                  className="rounded-xl border border-stone-200 px-3 py-2 text-sm font-bold outline-none"
+                  placeholder="每日限购"
+                />
+                <input
+                  type="number"
+                  value={itemForm.sortOrder ?? 0}
+                  onChange={(event) => setItemForm({ ...itemForm, sortOrder: Number(event.target.value) || 0 })}
+                  className="rounded-xl border border-stone-200 px-3 py-2 text-sm font-bold outline-none"
+                  placeholder="排序"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm font-bold text-stone-600">
+                <input
+                  type="checkbox"
+                  checked={itemForm.enabled !== false}
+                  onChange={(event) => setItemForm({ ...itemForm, enabled: event.target.checked })}
+                />
+                上架销售
+              </label>
+            </div>
+            <div className="mt-6 flex gap-3">
+              <button type="button" onClick={closeItemModal} className="flex-1 rounded-xl border border-stone-200 px-4 py-3 text-sm font-black text-stone-600 hover:bg-stone-50">
+                取消
+              </button>
+              <button type="submit" disabled={saving === 'item'} className="flex-1 rounded-xl bg-orange-500 px-4 py-3 text-sm font-black text-white hover:bg-orange-600 disabled:opacity-60">
+                {saving === 'item' ? '保存中...' : '保存商品'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

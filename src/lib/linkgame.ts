@@ -430,6 +430,13 @@ export function calculateScore(params: ScoreParams): number {
 }
 
 /**
+ * 计算连连看福利积分：按得分 1% 向下取整。
+ */
+export function calculateLinkGamePointReward(score: number): number {
+  return Math.max(0, Math.floor(score / 100));
+}
+
+/**
  * Check if three tiles can all be matched together (triple match).
  * All 3 pairs must be able to connect with ≤2 turns each.
  */

@@ -47,8 +47,48 @@ function buildBlobPath(role: FeedbackImageRole, mimeType: string): string {
   return `feedback/${dateBucket}/${role}/${nanoid(24)}.${ext}`;
 }
 
+function buildPublicImageUrl(pathname: string): string {
+  const publicBaseUrl = (process.env.R2_PUBLIC_URL ?? '').replace(/\/+$/, '');
+  if (publicBaseUrl) {
+    return `${publicBaseUrl}/${pathname}`;
+  }
+
+  const encodedPath = pathname
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+  return `/api/feedback/images/${encodedPath}`;
+}
+
 function isDataUrl(value: string): boolean {
   return /^data:/i.test(value.trim());
+}
+
+function getFeedbackImagesBucket():
+  | { put: (key: string, body: Buffer, options: { httpMetadata: { contentType: string } }) => Promise<unknown> }
+  | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ctx = (getCloudflareContext as any)?.();
+    const env = ctx?.env as
+      | {
+          FEEDBACK_IMAGES?: {
+            put: (key: string, body: Buffer, options: { httpMetadata: { contentType: string } }) => Promise<unknown>;
+          };
+        }
+      | undefined;
+    return env?.FEEDBACK_IMAGES ?? null;
+  } catch (error) {
+    console.error('Get FEEDBACK_IMAGES binding failed, keeping feedback images inline:', error);
+    return null;
+  }
+}
+
+function sanitizeStoredImage(image: FeedbackImage): FeedbackImage {
+  return {
+    ...image,
+    name: sanitizeFileName(image.name),
+  };
 }
 
 export async function externalizeFeedbackImages(
@@ -59,16 +99,11 @@ export async function externalizeFeedbackImages(
     return [];
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ctx = (getCloudflareContext as any)?.();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const env = ctx?.env as { FEEDBACK_IMAGES?: any } | undefined;
-  const r2 = env?.FEEDBACK_IMAGES;
+  const r2 = getFeedbackImagesBucket();
   if (!r2) {
-    throw new Error('R2 binding FEEDBACK_IMAGES not available');
+    console.warn('R2 binding FEEDBACK_IMAGES not available, keeping feedback images inline.');
+    return images.map(sanitizeStoredImage);
   }
-
-  const publicBaseUrl = (process.env.R2_PUBLIC_URL ?? '').replace(/\/+$/, '');
 
   return Promise.all(
     images.map(async (image) => {
@@ -80,19 +115,22 @@ export async function externalizeFeedbackImages(
       const { mimeType, bytes } = decodeDataUrl(data);
       const pathname = buildBlobPath(options.role, mimeType);
 
-      await r2.put(pathname, bytes, {
-        httpMetadata: { contentType: mimeType },
-      });
+      try {
+        await r2.put(pathname, bytes, {
+          httpMetadata: { contentType: mimeType },
+        });
 
-      const url = publicBaseUrl ? `${publicBaseUrl}/${pathname}` : pathname;
-
-      return {
-        ...image,
-        dataUrl: url,
-        mimeType,
-        size: bytes.byteLength,
-        name: sanitizeFileName(image.name),
-      };
+        return {
+          ...image,
+          dataUrl: buildPublicImageUrl(pathname),
+          mimeType,
+          size: bytes.byteLength,
+          name: sanitizeFileName(image.name),
+        };
+      } catch (error) {
+        console.error('Upload feedback image failed, keeping image inline:', error);
+        return sanitizeStoredImage(image);
+      }
     })
   );
 }

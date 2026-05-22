@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
-import { updateTiersProbability, updateLotteryConfig, getLotteryConfig } from "@/lib/lottery";
+import { updateLotteryTiers, updateLotteryConfig, getLotteryConfig } from "@/lib/lottery";
 
 export const dynamic = "force-dynamic";
 
@@ -13,10 +13,14 @@ export const PATCH = withAdmin(async (request: NextRequest) => {
       await updateLotteryConfig({ enabled: body.enabled });
     }
 
-    // 更新发放模式
-    if (body.mode && ['code', 'direct', 'hybrid'].includes(body.mode)) {
-      await updateLotteryConfig({ mode: body.mode });
+    // 新版幸运抽奖统一使用站内积分，旧兑换码/美元模式只保留历史读取。
+    if (body.mode && body.mode !== "points") {
+      return NextResponse.json(
+        { success: false, message: "当前仅支持积分抽奖模式" },
+        { status: 400 }
+      );
     }
+    await updateLotteryConfig({ mode: "points" });
 
     // 更新每日直充上限
     if (typeof body.dailyDirectLimit === "number" && body.dailyDirectLimit >= 0) {
@@ -39,9 +43,17 @@ export const PATCH = withAdmin(async (request: NextRequest) => {
         );
       }
 
-      // 验证概率总和
-      const totalProbability = body.tiers.reduce(
-        (sum: number, t: { probability: number }) => sum + (t.probability || 0),
+      // 启用奖项的概率合计必须为 100%；停用奖项不参与抽取。
+      const enabledTiers = body.tiers.filter((t: { enabled?: boolean }) => t.enabled !== false);
+      if (enabledTiers.length === 0) {
+        return NextResponse.json(
+          { success: false, message: "至少需要启用一个奖项" },
+          { status: 400 }
+        );
+      }
+
+      const totalProbability = enabledTiers.reduce(
+        (sum: number, t: { probability: number }) => sum + (Number(t.probability) || 0),
         0
       );
 
@@ -53,15 +65,39 @@ export const PATCH = withAdmin(async (request: NextRequest) => {
         );
       }
 
-      // 验证每个概率值
+      // 验证每个奖项字段
       for (const tier of body.tiers) {
-        if (typeof tier.id !== "string" || typeof tier.probability !== "number") {
+        if (typeof tier.id !== "string") {
           return NextResponse.json(
-            { success: false, message: "概率配置格式错误" },
+            { success: false, message: "奖项配置格式错误" },
             { status: 400 }
           );
         }
-        if (tier.probability < 0 || tier.probability > 100) {
+        if (typeof tier.name !== "undefined" && (typeof tier.name !== "string" || !tier.name.trim())) {
+          return NextResponse.json(
+            { success: false, message: "奖项名称不能为空" },
+            { status: 400 }
+          );
+        }
+        if (typeof tier.value !== "undefined" && (!Number.isSafeInteger(tier.value) || tier.value < 0)) {
+          return NextResponse.json(
+            { success: false, message: "奖项积分必须是非负整数" },
+            { status: 400 }
+          );
+        }
+        if (typeof tier.color !== "undefined" && (typeof tier.color !== "string" || !tier.color.trim())) {
+          return NextResponse.json(
+            { success: false, message: "奖项颜色不能为空" },
+            { status: 400 }
+          );
+        }
+        if (typeof tier.enabled !== "undefined" && typeof tier.enabled !== "boolean") {
+          return NextResponse.json(
+            { success: false, message: "启停状态格式错误" },
+            { status: 400 }
+          );
+        }
+        if (typeof tier.probability !== "number" || tier.probability < 0 || tier.probability > 100) {
           return NextResponse.json(
             { success: false, message: "概率值必须在0-100之间" },
             { status: 400 }
@@ -69,7 +105,7 @@ export const PATCH = withAdmin(async (request: NextRequest) => {
         }
       }
 
-      await updateTiersProbability(body.tiers);
+      await updateLotteryTiers(body.tiers);
     }
 
     const updatedConfig = await getLotteryConfig();
@@ -84,7 +120,10 @@ export const PATCH = withAdmin(async (request: NextRequest) => {
         tiers: updatedConfig.tiers.map((t) => ({
           id: t.id,
           name: t.name,
+          value: t.value,
+          color: t.color,
           probability: t.probability,
+          enabled: t.enabled !== false,
         })),
       },
     });

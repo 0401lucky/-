@@ -3,6 +3,7 @@ import { withAdmin } from "@/lib/api-guards";
 import type { AuthUser } from "@/lib/auth";
 import { getUserAllClaims, getAllProjects } from "@/lib/kv";
 import { kv } from '@/lib/d1-kv';
+import { getAdminUserAchievementList } from '@/lib/user-achievements';
 
 export const dynamic = "force-dynamic";
 
@@ -43,13 +44,17 @@ export const GET = withAdmin(async (
       };
     });
 
-    // 获取抽奖记录
-    const lotteryRecords = await kv.lrange<LotteryRecord>(`lottery:user:records:${userId}`, 0, -1) || [];
+    // 获取抽奖记录和可管理成就
+    const [lotteryRecords, achievements] = await Promise.all([
+      kv.lrange<LotteryRecord>(`lottery:user:records:${userId}`, 0, -1),
+      getAdminUserAchievementList(userId),
+    ]);
 
     return NextResponse.json({
       success: true,
       claims: claimsWithProject,
-      lotteryRecords,
+      lotteryRecords: lotteryRecords || [],
+      achievements,
     });
   } catch (error) {
     console.error("Get user detail error:", error);

@@ -43,6 +43,27 @@ interface TierData {
   currentReward: number;
 }
 
+type RarityKey = 'legendary_rare' | 'legendary' | 'epic' | 'rare' | 'common';
+
+interface CardRulesConfig {
+  rarityProbabilities: Record<RarityKey, number>;
+  pityThresholds: Record<'rare' | 'epic' | 'legendary' | 'legendary_rare', number>;
+  cardDrawPrice: number;
+  fragmentValues: Record<RarityKey, number>;
+  exchangePrices: Record<RarityKey, number>;
+  updatedAt: number;
+}
+
+const rarityLabels: Record<RarityKey, string> = {
+  legendary_rare: '传说稀有',
+  legendary: '传说',
+  epic: '史诗',
+  rare: '稀有',
+  common: '普通',
+};
+
+const rarityKeys: RarityKey[] = ['legendary_rare', 'legendary', 'epic', 'rare', 'common'];
+
 export default function AdminCardsPage() {
   const [users, setUsers] = useState<UserWithCardStats[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,7 +88,9 @@ export default function AdminCardsPage() {
   const [editingTier, setEditingTier] = useState<string | null>(null);
   const [editReward, setEditReward] = useState<number>(0);
   const [savingReward, setSavingReward] = useState(false);
-  const [activeTab, setActiveTab] = useState<'users' | 'albums'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'albums' | 'rules'>('users');
+  const [rules, setRules] = useState<CardRulesConfig | null>(null);
+  const [savingRules, setSavingRules] = useState(false);
 
   const fetchData = useCallback(async (
     { resetPage = true, search = '' }: { resetPage?: boolean; search?: string } = {}
@@ -112,10 +135,23 @@ export default function AdminCardsPage() {
     }
   }, []);
 
+  const fetchRules = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/cards/rules');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) setRules(data.data);
+      }
+    } catch (error) {
+      console.error('Fetch card rules error:', error);
+    }
+  }, []);
+
   useEffect(() => {
     void fetchData({ resetPage: true, search: '' });
     void fetchAlbums();
-  }, [fetchData, fetchAlbums]);
+    void fetchRules();
+  }, [fetchData, fetchAlbums, fetchRules]);
 
   const loadMoreUsers = async () => {
     if (loadingMore || !hasMore) return;
@@ -237,6 +273,61 @@ export default function AdminCardsPage() {
     setEditReward(tier.currentReward);
   };
 
+  const patchRules = (patch: Partial<CardRulesConfig>) => {
+    setRules((current) => current ? { ...current, ...patch } : current);
+  };
+
+  const patchRarityValue = (
+    section: 'rarityProbabilities' | 'fragmentValues' | 'exchangePrices',
+    rarity: RarityKey,
+    value: number,
+  ) => {
+    setRules((current) => current ? {
+      ...current,
+      [section]: {
+        ...current[section],
+        [rarity]: value,
+      },
+    } : current);
+  };
+
+  const patchPityValue = (
+    key: 'rare' | 'epic' | 'legendary' | 'legendary_rare',
+    value: number,
+  ) => {
+    setRules((current) => current ? {
+      ...current,
+      pityThresholds: {
+        ...current.pityThresholds,
+        [key]: value,
+      },
+    } : current);
+  };
+
+  const saveRules = async () => {
+    if (!rules) return;
+    setSavingRules(true);
+    try {
+      const res = await fetch('/api/admin/cards/rules', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rules),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRules(data.data);
+        alert('卡牌规则保存成功');
+      } else {
+        alert(data.message || '保存失败');
+      }
+    } catch (error) {
+      console.error('Save card rules error:', error);
+      alert('保存失败');
+    } finally {
+      setSavingRules(false);
+    }
+  };
+
   // Helper to get card name from ID
   const getCardName = (id: string) => {
     const card = CARDS.find(c => c.id === id);
@@ -286,6 +377,17 @@ export default function AdminCardsPage() {
           >
             <BookOpen className="w-4 h-4 inline mr-2" />
             卡册奖励
+          </button>
+          <button
+            onClick={() => setActiveTab('rules')}
+            className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+              activeTab === 'rules'
+                ? 'bg-indigo-500 text-white'
+                : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-50'
+            }`}
+          >
+            <Star className="w-4 h-4 inline mr-2" />
+            规则配置
           </button>
         </div>
 
@@ -581,6 +683,110 @@ export default function AdminCardsPage() {
             </div>
           </div>
           </>
+        )}
+
+        {activeTab === 'rules' && rules && (
+          <div className="space-y-6">
+            <div className="bg-white/95 rounded-3xl shadow-sm overflow-hidden border border-stone-200/60">
+              <div className="px-8 py-5 bg-indigo-50/80 border-b border-indigo-100 flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-indigo-600 uppercase tracking-wider">抽卡规则数值</h2>
+                  <p className="text-xs text-indigo-400 mt-1">概率、保底、价格、重复碎片和碎片兑换价会影响真实抽卡逻辑</p>
+                </div>
+                <button
+                  onClick={saveRules}
+                  disabled={savingRules}
+                  className="px-4 py-2 bg-indigo-500 text-white rounded-lg font-bold text-sm hover:bg-indigo-600 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {savingRules ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  保存规则
+                </button>
+              </div>
+
+              <div className="p-8 space-y-8">
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <label className="text-sm font-bold text-stone-600">
+                    单次抽卡价格
+                    <input
+                      type="number"
+                      min={1}
+                      value={rules.cardDrawPrice}
+                      onChange={(event) => patchRules({ cardDrawPrice: Math.max(1, Number(event.target.value) || 1) })}
+                      className="mt-2 w-full px-3 py-2 border border-stone-200 rounded-lg font-bold text-stone-700 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                    />
+                  </label>
+                  <div className="rounded-2xl bg-stone-50 p-4 text-sm text-stone-500">
+                    当前概率合计：
+                    <strong className="ml-2 text-indigo-600">
+                      {Object.values(rules.rarityProbabilities).reduce((sum, value) => sum + value, 0).toFixed(2)}%
+                    </strong>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[820px] text-left">
+                    <thead>
+                      <tr className="text-xs font-bold text-stone-400 uppercase">
+                        <th className="py-3">稀有度</th>
+                        <th className="py-3">概率 %</th>
+                        <th className="py-3">保底阈值</th>
+                        <th className="py-3">重复碎片</th>
+                        <th className="py-3">碎片兑换价</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-100">
+                      {rarityKeys.map((rarity) => (
+                        <tr key={rarity}>
+                          <td className="py-4 font-bold text-stone-700">{rarityLabels[rarity]}</td>
+                          <td className="py-4">
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={rules.rarityProbabilities[rarity]}
+                              onChange={(event) => patchRarityValue('rarityProbabilities', rarity, Math.max(0, Number(event.target.value) || 0))}
+                              className="w-28 px-3 py-2 border border-stone-200 rounded-lg font-bold text-stone-700 outline-none"
+                            />
+                          </td>
+                          <td className="py-4">
+                            {rarity === 'common' ? (
+                              <span className="text-sm text-stone-400">无</span>
+                            ) : (
+                              <input
+                                type="number"
+                                min={1}
+                                value={rules.pityThresholds[rarity]}
+                                onChange={(event) => patchPityValue(rarity, Math.max(1, Number(event.target.value) || 1))}
+                                className="w-28 px-3 py-2 border border-stone-200 rounded-lg font-bold text-stone-700 outline-none"
+                              />
+                            )}
+                          </td>
+                          <td className="py-4">
+                            <input
+                              type="number"
+                              min={1}
+                              value={rules.fragmentValues[rarity]}
+                              onChange={(event) => patchRarityValue('fragmentValues', rarity, Math.max(1, Number(event.target.value) || 1))}
+                              className="w-28 px-3 py-2 border border-stone-200 rounded-lg font-bold text-stone-700 outline-none"
+                            />
+                          </td>
+                          <td className="py-4">
+                            <input
+                              type="number"
+                              min={1}
+                              value={rules.exchangePrices[rarity]}
+                              onChange={(event) => patchRarityValue('exchangePrices', rarity, Math.max(1, Number(event.target.value) || 1))}
+                              className="w-28 px-3 py-2 border border-stone-200 rounded-lg font-bold text-stone-700 outline-none"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
 

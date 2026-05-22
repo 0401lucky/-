@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import DesktopPet from "@/components/desktop-pet/DesktopPet";
 
 export const metadata: Metadata = {
-  title: "兑换码领取中心",
-  description: "领取你的专属兑换码",
+  title: "LuCy Station",
+  description: "LuCy Station",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
-    apple: "/favicon.svg",
+    icon: "/site-icon.png",
+    shortcut: "/site-icon.png",
+    apple: "/site-icon.png",
   },
 };
 
@@ -20,6 +21,7 @@ export default function RootLayout({
     <html lang="zh-CN">
       <body className="antialiased">
         {children}
+        <DesktopPet />
       </body>
     </html>
   );

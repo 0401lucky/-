@@ -10,6 +10,7 @@ interface GameBoardProps {
   selected: number[];
   shakingIndices?: number[];
   matchingIndices?: number[];
+  hintIndices?: number[];
   matchPaths?: LinkGamePosition[][];
   onSelect: (index: number) => void;
   onMatch?: (index1: number, index2: number) => void;
@@ -22,6 +23,7 @@ export function GameBoard({
   selected,
   shakingIndices = [],
   matchingIndices = [],
+  hintIndices = [],
   matchPaths,
   onSelect,
 }: GameBoardProps) {
@@ -47,7 +49,7 @@ export function GameBoard({
     setShakingTiles(indices);
   }, []);
 
-  // Calculate path points for the connecting line
+  // 根据棋盘尺寸重新计算连线路径，保证移动端缩放后线条仍然对齐。
   useEffect(() => {
     if (!matchPaths || matchPaths.length === 0 || !gridRef.current) {
       const frame = requestAnimationFrame(() => {
@@ -72,19 +74,12 @@ export function GameBoard({
       const gapY = parseFloat(computedStyle.rowGap) || 0;
       const { rows, cols } = config;
 
-      // Calculate cell dimensions including gap distribution
-      // Grid width = cols * cellWidth + (cols - 1) * gap
       const cellWidth = (width - (cols - 1) * gapX) / cols;
       const cellHeight = (height - (rows - 1) * gapY) / rows;
 
       const getX = (c: number) => {
-        // Center of tile: col * (size + gap) + size/2
-        // Border left (-1): -gap/2 (in the gap before start) -> actually inside the padding
-        // Let's place border lines in the middle of the padding area effectively
-        // We have p-8 (32px) padding in parent.
-        // Let's offset border paths by roughly half a cell or just outside the grid
-        const offset = Math.max(gapX, gapY) * 1.5; 
-        if (c < 0) return -offset; 
+        const offset = Math.max(gapX, gapY) * 1.5;
+        if (c < 0) return -offset;
         if (c >= cols) return width + offset;
         return c * (cellWidth + gapX) + cellWidth / 2;
       };
@@ -101,14 +96,13 @@ export function GameBoard({
     };
 
     updatePath();
-    // Use ResizeObserver for more robust resizing support
     const resizeObserver = new ResizeObserver(updatePath);
     resizeObserver.observe(gridRef.current);
-    
+
     return () => resizeObserver.disconnect();
   }, [matchPaths, config, resetPathPoints]);
 
-  // Sync props to local state for animation control
+  // 动画状态保留在本地，避免父组件快速刷新时打断反馈。
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       syncMatchingTiles(matchingIndices);
@@ -117,14 +111,20 @@ export function GameBoard({
   }, [matchingIndices, syncMatchingTiles]);
 
   useEffect(() => {
+    if (shakingIndices.length === 0) {
+      const frame = requestAnimationFrame(() => {
+        syncShakingTiles([]);
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+
     if (shakingIndices.length > 0) {
       const frame = requestAnimationFrame(() => {
         syncShakingTiles(shakingIndices);
       });
-      // Auto clear shaking state after animation duration to allow re-trigger
       const timer = setTimeout(() => {
         syncShakingTiles([]);
-      }, 400); // Duration of tile-shake
+      }, 400);
       return () => {
         cancelAnimationFrame(frame);
         clearTimeout(timer);
@@ -133,7 +133,6 @@ export function GameBoard({
   }, [shakingIndices, syncShakingTiles]);
 
   useEffect(() => {
-    // Mark entrance as complete after max possible delay + animation duration
     const maxDelay = (config.rows + config.cols) * 50;
     const timer = setTimeout(() => {
       setEntranceComplete(true);
@@ -146,20 +145,19 @@ export function GameBoard({
     return tile;
   };
 
-  const handleAnimationEnd = (index: number, animationName: string) => {
-    // If needed, we can trigger cleanup here
+  const handleAnimationEnd = (animationName: string) => {
     if (animationName.includes('tile-match')) {
-      // Animation finished
+      // 匹配动画结束后由父组件统一清理棋盘状态。
     }
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto p-8 bg-white/40 backdrop-blur-xl rounded-[2.5rem] border-4 border-white shadow-2xl shadow-indigo-500/10 relative overflow-hidden">
+    <div className="link-board-surface">
       <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-transparent pointer-events-none" />
-      
-      <div 
+
+      <div
         ref={gridRef}
-        className="grid gap-2 sm:gap-3 mx-auto relative z-10"
+        className="link-board-grid"
         style={{
           gridTemplateColumns: `repeat(${config.cols}, minmax(0, 1fr))`,
           maxWidth: '100%',
@@ -178,11 +176,11 @@ export function GameBoard({
               </filter>
             </defs>
             {pathPointsList.map((points, idx) => {
-              const colors = ['#f472b6', '#a78bfa', '#22d3ee']; // pink-400, violet-400, cyan-400
+              const colors = ['#f472b6', '#a78bfa', '#22d3ee'];
               const color = colors[idx % colors.length];
               return (
                 <g key={idx}>
-                  {/* Outer glow/stroke */}
+                  {/* 外层辉光 */}
                   <polyline
                     points={points}
                     fill="none"
@@ -192,7 +190,7 @@ export function GameBoard({
                     strokeLinejoin="round"
                     className="opacity-50 blur-sm"
                   />
-                  {/* Main stroke */}
+                  {/* 主连线 */}
                   <polyline
                     points={points}
                     fill="none"
@@ -203,7 +201,7 @@ export function GameBoard({
                     filter="url(#glow)"
                     className="animate-draw-line"
                   />
-                  {/* Inner highlight */}
+                  {/* 内层高光 */}
                   <polyline
                     points={points}
                     fill="none"
@@ -221,43 +219,38 @@ export function GameBoard({
         {tileLayout.map((tile, index) => {
           const isSelected = selected.includes(index);
           const isVisible = tile !== null;
-          
-          // Use props or local state - local state allows us to keep 'shaking' active for the duration
+
           const isShaking = shakingTiles.includes(index) || shakingIndices.includes(index);
           const isMatching = matchingTiles.includes(index) || matchingIndices.includes(index);
-          
-          // Calculate staggered delay for entrance animation based on grid position
+          const isHinted = hintIndices.includes(index);
+
           const row = Math.floor(index / config.cols);
           const col = index % config.cols;
-          // Calculate manhattan distance from center or top-left for a nice wave
-          const delay = (row + col) * 50; 
+          const delay = (row + col) * 50;
 
           return (
             <div key={index} className="relative group perspective-500">
               <button
                 onClick={() => isVisible && onSelect(index)}
                 disabled={!isVisible || isMatching}
-                onAnimationEnd={(e) => handleAnimationEnd(index, e.animationName)}
+                onAnimationEnd={(e) => handleAnimationEnd(e.animationName)}
                 className={cn(
-                  "relative w-full h-full flex items-center justify-center text-3xl sm:text-5xl select-none transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]",
-                  "rounded-3xl aspect-square shadow-[0_4px_0_0_rgba(0,0,0,0.05)] active:shadow-none active:translate-y-[4px]",
-                  isVisible 
-                    ? "bg-white border-b-4 border-r-2 border-l-2 border-t-2 border-white cursor-pointer hover:-translate-y-1 hover:shadow-[0_8px_0_0_rgba(0,0,0,0.05)]" 
+                  "relative w-full h-full flex items-center justify-center text-xl sm:text-3xl md:text-4xl select-none transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]",
+                  "rounded-2xl sm:rounded-3xl aspect-square shadow-[0_3px_0_0_rgba(0,0,0,0.05)] active:shadow-none active:translate-y-[3px]",
+                  isVisible
+                    ? "bg-white border-b-4 border-r-2 border-l-2 border-t-2 border-white cursor-pointer hover:-translate-y-1 hover:shadow-[0_6px_0_0_rgba(0,0,0,0.05)]"
                     : "invisible opacity-0",
-                  
-                  // Entrance animation - only run if not complete
+
                   isVisible && !entranceComplete && "animate-tile-entrance",
-                  
-                  // Normal state gradient (subtle)
+
                   isVisible && !isSelected && !isMatching && !isShaking && "bg-gradient-to-br from-white to-slate-50",
 
-                  // Selection state
-                  isSelected && isVisible && "animate-tile-pulse ring-4 ring-pink-400 border-pink-500 z-10 shadow-xl bg-pink-50 rotate-3 text-4xl sm:text-6xl scale-[1.06] sm:scale-110",
-                  
-                  // Shaking state (error)
+                  isHinted && isVisible && !isSelected && !isMatching && "ring-4 ring-amber-300 border-amber-400 bg-amber-50 z-10 scale-[1.04]",
+
+                  isSelected && isVisible && "animate-tile-pulse ring-4 ring-pink-400 border-pink-500 z-10 shadow-xl bg-pink-50 rotate-3 text-2xl sm:text-4xl md:text-5xl scale-[1.06] sm:scale-110",
+
                   isShaking && "animate-tile-shake bg-red-50 border-red-400 text-red-500 ring-4 ring-red-200 z-10 rotate-12",
-                  
-                  // Matching state (success)
+
                   isMatching && "animate-tile-match z-20 border-emerald-400 bg-emerald-50 ring-4 ring-emerald-200 rotate-[-12deg] scale-110 sm:scale-125"
                 )}
                 style={{
@@ -265,8 +258,7 @@ export function GameBoard({
                 }}
               >
                 <span className="drop-shadow-sm filter transform sm:hover:scale-110 transition-transform">{getTileContent(tile)}</span>
-                
-                {/* Sparkle effects for matching tiles */}
+
                 {isMatching && (
                   <>
                     <span className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 text-2xl animate-sparkle" style={{ animationDelay: '0.1s' }}>✨</span>

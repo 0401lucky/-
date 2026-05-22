@@ -5,6 +5,7 @@ import {
   getCheckinStreak,
   getCheckinStreakLeaderboard,
   getGameLeaderboard,
+  getMonthlyPeakHistory,
   getPointsLeaderboard,
 } from '../rankings';
 import { getAllUsers } from '../kv';
@@ -20,6 +21,14 @@ vi.mock('@/lib/d1-kv', () => ({
 
 vi.mock('../kv', () => ({
   getAllUsers: vi.fn(),
+}));
+
+vi.mock('../user-profile', () => ({
+  getCustomUserProfile: vi.fn().mockResolvedValue({}),
+}));
+
+vi.mock('../user-achievements', () => ({
+  getEquippedAchievementForUser: vi.fn().mockResolvedValue(null),
 }));
 
 describe('rankings', () => {
@@ -45,19 +54,19 @@ describe('rankings', () => {
     const now = Date.now();
 
     mockKvLrange.mockImplementation(async (key: string) => {
-      if (key === 'slot:records:1001') {
+      if (key === 'linkgame:records:1001') {
         return [
           { score: 120, pointsEarned: 30, createdAt: now - 1000 },
           { score: 80, pointsEarned: 20, createdAt: now - 2000 },
         ];
       }
-      if (key === 'slot:records:1002') {
+      if (key === 'linkgame:records:1002') {
         return [{ score: 150, pointsEarned: 35, createdAt: now - 1000 }];
       }
       return [];
     });
 
-    const leaderboard = await getGameLeaderboard('slot', 'daily', 10);
+    const leaderboard = await getGameLeaderboard('linkgame', 'daily', 10);
 
     expect(leaderboard).toHaveLength(2);
     expect(leaderboard[0]).toMatchObject({
@@ -96,7 +105,7 @@ describe('rankings', () => {
     const gameTypes = result.games.map((item) => item.gameType).sort();
 
     expect(result.games).toHaveLength(6);
-    expect(gameTypes).toEqual(['linkgame', 'match3', 'memory', 'pachinko', 'slot', 'tower']);
+    expect(gameTypes).toEqual(['linkgame', 'match3', 'memory', 'minesweeper', 'roguelite', 'whack_mole']);
     expect(result.overall[0]).toMatchObject({
       userId: 1001,
     });
@@ -111,7 +120,7 @@ describe('rankings', () => {
       period: 'daily' as const,
       generatedAt: 123,
       startAt: 456,
-      games: [{ gameType: 'slot' as const, leaderboard: [] }],
+      games: [{ gameType: 'linkgame' as const, leaderboard: [] }],
       overall: [],
     };
     mockKvGet.mockResolvedValueOnce(cached as any);
@@ -148,8 +157,46 @@ describe('rankings', () => {
     });
 
     const monthly = await getPointsLeaderboard('monthly', 10);
-    expect(monthly.leaderboard[0]).toMatchObject({ userId: 1001, points: 150 });
+    expect(monthly.leaderboard[0]).toMatchObject({ userId: 1001, points: 200 });
     expect(monthly.leaderboard[1]).toMatchObject({ userId: 1002, points: 80 });
+  });
+
+  it('builds monthly peak history from positive point income only', async () => {
+    const referenceTime = new Date('2026-05-21T04:00:00.000Z').getTime();
+    const aprilTs = new Date('2026-04-10T04:00:00.000Z').getTime();
+    const marchTs = new Date('2026-03-10T04:00:00.000Z').getTime();
+
+    mockKvLrange.mockImplementation(async (key: string) => {
+      if (key === 'points_log:1001') {
+        return [
+          { amount: 300, createdAt: aprilTs },
+          { amount: -70, createdAt: aprilTs },
+          { amount: 50, createdAt: marchTs },
+        ];
+      }
+      if (key === 'points_log:1002') {
+        return [{ amount: 120, createdAt: aprilTs }];
+      }
+      return [];
+    });
+
+    const history = await getMonthlyPeakHistory({
+      months: 1,
+      topLimit: 10,
+      referenceTime,
+    });
+
+    expect(history.months[0].monthKey).toBe('2026-04');
+    expect(history.months[0].leaderboard[0]).toMatchObject({
+      rank: 1,
+      userId: 1001,
+      points: 300,
+    });
+    expect(history.months[0].leaderboard[1]).toMatchObject({
+      rank: 2,
+      userId: 1002,
+      points: 120,
+    });
   });
 
   it('calculates checkin streak and leaderboard', async () => {

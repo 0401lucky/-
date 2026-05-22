@@ -3,7 +3,7 @@
 /**
  * 中国时区偏移量（毫秒）
  */
-const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
+export const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 /**
  * 获取当前中国时区时间
@@ -13,14 +13,21 @@ export function getChinaTime(date: Date = new Date()): Date {
 }
 
 /**
- * 获取今天日期字符串 (YYYY-MM-DD) - 使用中国时区 (UTC+8)
+ * 将任意时刻格式化为中国时区日期字符串 (YYYY-MM-DD)
  */
-export function getTodayDateString(): string {
-  const chinaTime = getChinaTime();
+export function formatChinaDateKey(date: Date = new Date()): string {
+  const chinaTime = getChinaTime(date);
   const year = chinaTime.getUTCFullYear();
   const month = String(chinaTime.getUTCMonth() + 1).padStart(2, '0');
   const day = String(chinaTime.getUTCDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+/**
+ * 获取今天日期字符串 (YYYY-MM-DD) - 使用中国时区 (UTC+8)
+ */
+export function getTodayDateString(): string {
+  return formatChinaDateKey();
 }
 
 /**

@@ -9,7 +9,6 @@ import {
   replaceNativeDailyStats,
   replaceNativeGameRecords,
   replaceNativePointLogs,
-  replaceNativeSlotDailyScores,
   replaceNativeUserCheckins,
   resetNativeHotStoreData,
   setNativeExtraSpinCount,
@@ -23,17 +22,16 @@ import {
 const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 const CHECKIN_SCAN_DAYS = 400;
 const RECENT_STATE_DAYS = 2;
-const SLOT_RANKING_MIGRATION_DAYS = 2;
 const MAX_POINT_LOGS = 100;
 const MAX_GAME_RECORDS = 200;
 
 const GAME_RECORD_KEYS: Record<Exclude<GameType, "farm">, (userId: number) => string> = {
-  pachinko: (userId) => `game:records:${userId}`,
   memory: (userId) => `memory:records:${userId}`,
-  slot: (userId) => `slot:records:${userId}`,
   match3: (userId) => `match3:records:${userId}`,
   linkgame: (userId) => `linkgame:records:${userId}`,
-  tower: (userId) => `tower:records:${userId}`,
+  whack_mole: (userId) => `whack_mole:records:${userId}`,
+  roguelite: (userId) => `roguelite:records:${userId}`,
+  minesweeper: (userId) => `minesweeper:records:${userId}`,
 };
 
 export interface NativeHotMigrationOptions {
@@ -59,7 +57,6 @@ export interface NativeHotMigrationResult {
   gameRecords: number;
   dailyPointsRows: number;
   dailyStatsRows: number;
-  slotRankingUsers: number;
 }
 
 function getChinaDateString(offsetDays: number): string {
@@ -108,39 +105,6 @@ async function getLegacyGameRecords<T>(key: string): Promise<T[]> {
   return (await kv.lrange<T>(key, 0, MAX_GAME_RECORDS - 1)) ?? [];
 }
 
-async function getLegacySlotDailyScores(date: string): Promise<Array<{ userId: number; score: number }>> {
-  const raw = await kv.zrange<string | number>(
-    `slot:rank:daily:${date}`,
-    0,
-    999,
-    { rev: true, withScores: true },
-  );
-
-  const entries: Array<{ userId: number; score: number }> = [];
-  for (let index = 0; index < raw.length; index += 2) {
-    const member = raw[index];
-    const score = raw[index + 1];
-    if (member === undefined || score === undefined) {
-      continue;
-    }
-
-    const memberStr = typeof member === "string" ? member : String(member);
-    const matched = memberStr.match(/^u:(\d+)$/);
-    const userId = matched ? Number(matched[1]) : Number(memberStr);
-    const scoreValue = typeof score === "number" ? score : Number(score);
-    if (!Number.isFinite(userId) || !Number.isFinite(scoreValue)) {
-      continue;
-    }
-
-    entries.push({
-      userId,
-      score: Math.floor(scoreValue),
-    });
-  }
-
-  return entries;
-}
-
 export async function migrateNativeHotData(
   options: NativeHotMigrationOptions = {},
 ): Promise<NativeHotMigrationResult> {
@@ -156,7 +120,6 @@ export async function migrateNativeHotData(
   const users = allUsers.slice(offset, offset + limit);
   const nextOffset = offset + users.length < allUsers.length ? offset + users.length : null;
   const hasMore = nextOffset !== null;
-  const rankingDates = Array.from({ length: SLOT_RANKING_MIGRATION_DAYS }, (_, index) => getChinaDateString(index));
   let pointsLogs = 0;
   let checkins = 0;
   let gameRecords = 0;
@@ -168,11 +131,6 @@ export async function migrateNativeHotData(
     const legacyConfig = await kv.get<Record<string, unknown>>("system:config");
     if (legacyConfig) {
       await updateNativeSystemConfig(legacyConfig);
-    }
-
-    for (const date of rankingDates) {
-      const slotScores = await getLegacySlotDailyScores(date);
-      await replaceNativeSlotDailyScores(date, slotScores);
     }
   }
 
@@ -251,6 +209,5 @@ export async function migrateNativeHotData(
     gameRecords,
     dailyPointsRows,
     dailyStatsRows,
-    slotRankingUsers: 0,
   };
 }

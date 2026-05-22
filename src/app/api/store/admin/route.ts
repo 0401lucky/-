@@ -6,12 +6,20 @@ import { kv } from '@/lib/d1-kv';
 import { getAuthUser, isAdmin } from '@/lib/auth';
 import {
   getAllStoreItems,
+  getStoreCategories,
+  createStoreCategory,
+  updateStoreCategory,
   createStoreItem,
   updateStoreItem,
   deleteStoreItem,
 } from '@/lib/store';
 import { enforceTrustedApiRequest } from '@/lib/request-security';
 import type { StoreItemType } from '@/lib/types/store';
+import type { ShopItemKey } from '@/lib/types/farm-v2';
+import {
+  getEffectiveFarmShopItems,
+  updateFarmShopItemOverride,
+} from '@/lib/farm-v2/admin-config';
 
 const STORE_ITEM_PURCHASE_COUNTS_KEY = 'store:item:purchase_counts';
 
@@ -50,7 +58,7 @@ async function checkAdmin() {
 
 // 验证商品类型
 function isValidItemType(type: unknown): type is StoreItemType {
-  return type === 'lottery_spin' || type === 'quota_direct' || type === 'card_draw';
+  return type === 'lottery_spin' || type === 'card_draw' || type === 'makeup_card';
 }
 
 /**
@@ -63,7 +71,11 @@ export async function GET() {
   }
 
   try {
-    const items = await getAllStoreItems();
+    const [items, categories, farmItemsMap] = await Promise.all([
+      getAllStoreItems(),
+      getStoreCategories(true),
+      getEffectiveFarmShopItems(),
+    ]);
 
     const purchaseCounts: Record<string, unknown> = {};
     try {
@@ -86,7 +98,9 @@ export async function GET() {
       purchaseCount: normalizePurchaseCount(purchaseCounts[item.id]),
     }));
 
-    return jsonResponse({ success: true, data: { items: itemsWithStats } });
+    const farmItems = Object.values(farmItemsMap).sort((a, b) => a.category.localeCompare(b.category) || a.cost - b.cost);
+
+    return jsonResponse({ success: true, data: { items: itemsWithStats, categories, farmItems } });
   } catch (error) {
     console.error('Get all store items error:', error);
     return jsonResponse({ success: false, message: '获取商品列表失败' }, 500);
@@ -111,7 +125,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     
     // 验证必填字段
-    const { name, description, type, pointsCost, value, sortOrder, enabled } = body;
+    const { name, description, type, categoryId, pointsCost, value, sortOrder, enabled } = body;
     
     if (typeof name !== 'string' || name.trim() === '') {
       return jsonResponse({ success: false, message: '商品名称不能为空' }, 400);
@@ -120,7 +134,11 @@ export async function POST(request: NextRequest) {
       return jsonResponse({ success: false, message: '商品描述不能为空' }, 400);
     }
     if (!isValidItemType(type)) {
-      return jsonResponse({ success: false, message: '商品类型无效，必须是 lottery_spin / quota_direct / card_draw' }, 400);
+      return jsonResponse({ success: false, message: '商品类型无效，必须是 lottery_spin / card_draw / makeup_card' }, 400);
+    }
+    const categories = await getStoreCategories(true);
+    if (typeof categoryId !== 'string' || !categories.some((category) => category.id === categoryId)) {
+      return jsonResponse({ success: false, message: '商品分类无效' }, 400);
     }
     if (typeof pointsCost !== 'number' || !Number.isSafeInteger(pointsCost) || pointsCost < 1) {
       return jsonResponse({ success: false, message: '积分价格必须是正整数（≥1）' }, 400);
@@ -148,6 +166,7 @@ export async function POST(request: NextRequest) {
       name: name.trim(),
       description: description.trim(),
       type,
+      categoryId,
       pointsCost: pointsCost,
       value,
       sortOrder: Math.floor(sortOrder),
@@ -209,6 +228,14 @@ export async function PUT(request: NextRequest) {
       updates.type = body.type;
     }
 
+    if (body.categoryId !== undefined) {
+      const categories = await getStoreCategories(true);
+      if (typeof body.categoryId !== 'string' || !categories.some((category) => category.id === body.categoryId)) {
+        return jsonResponse({ success: false, message: '商品分类无效' }, 400);
+      }
+      updates.categoryId = body.categoryId;
+    }
+
     if (body.pointsCost !== undefined) {
       if (typeof body.pointsCost !== 'number' || !Number.isSafeInteger(body.pointsCost) || body.pointsCost < 1) {
         return jsonResponse({ success: false, message: '积分价格必须是正整数（≥1）' }, 400);
@@ -260,6 +287,71 @@ export async function PUT(request: NextRequest) {
   } catch (error) {
     console.error('Update store item error:', error);
     return jsonResponse({ success: false, message: '更新商品失败' }, 500);
+  }
+}
+
+/**
+ * PATCH - 创建或更新商品分类
+ */
+export async function PATCH(request: NextRequest) {
+  const auth = await checkAdmin();
+  if (!auth.authorized) {
+    return auth.response;
+  }
+
+  try {
+    const body = await request.json();
+    if (body.kind === 'farm-item') {
+      const key = body.key as ShopItemKey;
+      if (typeof key !== 'string' || !key.trim()) {
+        return jsonResponse({ success: false, message: '农场商品 key 不能为空' }, 400);
+      }
+
+      const override = await updateFarmShopItemOverride(key, {
+        cost: body.cost,
+        dailyLimit: body.dailyLimit,
+        durationMinutes: body.durationMinutes,
+        speedReduceMinutes: body.speedReduceMinutes,
+        petEffect: body.petEffect,
+      });
+
+      return jsonResponse({ success: true, data: { override }, message: '农场商品配置已保存' });
+    }
+
+    const { id, name, color, sortOrder, enabled } = body;
+
+    if (typeof name !== 'string' || !name.trim()) {
+      return jsonResponse({ success: false, message: '分类名称不能为空' }, 400);
+    }
+    if (typeof color !== 'string' || !color.trim()) {
+      return jsonResponse({ success: false, message: '分类颜色不能为空' }, 400);
+    }
+    if (typeof sortOrder !== 'number' || !Number.isFinite(sortOrder)) {
+      return jsonResponse({ success: false, message: '分类排序必须是数字' }, 400);
+    }
+    if (typeof enabled !== 'boolean') {
+      return jsonResponse({ success: false, message: '分类状态必须是布尔值' }, 400);
+    }
+
+    const payload = {
+      name: name.trim(),
+      color: color.trim(),
+      sortOrder: Math.floor(sortOrder),
+      enabled,
+    };
+
+    const category = typeof id === 'string' && id.trim()
+      ? await updateStoreCategory(id, payload)
+      : await createStoreCategory(payload);
+
+    if (!category) {
+      return jsonResponse({ success: false, message: '分类不存在' }, 404);
+    }
+
+    return jsonResponse({ success: true, data: { category }, message: '分类保存成功' });
+  } catch (error) {
+    console.error('Save store category error:', error);
+    return jsonResponse({ success: false, message: '保存分类失败' }, 500);
   }
 }
 

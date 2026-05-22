@@ -2,6 +2,7 @@ import { CARDS } from "./config";
 import { Rarity } from "./types";
 import { FRAGMENT_VALUES, EXCHANGE_PRICES } from "./constants";
 import { getUserCardData, updateUserCardData } from "./draw";
+import { getCardRulesConfig } from "./rules";
 
 /**
  * Returns the fragment value for a given rarity when a duplicate card is obtained.
@@ -26,7 +27,8 @@ export async function handleDuplicateCard(userId: string, cardId: string): Promi
   const card = CARDS.find(c => c.id === cardId);
   if (!card) throw new Error("Invalid card ID");
 
-  const fragmentValue = getFragmentValue(card.rarity);
+  const rules = await getCardRulesConfig();
+  const fragmentValue = rules.fragmentValues[card.rarity];
   const userData = await getUserCardData(userId);
 
   const isDuplicate = userData.inventory.includes(cardId);
@@ -53,7 +55,8 @@ export async function exchangeFragmentsForCard(userId: string, cardId: string): 
     return { success: false, message: "无效的卡片 ID" };
   }
 
-  const price = getExchangePrice(card.rarity);
+  const rules = await getCardRulesConfig();
+  const price = rules.exchangePrices[card.rarity];
   const userData = await getUserCardData(userId);
 
   const hasCard = userData.inventory.includes(cardId);

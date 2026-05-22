@@ -29,7 +29,7 @@ interface RewardBatchItem {
 
 export default function AdminRewardsPage() {
   // 表单状态
-  const [rewardType, setRewardType] = useState<RewardType>('points');
+  const rewardType: RewardType = 'points';
   const [amount, setAmount] = useState('');
   const [targetMode, setTargetMode] = useState<TargetMode>('all');
   const [title, setTitle] = useState('');
@@ -125,7 +125,6 @@ export default function AdminRewardsPage() {
   };
 
   const resetForm = () => {
-    setRewardType('points');
     setAmount('');
     setTargetMode('all');
     setTitle('');
@@ -175,7 +174,6 @@ export default function AdminRewardsPage() {
   const validateForm = (): string | null => {
     const amountNum = Number(amount);
     if (!Number.isFinite(amountNum) || amountNum <= 0) return '数量必须为正数';
-    if (rewardType === 'quota' && amountNum > 100) return '直充额度不能超过 100 美元';
     if (rewardType === 'points' && amountNum > 1000000) return '积分不能超过 1,000,000';
     if (!title.trim()) return '通知标题不能为空';
     if (!message.trim()) return '通知内容不能为空';
@@ -205,7 +203,7 @@ export default function AdminRewardsPage() {
       minute: '2-digit',
     });
 
-  const typeLabel = (t: RewardType) => (t === 'points' ? '积分' : '直充额度');
+  const typeLabel = (t: RewardType) => (t === 'points' ? '积分' : '历史额度');
   const modeLabel = (m: TargetMode) => (m === 'all' ? '全部用户' : '指定用户');
 
   return (
@@ -215,36 +213,30 @@ export default function AdminRewardsPage() {
         <h2 className="text-base font-semibold text-stone-800 mb-4">发放奖励</h2>
 
         <div className="space-y-4">
-          {/* 奖励类型 */}
           <div>
             <label className="block text-xs text-stone-500 mb-1">奖励类型</label>
-            <select
-              value={rewardType}
-              onChange={(e) => setRewardType(e.target.value as RewardType)}
-              className="w-full px-3 py-2 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-orange-500 outline-none"
-            >
-              <option value="points">积分</option>
-              <option value="quota">直充额度 (美元)</option>
-            </select>
+            <div className="w-full px-3 py-2 rounded-xl border border-orange-200 bg-orange-50 text-orange-700 text-sm font-semibold">
+              积分
+            </div>
           </div>
 
           {/* 数量 */}
           <div>
             <label className="block text-xs text-stone-500 mb-1">
-              {rewardType === 'points' ? '积分数量' : '额度金额 (美元)'}
+              积分数量
             </label>
             <input
               type="number"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               min={0}
-              step={rewardType === 'quota' ? 0.01 : 1}
-              max={rewardType === 'quota' ? 100 : 1000000}
+              step={1}
+              max={1000000}
               className="w-full px-3 py-2 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-orange-500 outline-none"
-              placeholder={rewardType === 'points' ? '输入积分数量' : '输入美元金额'}
+              placeholder="输入积分数量"
             />
             <p className="mt-1 text-xs text-stone-400">
-              {rewardType === 'points' ? '上限 1,000,000' : '上限 100 美元'}
+              上限 1,000,000
             </p>
           </div>
 
@@ -557,7 +549,7 @@ export default function AdminRewardsPage() {
               <p>
                 数量：
                 <strong>
-                  {rewardType === 'points' ? `${amount} 积分` : `$${amount} 美元`}
+                  {amount} 积分
                 </strong>
               </p>
               <p>
