@@ -122,7 +122,7 @@ describe('anomaly detector', () => {
       if (key === 'points_log:1002') {
         return [{ amount: -10, createdAt: now - 1000 }];
       }
-      if (key === 'slot:records:1001') {
+      if (key === 'linkgame:records:1001') {
         return [{ createdAt: now - 1000 }];
       }
       return [];

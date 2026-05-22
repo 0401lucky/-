@@ -4,8 +4,26 @@ import { getUserCardData } from './cards/draw';
 import { getPointsLogs, getUserPoints } from './points';
 import { getCheckinStreak, getTotalCheckinDays } from './rankings';
 import { listUserNotifications } from './notifications';
+import { getCustomUserProfile } from './user-profile';
+import { getMatch3Records } from './match3';
+import { MATCH3_WIN_SCORE } from './match3-engine';
+import { getMinesweeperRecords } from './minesweeper';
+import { getMemoryRecords } from './memory';
+import { getWhackMoleRecords } from './whack-mole';
+import { WHACK_MOLE_WIN_SCORE } from './whack-mole-engine';
+import { getRogueliteRecords } from './roguelite';
+import { getLinkGameRecords } from './linkgame-server';
+import { getUserLotteryRecords } from './lottery';
+import { FARM_V2_STATE_KEY } from './farm-v2/steal';
+import { MAX_LAND_COUNT } from './farm-v2/config';
+import type { FarmStateV2 } from './types/farm-v2';
+import {
+  buildUserAchievementSummary,
+  type UserAchievementSummary,
+} from './user-achievements';
+import type { ProfileAchievementStats } from './profile-achievements';
 
-type ProfileGameType = 'slot' | 'linkgame' | 'match3' | 'memory' | 'pachinko' | 'tower' | 'lottery';
+type ProfileGameType = 'linkgame' | 'match3' | 'memory' | 'whack_mole' | 'roguelite' | 'minesweeper' | 'lottery';
 
 export interface ProfileRecentRecord {
   gameType: ProfileGameType;
@@ -18,6 +36,12 @@ export interface ProfileOverview {
   user: {
     id: number;
     username: string;
+    // 自定义昵称（未设置时为 null）
+    customDisplayName: string | null;
+    // 自定义头像 URL（未设置时为 null）
+    customAvatarUrl: string | null;
+    // QQ 邮箱（未设置时为 null）
+    customQqEmail: string | null;
   };
   points: {
     balance: number;
@@ -58,15 +82,17 @@ export interface ProfileOverview {
       isRead: boolean;
     }>;
   };
+  achievementStats: ProfileAchievementStats;
+  achievements: UserAchievementSummary;
 }
 
 const GAME_RECORD_KEYS: Array<{ type: ProfileGameType; key: (userId: number) => string }> = [
-  { type: 'slot', key: (userId) => `slot:records:${userId}` },
   { type: 'linkgame', key: (userId) => `linkgame:records:${userId}` },
   { type: 'match3', key: (userId) => `match3:records:${userId}` },
   { type: 'memory', key: (userId) => `memory:records:${userId}` },
-  { type: 'pachinko', key: (userId) => `game:records:${userId}` },
-  { type: 'tower', key: (userId) => `tower:records:${userId}` },
+  { type: 'whack_mole', key: (userId) => `whack_mole:records:${userId}` },
+  { type: 'roguelite', key: (userId) => `roguelite:records:${userId}` },
+  { type: 'minesweeper', key: (userId) => `minesweeper:records:${userId}` },
   { type: 'lottery', key: (userId) => `lottery:user:records:${userId}` },
 ];
 
@@ -114,6 +140,83 @@ async function getRecentRecords(userId: number, limit = 10): Promise<ProfileRece
     .slice(0, limit);
 }
 
+const ACHIEVEMENT_GAME_RECORD_LIMIT = 200;
+const ACHIEVEMENT_LOTTERY_RECORD_LIMIT = 5000;
+
+async function getGameWinAchievementStats(userId: number): Promise<Pick<ProfileAchievementStats, 'gameWinRate' | 'gameWinPlays'>> {
+  const [
+    linkgameRecords,
+    match3Records,
+    memoryRecords,
+    minesweeperRecords,
+    rogueliteRecords,
+    whackMoleRecords,
+  ] = await Promise.all([
+    getLinkGameRecords(userId, ACHIEVEMENT_GAME_RECORD_LIMIT),
+    getMatch3Records(userId, ACHIEVEMENT_GAME_RECORD_LIMIT),
+    getMemoryRecords(userId, ACHIEVEMENT_GAME_RECORD_LIMIT),
+    getMinesweeperRecords(userId, ACHIEVEMENT_GAME_RECORD_LIMIT),
+    getRogueliteRecords(userId, ACHIEVEMENT_GAME_RECORD_LIMIT),
+    getWhackMoleRecords(userId, ACHIEVEMENT_GAME_RECORD_LIMIT),
+  ]);
+
+  const plays =
+    linkgameRecords.length +
+    match3Records.length +
+    memoryRecords.length +
+    minesweeperRecords.length +
+    rogueliteRecords.length +
+    whackMoleRecords.length;
+
+  const wins =
+    linkgameRecords.filter((record) => record.completed).length +
+    match3Records.filter((record) => record.score >= MATCH3_WIN_SCORE).length +
+    memoryRecords.filter((record) => record.completed).length +
+    minesweeperRecords.filter((record) => record.won).length +
+    rogueliteRecords.filter((record) => record.won).length +
+    whackMoleRecords.filter((record) => record.score >= WHACK_MOLE_WIN_SCORE).length;
+
+  return {
+    gameWinRate: plays > 0 ? wins / plays : 0,
+    gameWinPlays: plays,
+  };
+}
+
+async function getFarmUnlockedLandCount(userId: number): Promise<number> {
+  const state = await kv.get<FarmStateV2>(FARM_V2_STATE_KEY(userId));
+  if (!state || !Array.isArray(state.lands)) {
+    return 0;
+  }
+  return Math.min(
+    MAX_LAND_COUNT,
+    state.lands.filter((land) => land && land.status !== 'locked').length
+  );
+}
+
+async function getLotteryAchievementCounts(
+  userId: number
+): Promise<Pick<ProfileAchievementStats, 'lotteryOrangeCount' | 'lotteryHeartCount'>> {
+  const records = await getUserLotteryRecords(userId, ACHIEVEMENT_LOTTERY_RECORD_LIMIT);
+  return {
+    lotteryOrangeCount: records.filter((record) => record.tierName.includes('橙子') || record.tierValue === 200).length,
+    lotteryHeartCount: records.filter((record) => record.tierName.includes('谢谢惠顾') || record.tierValue === 0).length,
+  };
+}
+
+async function getAchievementStats(userId: number): Promise<ProfileAchievementStats> {
+  const [gameStats, farmUnlockedLands, lotteryCounts] = await Promise.all([
+    getGameWinAchievementStats(userId),
+    getFarmUnlockedLandCount(userId),
+    getLotteryAchievementCounts(userId),
+  ]);
+
+  return {
+    ...gameStats,
+    farmUnlockedLands,
+    ...lotteryCounts,
+  };
+}
+
 function buildAlbumProgress(inventory: string[]): ProfileOverview['cards']['albums'] {
   const ownedSet = new Set(inventory);
 
@@ -147,6 +250,8 @@ export async function getProfileOverview(
     totalCheckinDays,
     recentRecords,
     notificationResult,
+    customProfile,
+    achievementStats,
   ] = await Promise.all([
     getUserPoints(user.id),
     getPointsLogs(user.id, 10),
@@ -155,6 +260,8 @@ export async function getProfileOverview(
     getTotalCheckinDays(user.id),
     getRecentRecords(user.id, 10),
     listUserNotifications(user.id, { page: 1, limit: 5 }),
+    getCustomUserProfile(user.id),
+    getAchievementStats(user.id),
   ]);
 
   const albums = buildAlbumProgress(cardData.inventory);
@@ -162,10 +269,13 @@ export async function getProfileOverview(
   const ownedCards = new Set(cardData.inventory).size;
   const completionRate = totalCards > 0 ? Math.min(100, Math.round((ownedCards / totalCards) * 10000) / 100) : 0;
 
-  return {
+  const baseOverview = {
     user: {
       id: user.id,
       username: user.username,
+      customDisplayName: customProfile.displayName ?? null,
+      customAvatarUrl: customProfile.avatarUrl ?? null,
+      customQqEmail: customProfile.qqEmail ?? null,
     },
     points: {
       balance: pointsBalance,
@@ -200,5 +310,13 @@ export async function getProfileOverview(
         isRead: item.isRead,
       })),
     },
+    achievementStats,
+  };
+
+  const achievements = await buildUserAchievementSummary(user.id, baseOverview);
+
+  return {
+    ...baseOverview,
+    achievements,
   };
 }

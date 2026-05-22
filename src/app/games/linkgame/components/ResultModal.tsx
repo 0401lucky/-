@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { ArrowLeft, Clock3, Play, Trophy } from 'lucide-react';
 import { DIFFICULTY_META } from '../lib/constants';
+import { calculateLinkGamePointReward } from '@/lib/linkgame';
 import type { LinkGameDifficulty } from '@/lib/types/game';
 
 interface ResultModalProps {
@@ -11,6 +12,8 @@ interface ResultModalProps {
   pointsEarned: number;
   completed: boolean;
   matchedPairs: number;
+  moves: number;
+  duration: number;
   onPlayAgain: () => void;
   onBackToGames: () => void;
 }
@@ -22,192 +25,84 @@ export function ResultModal({
   pointsEarned,
   completed,
   matchedPairs,
+  moves,
+  duration,
   onPlayAgain,
   onBackToGames,
 }: ResultModalProps) {
-  const [displayScore, setDisplayScore] = useState(0);
-
-  const playAgainRef = useRef<HTMLButtonElement>(null);
-  const focusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // [Perf] 动态导入彩带特效，减少首屏 JS 体积
-  useEffect(() => {
-    if (isOpen && completed) {
-      const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      if (prefersReducedMotion) return;
-
-      let intervalId: number | undefined;
-
-      import('canvas-confetti').then(({ default: confetti }) => {
-        const duration = 3000;
-        const animationEnd = Date.now() + duration;
-        const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 60 };
-
-        const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
-
-        intervalId = window.setInterval(() => {
-          const timeLeft = animationEnd - Date.now();
-
-          if (timeLeft <= 0) {
-            window.clearInterval(intervalId);
-            return;
-          }
-
-          const particleCount = 50 * (timeLeft / duration);
-          confetti({
-            ...defaults,
-            particleCount,
-            origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }
-          });
-          confetti({
-            ...defaults,
-            particleCount,
-            origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }
-          });
-        }, 250);
-      });
-
-      return () => {
-        if (intervalId !== undefined) {
-          window.clearInterval(intervalId);
-        }
-      };
-    }
-  }, [isOpen, completed]);
-
-  useEffect(() => {
-    if (isOpen) {
-      // Focus play again button when modal opens
-      focusTimeoutRef.current = setTimeout(() => {
-        playAgainRef.current?.focus();
-        focusTimeoutRef.current = null;
-      }, 100);
-      
-      const duration = 1000;
-      const steps = 30;
-      const increment = score / steps;
-      let current = 0;
-
-      const timer = setInterval(() => {
-        current += increment;
-        if (current >= score) {
-          setDisplayScore(score);
-          clearInterval(timer);
-        } else {
-          setDisplayScore(Math.floor(current));
-        }
-      }, duration / steps);
-
-      return () => {
-        if (focusTimeoutRef.current) {
-          clearTimeout(focusTimeoutRef.current);
-          focusTimeoutRef.current = null;
-        }
-        clearInterval(timer);
-      };
-    }
-  }, [isOpen, score]);
-
   if (!isOpen) return null;
 
   const meta = DIFFICULTY_META[difficulty];
+  const won = completed;
+  const expectedReward = calculateLinkGamePointReward(score);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="result-title">
-      <div className="absolute inset-0 bg-indigo-900/60 backdrop-blur-md animate-fade-in" />
-      
-      <div className="relative bg-white rounded-[3rem] shadow-2xl shadow-indigo-500/20 max-w-md w-full overflow-hidden animate-bounce-in border-[6px] border-white ring-4 ring-indigo-100">
-        <div className={`h-48 bg-gradient-to-br ${meta.color} flex items-center justify-center relative overflow-hidden`}>
-          <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMiIgY3k9IjIiIHI9IjIiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4yKSIvPjwvc3ZnPg==')] opacity-30" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
-          
-          <div className="absolute top-4 left-4 w-12 h-12 rounded-full border-4 border-white/20 animate-spin-slow" />
-          <div className="absolute bottom-4 right-4 w-8 h-8 rounded-full bg-white/20 animate-bounce" />
-
-          {completed && (
-            <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              {['🎉', '⭐', '✨', '🎊', '🍭'].map((emoji, i) => (
-                <span 
-                  key={i}
-                  className="absolute animate-confetti text-4xl filter drop-shadow-md"
-                  style={{
-                    left: `${20 + i * 15}%`,
-                    animationDelay: `${i * 150}ms`
-                  }}
-                >
-                  {emoji}
-                </span>
-              ))}
-            </div>
-          )}
-
-          <div className="text-center text-white relative z-10 transform translate-y-2">
-            <div className="text-8xl mb-4 animate-bounce filter drop-shadow-lg transform hover:scale-110 transition-transform cursor-default">
-              {completed ? '🎉' : '⏰'}
-            </div>
-            <div id="result-title" className="text-3xl font-black tracking-tight drop-shadow-md">
-              {completed ? '恭喜通关！' : '时间到啦！'}
-            </div>
+    <div className="link-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="linkgame-settlement-title">
+      <div className={`link-result-modal ${won ? 'won' : 'lost'}`}>
+        <div className="flex flex-col items-center text-center">
+          <div className={`link-result-icon ${won ? 'won' : 'lost'}`}>
+            {won ? <Trophy className="h-9 w-9" /> : <Clock3 className="h-9 w-9" />}
           </div>
+          <div className="mt-5 text-xs font-black uppercase tracking-wider text-emerald-700/80">
+            本局结算
+          </div>
+          <h2 id="linkgame-settlement-title" className="mt-1 text-2xl font-black text-slate-950">
+            {won ? '胜利结算完成' : '失败结算完成'}
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            本局得分 {score}，按得分 1% 结算，获得 {pointsEarned} 福利积分。
+          </p>
         </div>
-        
-        <div className="p-8">
-          <div className="space-y-4">
-            <div className="flex justify-between items-center py-3 border-b-2 border-dashed border-slate-100">
-              <span className="text-slate-400 font-black text-sm uppercase tracking-wider">难度</span>
-              <span className={`font-black flex items-center gap-2 bg-slate-50 px-4 py-1.5 rounded-full ${meta.textColor}`}>
-                <span>{meta.icon}</span>
-                {meta.name}
-              </span>
-            </div>
-            
-            <div className="flex justify-between items-center py-3 border-b-2 border-dashed border-slate-100">
-              <span className="text-slate-400 font-black text-sm uppercase tracking-wider">完成对数</span>
-              <span className="font-black text-slate-800 text-lg">{matchedPairs} 对</span>
-            </div>
-            
-            <div className="flex justify-between items-center py-3 border-b-2 border-dashed border-slate-100">
-              <span className="text-slate-400 font-black text-sm uppercase tracking-wider">游戏得分</span>
-              <span className="font-black text-2xl text-slate-800 tabular-nums tracking-tight">{displayScore}</span>
-            </div>
-            
-            <div className="flex justify-between items-center py-6 bg-gradient-to-r from-orange-50 via-yellow-50 to-orange-50 rounded-3xl px-6 border-2 border-orange-100 shadow-inner mt-2">
-              <span className="text-orange-900/60 font-black text-sm uppercase tracking-wider">获得积分</span>
-              <span className="font-black text-4xl text-orange-500 flex items-center gap-2 filter drop-shadow-sm">
-                <span className="text-2xl">⭐</span>
-                +{pointsEarned}
-              </span>
-            </div>
-            
-            {pointsEarned < score && (
-              <p className="text-center text-xs text-orange-400 font-bold bg-orange-50 py-2 rounded-xl mt-2">
-                ⚠️ 今日积分已达上限，部分积分未发放
-              </p>
-            )}
-          </div>
-          
-          <div className="mt-8 flex gap-4">
-            <button
-              onClick={onBackToGames}
-              className="group relative flex-1 py-4 px-4 rounded-2xl border-2 border-slate-200 text-slate-500 font-black hover:bg-slate-50 hover:text-slate-700 hover:border-slate-300 transition-all overflow-hidden active:scale-95"
-            >
-              <span className="relative z-10">返回</span>
-            </button>
-            <button
-              ref={playAgainRef}
-              onClick={onPlayAgain}
-              className={`group relative flex-1 py-4 px-4 rounded-2xl bg-gradient-to-r ${meta.color} text-white font-black shadow-xl shadow-indigo-500/20 hover:shadow-2xl hover:shadow-indigo-500/30 hover:-translate-y-1 active:scale-95 transition-all overflow-hidden border-b-4 border-black/10 active:border-b-0 active:translate-y-1`}
-            >
-              <span className="relative z-10 flex items-center justify-center gap-2">
-                <span>再来一局</span>
-                <span className="group-hover:rotate-180 transition-transform duration-500">🔄</span>
-              </span>
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:animate-shimmer" />
-            </button>
-          </div>
+
+        <div className="mt-5 rounded-2xl border border-emerald-100 bg-white px-5 py-3 text-center text-sm font-black text-emerald-700 shadow-sm">
+          最终福利积分 = {score} × 1% = {expectedReward}
+          {pointsEarned !== expectedReward ? `，实际到账 ${pointsEarned}` : ''}
+        </div>
+
+        <div className="link-result-stats">
+          <LinkResultStat label="难度" value={meta.name} />
+          <LinkResultStat label="用时" value={formatDuration(duration)} />
+          <LinkResultStat label="完成对数" value={`${matchedPairs} 对`} />
+          <LinkResultStat label="操作" value={`${moves} 次`} />
+          <LinkResultStat label="得分" value={String(score)} />
+          <LinkResultStat label="奖励" value={`${pointsEarned}`} />
+        </div>
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          <button
+            onClick={onBackToGames}
+            className="flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-white px-5 py-3 text-sm font-black text-emerald-700 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-emerald-50"
+            type="button"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            返回游戏中心
+          </button>
+          <button
+            onClick={onPlayAgain}
+            className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-200 transition-all hover:-translate-y-0.5 hover:bg-emerald-500"
+            type="button"
+          >
+            <Play className="h-4 w-4" />
+            继续选择难度
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
+function LinkResultStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="link-result-stat">
+      <div className="text-xs font-black text-slate-400">{label}</div>
+      <div className="mt-1 text-lg font-black text-slate-950">{value}</div>
+    </div>
+  );
+}
+
+function formatDuration(duration: number): string {
+  const safe = Math.max(0, Math.ceil(duration / 1000));
+  const min = Math.floor(safe / 60);
+  const sec = safe % 60;
+  return `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}

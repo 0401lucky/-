@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import {
   createFeedback,
+  getFeedbackLikeState,
   getFeedbackMessages,
+  listAllFeedback,
   listUserFeedback,
   type FeedbackStatus,
 } from "@/lib/feedback";
@@ -10,6 +12,10 @@ import {
   normalizeFeedbackImages,
   type FeedbackImage,
 } from "@/lib/feedback-image";
+import {
+  attachFeedbackAuthorProfile,
+  attachFeedbackAuthorProfiles,
+} from "@/lib/feedback-author";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +63,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const page = parsePage(searchParams.get("page"));
     const limit = parseLimit(searchParams.get("limit"));
+    const scope = searchParams.get("scope");
 
     const statusRaw = searchParams.get("status");
     const status = parseStatus(statusRaw);
@@ -67,14 +74,48 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    if (scope === "wall") {
+      const { items, pagination } = await listAllFeedback({
+        page,
+        limit,
+        status: status ?? undefined,
+      });
+
+      const publicItems = items.filter((item) => !item.anonymous);
+      const publicItemsWithAuthor = await attachFeedbackAuthorProfiles(publicItems);
+      const wallItems = await Promise.all(
+        publicItemsWithAuthor.map(async (item) => {
+          const messages = [...(await getFeedbackMessages(item.id, 20))].reverse();
+          const firstUserMessage = messages.find((message) => message.role === "user") ?? null;
+          const latestAdminReply = [...messages].reverse().find((message) => message.role === "admin") ?? null;
+
+          return {
+            ...item,
+            contact: undefined,
+            firstMessage: firstUserMessage,
+            latestAdminReply,
+            replyCount: Math.max(0, messages.length - 1),
+            ...(await getFeedbackLikeState(item.id, user.id)),
+          };
+        })
+      );
+
+      return NextResponse.json({
+        success: true,
+        items: wallItems,
+        pagination,
+      });
+    }
+
     const { items, pagination } = await listUserFeedback(user.id, {
       page,
       limit,
       status: status ?? undefined,
     });
 
+    const itemsWithAuthor = await attachFeedbackAuthorProfiles(items);
     const itemsWithLatestMessage = await Promise.all(
-      items.map(async (item) => {
+      itemsWithAuthor.map(async (item) => {
         const latestMessages = await getFeedbackMessages(item.id, 1);
         const latestMessage = latestMessages[0] ?? null;
 
@@ -123,12 +164,14 @@ export async function POST(request: NextRequest) {
       content?: unknown;
       contact?: unknown;
       images?: unknown;
+      anonymous?: unknown;
     } | null;
 
     const content =
       typeof body?.content === "string" ? body.content.trim() : "";
     const contact =
       typeof body?.contact === "string" ? body.contact.trim() : "";
+    const anonymous = body?.anonymous === true;
 
     let images: FeedbackImage[] = [];
     try {
@@ -176,14 +219,16 @@ export async function POST(request: NextRequest) {
       user.username,
       content,
       contact || undefined,
-      images
+      images,
+      anonymous
     );
+    const feedback = await attachFeedbackAuthorProfile(result.feedback);
 
     return NextResponse.json(
       {
         success: true,
         message: "反馈提交成功",
-        feedback: result.feedback,
+        feedback,
         firstMessage: result.message,
       },
       { status: 201 }

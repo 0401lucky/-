@@ -47,7 +47,7 @@ const mockLtrim = vi.mocked(kv.ltrim);
 const mockLrange = vi.mocked(kv.lrange);
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
 });
 
@@ -122,41 +122,39 @@ describe('addGamePointsWithLimit', () => {
     expect(mockLtrim).toHaveBeenCalledTimes(1);
   });
 
-  it('returns 0 earned when daily limit already reached', async () => {
-    // D1-compatible: kv.get returns dailyEarned = 100 (at limit), remaining=0, grant=0
-    mockGet
-      .mockResolvedValueOnce(100) // dailyEarned = 100 (already at limit)
-      .mockResolvedValueOnce(100); // points balance (no change, just read)
-
-    const result = await addGamePointsWithLimit(1, 10, 100, 'game_play', 'played');
-
-    expect(result).toEqual({
-      success: true,
-      pointsEarned: 0,
-      balance: 100,
-      dailyEarned: 100,
-      limitReached: true,
-    });
-    // no log when pointsEarned = 0
-    expect(mockLpush).not.toHaveBeenCalled();
-  });
-
-  it('truncates score when remaining daily allowance is less than score', async () => {
-    // D1-compatible: dailyEarned=95, limit=100, score=10 => grant=5
-    mockGet.mockResolvedValueOnce(95); // dailyEarned = 95
+  it('returns full score when daily limit param ignored (v2)', async () => {
+    // v2：取消每日上限。即使 dailyEarned 已达 100，仍全额发放
+    mockGet.mockResolvedValueOnce(100); // dailyEarned = 100
     mockIncrby
-      .mockResolvedValueOnce(105) // points balance after +5
-      .mockResolvedValueOnce(100); // dailyEarned after +5 = 100
+      .mockResolvedValueOnce(110) // points balance after +10
+      .mockResolvedValueOnce(110); // dailyEarned after +10
     mockExpire.mockResolvedValue(1);
     mockLpush.mockResolvedValue(1);
     mockLtrim.mockResolvedValue('OK' as any);
 
     const result = await addGamePointsWithLimit(1, 10, 100, 'game_play', 'played');
 
-    expect(result.pointsEarned).toBe(5);
-    expect(result.limitReached).toBe(true);
+    expect(result.success).toBe(true);
+    expect(result.pointsEarned).toBe(10);
+    expect(result.limitReached).toBe(false);
+  });
+
+  it('grants full score regardless of remaining quota (v2)', async () => {
+    // v2：dailyEarned=95、score=10，依然全额 10 而非截断为 5
+    mockGet.mockResolvedValueOnce(95);
+    mockIncrby
+      .mockResolvedValueOnce(110) // points balance after +10
+      .mockResolvedValueOnce(105); // dailyEarned after +10 = 105
+    mockExpire.mockResolvedValue(1);
+    mockLpush.mockResolvedValue(1);
+    mockLtrim.mockResolvedValue('OK' as any);
+
+    const result = await addGamePointsWithLimit(1, 10, 100, 'game_play', 'played');
+
+    expect(result.pointsEarned).toBe(10);
+    expect(result.limitReached).toBe(false);
     expect(mockLpush).toHaveBeenCalledWith('points_log:1', expect.objectContaining({
-      amount: 5,
+      amount: 10,
     }));
   });
 

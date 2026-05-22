@@ -26,7 +26,7 @@ const RARITY_COLORS: Record<string, string> = {
   epic: 'text-purple-600 bg-purple-50 border-purple-200',
   rare: 'text-blue-600 bg-blue-50 border-blue-200',
   common: 'text-slate-600 bg-slate-50 border-slate-200',
-  full_set: 'text-orange-600 bg-orange-50 border-orange-200',
+  full_set: 'text-indigo-600 bg-indigo-50 border-indigo-200',
 };
 
 export function RewardsSection({ albumId, inventory, claimedRewards, onClaim }: RewardsSectionProps) {
@@ -71,7 +71,7 @@ export function RewardsSection({ albumId, inventory, claimedRewards, onClaim }: 
   return (
     <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-100 space-y-6">
       <div className="flex items-center gap-3 mb-6">
-        <div className="p-2 bg-yellow-100 rounded-full text-yellow-600">
+        <div className="p-2 bg-blue-100 rounded-full text-blue-600">
           <Trophy className="w-6 h-6" />
         </div>
         <h2 className="text-xl font-bold text-slate-800">图鉴奖励</h2>
@@ -92,8 +92,8 @@ export function RewardsSection({ albumId, inventory, claimedRewards, onClaim }: 
               key={type}
               className={`
                 relative p-4 rounded-2xl border transition-all duration-300
-                ${percent === 100 ? 'bg-white shadow-md border-orange-100' : 'bg-slate-50 border-slate-100'}
-                ${canClaim ? 'ring-2 ring-orange-400 ring-offset-2' : ''}
+                ${percent === 100 ? 'bg-white shadow-md border-blue-100' : 'bg-slate-50 border-slate-100'}
+                ${canClaim ? 'ring-2 ring-blue-400 ring-offset-2' : ''}
               `}
             >
               <div className="flex justify-between items-start mb-3">
@@ -106,7 +106,7 @@ export function RewardsSection({ albumId, inventory, claimedRewards, onClaim }: 
                   </div>
                 </div>
                 {isClaimed ? (
-                  <div className="flex items-center gap-1 text-green-500 font-bold text-sm bg-green-50 px-2 py-1 rounded-lg">
+                  <div className="flex items-center gap-1 text-blue-500 font-bold text-sm bg-blue-50 px-2 py-1 rounded-lg">
                     <Check className="w-4 h-4" />
                     已领取
                   </div>
@@ -117,7 +117,7 @@ export function RewardsSection({ albumId, inventory, claimedRewards, onClaim }: 
                     className={`
                       flex items-center gap-1 px-3 py-1.5 rounded-xl text-sm font-bold transition-all
                       ${canClaim
-                        ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg shadow-orange-500/30 hover:shadow-orange-500/40 hover:-translate-y-0.5 active:scale-95'
+                        ? 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 active:scale-95'
                         : 'bg-slate-200 text-slate-400 cursor-not-allowed'}
                     `}
                   >
@@ -141,7 +141,7 @@ export function RewardsSection({ albumId, inventory, claimedRewards, onClaim }: 
                 </div>
                 <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all duration-1000 ${percent === 100 ? 'bg-green-500' : 'bg-orange-400'}`}
+                    className={`h-full rounded-full transition-all duration-1000 ${percent === 100 ? 'bg-gradient-to-r from-sky-400 to-blue-600' : 'bg-blue-300'}`}
                     style={{ width: `${percent}%` }}
                   ></div>
                 </div>

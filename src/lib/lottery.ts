@@ -8,8 +8,10 @@ import {
   releaseDailyFree,
   rollbackExtraSpin,
 } from "./kv";
-import { getTodayDateString, getSecondsUntilMidnight } from "./time";
+import { getTodayDateString, getSecondsUntilMidnight, getChinaTime } from "./time";
 import { withKvLock } from './economy-lock';
+import { getEquippedAchievementForUser } from './user-achievements';
+import type { PublicAchievement } from './profile-achievements';
 
 // 抽奖档位
 export interface LotteryTier {
@@ -20,6 +22,7 @@ export interface LotteryTier {
   color: string;        // 转盘扇区颜色
   codesCount: number;   // 总库存
   usedCount: number;    // 已使用
+  enabled?: boolean;    // 积分模式是否启用
 }
 
 // 抽奖记录
@@ -32,6 +35,7 @@ export interface LotteryRecord {
   code: string;           // 兑换码模式使用
   directCredit?: boolean; // 是否为直充模式
   creditedQuota?: number; // 直充的 quota 数量
+  pointsAwarded?: number; // 积分模式：本次发放的积分（0 表示「谢谢惠顾」）
   createdAt: number;
 }
 
@@ -42,7 +46,7 @@ export interface SpinLotteryOptions {
 // 抽奖配置
 export interface LotteryConfig {
   enabled: boolean;
-  mode: 'code' | 'direct' | 'hybrid';
+  mode: 'code' | 'direct' | 'hybrid' | 'points';
   dailyDirectLimit: number;
   tiers: LotteryTier[];
 }
@@ -56,6 +60,7 @@ export interface LotteryPageState {
     value: number;
     color: string;
     hasStock: boolean;
+    enabled: boolean;
   }>;
   canSpin: boolean;
   hasSpunToday: boolean;
@@ -76,6 +81,7 @@ export interface LotteryRankingEntry {
   rank: number;
   userId: string;
   username: string;
+  equippedAchievement?: PublicAchievement | null;
   totalValue: number;
   bestPrize: string;
   count: number;
@@ -87,19 +93,32 @@ export interface LotteryDailyRankingResult {
   ranking: LotteryRankingEntry[];
 }
 
+export type LotteryRankingPeriod = 'daily' | 'weekly' | 'monthly';
+
+export interface LotteryPeriodRankingResult {
+  period: LotteryRankingPeriod;
+  periodKey: string;
+  totalParticipants: number;
+  ranking: LotteryRankingEntry[];
+}
+
+// 积分模式默认档位（与前端转盘一一对应）
+// id 含义：pts_<积分数>，pts_0 = 谢谢惠顾
+// 概率均为百分比，总和 100，橙子保持有竞争力的概率，谢谢惠顾不会过高
 const DEFAULT_TIERS: LotteryTier[] = [
-  { id: "tier_1", name: "1刀福利", value: 1, probability: 40, color: "#fbbf24", codesCount: 0, usedCount: 0 },
-  { id: "tier_3", name: "3刀福利", value: 3, probability: 30, color: "#fb923c", codesCount: 0, usedCount: 0 },
-  { id: "tier_5", name: "5刀福利", value: 5, probability: 18, color: "#f97316", codesCount: 0, usedCount: 0 },
-  { id: "tier_10", name: "10刀福利", value: 10, probability: 8, color: "#ea580c", codesCount: 0, usedCount: 0 },
-  { id: "tier_15", name: "15刀福利", value: 15, probability: 3, color: "#dc2626", codesCount: 0, usedCount: 0 },
-  { id: "tier_20", name: "20刀福利", value: 20, probability: 1, color: "#b91c1c", codesCount: 0, usedCount: 0 },
+  { id: "pts_200", name: "橙子 200积分", value: 200, probability: 8, color: "#fb923c", codesCount: 0, usedCount: 0, enabled: true },
+  { id: "pts_150", name: "钻石 150积分", value: 150, probability: 6, color: "#8b5cf6", codesCount: 0, usedCount: 0, enabled: true },
+  { id: "pts_100", name: "金币 100积分", value: 100, probability: 12, color: "#facc15", codesCount: 0, usedCount: 0, enabled: true },
+  { id: "pts_50", name: "星星 50积分", value: 50, probability: 18, color: "#3b82f6", codesCount: 0, usedCount: 0, enabled: true },
+  { id: "pts_30", name: "小狗 30积分", value: 30, probability: 22, color: "#10b981", codesCount: 0, usedCount: 0, enabled: true },
+  { id: "pts_10", name: "小猫 10积分", value: 10, probability: 24, color: "#06b6d4", codesCount: 0, usedCount: 0, enabled: true },
+  { id: "pts_0", name: "谢谢惠顾", value: 0, probability: 10, color: "#ec4899", codesCount: 0, usedCount: 0, enabled: true },
 ];
 
 const DEFAULT_CONFIG: LotteryConfig = {
   enabled: true,
-  mode: 'direct',        // 默认使用直充模式
-  dailyDirectLimit: 2000, // 每日直充上限 $2000
+  mode: 'points',         // 默认使用积分模式
+  dailyDirectLimit: 2000, // 仅 direct/hybrid 模式仍读取此值，points 模式无视
   tiers: DEFAULT_TIERS,
 };
 
@@ -109,8 +128,8 @@ const LOTTERY_CODES_PREFIX = "lottery:codes:";        // 所有码（Set）
 const LOTTERY_USED_CODES_PREFIX = "lottery:used:";    // 已使用的码（Set）
 const LOTTERY_RECORDS_KEY = "lottery:records";
 const LOTTERY_USER_RECORDS_PREFIX = "lottery:user:records:";
-const LOTTERY_RANK_DAILY_KEY = (date: string) => `lottery:rank:daily:${date}`;
-const LOTTERY_RANK_DAILY_USER_KEY = (date: string, userId: string | number) => `lottery:rank:daily:${date}:user:${userId}`;
+const LOTTERY_RANK_PERIOD_KEY = (period: LotteryRankingPeriod, periodKey: string) => `lottery:rank:${period}:${periodKey}`;
+const LOTTERY_RANK_PERIOD_USER_KEY = (period: LotteryRankingPeriod, periodKey: string, userId: string | number) => `lottery:rank:${period}:${periodKey}:user:${userId}`;
 const LOTTERY_DAILY_DIRECT_LOCK_KEY = "lottery:daily_direct_lock:";
 const LOTTERY_DAILY_TTL_BUFFER_SECONDS = 3600;
 const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -124,8 +143,54 @@ function getChinaDateStringFromTimestamp(timestamp: number): string {
   return `${year}-${month}-${day}`;
 }
 
+function getLotteryWeekKeyFromTimestamp(timestamp: number): string {
+  const chinaTime = new Date(timestamp + CHINA_TZ_OFFSET_MS);
+  chinaTime.setUTCHours(0, 0, 0, 0);
+  const day = chinaTime.getUTCDay();
+  const diffToMonday = day === 0 ? 6 : day - 1;
+  chinaTime.setUTCDate(chinaTime.getUTCDate() - diffToMonday);
+  const year = chinaTime.getUTCFullYear();
+  const month = String(chinaTime.getUTCMonth() + 1).padStart(2, '0');
+  const date = String(chinaTime.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${date}`;
+}
+
+function getLotteryMonthKeyFromTimestamp(timestamp: number): string {
+  const chinaTime = new Date(timestamp + CHINA_TZ_OFFSET_MS);
+  const year = chinaTime.getUTCFullYear();
+  const month = String(chinaTime.getUTCMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
+function getCurrentLotteryPeriodKey(period: LotteryRankingPeriod): string {
+  const now = Date.now();
+  if (period === 'weekly') return getLotteryWeekKeyFromTimestamp(now);
+  if (period === 'monthly') return getLotteryMonthKeyFromTimestamp(now);
+  return getTodayDateString();
+}
+
 function getLotteryDailyTtlSeconds(): number {
   return getSecondsUntilMidnight() + LOTTERY_DAILY_TTL_BUFFER_SECONDS;
+}
+
+function getLotteryRankingTtlSeconds(period: LotteryRankingPeriod): number {
+  if (period === 'daily') {
+    return getLotteryDailyTtlSeconds();
+  }
+  if (period === 'weekly') {
+    const chinaTime = getChinaTime();
+    const day = chinaTime.getUTCDay();
+    const daysUntilNextMonday = day === 0 ? 1 : 8 - day;
+    const nextMonday = new Date(chinaTime);
+    nextMonday.setUTCDate(chinaTime.getUTCDate() + daysUntilNextMonday);
+    nextMonday.setUTCHours(0, 0, 0, 0);
+    return Math.max(1, Math.ceil((nextMonday.getTime() - chinaTime.getTime()) / 1000)) + LOTTERY_DAILY_TTL_BUFFER_SECONDS;
+  }
+  const chinaTime = getChinaTime();
+  const nextMonth = new Date(chinaTime);
+  nextMonth.setUTCMonth(chinaTime.getUTCMonth() + 1, 1);
+  nextMonth.setUTCHours(0, 0, 0, 0);
+  return Math.max(1, Math.ceil((nextMonth.getTime() - chinaTime.getTime()) / 1000)) + LOTTERY_DAILY_TTL_BUFFER_SECONDS;
 }
 
 function normalizeLotteryRankingUserId(member: string | number): string {
@@ -142,30 +207,45 @@ async function writeLotteryUserRecordBestEffort(userId: number, record: LotteryR
   }
 }
 
-async function syncLotteryDailyRankingBestEffort(record: LotteryRecord): Promise<void> {
+async function syncLotteryRankingBucketBestEffort(
+  period: LotteryRankingPeriod,
+  periodKey: string,
+  record: LotteryRecord,
+): Promise<void> {
+  const rankingKey = LOTTERY_RANK_PERIOD_KEY(period, periodKey);
+  const userRankingKey = LOTTERY_RANK_PERIOD_USER_KEY(period, periodKey, record.oderId);
+  const ttl = getLotteryRankingTtlSeconds(period);
+  const currentBestPrizeValue = Number(await kv.hget<number>(userRankingKey, 'bestPrizeValue'));
+
+  const fields: Record<string, unknown> = {
+    userId: record.oderId,
+    username: record.username,
+  };
+
+  if (!Number.isFinite(currentBestPrizeValue) || record.tierValue > currentBestPrizeValue) {
+    fields.bestPrize = record.tierName;
+    fields.bestPrizeValue = record.tierValue;
+  }
+
+  await Promise.all([
+    kv.zincrby(rankingKey, record.tierValue, `u:${record.oderId}`),
+    kv.hincrby(userRankingKey, 'count', 1),
+    kv.hset(userRankingKey, fields),
+    kv.expire(rankingKey, ttl),
+    kv.expire(userRankingKey, ttl),
+  ]);
+}
+
+async function syncLotteryRankingBestEffort(record: LotteryRecord): Promise<void> {
   try {
     const date = getChinaDateStringFromTimestamp(record.createdAt);
-    const rankingKey = LOTTERY_RANK_DAILY_KEY(date);
-    const userRankingKey = LOTTERY_RANK_DAILY_USER_KEY(date, record.oderId);
-    const ttl = getLotteryDailyTtlSeconds();
-    const currentBestPrizeValue = Number(await kv.hget<number>(userRankingKey, 'bestPrizeValue'));
-
-    const fields: Record<string, unknown> = {
-      userId: record.oderId,
-      username: record.username,
-    };
-
-    if (!Number.isFinite(currentBestPrizeValue) || record.tierValue > currentBestPrizeValue) {
-      fields.bestPrize = record.tierName;
-      fields.bestPrizeValue = record.tierValue;
-    }
+    const weekKey = getLotteryWeekKeyFromTimestamp(record.createdAt);
+    const monthKey = getLotteryMonthKeyFromTimestamp(record.createdAt);
 
     await Promise.all([
-      kv.zincrby(rankingKey, record.tierValue, `u:${record.oderId}`),
-      kv.hincrby(userRankingKey, 'count', 1),
-      kv.hset(userRankingKey, fields),
-      kv.expire(rankingKey, ttl),
-      kv.expire(userRankingKey, ttl),
+      syncLotteryRankingBucketBestEffort('daily', date, record),
+      syncLotteryRankingBucketBestEffort('weekly', weekKey, record),
+      syncLotteryRankingBucketBestEffort('monthly', monthKey, record),
     ]);
   } catch (rankingError) {
     console.error("更新抽奖排行榜聚合失败（不影响抽奖结果）:", rankingError);
@@ -195,32 +275,53 @@ function cloneDefaultLotteryConfig(): LotteryConfig {
   };
 }
 
+export function isLotteryTierEnabled(tier: Pick<LotteryTier, 'probability' | 'enabled'>): boolean {
+  return tier.enabled !== false && tier.probability > 0;
+}
+
+export function getActiveLotteryTiers(config: Pick<LotteryConfig, 'tiers'>): LotteryTier[] {
+  return config.tiers.filter(isLotteryTierEnabled);
+}
+
 function sanitizeLotteryConfig(config: Partial<LotteryConfig>): LotteryConfig {
   const fallback = cloneDefaultLotteryConfig();
-  const safeMode = config.mode === "code" || config.mode === "direct" || config.mode === "hybrid"
-    ? config.mode
-    : fallback.mode;
+  const safeMode: LotteryConfig['mode'] =
+    config.mode === "code" || config.mode === "direct" || config.mode === "hybrid" || config.mode === "points"
+      ? config.mode
+      : fallback.mode;
 
-  const tiers = Array.isArray(config.tiers) && config.tiers.length > 0
-    ? config.tiers.map((tier, index) => {
-      const base = fallback.tiers[index] ?? fallback.tiers[fallback.tiers.length - 1];
-      return {
-        id: typeof tier?.id === "string" && tier.id.trim() ? tier.id : base.id,
-        name: typeof tier?.name === "string" && tier.name.trim() ? tier.name : base.name,
-        value: typeof tier?.value === "number" && Number.isFinite(tier.value) ? tier.value : base.value,
-        probability: typeof tier?.probability === "number" && Number.isFinite(tier.probability)
-          ? tier.probability
-          : base.probability,
-        color: typeof tier?.color === "string" && tier.color.trim() ? tier.color : base.color,
-        codesCount: typeof tier?.codesCount === "number" && Number.isFinite(tier.codesCount)
-          ? tier.codesCount
-          : base.codesCount,
-        usedCount: typeof tier?.usedCount === "number" && Number.isFinite(tier.usedCount)
-          ? tier.usedCount
-          : base.usedCount,
-      };
-    })
-    : fallback.tiers;
+  const incomingTiers = Array.isArray(config.tiers) ? config.tiers : [];
+  // 检测是否为旧版美元档位（id 前缀 tier_）。旧版 KV 配置一访问就强制迁移到积分模式，
+  // 避免老 mode/tiers 与新前端不匹配，出现「未知奖品」。
+  const isLegacyTiers = incomingTiers.length === 0
+    || !incomingTiers.every((tier) => typeof tier?.id === 'string' && tier.id.startsWith('pts_'));
+
+  if (isLegacyTiers) {
+    return {
+      ...fallback,
+      enabled: typeof config.enabled === 'boolean' ? config.enabled : fallback.enabled,
+    };
+  }
+
+  const tiers = incomingTiers.map((tier, index) => {
+    const base = fallback.tiers[index] ?? fallback.tiers[fallback.tiers.length - 1];
+    return {
+      id: typeof tier?.id === "string" && tier.id.trim() ? tier.id : base.id,
+      name: typeof tier?.name === "string" && tier.name.trim() ? tier.name : base.name,
+      value: typeof tier?.value === "number" && Number.isFinite(tier.value) ? tier.value : base.value,
+      probability: typeof tier?.probability === "number" && Number.isFinite(tier.probability)
+        ? tier.probability
+        : base.probability,
+      color: typeof tier?.color === "string" && tier.color.trim() ? tier.color : base.color,
+      codesCount: typeof tier?.codesCount === "number" && Number.isFinite(tier.codesCount)
+        ? tier.codesCount
+        : base.codesCount,
+      usedCount: typeof tier?.usedCount === "number" && Number.isFinite(tier.usedCount)
+        ? tier.usedCount
+        : base.usedCount,
+      enabled: typeof tier?.enabled === "boolean" ? tier.enabled : base.enabled !== false,
+    };
+  });
 
   return {
     enabled: typeof config.enabled === "boolean" ? config.enabled : fallback.enabled,
@@ -253,7 +354,22 @@ export async function getLotteryConfig(): Promise<LotteryConfig> {
       return fallback;
     }
 
-    return sanitizeLotteryConfig(config);
+    const sanitized = sanitizeLotteryConfig(config);
+
+    // 旧版美元档位（tier_xxx）一旦命中迁移路径，就主动把新配置写回 KV，
+    // 让下一次访问直接读到积分档位，不再走迁移逻辑
+    const wasLegacy = !Array.isArray(config.tiers)
+      || config.tiers.length === 0
+      || !config.tiers.every((t) => typeof t?.id === 'string' && t.id.startsWith('pts_'));
+    if (wasLegacy) {
+      try {
+        await kv.set(LOTTERY_CONFIG_KEY, sanitized);
+      } catch (migrationError) {
+        console.warn("迁移旧版抽奖配置失败，下次会重试:", migrationError);
+      }
+    }
+
+    return sanitized;
   } catch (error) {
     const insight = getKvErrorInsight(error);
     if (insight.isUnavailable) {
@@ -275,11 +391,33 @@ export async function updateLotteryConfig(config: Partial<LotteryConfig>): Promi
 export async function updateTiersProbability(
   tiersUpdate: { id: string; probability: number }[]
 ): Promise<void> {
+  await updateLotteryTiers(tiersUpdate);
+}
+
+export async function updateLotteryTiers(
+  tiersUpdate: Array<{
+    id: string;
+    name?: string;
+    value?: number;
+    color?: string;
+    probability?: number;
+    enabled?: boolean;
+  }>
+): Promise<void> {
   const config = await getLotteryConfig();
   const updatedTiers = config.tiers.map((tier) => {
     const update = tiersUpdate.find((t) => t.id === tier.id);
     if (update) {
-      return { ...tier, probability: update.probability };
+      return {
+        ...tier,
+        name: typeof update.name === 'string' && update.name.trim() ? update.name.trim() : tier.name,
+        value: typeof update.value === 'number' && Number.isFinite(update.value) ? update.value : tier.value,
+        color: typeof update.color === 'string' && update.color.trim() ? update.color.trim() : tier.color,
+        probability: typeof update.probability === 'number' && Number.isFinite(update.probability)
+          ? update.probability
+          : tier.probability,
+        enabled: typeof update.enabled === 'boolean' ? update.enabled : tier.enabled !== false,
+      };
     }
     return tier;
   });
@@ -524,7 +662,7 @@ export async function recalculateStats(): Promise<{
 // [M6修复] 检查是否有可抽奖的档位（概率>0的档位必须有库存）- 并行查询优化
 export async function checkAllTiersHaveCodes(): Promise<boolean> {
   const config = await getLotteryConfig();
-  const activeTiers = config.tiers.filter(t => t.probability > 0);
+  const activeTiers = getActiveLotteryTiers(config);
 
   if (activeTiers.length === 0) return false;
 
@@ -540,7 +678,7 @@ export async function checkAllTiersHaveCodes(): Promise<boolean> {
 // [M6修复] 获取可抽奖的档位（概率>0且有库存）- 并行查询优化
 export async function getAvailableTiers(configOverride?: LotteryConfig): Promise<LotteryTier[]> {
   const config = configOverride ?? await getLotteryConfig();
-  const activeTiers = config.tiers.filter(t => t.probability > 0);
+  const activeTiers = getActiveLotteryTiers(config);
 
   if (activeTiers.length === 0) return [];
 
@@ -797,7 +935,7 @@ async function completeSpinWithCode(
   // [Final-A] 提交点之后的所有操作都用 try-catch 包裹，绝不抛错
   await Promise.all([
     writeLotteryUserRecordBestEffort(userId, record),
-    syncLotteryDailyRankingBestEffort(record),
+    syncLotteryRankingBestEffort(record),
     syncLotteryTierStatsBestEffort(selectedTier.id),
   ]);
 
@@ -829,8 +967,23 @@ export async function getLotteryDailyRanking(
   limit: number = 10,
   date: string = getTodayDateString(),
 ): Promise<LotteryDailyRankingResult> {
+  const data = await getLotteryRanking('daily', limit, date);
+  return {
+    date,
+    totalParticipants: data.totalParticipants,
+    ranking: data.ranking,
+  };
+}
+
+export async function getLotteryRanking(
+  period: LotteryRankingPeriod = 'daily',
+  limit: number = 10,
+  periodKey: string = getCurrentLotteryPeriodKey(period),
+): Promise<LotteryPeriodRankingResult> {
+  const safePeriod: LotteryRankingPeriod = period === 'weekly' || period === 'monthly' ? period : 'daily';
   const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
-  const rankingKey = LOTTERY_RANK_DAILY_KEY(date);
+  const safePeriodKey = periodKey || getCurrentLotteryPeriodKey(safePeriod);
+  const rankingKey = LOTTERY_RANK_PERIOD_KEY(safePeriod, safePeriodKey);
   const raw = await kv.zrange<string | number>(
     rankingKey,
     0,
@@ -860,17 +1013,24 @@ export async function getLotteryDailyRanking(
 
   const ranking = await Promise.all(
     pairs.map(async ({ userId, totalValue }, index) => {
-      const meta = await kv.hgetall<Record<string, unknown>>(LOTTERY_RANK_DAILY_USER_KEY(date, userId));
+      const meta = await kv.hgetall<Record<string, unknown>>(
+        LOTTERY_RANK_PERIOD_USER_KEY(safePeriod, safePeriodKey, userId)
+      );
       const username = typeof meta?.username === 'string' && meta.username
         ? meta.username
         : `#${userId}`;
       const bestPrize = typeof meta?.bestPrize === 'string' ? meta.bestPrize : '';
       const count = Number(meta?.count);
+      const numericUserId = Number(userId);
+      const equippedAchievement = Number.isFinite(numericUserId)
+        ? await getEquippedAchievementForUser(numericUserId)
+        : null;
 
       return {
         rank: index + 1,
         userId,
         username,
+        equippedAchievement,
         totalValue,
         bestPrize,
         count: Number.isFinite(count) ? count : 0,
@@ -879,7 +1039,8 @@ export async function getLotteryDailyRanking(
   );
 
   return {
-    date,
+    period: safePeriod,
+    periodKey: safePeriodKey,
     totalParticipants,
     ranking,
   };
@@ -994,7 +1155,7 @@ export async function rollbackDailyDirectQuota(dollars: number): Promise<void> {
  */
 export async function getMinTierValue(): Promise<number> {
   const config = await getLotteryConfig();
-  const activeTiers = config.tiers.filter(t => t.probability > 0);
+  const activeTiers = getActiveLotteryTiers(config);
   if (activeTiers.length === 0) return Infinity;
   return Math.min(...activeTiers.map(t => t.value));
 }
@@ -1011,7 +1172,7 @@ export async function getLotteryPageState(
   ]);
 
   const activeTierIds = new Set(
-    config.tiers.filter((tier) => tier.probability > 0).map((tier) => tier.id)
+    getActiveLotteryTiers(config).map((tier) => tier.id)
   );
   const allTiersHaveCodes = activeTierIds.size > 0
     && tiersStats
@@ -1026,16 +1187,19 @@ export async function getLotteryPageState(
       value: tier.value,
       color: tier.color,
       hasStock: (stats?.available ?? 0) > 0,
+      enabled: tier.enabled !== false,
     };
   });
 
-  const activeTiers = config.tiers.filter((tier) => tier.probability > 0);
+  const activeTiers = getActiveLotteryTiers(config);
   const minTierValue = activeTiers.length > 0
     ? Math.min(...activeTiers.map((tier) => tier.value))
     : Infinity;
 
   let canSpinByMode = false;
-  if (config.mode === 'direct') {
+  if (config.mode === 'points') {
+    canSpinByMode = activeTiers.length > 0;
+  } else if (config.mode === 'direct') {
     canSpinByMode = await checkDailyDirectLimit(minTierValue, config);
   } else if (config.mode === 'code') {
     canSpinByMode = allTiersHaveCodes;
@@ -1111,7 +1275,7 @@ export async function spinLotteryDirect(
     const remainingQuota = config.dailyDirectLimit - todayTotal;
     
     // 过滤掉超过剩余额度的档位
-    const affordableTiers = config.tiers.filter(t => t.probability > 0 && t.value <= remainingQuota);
+    const affordableTiers = getActiveLotteryTiers(config).filter(t => t.value <= remainingQuota);
     
     if (affordableTiers.length === 0) {
       await rollbackSpinCount();
@@ -1163,7 +1327,7 @@ export async function spinLotteryDirect(
         await kv.lpush(LOTTERY_RECORDS_KEY, pendingRecord);
         await Promise.all([
           writeLotteryUserRecordBestEffort(userId, pendingRecord),
-          syncLotteryDailyRankingBestEffort(pendingRecord),
+          syncLotteryRankingBestEffort(pendingRecord),
         ]);
       } catch (e) {
         console.error("写入 pending 记录失败:", e);
@@ -1205,7 +1369,7 @@ export async function spinLotteryDirect(
       await kv.lpush(LOTTERY_RECORDS_KEY, record);
       await Promise.all([
         writeLotteryUserRecordBestEffort(userId, record),
-        syncLotteryDailyRankingBestEffort(record),
+        syncLotteryRankingBestEffort(record),
       ]);
     } catch (globalRecordError) {
       console.error("写入全局记录失败（充值已成功，不影响用户）:", globalRecordError);
@@ -1229,6 +1393,95 @@ export async function spinLotteryDirect(
 }
 
 /**
+ * 积分模式抽奖
+ * - 概率抽中后通过 applyPointsDelta 一次性发放积分到用户余额
+ * - tier.value === 0 表示「谢谢惠顾」，仍写记录但跳过加积分
+ * - 失败回滚抽奖次数，避免占用用户机会
+ */
+export async function spinLotteryPoints(
+  userId: number,
+  username: string,
+  options?: SpinLotteryOptions,
+): Promise<{ success: boolean; record?: LotteryRecord; message: string }> {
+  // 动态导入避免顶层循环依赖（points 模块依赖 hot-d1/kv）
+  const { applyPointsDelta } = await import('./points');
+
+  const spinCountResult = await consumeSpinCount(userId, options);
+  if (!spinCountResult.success) {
+    return { success: false, message: spinCountResult.message || "系统繁忙，请稍后再试" };
+  }
+  const rollbackSpinCount = spinCountResult.rollback;
+
+  try {
+    const config = await getLotteryConfig();
+    if (!config.enabled) {
+      await rollbackSpinCount();
+      return { success: false, message: "抽奖活动暂未开放" };
+    }
+
+    const activeTiers = getActiveLotteryTiers(config);
+    if (activeTiers.length === 0) {
+      await rollbackSpinCount();
+      return { success: false, message: "抽奖配置异常，请联系管理员" };
+    }
+
+    const selectedTier = weightedRandomSelect(activeTiers);
+    if (!selectedTier) {
+      await rollbackSpinCount();
+      return { success: false, message: "抽奖配置异常，请联系管理员" };
+    }
+
+    let pointsAwarded = 0;
+    const grantResult = await applyPointsDelta(
+      userId,
+      selectedTier.value,
+      'lottery_win',
+      `幸运抽奖：${selectedTier.name}`,
+      { recordZero: true },
+    );
+    if (!grantResult.success) {
+      await rollbackSpinCount();
+      return { success: false, message: grantResult.message || "积分发放失败，请稍后重试" };
+    }
+    pointsAwarded = selectedTier.value;
+
+    const record: LotteryRecord = {
+      id: `lottery_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+      oderId: String(userId),
+      username,
+      tierName: selectedTier.name,
+      tierValue: selectedTier.value,
+      code: '',
+      pointsAwarded,
+      createdAt: Date.now(),
+    };
+
+    // 写入全局记录是「提交点」，之后 best-effort
+    try {
+      await kv.lpush(LOTTERY_RECORDS_KEY, record);
+      await Promise.all([
+        writeLotteryUserRecordBestEffort(userId, record),
+        syncLotteryRankingBestEffort(record),
+      ]);
+    } catch (recordError) {
+      console.error("写入积分抽奖记录失败（积分已发放，不影响用户）:", recordError);
+    }
+
+    return {
+      success: true,
+      record,
+      message: selectedTier.value > 0
+        ? `恭喜获得 ${selectedTier.name}！`
+        : '谢谢惠顾，下次再来试试手气',
+    };
+  } catch (error) {
+    console.error("spinLotteryPoints 异常:", error);
+    await rollbackSpinCount();
+    return { success: false, message: "系统错误，请稍后再试" };
+  }
+}
+
+/**
  * 统一抽奖入口（根据配置选择模式）
  */
 export async function spinLotteryAuto(
@@ -1237,14 +1490,17 @@ export async function spinLotteryAuto(
   options?: SpinLotteryOptions
 ): Promise<{ success: boolean; record?: LotteryRecord; message: string }> {
   const config = await getLotteryConfig();
-  
+
   switch (config.mode) {
+    case 'points':
+      return spinLotteryPoints(userId, username, options);
+
     case 'direct':
       return spinLotteryDirect(userId, username, options);
-    
+
     case 'code':
       return spinLottery(userId, username, options);
-    
+
     case 'hybrid': {
       const spinCountResult = await consumeSpinCount(userId, options);
       if (!spinCountResult.success) {
@@ -1267,8 +1523,6 @@ export async function spinLotteryAuto(
             console.warn("直充结果不确定，不降级到兑换码模式");
             return directResult;
           }
-          // 明确失败时降级到兑换码模式
-          console.log("直充明确失败，降级到兑换码模式:", directResult.message);
         }
 
         const codeResult = await spinLottery(userId, username, childOptions);

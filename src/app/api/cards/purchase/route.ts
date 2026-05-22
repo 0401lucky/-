@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthUser } from '@/lib/auth';
-import { CARD_DRAW_PRICE } from '@/lib/cards/constants';
+import { getCardRulesConfig } from '@/lib/cards/rules';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { addCardDraws } from '@/lib/kv';
 import { addPoints, deductPoints } from '@/lib/points';
@@ -20,7 +20,8 @@ export async function POST() {
   }
 
   const userId = user.id;
-  const amount = CARD_DRAW_PRICE;
+  const rules = await getCardRulesConfig();
+  const amount = rules.cardDrawPrice;
   const drawAward = 1;
 
   try {

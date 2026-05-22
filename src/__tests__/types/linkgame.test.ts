@@ -102,6 +102,6 @@ describe('LinkGame Types', () => {
   });
 
   it('should include linkgame in GameType', () => {
-    expectTypeOf<GameType>().toMatchTypeOf<'pachinko' | 'memory' | 'slot' | 'match3' | 'linkgame' | 'tower' | 'farm'>();
+    expectTypeOf<GameType>().toMatchTypeOf<'memory' | 'match3' | 'linkgame' | 'farm' | 'whack_mole' | 'roguelite' | 'minesweeper'>();
   });
 });

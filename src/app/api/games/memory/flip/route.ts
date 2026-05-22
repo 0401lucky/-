@@ -8,7 +8,7 @@ export const POST = withUserRateLimit(
     try {
       const body = await request.json();
       const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : '';
-      const cardIndex = Number(body?.cardIndex);
+      const cardIndex = body?.cardIndex;
 
       if (!sessionId || !Number.isInteger(cardIndex)) {
         return NextResponse.json({ success: false, message: '参数错误' }, { status: 400 });

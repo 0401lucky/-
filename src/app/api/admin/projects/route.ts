@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
-import { createProject, getAllProjects, addCodesToProject, type Project } from "@/lib/kv";
+import { createProject, getAllProjects, type Project } from "@/lib/kv";
 import { generateId } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -40,12 +40,9 @@ export const POST = withAdmin(async (request: NextRequest, user) => {
     const description = formData.get("description") as string || "";
     const maxClaimsParsed = parseInt(formData.get("maxClaims") as string, 10);
     const maxClaims = Number.isFinite(maxClaimsParsed) ? maxClaimsParsed : 100;
-    const codesFile = formData.get("codes") as File | null;
     const newUserOnly = formData.get("newUserOnly") === "true";
-    const rewardTypeRaw = (formData.get("rewardType") as string | null) || "code";
-    const rewardType = rewardTypeRaw === "direct" ? "direct" : "code";
-    const directDollarsRaw = formData.get("directDollars") as string | null;
-    const directDollars = directDollarsRaw ? parseFloat(directDollarsRaw) : undefined;
+    const directPointsRaw = formData.get("directPoints") as string | null;
+    const directPoints = directPointsRaw ? Number.parseInt(directPointsRaw, 10) : NaN;
 
     if (!name) {
       return NextResponse.json(
@@ -59,23 +56,11 @@ export const POST = withAdmin(async (request: NextRequest, user) => {
         { status: 400 }
       );
     }
-    if (rewardType === "direct") {
-      if (!Number.isFinite(directDollars) || (directDollars as number) <= 0) {
-        return NextResponse.json(
-          { success: false, message: "直充金额必须是正数" },
-          { status: 400 }
-        );
-      }
-    }
-
-    // 解析兑换码文件
-    let codes: string[] = [];
-    if (rewardType === "code" && codesFile) {
-      const text = await codesFile.text();
-      codes = text
-        .split(/[\r\n]+/)
-        .map(line => line.trim())
-        .filter(line => line.length > 0);
+    if (!Number.isSafeInteger(directPoints) || directPoints <= 0) {
+      return NextResponse.json(
+        { success: false, message: "直充积分必须是正整数" },
+        { status: 400 }
+      );
     }
 
     const projectId = generateId();
@@ -85,26 +70,22 @@ export const POST = withAdmin(async (request: NextRequest, user) => {
       description,
       maxClaims,
       claimedCount: 0,
-      codesCount: rewardType === "direct" ? maxClaims : 0,  // 直充项目用作名额总量；兑换码项目由 addCodesToProject 统一处理计数
+      codesCount: maxClaims,
       status: "active",
       createdAt: Date.now(),
       createdBy: user.username,
-      rewardType,
-      directDollars: rewardType === "direct" ? (directDollars as number) : undefined,
+      rewardType: "direct",
+      directPoints,
       newUserOnly,
     };
 
     await createProject(project);
 
-    if (rewardType === "code" && codes.length > 0) {
-      await addCodesToProject(projectId, codes);
-    }
-
     return NextResponse.json({
       success: true,
       message: "项目创建成功",
       project,
-      codesAdded: codes.length,
+      codesAdded: 0,
     });
   } catch (error) {
     console.error("Create project error:", error);

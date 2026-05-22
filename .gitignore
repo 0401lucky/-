@@ -24,13 +24,22 @@ yarn-debug.log*
 yarn-error.log*
 
 # local tooling / agent artifacts
+/.claude/
 /.playwright-mcp/
+/.tools/
 /.sisyphus/
 /.sisyphusevidence/
 /devserver.log
 /devserver.err
+/*.log
+/*.err.log
+/lint_output.txt
 /nul
 /tailwindcss-*.log
+/地址.txt
+
+# local visual verification screenshots
+/*.png
 
 # duplicate local assets (kept in public/images)
 /images/

@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
-import { GET as userListGET } from '@/app/api/feedback/route';
+import { GET as userListGET, POST as userCreatePOST } from '@/app/api/feedback/route';
 import { GET as userDetailGET } from '@/app/api/feedback/[id]/route';
+import { POST as userMessagePOST } from '@/app/api/feedback/[id]/messages/route';
 import { GET as adminListGET } from '@/app/api/admin/feedback/route';
 import { PATCH as adminDetailPATCH } from '@/app/api/admin/feedback/[id]/route';
 import { POST as adminReplyPOST } from '@/app/api/admin/feedback/[id]/messages/route';
 import { getAuthUser, isAdmin } from '@/lib/auth';
 import {
   addFeedbackMessage,
+  createFeedback,
   getFeedbackById,
+  getFeedbackLikeState,
   getFeedbackMessages,
   updateFeedbackStatus,
 } from '@/lib/feedback';
@@ -23,10 +26,27 @@ vi.mock('@/lib/feedback', () => ({
   createFeedback: vi.fn(),
   getFeedbackById: vi.fn(),
   getFeedbackMessages: vi.fn(),
+  getFeedbackLikeState: vi.fn(),
+  toggleFeedbackLike: vi.fn(),
   addFeedbackMessage: vi.fn(),
   updateFeedbackStatus: vi.fn(),
   listUserFeedback: vi.fn(),
   listAllFeedback: vi.fn(),
+}));
+
+vi.mock('@/lib/feedback-author', () => ({
+  attachFeedbackAuthorProfile: vi.fn(async (item: { username: string }) => ({
+    ...item,
+    displayName: item.username,
+    avatarUrl: null,
+  })),
+  attachFeedbackAuthorProfiles: vi.fn(async (items) =>
+    items.map((item: { username: string }) => ({
+      ...item,
+      displayName: item.username,
+      avatarUrl: null,
+    }))
+  ),
 }));
 
 vi.mock('@/lib/rate-limit', () => ({
@@ -43,9 +63,11 @@ describe('Feedback API Permission & Flow', () => {
   const mockGetAuthUser = vi.mocked(getAuthUser);
   const mockIsAdmin = vi.mocked(isAdmin);
   const mockGetFeedbackById = vi.mocked(getFeedbackById);
+  const mockGetFeedbackLikeState = vi.mocked(getFeedbackLikeState);
   const mockGetFeedbackMessages = vi.mocked(getFeedbackMessages);
   const mockUpdateFeedbackStatus = vi.mocked(updateFeedbackStatus);
   const mockAddFeedbackMessage = vi.mocked(addFeedbackMessage);
+  const mockCreateFeedback = vi.mocked(createFeedback);
   const mockCheckRateLimit = vi.mocked(checkRateLimit);
 
   beforeEach(() => {
@@ -54,6 +76,10 @@ describe('Feedback API Permission & Flow', () => {
       success: true,
       remaining: 10,
       resetAt: 0,
+    });
+    mockGetFeedbackLikeState.mockResolvedValue({
+      likeCount: 0,
+      likedByMe: false,
     });
   });
 
@@ -69,7 +95,7 @@ describe('Feedback API Permission & Flow', () => {
     expect(data.success).toBe(false);
   });
 
-  it('用户不能查看其他人的反馈详情', async () => {
+  it('用户不能查看其他人的匿名反馈详情', async () => {
     mockGetAuthUser.mockResolvedValue({
       id: 1,
       username: 'user-a',
@@ -80,6 +106,7 @@ describe('Feedback API Permission & Flow', () => {
       id: 'fb-1',
       userId: 2,
       username: 'user-b',
+      anonymous: true,
       status: 'open',
       createdAt: 1,
       updatedAt: 1,
@@ -199,6 +226,154 @@ describe('Feedback API Permission & Flow', () => {
       '我们已收到，会尽快处理',
       'admin',
       []
+    );
+  });
+
+  it('用户可以提交带图片的新反馈', async () => {
+    mockGetAuthUser.mockResolvedValue({
+      id: 10,
+      username: 'normal-user',
+      displayName: 'Normal User',
+      isAdmin: false,
+    });
+    mockCreateFeedback.mockResolvedValue({
+      feedback: {
+        id: 'fb-image',
+        userId: 10,
+        username: 'normal-user',
+        status: 'open',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      message: {
+        id: 'msg-image',
+        feedbackId: 'fb-image',
+        role: 'user',
+        content: '截图反馈',
+        images: [
+          {
+            dataUrl: '/api/feedback/images/feedback/20260520/user/img.png',
+            mimeType: 'image/png',
+            size: 5,
+            name: 'bug.png',
+          },
+        ],
+        createdAt: 1,
+        createdBy: 'normal-user',
+      },
+    });
+
+    const response = await userCreatePOST(
+      new NextRequest('http://localhost/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: '截图反馈',
+          images: [
+            {
+              dataUrl: 'data:image/png;base64,aGVsbG8=',
+              name: 'bug.png',
+            },
+          ],
+        }),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(data.success).toBe(true);
+    expect(mockCreateFeedback).toHaveBeenCalledWith(
+      10,
+      'normal-user',
+      '截图反馈',
+      undefined,
+      [
+        {
+          dataUrl: 'data:image/png;base64,aGVsbG8=',
+          mimeType: 'image/png',
+          size: 5,
+          name: 'bug.png',
+        },
+      ],
+      false
+    );
+  });
+
+  it('用户可以发布带图片的反馈评论', async () => {
+    mockGetAuthUser.mockResolvedValue({
+      id: 10,
+      username: 'normal-user',
+      displayName: 'Normal User',
+      isAdmin: false,
+    });
+    mockGetFeedbackById.mockResolvedValue({
+      id: 'fb-4',
+      userId: 10,
+      username: 'normal-user',
+      status: 'open',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    mockAddFeedbackMessage.mockResolvedValue({
+      feedback: {
+        id: 'fb-4',
+        userId: 10,
+        username: 'normal-user',
+        status: 'open',
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      message: {
+        id: 'msg-2',
+        feedbackId: 'fb-4',
+        role: 'user',
+        content: '补充截图',
+        images: [
+          {
+            dataUrl: '/api/feedback/images/feedback/20260520/user/img.png',
+            mimeType: 'image/png',
+            size: 5,
+            name: 'reply.png',
+          },
+        ],
+        createdAt: 2,
+        createdBy: 'normal-user',
+      },
+    });
+
+    const response = await userMessagePOST(
+      new NextRequest('http://localhost/api/feedback/fb-4/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: '补充截图',
+          images: [
+            {
+              dataUrl: 'data:image/png;base64,aGVsbG8=',
+              name: 'reply.png',
+            },
+          ],
+        }),
+      }),
+      { params: Promise.resolve({ id: 'fb-4' }) }
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(data.success).toBe(true);
+    expect(mockAddFeedbackMessage).toHaveBeenCalledWith(
+      'fb-4',
+      'user',
+      '补充截图',
+      'normal-user',
+      [
+        {
+          dataUrl: 'data:image/png;base64,aGVsbG8=',
+          mimeType: 'image/png',
+          size: 5,
+          name: 'reply.png',
+        },
+      ]
     );
   });
 });

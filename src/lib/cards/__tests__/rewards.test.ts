@@ -173,11 +173,10 @@ describe("Rewards System", () => {
       const statuses = await getAlbumRewardStatuses(userData, testAlbumId);
 
       const commonStatus = statuses.find((s: { type: string }) => s.type === "common");
-      expect(commonStatus?.points).toBe(COLLECTION_REWARDS.common);
+      expect(commonStatus?.points).toBe(ALBUMS[0].tierRewards?.common);
 
       const fullSetStatus = statuses.find((s: { type: string }) => s.type === "full_set");
-      // full_set uses dynamic reward from config (default 10000 for animal-s1)
-      expect(fullSetStatus?.points).toBe(10000);
+      expect(fullSetStatus?.points).toBe(ALBUMS[0].reward);
     });
 
     it("should show eligible when tier is complete", async () => {

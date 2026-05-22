@@ -35,6 +35,8 @@ export const MATCH3_DEFAULT_CONFIG: Match3Config = {
   types: 6,
 };
 
+export const MATCH3_WIN_SCORE = 1200;
+
 const EMPTY = -1;
 const BASE_TILE_SCORE = 4;
 

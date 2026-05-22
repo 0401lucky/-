@@ -26,6 +26,7 @@ export const { POST } = createStartRoute(
       sessionId: result.session!.id,
       difficulty: result.session!.difficulty,
       ...buildMemorySessionView(result.session!),
+      startedAt: result.session!.startedAt,
       expiresAt: result.session!.expiresAt,
       config: DIFFICULTY_CONFIG[difficulty],
     };

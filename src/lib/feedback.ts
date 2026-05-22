@@ -12,6 +12,7 @@ export interface FeedbackItem {
   userId: number;
   username: string;
   contact?: string;
+  anonymous?: boolean;
   status: FeedbackStatus;
   createdAt: number;
   updatedAt: number;
@@ -47,6 +48,7 @@ const FEEDBACK_LIST_KEY = 'feedback:list';
 const FEEDBACK_ITEM_KEY = (feedbackId: string) => `feedback:item:${feedbackId}`;
 const FEEDBACK_USER_LIST_KEY = (userId: number) => `feedback:user:${userId}`;
 const FEEDBACK_MESSAGES_KEY = (feedbackId: string) => `feedback:messages:${feedbackId}`;
+const FEEDBACK_LIKES_KEY = (feedbackId: string) => `feedback:likes:${feedbackId}`;
 
 const FEEDBACK_INDEX_ALL_KEY = 'feedback:index:all';
 const FEEDBACK_INDEX_ARCHIVED_KEY = 'feedback:index:archived';
@@ -209,7 +211,8 @@ export async function createFeedback(
   username: string,
   content: string,
   contact?: string,
-  images: FeedbackImage[] = []
+  images: FeedbackImage[] = [],
+  anonymous: boolean = false
 ): Promise<{ feedback: FeedbackItem; message: FeedbackMessage }> {
   const now = Date.now();
   const feedbackId = nanoid(12);
@@ -228,6 +231,7 @@ export async function createFeedback(
     userId,
     username,
     contact,
+    anonymous,
     status: 'open',
     createdAt: now,
     updatedAt: now,
@@ -262,6 +266,47 @@ export async function getFeedbackMessages(feedbackId: string, limit: number = 20
   const safeLimit = Math.max(1, Math.min(500, Math.floor(limit)));
   const messages = await kv.lrange<FeedbackMessage>(FEEDBACK_MESSAGES_KEY(feedbackId), 0, safeLimit - 1);
   return messages ?? [];
+}
+
+export async function getFeedbackLikeState(
+  feedbackId: string,
+  userId: number
+): Promise<{ likeCount: number; likedByMe: boolean }> {
+  const [likeCount, likedByMe] = await Promise.all([
+    kv.scard(FEEDBACK_LIKES_KEY(feedbackId)),
+    kv.sismember(FEEDBACK_LIKES_KEY(feedbackId), String(userId)),
+  ]);
+
+  return {
+    likeCount,
+    likedByMe: likedByMe === 1,
+  };
+}
+
+export async function toggleFeedbackLike(
+  feedbackId: string,
+  userId: number
+): Promise<{ likeCount: number; likedByMe: boolean }> {
+  const feedback = await getFeedbackById(feedbackId);
+  if (!feedback) {
+    throw new Error('反馈不存在');
+  }
+
+  if (isArchivedFeedback(feedback)) {
+    throw new Error('该反馈已归档，不能继续点赞');
+  }
+
+  const key = FEEDBACK_LIKES_KEY(feedbackId);
+  const member = String(userId);
+  const liked = await kv.sismember(key, member);
+
+  if (liked === 1) {
+    await kv.srem(key, member);
+  } else {
+    await kv.sadd(key, member);
+  }
+
+  return getFeedbackLikeState(feedbackId, userId);
 }
 
 export async function addFeedbackMessage(

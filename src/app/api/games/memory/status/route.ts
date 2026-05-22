@@ -34,9 +34,6 @@ export async function GET() {
       cooldownRemaining = await getCooldownRemaining(user.id);
     }
 
-    // 检查是否已达积分上限
-    const pointsLimitReached = dailyStats && dailyStats.pointsEarned >= dailyPointsLimit;
-
     return NextResponse.json({
       success: true,
       data: {
@@ -48,11 +45,12 @@ export async function GET() {
         inCooldown,
         cooldownRemaining,
         dailyLimit: dailyPointsLimit,
-        pointsLimitReached,
+        pointsLimitReached: false,
         activeSession: activeSession ? {
           sessionId: activeSession.id,
           difficulty: activeSession.difficulty,
           ...buildMemorySessionView(activeSession),
+          startedAt: activeSession.startedAt,
           expiresAt: activeSession.expiresAt,
           config: DIFFICULTY_CONFIG[activeSession.difficulty as MemoryDifficulty],
         } : null,

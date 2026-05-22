@@ -25,7 +25,7 @@ const nextConfig: NextConfig = {
   // 实验性优化
   experimental: {
     // 按需导入图标库，减少 bundle 体积
-    optimizePackageImports: ["lucide-react", "react-icons"],
+    optimizePackageImports: ["lucide-react"],
   },
 
   // 统一下发静态安全响应头，避免页面流量经过 middleware
@@ -38,8 +38,6 @@ const nextConfig: NextConfig = {
     ];
   },
 
-  // 优化服务端外部包
-  serverExternalPackages: ["matter-js"],
 };
 
 export default nextConfig;

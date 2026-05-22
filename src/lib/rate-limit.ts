@@ -128,6 +128,9 @@ export const RATE_LIMITS = {
   // 抽奖相关
   'lottery:spin': { windowSeconds: 60, maxRequests: 10, prefix: 'ratelimit:lottery:spin' },
   'lottery:records': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:lottery:records' },
+  'lottery:number-bomb:state': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:lottery:number-bomb:state' },
+  'lottery:number-bomb:bet': { windowSeconds: 60, maxRequests: 10, prefix: 'ratelimit:lottery:number-bomb:bet' },
+  'lottery:number-bomb:cancel': { windowSeconds: 60, maxRequests: 10, prefix: 'ratelimit:lottery:number-bomb:cancel' },
 
   // 卡牌相关
   'cards:purchase': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:cards:purchase' },
@@ -135,18 +138,20 @@ export const RATE_LIMITS = {
 
   // 游戏相关
   'game:start': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:game:start' },
+  'game:action': { windowSeconds: 60, maxRequests: 240, prefix: 'ratelimit:game:action' },
   'game:submit': { windowSeconds: 60, maxRequests: 60, prefix: 'ratelimit:game:submit' },
-  'slot:spin': { windowSeconds: 60, maxRequests: 120, prefix: 'ratelimit:slot:spin' },
   'farm:action': { windowSeconds: 60, maxRequests: 240, prefix: 'ratelimit:farm:action' },
 
   // 兑换码相关
   'project:claim': { windowSeconds: 60, maxRequests: 10, prefix: 'ratelimit:project:claim' },
+  'projects:my-claims': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:projects:my-claims' },
 
   // 商店相关
   'store:exchange': { windowSeconds: 60, maxRequests: 20, prefix: 'ratelimit:store:exchange' },
 
   // 签到
   'checkin': { windowSeconds: 60, maxRequests: 5, prefix: 'ratelimit:checkin' },
+  'checkin:makeup': { windowSeconds: 60, maxRequests: 10, prefix: 'ratelimit:checkin:makeup' },
 
   // 排行榜
   'rankings:games': { windowSeconds: 60, maxRequests: 40, prefix: 'ratelimit:rankings:games' },
@@ -158,6 +163,7 @@ export const RATE_LIMITS = {
   // 通知与公告
   'notifications:list': { windowSeconds: 60, maxRequests: 60, prefix: 'ratelimit:notifications:list' },
   'notifications:read': { windowSeconds: 60, maxRequests: 60, prefix: 'ratelimit:notifications:read' },
+  'notifications:delete': { windowSeconds: 60, maxRequests: 60, prefix: 'ratelimit:notifications:delete' },
   'announcements:list': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:announcements:list' },
   'announcements:admin': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:announcements:admin' },
 

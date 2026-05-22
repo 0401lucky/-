@@ -40,7 +40,7 @@ export async function POST(
       );
     }
 
-    if (feedback.userId !== user.id) {
+    if (feedback.anonymous && feedback.userId !== user.id) {
       return NextResponse.json(
         { success: false, message: "无权限操作该反馈" },
         { status: 403 }

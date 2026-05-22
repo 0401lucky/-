@@ -8,10 +8,16 @@ export type PointsSource =
   | 'checkin_bonus'  // 签到奖励
   | 'exchange'       // 商店兑换（扣除）
   | 'exchange_refund' // 商店兑换回滚（退还）
+  | 'exchange_withdraw' // 积分提现至账户额度（扣除）
+  | 'exchange_topup'    // 账户额度兑换为积分（增加）
   | 'admin_adjust'   // 管理员调整
   | 'card_collection' // 卡牌集齐奖励
   | 'ranking_reward' // 排行榜周期奖励
   | 'reward_claim'   // 奖励领取
+  | 'lottery_win'    // 幸运抽奖结果
+  | 'number_bomb_bet' // 数字炸弹下注
+  | 'number_bomb_refund' // 数字炸弹退还
+  | 'number_bomb_reward' // 数字炸弹奖励
 
 /** 积分流水记录 */
 export interface PointsLog {
@@ -26,8 +32,20 @@ export interface PointsLog {
 /** 商店商品类型 */
 export type StoreItemType =
   | 'lottery_spin'    // 抽奖次数
-  | 'quota_direct'    // 直充额度
+  | 'quota_direct'    // 直充额度（已下架，仅保留兼容历史数据）
   | 'card_draw'       // 卡牌抽奖次数
+  | 'makeup_card'     // 签到补签卡
+
+/** 商店分类 */
+export interface StoreCategory {
+  id: string
+  name: string
+  color: string
+  sortOrder: number
+  enabled: boolean
+  createdAt: number
+  updatedAt: number
+}
 
 /** 商店商品 */
 export interface StoreItem {
@@ -35,6 +53,7 @@ export interface StoreItem {
   name: string
   description: string
   type: StoreItemType
+  categoryId?: string     // 后台配置的积分商品分类
   pointsCost: number    // 积分价格
   value: number         // 获得数值（次数或美元）
   dailyLimit?: number   // 每日限购（可选）

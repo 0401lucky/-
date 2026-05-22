@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { POST as purchasePOST } from '@/app/api/cards/purchase/route';
 import { getAuthUser } from '@/lib/auth';
 import { CARD_DRAW_PRICE } from '@/lib/cards/constants';
+import { getCardRulesConfig } from '@/lib/cards/rules';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { addCardDraws } from '@/lib/kv';
 import { addPoints, deductPoints } from '@/lib/points';
@@ -24,6 +25,10 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimitResponse: vi.fn(),
 }));
 
+vi.mock('@/lib/cards/rules', () => ({
+  getCardRulesConfig: vi.fn(),
+}));
+
 describe('Card Draw Store Integration', () => {
   const userId = 123;
   const user = { id: userId, username: 'testuser', displayName: 'Test User', isAdmin: false };
@@ -32,6 +37,7 @@ describe('Card Draw Store Integration', () => {
   const mockDeductPoints = vi.mocked(deductPoints);
   const mockAddCardDraws = vi.mocked(addCardDraws);
   const mockAddPoints = vi.mocked(addPoints);
+  const mockGetCardRulesConfig = vi.mocked(getCardRulesConfig);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -40,6 +46,37 @@ describe('Card Draw Store Integration', () => {
     mockDeductPoints.mockResolvedValue({ success: true, balance: 100 });
     mockAddCardDraws.mockResolvedValue({ success: true, drawsAvailable: 11 });
     mockAddPoints.mockResolvedValue({ success: true, balance: CARD_DRAW_PRICE + 100 });
+    mockGetCardRulesConfig.mockResolvedValue({
+      rarityProbabilities: {
+        legendary_rare: 0.5,
+        legendary: 2,
+        epic: 8,
+        rare: 24.5,
+        common: 65,
+      },
+      pityThresholds: {
+        rare: 10,
+        epic: 50,
+        legendary: 100,
+        legendary_rare: 200,
+      },
+      cardDrawPrice: CARD_DRAW_PRICE,
+      fragmentValues: {
+        legendary_rare: 100,
+        legendary: 50,
+        epic: 20,
+        rare: 8,
+        common: 3,
+      },
+      exchangePrices: {
+        legendary_rare: 500,
+        legendary: 250,
+        epic: 100,
+        rare: 40,
+        common: 15,
+      },
+      updatedAt: 0,
+    });
   });
 
   it('should successfully purchase a card draw with sufficient points', async () => {

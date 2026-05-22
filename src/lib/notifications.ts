@@ -253,6 +253,51 @@ export async function getUserNotificationUnreadCount(userId: number): Promise<nu
   return Number(unread) || 0;
 }
 
+export async function deleteUserNotifications(
+  userId: number,
+  ids: string[]
+): Promise<{ deleted: number; unreadCount: number }> {
+  const uniqueIds = Array.from(
+    new Set(
+      (ids ?? [])
+        .filter((id): id is string => typeof id === 'string')
+        .map((id) => id.trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (uniqueIds.length === 0) {
+    const unread = await kv.scard(USER_NOTIFICATION_UNREAD_KEY(userId));
+    return { deleted: 0, unreadCount: Number(unread) || 0 };
+  }
+
+  const results = await Promise.all(
+    uniqueIds.map(async (notificationId) => {
+      // 仅允许删除属于当前用户、且已读的通知
+      const inIndex = await kv.zscore(USER_NOTIFICATION_INDEX_KEY(userId), notificationId);
+      if (inIndex === null) return false;
+
+      const stillUnread = await kv.sismember(
+        USER_NOTIFICATION_UNREAD_KEY(userId),
+        notificationId
+      );
+      if (Number(stillUnread) === 1) return false;
+
+      await Promise.all([
+        kv.del(NOTIFICATION_ITEM_KEY(notificationId)),
+        kv.zrem(USER_NOTIFICATION_INDEX_KEY(userId), notificationId),
+      ]);
+
+      return true;
+    })
+  );
+
+  const deleted = results.filter(Boolean).length;
+  const unread = await kv.scard(USER_NOTIFICATION_UNREAD_KEY(userId));
+
+  return { deleted, unreadCount: Number(unread) || 0 };
+}
+
 export async function getNotificationById(id: string): Promise<NotificationItem | null> {
   return kv.get<NotificationItem>(NOTIFICATION_ITEM_KEY(id));
 }

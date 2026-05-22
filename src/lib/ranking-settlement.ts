@@ -6,6 +6,7 @@ import {
   getAllGamesLeaderboardByRange,
   type OverallLeaderboardEntry,
 } from './rankings';
+import { grantPeakFirstAchievement } from './user-achievements';
 import {
   acquireNativeLock,
   getNativeSettlementRecord,
@@ -324,6 +325,20 @@ async function settleSingleReward(
       rewardPoints,
       range.label,
     );
+
+    if (period === 'monthly' && winner.rank === 1) {
+      try {
+        await grantPeakFirstAchievement({
+          userId: winner.userId,
+          periodStart: range.startAt,
+          periodEnd: range.endAt,
+          periodLabel: range.label,
+          grantedAt: processedAt,
+        });
+      } catch (achievementError) {
+        console.error('Grant peak first achievement error:', achievementError);
+      }
+    }
 
     return {
       ...base,

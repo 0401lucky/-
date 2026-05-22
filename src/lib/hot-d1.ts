@@ -1,7 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { kv } from "@/lib/d1-kv";
 import { getTodayDateString } from "./time";
-import type { UserCards } from "./cards/draw";
+import { createDefaultUserCards, type UserCards } from "./cards/draw";
 import type { DailyGameStats, GameType } from "./types/game";
 import type { PointsLog, PointsSource } from "./types/store";
 
@@ -52,13 +52,13 @@ const SYSTEM_CONFIG_KEY = "system:config";
 const DEFAULT_READY_CACHE_TTL_MS = 60_000;
 
 const GAME_RECORD_TABLE_TYPES = new Set<GameType>([
-  "slot",
   "linkgame",
   "match3",
   "memory",
-  "pachinko",
-  "tower",
   "farm",
+  "whack_mole",
+  "roguelite",
+  "minesweeper",
 ]);
 
 let hotDb: D1DatabaseLike | null = null;
@@ -255,15 +255,6 @@ async function ensureHotSchema(): Promise<void> {
           last_game_at INTEGER NOT NULL DEFAULT 0,
           PRIMARY KEY (user_id, stat_date)
         )`,
-        `CREATE TABLE IF NOT EXISTS native_slot_daily_rankings (
-          stat_date TEXT NOT NULL,
-          user_id INTEGER NOT NULL,
-          score INTEGER NOT NULL DEFAULT 0,
-          updated_at INTEGER NOT NULL,
-          PRIMARY KEY (stat_date, user_id)
-        )`,
-        `CREATE INDEX IF NOT EXISTS idx_native_slot_daily_rankings_score
-          ON native_slot_daily_rankings(stat_date, score DESC, user_id)`,
         `CREATE TABLE IF NOT EXISTS native_ranking_snapshots (
           cache_key TEXT PRIMARY KEY,
           ranking_type TEXT NOT NULL,
@@ -747,7 +738,7 @@ export async function grantNativeCheckinRewards(
   userId: number,
   dateStr: string,
   extraSpins: number,
-  cards: UserCards,
+  cards: UserCards | null,
   quotaAwarded: number = 0,
 ): Promise<{ granted: boolean; extraSpins: number; cards: UserCards }> {
   await ensureHotSchema();
@@ -767,16 +758,19 @@ export async function grantNativeCheckinRewards(
     return {
       granted: false,
       extraSpins: await getNativeExtraSpinCount(userId),
-      cards: (await getNativeUserCards(userId)) ?? cards,
+      cards: (await getNativeUserCards(userId)) ?? cards ?? createDefaultUserCards(),
     };
   }
 
   const nextSpins = await incrementNativeExtraSpinCount(userId, extraSpins);
-  await setNativeUserCards(userId, cards);
+  const nextCards = cards ?? (await getNativeUserCards(userId)) ?? createDefaultUserCards();
+  if (cards) {
+    await setNativeUserCards(userId, cards);
+  }
   return {
     granted: true,
     extraSpins: nextSpins,
-    cards,
+    cards: nextCards,
   };
 }
 
@@ -953,7 +947,7 @@ export async function getNativeDailyGamePoints(
 export async function addNativeGamePointsWithLimit(
   userId: number,
   score: number,
-  dailyLimit: number,
+  _dailyLimit: number,
   source: PointsSource,
   description: string,
   logId: string,
@@ -968,7 +962,8 @@ export async function addNativeGamePointsWithLimit(
   await ensureHotSchema();
   const statDate = getTodayDateString();
   const dailyEarned = await getNativeDailyGamePoints(userId, statDate);
-  const grant = Math.max(0, Math.min(score, Math.max(0, dailyLimit - dailyEarned)));
+  // v2: 取消每日上限，全额发放
+  const grant = Math.max(0, score);
   const currentBalance = await getNativeUserPoints(userId);
   const nextBalance = currentBalance + grant;
   const nextDailyEarned = dailyEarned + grant;
@@ -1004,7 +999,7 @@ export async function addNativeGamePointsWithLimit(
     pointsEarned: grant,
     balance: nextBalance,
     dailyEarned: nextDailyEarned,
-    limitReached: nextDailyEarned >= dailyLimit,
+    limitReached: false,
   };
 }
 
@@ -1235,10 +1230,6 @@ export async function completeNativeGameSettlement<T extends {
   scoreDelta: number,
   cumulativePointsEarned: number,
   cooldownSeconds: number,
-  options: {
-    slotRankingDate?: string;
-    slotRankingDelta?: number;
-  } = {},
 ): Promise<void> {
   await ensureHotSchema();
   const db = getHotDb();
@@ -1268,23 +1259,6 @@ export async function completeNativeGameSettlement<T extends {
          expires_at = excluded.expires_at`,
     ).bind(record.userId, record.gameType, cooldownExpiresAt),
   ];
-
-  if (record.gameType === "slot" && options.slotRankingDate && (options.slotRankingDelta ?? 0) > 0) {
-    statements.push(
-      db.prepare(
-        `INSERT INTO native_slot_daily_rankings (stat_date, user_id, score, updated_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(stat_date, user_id) DO UPDATE SET
-           score = native_slot_daily_rankings.score + excluded.score,
-           updated_at = excluded.updated_at`,
-      ).bind(
-        options.slotRankingDate,
-        record.userId,
-        options.slotRankingDelta ?? 0,
-        record.createdAt,
-      ),
-    );
-  }
 
   await db.batch(statements);
 }
@@ -1495,7 +1469,7 @@ export async function getNativePointsLeaderboardRows(
       `SELECT
          l.user_id AS userId,
          COALESCE(u.username, '#' || l.user_id) AS username,
-         SUM(l.amount) AS points
+         SUM(CASE WHEN l.amount > 0 THEN l.amount ELSE 0 END) AS points
        FROM native_user_point_logs l
        LEFT JOIN native_users u ON u.user_id = l.user_id
        WHERE l.created_at >= ?
@@ -1505,6 +1479,31 @@ export async function getNativePointsLeaderboardRows(
     ).bind(startAt, limit);
 
   const rows = await query.all<{ userId: number; username: string; points: number }>();
+  return rows.results;
+}
+
+export async function getNativePositivePointsLeaderboardRowsByRange(
+  startAt: number,
+  endAt: number,
+  limit: number,
+): Promise<Array<{ userId: number; username: string; points: number }>> {
+  await ensureHotSchema();
+  const rows = await getHotDb()
+    .prepare(
+      `SELECT
+         l.user_id AS userId,
+         COALESCE(u.username, '#' || l.user_id) AS username,
+         SUM(l.amount) AS points
+       FROM native_user_point_logs l
+       LEFT JOIN native_users u ON u.user_id = l.user_id
+       WHERE l.created_at >= ? AND l.created_at < ? AND l.amount > 0
+       GROUP BY l.user_id
+       ORDER BY points DESC, l.user_id ASC
+       LIMIT ?`,
+    )
+    .bind(startAt, endAt, limit)
+    .all<{ userId: number; username: string; points: number }>();
+
   return rows.results;
 }
 
@@ -1535,29 +1534,6 @@ export async function getNativeCheckinEntries(
        WHERE c.checkin_date >= ?
        ORDER BY c.user_id ASC, c.checkin_date DESC`,
     ).bind(startDate).all<{ userId: number; username: string; checkinDate: string }>();
-
-  return rows.results;
-}
-
-export async function listNativeSlotDailyRanking(
-  date: string,
-  limit: number,
-): Promise<Array<{ userId: number; username: string; score: number }>> {
-  await ensureHotSchema();
-  const rows = await getHotDb()
-    .prepare(
-      `SELECT
-         r.user_id AS userId,
-         COALESCE(u.username, '#' || r.user_id) AS username,
-         r.score AS score
-       FROM native_slot_daily_rankings r
-       LEFT JOIN native_users u ON u.user_id = r.user_id
-       WHERE r.stat_date = ?
-       ORDER BY r.score DESC, r.user_id ASC
-       LIMIT ?`,
-    )
-    .bind(date, limit)
-    .all<{ userId: number; username: string; score: number }>();
 
   return rows.results;
 }
@@ -1773,7 +1749,6 @@ export async function resetNativeHotStoreData(): Promise<void> {
     "native_game_cooldowns",
     "native_game_records",
     "native_game_daily_stats",
-    "native_slot_daily_rankings",
     "native_ranking_snapshots",
     "native_ranking_settlements",
     "native_ranking_reward_claims",
@@ -1933,46 +1908,6 @@ export async function replaceNativeDailyGamePoints(
       entry.earnedPoints,
       nowMs(),
     )
-  ));
-}
-
-export async function replaceNativeSlotDailyScores(
-  date: string,
-  entries: Array<{ userId: number; score: number }>,
-): Promise<void> {
-  await ensureHotSchema();
-  const db = getHotDb();
-  await db.prepare("DELETE FROM native_slot_daily_rankings WHERE stat_date = ?").bind(date).run();
-  if (entries.length === 0) {
-    return;
-  }
-
-  await db.batch(entries.map((entry) =>
-    db.prepare(
-      `INSERT INTO native_slot_daily_rankings (stat_date, user_id, score, updated_at)
-       VALUES (?, ?, ?, ?)`,
-    ).bind(date, entry.userId, entry.score, nowMs())
-  ));
-}
-
-export async function upsertNativeSlotDailyScores(
-  date: string,
-  entries: Array<{ userId: number; score: number }>,
-): Promise<void> {
-  await ensureHotSchema();
-  if (entries.length === 0) {
-    return;
-  }
-
-  const db = getHotDb();
-  await db.batch(entries.map((entry) =>
-    db.prepare(
-      `INSERT INTO native_slot_daily_rankings (stat_date, user_id, score, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(stat_date, user_id) DO UPDATE SET
-         score = excluded.score,
-         updated_at = excluded.updated_at`,
-    ).bind(date, entry.userId, entry.score, nowMs())
   ));
 }
 

@@ -21,10 +21,10 @@ export const POST = withAdmin(
         message?: unknown;
       } | null;
 
-      const type = body?.type === 'points' || body?.type === 'quota' ? body.type : null;
+      const type = body?.type === 'points' ? body.type : null;
       if (!type) {
         return NextResponse.json(
-          { success: false, message: '奖励类型无效，必须为 points 或 quota' },
+          { success: false, message: '奖励类型无效，当前仅支持 points' },
           { status: 400 }
         );
       }

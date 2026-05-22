@@ -36,18 +36,15 @@ export const Card = memo(function Card({
   };
 
   return (
-    <div
-      className={`
-        relative aspect-square cursor-pointer perspective-1000
-        ${disabled || isFlipped || isMatched ? 'pointer-events-none' : ''}
-      `}
+    <button
+      type="button"
+      className="memory-card"
       onClick={handleClick}
+      disabled={disabled || isFlipped || isMatched}
+      aria-label={`${index + 1} 号记忆卡${isMatched ? '，已配对' : isFlipped || isRevealed ? `，${iconData.emoji}` : '，未翻开'}`}
     >
       <div
-        className={`
-          relative w-full h-full transition-transform duration-300 transform-style-3d
-          ${isFlipped || isMatched || isRevealed ? 'rotate-y-180' : ''}
-        `}
+        className="memory-card-inner"
         style={{
           transformStyle: 'preserve-3d',
           transform: isFlipped || isMatched || isRevealed ? 'rotateY(180deg)' : 'rotateY(0deg)',
@@ -55,44 +52,28 @@ export const Card = memo(function Card({
       >
         {/* 卡片背面 */}
         <div
-          className={`
-            absolute inset-0 rounded-xl backface-hidden
-            bg-gradient-to-br from-indigo-500 to-purple-600
-            flex items-center justify-center
-            shadow-lg border-2 border-white/20
-            hover:shadow-xl hover:scale-105 transition-all duration-200
-            ${!disabled && !isFlipped && !isMatched && !isLoading ? 'hover:from-indigo-400 hover:to-purple-500' : ''}
-          `}
+          className="memory-card-back"
           style={{ backfaceVisibility: 'hidden' }}
         >
-          <span className="text-3xl sm:text-4xl">🃏</span>
+          <span>🃏</span>
         </div>
 
         {/* 卡片正面 */}
         <div
-          className={`
-            absolute inset-0 rounded-xl backface-hidden
-            bg-white flex items-center justify-center
-            shadow-lg border-2
-            ${isMatched ? 'border-green-400 bg-green-50' : 'border-slate-200'}
-          `}
+          className={`memory-card-front ${isMatched ? 'is-matched' : ''}`}
           style={{
             backfaceVisibility: 'hidden',
             transform: 'rotateY(180deg)',
           }}
         >
-          <span 
-            className={`
-              text-4xl sm:text-5xl
-            ${isMatched ? 'scale-110' : ''}
-            transition-transform duration-300
-          `}
-          style={{ opacity: isLoading ? 0.65 : 1 }}
-        >
-          {iconData.emoji}
-        </span>
+          <span
+            className={isMatched ? 'is-pop' : ''}
+            style={{ opacity: isLoading ? 0.65 : 1 }}
+          >
+            {iconData.emoji}
+          </span>
         </div>
       </div>
-    </div>
+    </button>
   );
 });

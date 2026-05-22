@@ -1,5 +1,4 @@
 import { kv } from '@/lib/d1-kv';
-import { maskUserId, maskUsername } from './logging';
 import { getRuntimeEnvValue, sanitizeRuntimeEnvValue } from './runtime-env';
 
 let _newApiUrl: string | null = null;
@@ -100,8 +99,6 @@ export async function loginToNewApi(username: string, password: string): Promise
     const baseUrl = getNewApiUrl();
     const safeUsername = sanitizeEnvValue(username);
     const safePassword = sanitizeEnvValue(password);
-    console.log("Attempting login to new-api", { endpoint: `${baseUrl}/api/user/login`, username: maskUsername(safeUsername) });
-    
     const response = await fetch(`${baseUrl}/api/user/login`, {
       method: "POST",
       headers: {
@@ -123,24 +120,7 @@ export async function loginToNewApi(username: string, password: string): Promise
     
     const data = await response.json();
 
-    console.log("Login response:", { 
-      success: data.success, 
-      message: data.message,
-      hasCookies: !!cookies, 
-      cookiesLength: cookies.length,
-      hasData: !!data.data,
-      userId: maskUserId(data.data?.id)
-    });
-
     if (data.success) {
-      // 如果没有 cookies，但登录成功了，尝试构造 session cookie
-      // new-api 的 session 通常存储在 data.data 或响应中
-      if (!cookies && data.data) {
-        // 某些 new-api 版本会在登录成功后返回 session token
-        // 这里我们可以尝试用用户信息来验证后续请求
-        console.log("No cookies received, attempting alternative session method");
-      }
-      
       return {
         success: true,
         message: "登录成功",
@@ -313,8 +293,6 @@ async function getAdminSessionSlowPath(): Promise<{ cookies: string; adminUserId
     return null;
   }
 
-  console.log('Attempting admin login to new-api', { username: maskUsername(username) });
-  
   const result = await loginToNewApi(username, password);
   
   if (!result.success) {
@@ -450,8 +428,6 @@ export async function creditQuotaToUser(
       });
       const userData = await userResponse.json();
 
-      console.log('Get user response:', { success: userData.success, userId: maskUserId(userId), hasData: !!userData.data });
-
       if (!userData.success || !userData.data) {
         return { success: false, message: '获取用户信息失败' };
       }
@@ -485,13 +461,6 @@ export async function creditQuotaToUser(
         const verifyResult = await verifyQuotaUpdate(userId, newQuota, adminCookies, adminUserId);
         return verifyResult;
       }
-
-      console.log('Manage user quota response:', {
-        success: updateData.success,
-        message: updateData.message,
-        quotaToAdd,
-        newQuota,
-      });
 
       if (updateData.success) {
         return {
@@ -532,6 +501,175 @@ export async function creditQuotaToUser(
         }
       } catch (verifyError) {
         console.error('Verification also failed:', verifyError);
+      }
+      return {
+        success: false,
+        message: '服务连接失败，结果不确定，请检查余额',
+        uncertain: true,
+      };
+    }
+  } finally {
+    await releaseUserQuotaLock(lock);
+  }
+}
+
+/**
+ * 验证 quota 减少是否成功（与 verifyQuotaUpdate 对应的减额度版本）
+ * - 期望余额 expectedQuota = 减扣后剩余值
+ * - 当前余额 <= expectedQuota 视为减扣成功（用户可能在期间又消耗了一些 quota）
+ */
+async function verifyQuotaDeducted(
+  userId: number,
+  expectedQuota: number | undefined,
+  adminCookies: string,
+  adminUserId: number,
+): Promise<{ success: boolean; message: string; newQuota?: number; uncertain?: boolean }> {
+  try {
+    const baseUrl = getNewApiUrl();
+    const verifyResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
+      headers: {
+        Cookie: adminCookies,
+        'New-Api-User': String(adminUserId),
+      },
+    });
+    const verifyData = await verifyResponse.json();
+
+    if (verifyData.success && verifyData.data) {
+      const currentQuota = verifyData.data.quota || 0;
+
+      if (expectedQuota !== undefined && currentQuota <= expectedQuota) {
+        return { success: true, message: '扣减已确认成功', newQuota: currentQuota };
+      }
+      if (expectedQuota === undefined) {
+        return {
+          success: false,
+          message: '无法确认扣减结果',
+          newQuota: currentQuota,
+          uncertain: true,
+        };
+      }
+      return { success: false, message: '扣减确认失败' };
+    }
+    return { success: false, message: '验证用户信息失败', uncertain: true };
+  } catch (error) {
+    console.error('Verify quota deduct error:', error);
+    return { success: false, message: '验证失败', uncertain: true };
+  }
+}
+
+/**
+ * 从指定用户的 new-api 账户扣减额度（积分充值流程使用）
+ * - dollars 为扣减金额（美元，会转换为 new-api 的 quota）
+ * - 内置用户级锁，避免与其它增/减额度并发交错
+ * - 返回与 creditQuotaToUser 一致的结构，便于上游统一处理 uncertain 场景
+ */
+export async function deductQuotaFromUser(
+  userId: number,
+  dollars: number,
+): Promise<CreditQuotaResult> {
+  const baseUrl = getNewApiUrl();
+  const loginResult = await getAdminSessionWithUser();
+  if (!loginResult) {
+    return { success: false, message: '管理员会话获取失败' };
+  }
+
+  const { cookies: adminCookies, adminUserId } = loginResult;
+  const lock = await acquireUserQuotaLock(userId);
+  if (!lock) {
+    return { success: false, message: '系统繁忙，扣减请求排队中，请稍后重试' };
+  }
+
+  let expectedQuota: number | undefined;
+
+  try {
+    try {
+      const userResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
+        headers: {
+          Cookie: adminCookies,
+          'New-Api-User': String(adminUserId),
+        },
+      });
+      const userData = await userResponse.json();
+
+      if (!userData.success || !userData.data) {
+        return { success: false, message: '获取用户信息失败' };
+      }
+
+      const user = userData.data;
+      const currentQuota = user.quota || 0;
+      const quotaToDeduct = Math.floor(dollars * 500000);
+
+      if (quotaToDeduct <= 0) {
+        return { success: false, message: '扣减金额无效' };
+      }
+      if (currentQuota < quotaToDeduct) {
+        return { success: false, message: '账户额度不足，无法兑换为积分' };
+      }
+
+      const newQuota = currentQuota - quotaToDeduct;
+      expectedQuota = newQuota;
+
+      const updateResponse = await fetch(`${baseUrl}/api/user/manage`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: adminCookies,
+          'New-Api-User': String(adminUserId),
+        },
+        body: JSON.stringify({
+          id: userId,
+          action: 'add_quota',
+          mode: 'sub',
+          value: quotaToDeduct,
+        }),
+      });
+
+      let updateData;
+      try {
+        updateData = await updateResponse.json();
+      } catch (parseError) {
+        console.warn('Deduct response parse failed, verifying with GET:', parseError);
+        return await verifyQuotaDeducted(userId, newQuota, adminCookies, adminUserId);
+      }
+
+      if (updateData.success) {
+        return {
+          success: true,
+          message: `成功扣减 $${dollars}`,
+          newQuota,
+        };
+      }
+
+      const verifyResult = await verifyQuotaDeducted(userId, newQuota, adminCookies, adminUserId);
+      if (verifyResult.success || verifyResult.uncertain) {
+        return verifyResult;
+      }
+      return {
+        success: false,
+        message: updateData.message || '额度扣减失败',
+      };
+    } catch (error) {
+      console.error('Deduct quota error:', error);
+      try {
+        const nextLoginResult = await getAdminSessionWithUser();
+        if (nextLoginResult) {
+          const verifyResult = await verifyQuotaDeducted(
+            userId,
+            expectedQuota,
+            nextLoginResult.cookies,
+            nextLoginResult.adminUserId,
+          );
+          if (verifyResult.uncertain) {
+            return {
+              success: false,
+              message: '扣减结果不确定，请稍后检查余额',
+              uncertain: true,
+            };
+          }
+          return verifyResult;
+        }
+      } catch (verifyError) {
+        console.error('Deduct verification also failed:', verifyError);
       }
       return {
         success: false,

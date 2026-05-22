@@ -2,17 +2,24 @@
 
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, ChevronLeft, RotateCcw, Star, Timer, Trophy, X, Zap } from 'lucide-react';
+import { ArrowLeft, BookOpen, Clock3, Gem, Grid3x3, HeartCrack, Layers, Loader2, MousePointer2, RotateCcw, Sparkles, Trophy, X, Zap } from 'lucide-react';
 import { Board } from './components/Board';
 import { useGameSession } from './hooks/useGameSession';
-import { createInitialBoard, simulateMatch3Game } from '@/lib/match3-engine';
+import { createInitialBoard, MATCH3_WIN_SCORE, simulateMatch3Game } from '@/lib/match3-engine';
 import type { Match3Move } from '@/lib/match3-engine';
 import { cn } from '@/lib/utils';
 
-type Phase = 'ready' | 'playing' | 'result';
+type Phase = 'ready' | 'playing' | 'outcome' | 'result';
+
+interface Match3Outcome {
+  score: number;
+  moves: number;
+  cascades: number;
+  tilesCleared: number;
+}
 
 function movesStorageKey(sessionId: string) {
   return `match3:moves:${sessionId}`;
@@ -25,6 +32,13 @@ function areAdjacent(a: number, b: number, cols: number): boolean {
   const diff = Math.abs(a - b);
   if (diff === 1) return ar === br;
   return diff === cols;
+}
+
+function formatClock(seconds: number): string {
+  const safe = Math.max(0, Math.ceil(seconds));
+  const min = Math.floor(safe / 60);
+  const sec = safe % 60;
+  return `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
 
 function loadMoves(sessionId: string): Match3Move[] {
@@ -68,7 +82,7 @@ function clearMoves(sessionId: string) {
 function useAnimatedNumber(value: number, duration: number = 500) {
   const [displayValue, setDisplayValue] = useState(value);
   const displayValueRef = useRef(displayValue);
-  
+
   useEffect(() => {
     displayValueRef.current = displayValue;
   }, [displayValue]);
@@ -77,16 +91,16 @@ function useAnimatedNumber(value: number, duration: number = 500) {
     let startTimestamp: number | null = null;
     const startValue = displayValueRef.current;
     const endValue = value;
-    
+
     if (startValue === endValue) return;
 
     const step = (timestamp: number) => {
       if (!startTimestamp) startTimestamp = timestamp;
       const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-      
+
       // Ease out cubic
       const ease = 1 - Math.pow(1 - progress, 3);
-      
+
       const current = Math.floor(startValue + (endValue - startValue) * ease);
       displayValueRef.current = current;
       setDisplayValue(current);
@@ -131,7 +145,8 @@ export default function Match3Page() {
     cascades: number;
     tilesCleared: number;
   } | null>(null);
-  const [showLimitWarning, setShowLimitWarning] = useState(false);
+  const [pendingOutcome, setPendingOutcome] = useState<Match3Outcome | null>(null);
+  const [showRules, setShowRules] = useState(false);
 
   // Animation states
   const displayScore = useAnimatedNumber(score);
@@ -170,7 +185,7 @@ export default function Match3Page() {
 
   // [Perf] 动态导入彩带特效，减少首屏 JS 体积
   useEffect(() => {
-    if (phase === 'result' && result) {
+    if (phase === 'result' && result && result.score >= MATCH3_WIN_SCORE) {
       import('canvas-confetti').then(({ default: confetti }) => {
         const duration = 3000;
         const end = Date.now() + duration;
@@ -209,6 +224,7 @@ export default function Match3Page() {
         ok: true as const,
         score: sim.score,
         board: sim.finalBoard,
+        stats: sim.stats,
       };
     },
     [session]
@@ -263,55 +279,36 @@ export default function Match3Page() {
       setTimeLeftMs(left);
       if (left <= 0 && !finishedRef.current) {
         finishedRef.current = true;
-        const sessionId = session.sessionId;
-        submitResult(movesRef.current).then((res) => {
-          if (res) {
-            clearMoves(sessionId);
-            setResult({
-              score: res.record.score,
-              pointsEarned: res.pointsEarned,
-              moves: res.record.moves,
-              cascades: res.record.cascades,
-              tilesCleared: res.record.tilesCleared,
-            });
-            setPhase('result');
-          } else {
-            finishedRef.current = false;
-          }
-        });
+        const sim = simulateMatch3Game(session.seed, session.config, movesRef.current, { maxMoves: 250 });
+        if (sim.ok) {
+          setPendingOutcome({
+            score: sim.score,
+            moves: sim.stats.movesApplied,
+            cascades: sim.stats.cascades,
+            tilesCleared: sim.stats.tilesCleared,
+          });
+          setSelectedIndex(null);
+          setPhase('outcome');
+        } else {
+          setError(sim.message);
+          finishedRef.current = false;
+        }
       }
     };
 
     tick();
     const id = window.setInterval(tick, 200);
     return () => window.clearInterval(id);
-  }, [phase, session, submitResult]);
+  }, [phase, session, setError]);
 
   const timeLeftSec = useMemo(() => Math.ceil(timeLeftMs / 1000), [timeLeftMs]);
 
   const handleStart = useCallback(async () => {
-    if (status?.pointsLimitReached) {
-      setShowLimitWarning(true);
-      return;
-    }
-
     setError(null);
     const ok = await startGame();
     if (ok) {
       setResult(null);
-      setMoves([]);
-      setScore(0);
-      prevScoreRef.current = 0;
-      setBoard([]);
-    }
-  }, [startGame, setError, status?.pointsLimitReached]);
-
-  const handleConfirmStart = useCallback(async () => {
-    setShowLimitWarning(false);
-    setError(null);
-    const ok = await startGame();
-    if (ok) {
-      setResult(null);
+      setPendingOutcome(null);
       setMoves([]);
       setScore(0);
       prevScoreRef.current = 0;
@@ -346,7 +343,7 @@ export default function Match3Page() {
       if (!next.ok) {
         setSelectedIndex(null);
         setError(next.message || '无效交换');
-        
+
         // Shake animation feedback?
         const boardEl = document.getElementById('game-board');
         if(boardEl) {
@@ -380,11 +377,33 @@ export default function Match3Page() {
     setScore(0);
     setSelectedIndex(null);
     setResult(null);
+    setPendingOutcome(null);
     setPhase('ready');
   }, [cancelGame, session]);
 
+  const handleSettleOutcome = useCallback(async () => {
+    if (!session || !pendingOutcome) return;
+    const sessionId = session.sessionId;
+    const res = await submitResult(movesRef.current);
+    if (res) {
+      clearMoves(sessionId);
+      setResult({
+        score: res.record.score,
+        pointsEarned: res.pointsEarned,
+        moves: res.record.moves,
+        cascades: res.record.cascades,
+        tilesCleared: res.record.tilesCleared,
+      });
+      setPendingOutcome(null);
+      setPhase('result');
+    } else {
+      finishedRef.current = false;
+    }
+  }, [pendingOutcome, session, submitResult]);
+
   const handlePlayAgain = useCallback(async () => {
     setResult(null);
+    setPendingOutcome(null);
     setSelectedIndex(null);
     setMoves([]);
     setBoard([]);
@@ -398,376 +417,751 @@ export default function Match3Page() {
     router.push('/games');
   }, [router]);
 
+  const phaseLabel = phase === 'playing' ? '消除指令' : phase === 'outcome' || phase === 'result' ? '本局结算' : '出发准备';
+  const tacticalLine = useMemo(() => {
+    if (phase === 'playing') return '交换相邻宝石，只有产生消除的交换才会记录。';
+    if (phase === 'outcome') return '时间到，请确认本局结果并结算成绩。';
+    if (phase === 'result') return '本局已完成结算，可以返回游戏中心或等待冷却后继续。';
+    if (status?.inCooldown) return `冷却剩余 ${status.cooldownRemaining} 秒。`;
+    return '限时 60 秒，连锁越多，得分越高。';
+  }, [phase, status?.cooldownRemaining, status?.inCooldown]);
+  const commandMessage = phase === 'playing'
+    ? '凑三消除，冲高连锁'
+    : phase === 'outcome'
+      ? (pendingOutcome?.score ?? 0) >= MATCH3_WIN_SCORE ? '挑战成功' : '挑战失败'
+      : phase === 'result'
+      ? `本局获得 ${result?.pointsEarned ?? 0} 积分`
+      : '准备开始消消乐';
+
   return (
-    <div className="min-h-screen bg-slate-50 relative overflow-hidden">
-      {/* Animated Background */}
-      <div className="absolute inset-0 z-0 opacity-30 pointer-events-none">
-        <div className="absolute top-0 -left-10 w-96 h-96 bg-purple-300 rounded-full mix-blend-multiply filter blur-3xl animate-blob"></div>
-        <div className="absolute top-0 -right-10 w-96 h-96 bg-yellow-300 rounded-full mix-blend-multiply filter blur-3xl animate-blob animation-delay-2000"></div>
-        <div className="absolute -bottom-8 left-20 w-96 h-96 bg-pink-300 rounded-full mix-blend-multiply filter blur-3xl animate-blob animation-delay-4000"></div>
+    <div className="match3-page">
+      <div className="match3-mesh-bg" aria-hidden />
+      <div className="match3-stars" aria-hidden>
+        <span style={{ top: '10%', left: '6%', fontSize: 13 }}>✦</span>
+        <span style={{ top: '21%', left: '91%', fontSize: 11, animationDelay: '1.2s' }}>✦</span>
+        <span style={{ top: '48%', left: '4%', fontSize: 16, animationDelay: '2.2s' }}>✧</span>
+        <span style={{ top: '72%', left: '94%', fontSize: 12, animationDelay: '0.6s' }}>✧</span>
       </div>
-      
+
+      <header className="match3-topbar">
+        <Link href="/games" className="match3-exit-btn">
+          <span className="arrow">
+            <ArrowLeft size={14} strokeWidth={2.4} />
+          </span>
+          EXIT
+        </Link>
+      </header>
+
+      <main className="match3-container">
+        {error && (
+          <div className="match3-error-banner" role="alert">
+            {error}
+          </div>
+        )}
+
+        <section className="match3-command-bar" aria-live="polite">
+          <div className="min-w-0">
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-black text-emerald-700">
+              <Grid3x3 className="h-4 w-4" />
+              <span>{phaseLabel}</span>
+              <span className="text-slate-300">/</span>
+              <span className="text-slate-500">{tacticalLine}</span>
+            </div>
+            <p className="truncate text-lg font-black text-slate-950 sm:text-xl">{commandMessage}</p>
+          </div>
+          <div className="match3-command-actions">
+            <button
+              onClick={() => setShowRules(true)}
+              type="button"
+              className="match3-action-btn"
+            >
+              <BookOpen className="h-4 w-4" />
+              规则
+            </button>
+            {session && phase === 'playing' && (
+              <button
+                onClick={handleCancel}
+                disabled={loading}
+                className="match3-action-btn danger"
+                type="button"
+              >
+                <X className="h-4 w-4" />
+                放弃
+              </button>
+            )}
+          </div>
+        </section>
+
       <style jsx global>{`
-        @keyframes blob {
-          0% { transform: translate(0px, 0px) scale(1); }
-          33% { transform: translate(30px, -50px) scale(1.1); }
-          66% { transform: translate(-20px, 20px) scale(0.9); }
-          100% { transform: translate(0px, 0px) scale(1); }
+        .match3-page {
+          min-height: 100vh;
+          background: #eefcf8;
+          color: #0f172a;
+          position: relative;
+          overflow-x: hidden;
         }
-        .animate-blob {
-          animation: blob 7s infinite;
+        .match3-page a {
+          color: inherit;
+          text-decoration: none;
         }
-        .animation-delay-2000 {
-          animation-delay: 2s;
+        .match3-page .match3-mesh-bg {
+          position: fixed;
+          inset: 0;
+          z-index: 0;
+          pointer-events: none;
+          background:
+            radial-gradient(circle at 12% 18%, rgba(16, 185, 129, 0.2), transparent 34%),
+            radial-gradient(circle at 85% 10%, rgba(45, 212, 191, 0.18), transparent 32%),
+            linear-gradient(180deg, #f7fffc 0%, #e7fbf4 54%, #dcfce7 100%);
         }
-        .animation-delay-4000 {
-          animation-delay: 4s;
+        .match3-page .match3-stars {
+          position: fixed;
+          inset: 0;
+          z-index: 0;
+          pointer-events: none;
+          color: rgba(5, 150, 105, 0.22);
+        }
+        .match3-page .match3-stars span {
+          position: absolute;
+          animation: match3-twinkle 3s ease-in-out infinite;
+        }
+        @keyframes match3-twinkle {
+          0%, 100% { opacity: 0.35; transform: scale(0.9); }
+          50% { opacity: 0.8; transform: scale(1.08); }
+        }
+        .match3-page .match3-topbar {
+          position: sticky;
+          top: 0;
+          z-index: 40;
+          display: flex;
+          align-items: center;
+          justify-content: flex-start;
+          padding: 18px 48px;
+          padding-top: max(18px, env(safe-area-inset-top));
+          background: rgba(239, 253, 248, 0.68);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.74);
+          backdrop-filter: blur(22px) saturate(1.45);
+        }
+        .match3-page .match3-exit-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(255, 255, 255, 0.82);
+          background: rgba(255, 255, 255, 0.62);
+          padding: 8px 18px 8px 8px;
+          color: #065f46;
+          font-size: 13px;
+          font-weight: 900;
+          letter-spacing: 1.5px;
+          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.07);
+          backdrop-filter: blur(16px);
+        }
+        .match3-page .match3-exit-btn .arrow {
+          display: inline-flex;
+          height: 30px;
+          width: 30px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 50%;
+          flex-shrink: 0;
+          background: linear-gradient(135deg, #34d399, #047857);
+          color: white;
+          box-shadow: 0 8px 14px rgba(4, 120, 87, 0.28);
+        }
+        .match3-page .match3-container {
+          position: relative;
+          z-index: 1;
+          width: min(100% - 64px, 1180px);
+          margin: 0 auto;
+          padding: 12px 0 72px;
+        }
+        .match3-page .match3-error-banner {
+          margin-bottom: 14px;
+          border-radius: 18px;
+          border: 1px solid #fecdd3;
+          background: #fff1f2;
+          padding: 12px 14px;
+          color: #be123c;
+          font-size: 14px;
+          font-weight: 900;
+        }
+        .match3-page .match3-command-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          margin-bottom: 18px;
+          border: 1px solid rgba(255, 255, 255, 0.9);
+          border-radius: 28px;
+          background: rgba(255, 255, 255, 0.84);
+          padding: 18px 20px;
+          box-shadow: 0 18px 44px rgba(15, 23, 42, 0.08);
+          backdrop-filter: blur(18px);
+        }
+        .match3-page .match3-command-actions {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+        }
+        .match3-page .match3-action-btn {
+          display: inline-flex;
+          flex: none;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          border-radius: 999px;
+          border: 1px solid #a7f3d0;
+          background: #fff;
+          padding: 10px 14px;
+          color: #047857;
+          font-size: 13px;
+          font-weight: 900;
+          transition: background 0.2s ease, transform 0.2s ease;
+        }
+        .match3-page .match3-action-btn:hover:not(:disabled) {
+          background: #ecfdf5;
+          transform: translateY(-1px);
+        }
+        .match3-page .match3-action-btn.danger {
+          border-color: #fecdd3;
+          color: #be123c;
+        }
+        .match3-page .match3-action-btn.danger:hover:not(:disabled) {
+          background: #fff1f2;
+        }
+        .match3-page .match3-action-btn:disabled {
+          cursor: not-allowed;
+          opacity: 0.55;
+        }
+        .match3-page .glass-card {
+          border: 1px solid rgba(255, 255, 255, 0.86);
+          background: rgba(255, 255, 255, 0.88);
+          box-shadow: 0 20px 52px rgba(15, 23, 42, 0.08);
+          backdrop-filter: blur(18px);
+        }
+        .match3-page .stage-card {
+          border-radius: 30px;
+          padding: 24px;
+        }
+        .match3-page .section-title {
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          font-size: 22px;
+          font-weight: 1000;
+          color: #0f172a;
+        }
+        .match3-page .section-title .st-icon {
+          display: inline-flex;
+          height: 36px;
+          width: 36px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 14px;
+          background: #059669;
+          color: white;
+          box-shadow: 0 12px 26px rgba(5, 150, 105, 0.26);
+        }
+        .match3-page .match3-ready-card {
+          min-height: 430px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+          text-align: center;
+        }
+        .match3-page .match3-ready-icon {
+          display: inline-flex;
+          height: 82px;
+          width: 82px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 28px;
+          background: linear-gradient(135deg, #10b981, #047857);
+          color: #fff;
+          box-shadow: 0 20px 40px rgba(5, 150, 105, 0.28);
+        }
+        .match3-page .match3-start-btn {
+          display: inline-flex;
+          min-width: 210px;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          border-radius: 20px;
+          background: #059669;
+          padding: 14px 24px;
+          color: #fff;
+          font-size: 16px;
+          font-weight: 1000;
+          box-shadow: 0 18px 34px rgba(5, 150, 105, 0.24);
+          transition: transform 0.2s ease, background 0.2s ease;
+        }
+        .match3-page .match3-start-btn:hover:not(:disabled) {
+          background: #10b981;
+          transform: translateY(-2px);
+        }
+        .match3-page .match3-start-btn:disabled {
+          cursor: not-allowed;
+          opacity: 0.55;
+        }
+        .match3-page .match3-cooldown-note {
+          margin: 18px auto 0;
+          width: fit-content;
+          max-width: 100%;
+          border-radius: 18px;
+          border: 1px solid #fde68a;
+          background: #fffbeb;
+          padding: 10px 14px;
+          color: #b45309;
+          font-size: 13px;
+          font-weight: 900;
+        }
+        .match3-page .match3-battle-stat {
+          border-radius: 18px;
+          border: 1px solid #d1fae5;
+          background: #f8fafc;
+          padding: 12px;
+          text-align: left;
+        }
+        .match3-page .match3-battle-stat strong {
+          display: block;
+          margin-top: 5px;
+          color: #0f172a;
+          font-size: 20px;
+          font-weight: 1000;
+          font-variant-numeric: tabular-nums;
+        }
+        .match3-page .match3-battle-stat span {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          color: #64748b;
+          font-size: 12px;
+          font-weight: 900;
+        }
+        .match3-page .match3-game-layout {
+          display: grid;
+          grid-template-columns: minmax(0, 640px) minmax(260px, 340px);
+          gap: 18px;
+          justify-content: center;
+          align-items: start;
+        }
+        .match3-page .match3-board-card {
+          position: relative;
+          border-radius: 30px;
+          padding: 18px;
+        }
+        .match3-page .match3-side-panel {
+          position: sticky;
+          top: 96px;
+        }
+        .match3-page .match3-stat-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+          margin-top: 16px;
+        }
+        .match3-page .match3-restore-note {
+          margin-top: 14px;
+          border-radius: 18px;
+          border: 1px solid #fde68a;
+          background: #fffbeb;
+          padding: 11px 14px;
+          color: #b45309;
+          text-align: center;
+          font-size: 13px;
+          font-weight: 900;
         }
         @keyframes floatUp {
           0% { transform: translateY(0) scale(0.8); opacity: 0; }
           20% { transform: translateY(-10px) scale(1.1); opacity: 1; }
           100% { transform: translateY(-30px) scale(1); opacity: 0; }
         }
-        .animate-float-up {
-          animation: floatUp 1s ease-out forwards;
+        .match3-page .animate-float-up { animation: floatUp 1s ease-out forwards; }
+        .match3-page .match3-modal-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 60;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(15, 23, 42, 0.42);
+          padding: 18px;
+          backdrop-filter: blur(10px);
+        }
+        .match3-page .match3-result-modal,
+        .match3-page .match3-rules-modal {
+          width: min(520px, 100%);
+          max-height: min(86vh, 760px);
+          overflow: auto;
+          border-radius: 30px;
+          border: 1px solid rgba(255, 255, 255, 0.92);
+          background: rgba(255, 255, 255, 0.96);
+          padding: 24px;
+          box-shadow: 0 28px 90px rgba(15, 23, 42, 0.24);
+        }
+        .match3-page .match3-rules-modal {
+          width: min(720px, 100%);
+        }
+        .match3-page .match3-result-modal.won {
+          box-shadow: 0 28px 90px rgba(5, 150, 105, 0.24);
+        }
+        .match3-page .match3-result-modal.lost {
+          box-shadow: 0 28px 90px rgba(225, 29, 72, 0.2);
+        }
+        .match3-page .match3-result-icon {
+          display: flex;
+          height: 82px;
+          width: 82px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 28px;
+          color: #fff;
+        }
+        .match3-page .match3-result-icon.won {
+          background: linear-gradient(135deg, #34d399, #059669);
+          box-shadow: 0 18px 34px rgba(5, 150, 105, 0.25);
+        }
+        .match3-page .match3-result-icon.lost {
+          background: linear-gradient(135deg, #fb7185, #be123c);
+          box-shadow: 0 18px 34px rgba(190, 18, 60, 0.22);
+        }
+        .match3-page .match3-result-stats,
+        .match3-page .match3-rule-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+          margin-top: 20px;
+        }
+        .match3-page .match3-result-stat,
+        .match3-page .match3-rule-item {
+          border-radius: 18px;
+          border: 1px solid #e2e8f0;
+          background: #f8fafc;
+          padding: 12px;
+        }
+        .match3-page .match3-rule-item h3 {
+          margin: 8px 0 4px;
+          font-size: 15px;
+          font-weight: 1000;
+        }
+        .match3-page .match3-rule-item p {
+          margin: 0;
+          color: #64748b;
+          font-size: 13px;
+          font-weight: 700;
+          line-height: 1.7;
+        }
+        @media (max-width: 980px) {
+          .match3-page .match3-game-layout {
+            grid-template-columns: 1fr;
+          }
+          .match3-page .match3-side-panel {
+            position: static;
+          }
+        }
+        @media (max-width: 768px) {
+          .match3-page .match3-topbar {
+            padding: 14px 16px;
+            padding-top: max(14px, env(safe-area-inset-top));
+          }
+          .match3-page .match3-container {
+            width: calc(100% - 24px);
+            padding-bottom: 72px;
+          }
+          .match3-page .match3-command-bar {
+            align-items: stretch;
+            flex-direction: column;
+            border-radius: 24px;
+            padding: 14px;
+          }
+          .match3-page .match3-command-bar p {
+            white-space: normal;
+          }
+          .match3-page .match3-command-actions,
+          .match3-page .match3-command-actions button {
+            width: 100%;
+          }
+          .match3-page .stage-card,
+          .match3-page .match3-board-card {
+            border-radius: 24px;
+            padding: 14px;
+          }
+          .match3-page .match3-ready-card {
+            min-height: 420px;
+          }
+          .match3-page .match3-result-stats,
+          .match3-page .match3-rule-grid {
+            grid-template-columns: 1fr;
+          }
+          .match3-page .match3-stat-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+          .match3-page .match3-result-modal,
+          .match3-page .match3-rules-modal {
+            border-radius: 22px;
+            padding: 18px;
+          }
+        }
+        @media (max-width: 420px) {
+          .match3-page .match3-container {
+            width: calc(100% - 16px);
+          }
+          .match3-page .match3-stat-grid {
+            grid-template-columns: 1fr;
+          }
         }
       `}</style>
 
-      <div className="relative z-10 max-w-5xl mx-auto py-8 px-4">
-        {/* 顶部导航 */}
-        <div className="flex items-center justify-between mb-8">
-          <button
-            onClick={() => router.push('/games')}
-            className="group flex items-center text-slate-500 hover:text-slate-800 transition-colors font-medium bg-white/50 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-white/20 hover:bg-white/80"
-          >
-            <ChevronLeft className="w-5 h-5 mr-1 group-hover:-translate-x-0.5 transition-transform" />
-            游戏中心
-          </button>
-
-          <div className="flex items-center gap-4">
-            <Link
-              href="/store"
-              className="flex items-center gap-2 px-4 py-2 bg-white/80 backdrop-blur-md rounded-full shadow-sm border border-slate-200 text-slate-700 hover:border-yellow-400 hover:text-yellow-600 transition-all group hover:shadow-md"
+      {phase === 'ready' && (
+        <section className="glass-card stage-card match3-ready-card">
+          <div className="relative z-10 w-full max-w-2xl">
+            <div className="match3-ready-icon">
+              <Gem className="h-10 w-10" />
+            </div>
+            <h1 className="mt-6 text-3xl font-black text-slate-950">60 秒消除挑战</h1>
+            <p className="mx-auto mt-3 max-w-xl text-sm font-bold leading-7 text-slate-500">
+              点击一个宝石，再点击上下左右相邻宝石。只有能立刻产生三连消除的交换才会生效。
+            </p>
+            {status?.inCooldown && (
+              <div className="match3-cooldown-note">
+                冷却中，请等待 {status.cooldownRemaining} 秒
+              </div>
+            )}
+            <button
+              onClick={handleStart}
+              disabled={loading || status?.inCooldown}
+              className="match3-start-btn mt-8"
+              type="button"
             >
-              <Star className="w-4 h-4 text-yellow-500" />
-              <span className="font-bold tabular-nums">{status?.balance ?? '...'}</span>
-              <span className="text-slate-300 group-hover:text-yellow-400 transition-colors">→</span>
-            </Link>
+              {loading ? '处理中...' : status?.inCooldown ? '冷却中' : '开始游戏'}
+            </button>
           </div>
-        </div>
+        </section>
+      )}
 
-        {/* 标题 */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-slate-900 to-slate-700 tracking-tight mb-2 drop-shadow-sm">消消乐</h1>
-          <p className="text-slate-500 font-medium">交换相邻方块，凑 3 个及以上即可消除并得分。</p>
-        </div>
-
-        {/* 错误提示 */}
-        {error && (
-          <div className="mb-6 p-4 bg-red-50/90 backdrop-blur-sm border border-red-200 rounded-xl text-red-700 text-center animate-in slide-in-from-top-2">
-            {error}
-          </div>
-        )}
-
-        {/* 冷却提示 */}
-        {status?.inCooldown && phase === 'ready' && (
-          <div className="mb-6 p-4 bg-amber-50/90 backdrop-blur-sm border border-amber-200 rounded-xl text-amber-700 text-center animate-in slide-in-from-top-2">
-            冷却中，请等待 {status.cooldownRemaining} 秒后再开始游戏
-          </div>
-        )}
-
-        {/* 今日统计 */}
-        {status?.dailyStats && phase !== 'playing' && (
-          <div className="mb-8 bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-center gap-8">
-              <div className="text-center">
-                <div className="text-xs text-slate-400 uppercase tracking-wider mb-1 font-semibold">今日游戏</div>
-                <div className="text-2xl font-bold text-slate-900 tabular-nums">
-                  {status.dailyStats.gamesPlayed} <span className="text-sm font-normal text-slate-500">局</span>
-                </div>
+      {phase === 'playing' && session && (
+        <div className="match3-game-layout">
+          <section className="glass-card match3-board-card" id="game-board">
+            {lastScoreIncrease && (
+              <div
+                key={lastScoreIncrease.id}
+                className="absolute top-7 left-1/2 z-20 -translate-x-1/2 text-2xl font-black text-emerald-500 pointer-events-none animate-float-up"
+              >
+                +{lastScoreIncrease.val}
               </div>
-              <div className="w-px h-10 bg-slate-200" />
-              <div className="text-center">
-                <div className="text-xs text-slate-400 uppercase tracking-wider mb-1 font-semibold">今日积分</div>
-                <div className={`text-2xl font-bold ${status.pointsLimitReached ? 'text-orange-500' : 'text-green-600'}`}>
-                  <span className="tabular-nums">{status.dailyStats.pointsEarned}</span>{' '}
-                  <span className="text-slate-300">/</span>{' '}
-                  <span className="text-sm font-normal text-slate-500 tabular-nums">{status.dailyLimit ?? 2000}</span>
-                  {status.pointsLimitReached && (
-                    <span className="block text-xs text-orange-500 font-medium mt-1">已达上限</span>
-                  )}
-                </div>
+            )}
+            <Board
+              board={board}
+              config={session.config}
+              selectedIndex={selectedIndex}
+              onTileClick={handleTileClick}
+              disabled={loading || timeLeftMs <= 0}
+            />
+
+            {isRestored && (
+              <div className="match3-restore-note">
+                已恢复中断的游戏进度
               </div>
+            )}
+          </section>
+
+          <aside className="match3-side-panel">
+            <section className="glass-card stage-card">
+            <h2 className="section-title">
+              <span className="st-icon">
+                <Layers size={18} />
+              </span>
+              局内状态
+            </h2>
+            <div className="match3-stat-grid">
+              <Match3BattleStat icon={<Clock3 />} label="剩余时间" value={formatClock(timeLeftSec)} danger={timeLeftSec <= 10} />
+              <Match3BattleStat icon={<Sparkles />} label="得分" value={String(displayScore)} />
+              <Match3BattleStat icon={<MousePointer2 />} label="步数" value={String(moves.length)} />
+              <Match3BattleStat icon={<Zap />} label="奖励预估" value={`+${Math.floor(score / 10)}`} />
             </div>
-          </div>
-        )}
+          </section>
+          </aside>
+        </div>
+      )}
 
-        {/* 主内容 */}
-        {phase === 'ready' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="bg-white/90 backdrop-blur-md rounded-3xl p-8 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-lg transition-all">
-              <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
-                <Zap className="w-32 h-32 text-slate-900 rotate-12" />
+      {phase === 'outcome' && pendingOutcome && (
+        <Match3OutcomeModal
+          outcome={pendingOutcome}
+          loading={loading}
+          onSubmit={() => void handleSettleOutcome()}
+        />
+      )}
+
+      {phase === 'result' && result && (
+        <div className="match3-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="match3-result-title">
+          <div className={`match3-result-modal ${result.score >= MATCH3_WIN_SCORE ? 'won' : 'lost'}`}>
+            <div className="text-center relative">
+              <div className={`mx-auto match3-result-icon ${result.score >= MATCH3_WIN_SCORE ? 'won' : 'lost'}`}>
+                {result.score >= MATCH3_WIN_SCORE ? <Trophy className="h-9 w-9" /> : <HeartCrack className="h-9 w-9" />}
               </div>
-              <div className="relative z-10">
-                <div className="flex items-start justify-between gap-4 mb-6">
-                  <div>
-                    <h2 className="text-2xl font-extrabold text-slate-900">开始一局</h2>
-                    <p className="text-slate-500 mt-2">限时 60 秒，挑战你的反应速度。</p>
-                  </div>
-                  <div className="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow-lg shadow-slate-200">
-                    <Timer className="w-6 h-6" />
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleStart}
-                  disabled={loading || status?.inCooldown}
-                  className="w-full py-4 px-6 bg-slate-900 hover:bg-slate-800 text-white font-bold text-lg rounded-2xl transition-all shadow-lg shadow-slate-200 hover:shadow-xl hover:-translate-y-0.5 disabled:opacity-60 disabled:cursor-not-allowed active:scale-[0.98]"
-                >
-                  {loading ? '处理中...' : '开始游戏'}
-                </button>
-
-                <div className="mt-6 p-4 bg-slate-50 rounded-xl text-sm text-slate-500 leading-relaxed border border-slate-100">
-                  <span className="font-semibold text-slate-700">规则提示：</span>
-                  仅允许“能产生消除”的交换。
-                </div>
+              <div className="mt-5 text-xs font-black uppercase tracking-wider text-emerald-700/80">
+                结算完成
               </div>
-            </div>
-
-            <div className="bg-white/90 backdrop-blur-md rounded-3xl p-8 shadow-sm border border-slate-100 h-full">
-              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-6 flex items-center gap-2">
-                <Trophy className="w-4 h-4 text-yellow-500" />
-                最近记录
+              <h3 id="match3-result-title" className="mt-1 text-2xl font-black text-slate-950">
+                {result.score >= MATCH3_WIN_SCORE ? '成功结算完成' : '失败结算完成'}
               </h3>
-              {status?.records?.length ? (
-                <div className="space-y-4">
-                  {status.records.map((r, i) => (
-                    <div
-                      key={r.id}
-                      className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50/50 px-5 py-4 hover:bg-white hover:shadow-md transition-all"
-                      style={{ animationDelay: `${i * 100}ms` }}
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center border ${i === 0 ? 'bg-yellow-50 border-yellow-100 text-yellow-600' : 'bg-white border-slate-200 text-slate-400'}`}>
-                          {i === 0 ? <Trophy className="w-5 h-5" /> : <span className="font-bold text-sm">#{i + 1}</span>}
-                        </div>
-                        <div>
-                          <div className="text-base font-bold text-slate-900 tabular-nums">{r.score} 分</div>
-                          <div className="text-xs text-slate-500 tabular-nums">
-                            {r.moves} 步 · {r.cascades} 连锁
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-sm font-extrabold text-emerald-600 tabular-nums bg-emerald-50 px-3 py-1 rounded-lg">+{r.pointsEarned}</div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-8 text-slate-400">
-                  <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <Trophy className="w-8 h-8 text-slate-300" />
-                  </div>
-                  暂无记录
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+              <p className="mt-3 text-sm font-bold leading-6 text-slate-500">
+                本局得分 {result.score}，获得 {result.pointsEarned} 福利积分。
+              </p>
 
-        {phase === 'playing' && session && (
-          <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-8 items-start animate-in fade-in duration-300">
-            <div className="space-y-4" id="game-board">
-              <Board
-                board={board}
-                config={session.config}
-                selectedIndex={selectedIndex}
-                onTileClick={handleTileClick}
-                disabled={loading || timeLeftMs <= 0}
-              />
-
-              <div className="bg-white/90 backdrop-blur-md rounded-3xl p-5 shadow-sm border border-slate-100 relative overflow-hidden">
-                {/* Floating Score Animation */}
-                {lastScoreIncrease && (
-                   <div 
-                     key={lastScoreIncrease.id}
-                     className="absolute top-4 left-1/2 -translate-x-1/2 text-2xl font-black text-emerald-500 pointer-events-none animate-float-up z-20"
-                   >
-                     +{lastScoreIncrease.val}
-                   </div>
-                )}
-                
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <div className="text-xs text-slate-400 uppercase tracking-wider mb-1 font-bold">得分</div>
-                    <div className="text-4xl font-black text-slate-900 tabular-nums tracking-tighter">
-                      {displayScore}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xs text-slate-400 uppercase tracking-wider mb-1 font-bold">剩余时间</div>
-                    <div className={cn(
-                      "text-3xl font-black tabular-nums transition-colors duration-300",
-                      timeLeftSec <= 10 ? "text-red-500 animate-pulse" : "text-slate-900"
-                    )}>
-                      {Math.max(0, timeLeftSec)}s
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-6 flex items-center justify-between gap-3 text-sm border-t border-slate-100 pt-4">
-                  <div className="text-slate-500 tabular-nums font-medium">步数：{moves.length}</div>
-                  <button
-                    onClick={handleCancel}
-                    disabled={loading}
-                    className="inline-flex items-center gap-2 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed font-medium px-2 py-1 rounded-lg hover:bg-red-50"
-                    type="button"
-                  >
-                    <X className="w-4 h-4" />
-                    放弃
-                  </button>
-                </div>
-
-                {isRestored && (
-                  <div className="mt-4 p-3 rounded-2xl bg-amber-50 border border-amber-100 text-amber-700 text-xs font-medium text-center">
-                    已恢复中断的游戏进度
-                  </div>
-                )}
+              <div className="match3-result-stats">
+                <Match3ResultStat label="目标" value={`${MATCH3_WIN_SCORE} 分`} />
+                <Match3ResultStat label="得分" value={String(result.score)} />
+                <Match3ResultStat label="福利积分" value={`+${result.pointsEarned}`} />
+                <Match3ResultStat label="步数" value={String(result.moves)} />
               </div>
-            </div>
 
-            <div className="bg-white/90 backdrop-blur-md rounded-3xl p-6 shadow-sm border border-slate-100">
-              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-6">操作指南</h3>
-              <div className="space-y-6">
-                <div className="flex items-start gap-4 p-4 rounded-2xl bg-slate-50/50 hover:bg-slate-50 transition-colors">
-                  <div className="w-10 h-10 rounded-xl bg-indigo-500 text-white flex items-center justify-center shrink-0 shadow-lg shadow-indigo-200">
-                    <Timer className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="font-bold text-slate-900 text-sm mb-1">基础玩法</div>
-                    <div className="text-sm text-slate-600 leading-relaxed">点击一个方块，再点击相邻方块即可交换。凑齐 3 个或更多相同方块即可消除得分。</div>
-                  </div>
-                </div>
-                
-                <div className="flex items-start gap-4 p-4 rounded-2xl bg-slate-50/50 hover:bg-slate-50 transition-colors">
-                  <div className="w-10 h-10 rounded-xl bg-pink-500 text-white flex items-center justify-center shrink-0 shadow-lg shadow-pink-200">
-                    <RotateCcw className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="font-bold text-slate-900 text-sm mb-1">有效交换</div>
-                    <div className="text-sm text-slate-600 leading-relaxed">只有能产生消除的交换才会生效。无效交换会自动还原（且不消耗时间/步数）。</div>
-                  </div>
-                </div>
-
-                {status?.pointsLimitReached && (
-                  <div className="flex items-start gap-4 p-4 rounded-2xl bg-orange-50 border border-orange-100">
-                    <div className="w-10 h-10 rounded-xl bg-orange-500 text-white flex items-center justify-center shrink-0 shadow-lg shadow-orange-200">
-                      <AlertTriangle className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="font-bold text-orange-800 text-sm mb-1">积分上限提示</div>
-                      <div className="text-sm text-orange-700 leading-relaxed">今日积分已达上限。本局仍可游玩，但不会获得积分奖励。</div>
-                    </div>
-                  </div>
-                )}
+              <div className="mt-5 flex gap-3">
+                <button
+                  onClick={handleBackToGames}
+                  className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-600 transition-colors hover:bg-slate-50"
+                  type="button"
+                >
+                  返回游戏中心
+                </button>
+                <button
+                  onClick={handlePlayAgain}
+                  className="flex-1 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-emerald-200 transition-all hover:-translate-y-0.5 hover:bg-emerald-500"
+                  type="button"
+                >
+                  再来一局
+                </button>
               </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* 结算弹窗 */}
-        {phase === 'result' && result && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
-            <div className="bg-white rounded-[2rem] p-8 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-300 slide-in-from-bottom-8">
-              <div className="text-center relative">
-                {/* Decorative background for header */}
-                <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-40 h-40 bg-yellow-300 rounded-full blur-3xl opacity-20 pointer-events-none"></div>
-                
-                <div className="relative inline-flex mb-6">
-                  <div className="w-20 h-20 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-200 transform rotate-3">
-                    <Trophy className="w-10 h-10 text-white drop-shadow-md" />
-                  </div>
-                  <div className="absolute -top-2 -right-2 bg-white rounded-full p-1 shadow-sm">
-                    <Star className="w-6 h-6 text-yellow-500 fill-yellow-500 animate-spin-slow" />
-                  </div>
-                </div>
+      {showRules && <Match3RulesModal onClose={() => setShowRules(false)} />}
+      </main>
+    </div>
+  );
+}
 
-                <h3 className="text-2xl font-black text-slate-900 mb-1">游戏结束!</h3>
-                <p className="text-slate-500 text-sm mb-8 font-medium">表现不错！看看你的战绩</p>
+function Match3OutcomeModal({
+  outcome,
+  loading,
+  onSubmit,
+}: {
+  outcome: Match3Outcome;
+  loading: boolean;
+  onSubmit: () => void;
+}) {
+  const won = outcome.score >= MATCH3_WIN_SCORE;
+  const previewReward = Math.floor(outcome.score / 10);
 
-                <div className="grid grid-cols-2 gap-4 mb-8">
-                  <div className="col-span-2 bg-gradient-to-br from-slate-50 to-slate-100 rounded-2xl p-4 border border-slate-200">
-                    <div className="text-xs text-slate-400 uppercase tracking-wider mb-1 font-bold">最终得分</div>
-                    <div className="text-4xl font-black text-slate-900 tabular-nums tracking-tight">{result.score}</div>
-                  </div>
-                  
-                  <div className="bg-emerald-50 rounded-2xl p-4 border border-emerald-100 flex flex-col items-center justify-center">
-                    <div className="text-xs text-emerald-600 uppercase tracking-wider mb-1 font-bold">获得积分</div>
-                    <div className="text-xl font-black text-emerald-600 tabular-nums">+{result.pointsEarned}</div>
-                  </div>
-                  
-                  <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex flex-col items-center justify-center">
-                     <div className="text-xs text-slate-400 uppercase tracking-wider mb-1 font-bold">消除方块</div>
-                     <div className="text-xl font-black text-slate-700 tabular-nums">{result.tilesCleared}</div>
-                  </div>
-                </div>
-
-                <div className="flex gap-3">
-                  <button
-                    onClick={handleBackToGames}
-                    className="flex-1 py-3.5 px-4 border-2 border-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 hover:border-slate-200 transition-colors active:scale-[0.98]"
-                    type="button"
-                  >
-                    返回
-                  </button>
-                  <button
-                    onClick={handlePlayAgain}
-                    className="flex-1 py-3.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-2xl transition-all shadow-lg shadow-slate-200 hover:shadow-xl hover:-translate-y-0.5 active:scale-[0.98]"
-                    type="button"
-                  >
-                    再来一局
-                  </button>
-                </div>
-              </div>
-            </div>
+  return (
+    <div className="match3-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="match3-outcome-title">
+      <div className={`match3-result-modal ${won ? 'won' : 'lost'}`}>
+        <div className="text-center">
+          <div className={`mx-auto match3-result-icon ${won ? 'won' : 'lost'}`}>
+            {won ? <Trophy className="h-9 w-9" /> : <HeartCrack className="h-9 w-9" />}
           </div>
-        )}
-
-        {/* 积分上限警告 */}
-        {showLimitWarning && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in">
-            <div className="bg-white rounded-[2rem] p-8 max-w-sm w-full shadow-2xl animate-in zoom-in-95 slide-in-from-bottom-4">
-              <div className="text-center">
-                <div className="w-16 h-16 bg-orange-50 rounded-2xl flex items-center justify-center mx-auto mb-5 border border-orange-100 rotate-3">
-                  <AlertTriangle className="w-8 h-8 text-orange-500" />
-                </div>
-                <h3 className="text-xl font-extrabold text-slate-900 mb-2">积分已达上限</h3>
-                <p className="text-slate-500 mb-8 leading-relaxed text-sm">
-                  今日已获得 <span className="font-bold text-orange-600 tabular-nums">{status?.dailyStats?.pointsEarned ?? 0}</span> 积分，
-                  <br/>
-                  继续游戏将 <span className="text-orange-600 font-bold">无法获得</span> 新的积分。
-                </p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setShowLimitWarning(false)}
-                    className="flex-1 py-3 px-4 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-colors"
-                    type="button"
-                  >
-                    取消
-                  </button>
-                  <button
-                    onClick={handleConfirmStart}
-                    className="flex-1 py-3 px-4 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl transition-colors shadow-lg shadow-orange-200"
-                    type="button"
-                  >
-                    继续游戏
-                  </button>
-                </div>
-              </div>
-            </div>
+          <div className="mt-5 text-xs font-black uppercase tracking-wider text-emerald-700/80">
+            胜负结果
           </div>
-        )}
+          <h2 id="match3-outcome-title" className="mt-1 text-2xl font-black text-slate-950">
+            {won ? '挑战成功' : '挑战失败'}
+          </h2>
+          <p className="mt-3 text-sm font-bold leading-6 text-slate-500">
+            {won ? '得分已达到成功线，可以结算本局成绩。' : '本局未达到成功线，可以结算本局成绩。'}
+          </p>
+        </div>
+
+        <div className="match3-result-stats">
+          <Match3ResultStat label="目标" value={`${MATCH3_WIN_SCORE} 分`} />
+          <Match3ResultStat label="得分" value={String(outcome.score)} />
+          <Match3ResultStat label="步数" value={String(outcome.moves)} />
+          <Match3ResultStat label="预计奖励" value={`+${previewReward}`} />
+        </div>
+
+        <button
+          onClick={onSubmit}
+          disabled={loading}
+          className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-200 transition-all hover:-translate-y-0.5 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+          type="button"
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+          {loading ? '结算中' : '结算成绩'}
+        </button>
       </div>
     </div>
+  );
+}
+
+function Match3BattleStat({
+  icon,
+  label,
+  value,
+  danger = false,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  danger?: boolean;
+}) {
+  return (
+    <div className="match3-battle-stat">
+      <span className="[&_svg]:h-4 [&_svg]:w-4 [&_svg]:text-emerald-700">{icon}{label}</span>
+      <strong className={cn(danger ? 'text-rose-500 animate-pulse' : 'text-slate-950')}>{value}</strong>
+    </div>
+  );
+}
+
+function Match3ResultStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="match3-result-stat text-center">
+      <div className="text-xs font-black text-slate-400">{label}</div>
+      <div className="mt-1 text-lg font-black text-slate-950 tabular-nums">{value}</div>
+    </div>
+  );
+}
+
+function Match3RulesModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="match3-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="match3-rules-title">
+      <div className="match3-rules-modal">
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div>
+            <div className="mb-2 text-xs font-black text-emerald-600">RULE BOOK</div>
+            <h2 id="match3-rules-title" className="text-2xl font-black text-slate-950">
+              消消乐规则
+            </h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="flex h-10 w-10 flex-none items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition-colors hover:text-slate-900"
+            type="button"
+            aria-label="关闭规则"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="match3-rule-grid">
+          <Match3RuleItem icon={<MousePointer2 />} title="交换方式" text="先点一个宝石，再点上下左右相邻宝石。非相邻方块只会切换选中目标。" />
+          <Match3RuleItem icon={<Grid3x3 />} title="有效交换" text="交换后必须立刻形成 3 个或更多相同宝石连线，否则本次交换不记录。" />
+          <Match3RuleItem icon={<RotateCcw />} title="连锁得分" text="消除后会自动下落补位，新形成的连锁会继续加分，连锁越深每个宝石分值越高。" />
+          <Match3RuleItem icon={<Clock3 />} title="结算规则" text="对局限时 60 秒，时间结束后由服务端按真实操作序列复算得分并发放福利积分。" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Match3RuleItem({ icon, title, text }: { icon: ReactNode; title: string; text: string }) {
+  return (
+    <article className="match3-rule-item">
+      <div className="text-emerald-700 [&_svg]:h-5 [&_svg]:w-5">{icon}</div>
+      <h3>{title}</h3>
+      <p>{text}</p>
+    </article>
   );
 }

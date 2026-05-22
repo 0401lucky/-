@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, use, useCallback } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Upload, Loader2, AlertCircle, Users, Package, Clock, User as UserIcon, Check, X, Gift, FileText, Copy } from 'lucide-react';
+import { ArrowLeft, Loader2, AlertCircle, Users, Package, Clock, User as UserIcon, Check, X, Gift, FileText, Copy } from 'lucide-react';
 
 interface Project {
   id: string;
@@ -15,6 +15,7 @@ interface Project {
   createdAt: number;
   createdBy: string;
   rewardType?: 'code' | 'direct';
+  directPoints?: number;
   directDollars?: number;
 }
 
@@ -26,6 +27,7 @@ interface ClaimRecord {
   code: string;
   claimedAt: number;
   directCredit?: boolean;
+  creditedPoints?: number;
   creditedDollars?: number;
   creditStatus?: 'pending' | 'success' | 'uncertain';
   creditMessage?: string;
@@ -84,40 +86,6 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
       }
     };
   }, []);
-
-  const handleUploadCodes = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    setError(null);
-    setSuccess(null);
-
-    try {
-      const formData = new FormData();
-      formData.append('codes', file);
-
-      const res = await fetch(`/api/admin/projects/${id}`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data = await res.json();
-
-      if (data.success) {
-        setSuccess(`成功添加 ${data.codesAdded} 个兑换码`);
-        fetchData();
-        scheduleSuccessClear();
-      } else {
-        setError(data.message || '上传失败');
-      }
-    } catch {
-      setError('上传失败');
-    } finally {
-      setUploading(false);
-      e.target.value = '';
-    }
-  };
 
   const handleAppendClaims = async () => {
     const delta = parseInt(appendClaims, 10);
@@ -195,6 +163,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
 
   const remaining = Math.max(0, project.maxClaims - project.claimedCount);
   const isDirectProject = project.rewardType === 'direct';
+  const directPoints = project.directPoints ?? project.directDollars ?? 0;
 
   return (
     <div>
@@ -245,7 +214,7 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
                   <h1 className="text-2xl md:text-3xl font-bold text-stone-800 tracking-tight">{project.name}</h1>
                   {isDirectProject && (
                     <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-orange-50 text-orange-700 border border-orange-200">
-                      💰 直充 ${project.directDollars}
+                      直充 {directPoints} 积分
                     </span>
                   )}
                   <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${project.status === 'active'
@@ -283,11 +252,9 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
                 </button>
               </div>
             ) : (
-              <label className={`group relative inline-flex items-center justify-center gap-2 px-6 py-3.5 gradient-warm text-white rounded-2xl font-black shadow-lg shadow-orange-500/30 hover:shadow-orange-500/40 transition-all duration-300 active:scale-95 hover:scale-105 cursor-pointer overflow-hidden ${uploading ? 'opacity-70 cursor-not-allowed' : ''}`}>
-                <Upload className={`w-5 h-5 relative z-10 ${uploading ? 'animate-bounce' : ''}`} />
-                <span className="relative z-10 text-sm">{uploading ? '上传中...' : '追加兑换码'}</span>
-                <input type="file" accept=".txt" onChange={handleUploadCodes} disabled={uploading} className="hidden" />
-              </label>
+              <div className="rounded-2xl border border-stone-200 bg-stone-50 px-5 py-3 text-sm font-bold text-stone-500">
+                历史兑换码项目只读保留，不再允许追加兑换码。
+              </div>
             )}
           </div>
 
@@ -379,8 +346,8 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
                     {record.directCredit ? (
                       <div className="relative bg-stone-50/50 rounded-xl p-4 border border-stone-100 group-hover:border-orange-200/50 transition-colors">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-stone-400 uppercase tracking-wide">直充金额</span>
-                          <span className="text-lg font-black text-stone-800 tabular-nums">${record.creditedDollars}</span>
+                          <span className="text-xs font-bold text-stone-400 uppercase tracking-wide">直充积分</span>
+                          <span className="text-lg font-black text-stone-800 tabular-nums">{record.creditedPoints ?? record.creditedDollars ?? 0}</span>
                         </div>
                         <div className="mt-3 flex items-center justify-center">
                           <span className={`px-3 py-1 rounded-full text-xs font-bold border ${record.creditStatus === 'uncertain'

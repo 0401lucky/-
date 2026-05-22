@@ -2,22 +2,38 @@
 
 import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
-import { StoreItem, ExchangeLog } from './types/store';
+import { StoreCategory, StoreItem, ExchangeLog } from './types/store';
 import { deductPoints, applyPointsDelta } from './points';
 import { creditQuotaToUser } from './new-api';
 import { CARD_DRAW_PRICE } from './cards/constants';
+import { MAKEUP_CARD_POINTS_COST } from './checkin-rules';
 
 // ============ 商店商品管理 ============
 
 const STORE_ITEMS_KEY = 'store:items';
+const STORE_CATEGORIES_KEY = 'store:categories';
 const STORE_ITEM_PURCHASE_COUNTS_KEY = 'store:item:purchase_counts';
 
+const DEFAULT_STORE_CATEGORIES: Omit<StoreCategory, 'createdAt' | 'updatedAt'>[] = [
+  { id: 'lottery', name: '抽奖次数', color: '#06b6d4', sortOrder: 1, enabled: true },
+  { id: 'card', name: '卡牌抽卡', color: '#3b82f6', sortOrder: 2, enabled: true },
+  { id: 'makeup', name: '补签道具', color: '#22c55e', sortOrder: 3, enabled: true },
+];
+
+function getDefaultCategoryId(type: StoreItem['type']): string {
+  if (type === 'card_draw') return 'card';
+  if (type === 'makeup_card') return 'makeup';
+  return 'lottery';
+}
+
 // 预定义商品（首次访问时初始化）
+// 注意：账户额度直充（quota_direct）已下架，仅保留兼容历史数据；新签到规则改为本地积分。
 const DEFAULT_STORE_ITEMS: Omit<StoreItem, 'id' | 'createdAt' | 'updatedAt'>[] = [
   {
     name: '抽奖机会 x1',
     description: '兑换一次抽奖机会',
     type: 'lottery_spin',
+    categoryId: 'lottery',
     pointsCost: 13000,
     value: 1,
     dailyLimit: 1,
@@ -28,6 +44,7 @@ const DEFAULT_STORE_ITEMS: Omit<StoreItem, 'id' | 'createdAt' | 'updatedAt'>[] =
     name: '抽奖机会 x2',
     description: '兑换两次抽奖机会',
     type: 'lottery_spin',
+    categoryId: 'lottery',
     pointsCost: 24000,
     value: 2,
     dailyLimit: 1,
@@ -38,6 +55,7 @@ const DEFAULT_STORE_ITEMS: Omit<StoreItem, 'id' | 'createdAt' | 'updatedAt'>[] =
     name: '动物卡抽卡次数 x1',
     description: '兑换一次动物卡抽卡机会',
     type: 'card_draw',
+    categoryId: 'card',
     pointsCost: CARD_DRAW_PRICE,
     value: 1,
     dailyLimit: 0, // 不限购
@@ -45,49 +63,96 @@ const DEFAULT_STORE_ITEMS: Omit<StoreItem, 'id' | 'createdAt' | 'updatedAt'>[] =
     enabled: true,
   },
   {
-    name: '账户额度 $1',
-    description: '直接充值 $1 到您的账户',
-    type: 'quota_direct',
-    pointsCost: 3500,
+    name: '补签卡 x1',
+    description: '用于补回本周漏签的日子，补签后视同已签到，可恢复积分梯度并补发该日应得的积分与额外抽奖。',
+    type: 'makeup_card',
+    categoryId: 'makeup',
+    pointsCost: MAKEUP_CARD_POINTS_COST,
     value: 1,
-    dailyLimit: 1,  // 每日限购1次
-    sortOrder: 10,
-    enabled: true,
-  },
-  {
-    name: '账户额度 $5',
-    description: '直接充值 $5 到您的账户（优惠）',
-    type: 'quota_direct',
-    pointsCost: 16000,  // 约9折
-    value: 5,
-    dailyLimit: 1,  // 每日限购1次
-    sortOrder: 11,
+    dailyLimit: 0, // 不限购
+    sortOrder: 8,
     enabled: true,
   },
 ];
 
+export async function initDefaultStoreCategories(): Promise<void> {
+  const existing = await kv.hgetall<Record<string, StoreCategory>>(STORE_CATEGORIES_KEY);
+  const now = Date.now();
+  const updates: Record<string, StoreCategory> = {};
+
+  for (const category of DEFAULT_STORE_CATEGORIES) {
+    const saved = existing?.[category.id];
+    if (!saved) {
+      updates[category.id] = {
+        ...category,
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await kv.hset(STORE_CATEGORIES_KEY, updates);
+  }
+}
+
 /**
  * 初始化默认商品（如果不存在）
+ *
+ * 同时承担两类一次性迁移：
+ * 1) 历史 quota_direct 商品（原"账户额度直充"）→ 强制下架（enabled=false），
+ *    与签到规则升级保持一致；用户在配套发布前已购买的不影响。
+ * 2) 历史数据中缺少 card_draw、makeup_card 等新商品 → 自动补齐。
  */
 export async function initDefaultStoreItems(): Promise<void> {
+  await initDefaultStoreCategories();
   const existing = await kv.hgetall<Record<string, StoreItem>>(STORE_ITEMS_KEY);
   const existingItems = existing ? Object.values(existing) : [];
   if (existingItems.length > 0) {
-    // 兼容历史数据：已初始化过商店但缺少后续新增的默认商品（如 card_draw）
-    const hasCardDrawItem = existingItems.some(item => item.type === 'card_draw');
+    const now = Date.now();
+    const updates: Record<string, StoreItem> = {};
+
+    // 迁移 1：将 quota_direct 强制下架
+    for (const item of existingItems) {
+      if (item.type === 'quota_direct' && item.enabled) {
+        updates[item.id] = { ...item, enabled: false, updatedAt: now };
+      } else if (!item.categoryId && item.type !== 'quota_direct') {
+        updates[item.id] = { ...item, categoryId: getDefaultCategoryId(item.type), updatedAt: now };
+      }
+    }
+
+    // 迁移 2：缺失 card_draw 时补齐（兼容老逻辑）
+    const hasCardDrawItem = existingItems.some((item) => item.type === 'card_draw');
     if (!hasCardDrawItem) {
-      const now = Date.now();
-      const cardDrawItem = DEFAULT_STORE_ITEMS.find(item => item.type === 'card_draw');
+      const cardDrawItem = DEFAULT_STORE_ITEMS.find((item) => item.type === 'card_draw');
       if (cardDrawItem) {
         const id = nanoid();
-        const storeItem: StoreItem = {
+        updates[id] = {
           ...cardDrawItem,
           id,
           createdAt: now,
           updatedAt: now,
         };
-        await kv.hset(STORE_ITEMS_KEY, { [id]: storeItem });
       }
+    }
+
+    // 迁移 3：缺失 makeup_card 时补齐
+    const hasMakeupCardItem = existingItems.some((item) => item.type === 'makeup_card');
+    if (!hasMakeupCardItem) {
+      const makeupItem = DEFAULT_STORE_ITEMS.find((item) => item.type === 'makeup_card');
+      if (makeupItem) {
+        const id = nanoid();
+        updates[id] = {
+          ...makeupItem,
+          id,
+          createdAt: now,
+          updatedAt: now,
+        };
+      }
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await kv.hset(STORE_ITEMS_KEY, updates);
     }
     return;
   }
@@ -107,6 +172,52 @@ export async function initDefaultStoreItems(): Promise<void> {
 }
 
 /**
+ * 获取商品分类（默认只返回启用分类）
+ */
+export async function getStoreCategories(includeDisabled = false): Promise<StoreCategory[]> {
+  await initDefaultStoreCategories();
+  const categories = await kv.hgetall<Record<string, StoreCategory>>(STORE_CATEGORIES_KEY);
+  if (!categories) return [];
+
+  return Object.values(categories)
+    .filter((category) => includeDisabled || category.enabled)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+export async function createStoreCategory(
+  data: Omit<StoreCategory, 'id' | 'createdAt' | 'updatedAt'>
+): Promise<StoreCategory> {
+  const now = Date.now();
+  const id = nanoid();
+  const category: StoreCategory = {
+    ...data,
+    id,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await kv.hset(STORE_CATEGORIES_KEY, { [id]: category });
+  return category;
+}
+
+export async function updateStoreCategory(
+  id: string,
+  updates: Partial<Omit<StoreCategory, 'id' | 'createdAt'>>
+): Promise<StoreCategory | null> {
+  const existing = await kv.hget<StoreCategory>(STORE_CATEGORIES_KEY, id);
+  if (!existing) return null;
+
+  const updated: StoreCategory = {
+    ...existing,
+    ...updates,
+    id,
+    createdAt: existing.createdAt,
+    updatedAt: Date.now(),
+  };
+  await kv.hset(STORE_CATEGORIES_KEY, { [id]: updated });
+  return updated;
+}
+
+/**
  * 获取所有上架商品
  */
 export async function getStoreItems(): Promise<StoreItem[]> {
@@ -116,6 +227,7 @@ export async function getStoreItems(): Promise<StoreItem[]> {
   
   return Object.values(items)
     .filter(item => item.enabled)
+    .map(item => ({ ...item, categoryId: item.categoryId ?? getDefaultCategoryId(item.type) }))
     .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
@@ -135,7 +247,9 @@ export async function getAllStoreItems(): Promise<StoreItem[]> {
   const items = await kv.hgetall<Record<string, StoreItem>>(STORE_ITEMS_KEY);
   if (!items) return [];
   
-  return Object.values(items).sort((a, b) => a.sortOrder - b.sortOrder);
+  return Object.values(items)
+    .map(item => ({ ...item, categoryId: item.categoryId ?? getDefaultCategoryId(item.type) }))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
 /**
@@ -192,6 +306,7 @@ export async function deleteStoreItem(id: string): Promise<boolean> {
 
 // 导入抽奖次数增加函数（从kv.ts）
 import { addExtraSpinCount, addCardDraws } from './kv';
+import { addMakeupCards } from './makeup-cards';
 import { getTodayDateString } from './time';
 
 /**
@@ -330,11 +445,22 @@ export async function exchangeItem(
       // 增加卡牌抽奖次数
       const result = await addCardDraws(userId, totalValue);
       rewardSuccess = result.success;
-      rewardMessage = result.success 
-        ? `获得 ${totalValue} 次卡牌抽奖机会` 
+      rewardMessage = result.success
+        ? `获得 ${totalValue} 次卡牌抽奖机会`
         : '卡牌抽奖次数增加失败';
+    } else if (item.type === 'makeup_card') {
+      // 补签卡：增加用户的补签卡库存
+      try {
+        await addMakeupCards(userId, totalValue);
+        rewardSuccess = true;
+        rewardMessage = `获得 ${totalValue} 张补签卡，可在签到页面使用`;
+      } catch (error) {
+        console.error('Add makeup cards failed:', error);
+        rewardSuccess = false;
+        rewardMessage = '补签卡发放失败';
+      }
     } else if (item.type === 'quota_direct') {
-      // 直充额度
+      // 直充额度（已下架，仅保留兼容）
       const creditResult = await creditQuotaToUser(userId, totalValue) as {
         success: boolean;
         message: string;

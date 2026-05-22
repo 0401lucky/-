@@ -6,6 +6,7 @@ import {
   User as UserIcon, X,
   ChevronRight, Gift, Sparkles, Clock, CheckCircle2, Star, RefreshCw, Coins
 } from 'lucide-react';
+import type { AchievementId, AchievementUnlockMode } from '@/lib/profile-achievements';
 
 interface UserWithStats {
   id: number;
@@ -56,6 +57,19 @@ interface PointsLog {
   createdAt: number;
 }
 
+interface AdminAchievementItem {
+  id: AchievementId;
+  emoji: string;
+  name: string;
+  desc: string;
+  unlockMode: AchievementUnlockMode;
+  unlocked: boolean;
+  series?: string;
+  grantedAt?: number | null;
+  expiresAt?: number | null;
+  equipped?: boolean;
+}
+
 export default function UsersPage() {
   const [users, setUsers] = useState<UserWithStats[]>([]);
   const [filteredUsers, setFilteredUsers] = useState<UserWithStats[]>([]);
@@ -77,6 +91,8 @@ export default function UsersPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [migratingEligibility, setMigratingEligibility] = useState(false);
+  const [userAchievements, setUserAchievements] = useState<AdminAchievementItem[]>([]);
+  const [achievementUpdating, setAchievementUpdating] = useState(false);
 
   // 积分相关状态
   const [userPoints, setUserPoints] = useState<number | null>(null);
@@ -183,6 +199,7 @@ export default function UsersPage() {
     setUserPointsLogs([]);
     setUserClaims([]);
     setUserLotteryRecords([]);
+    setUserAchievements([]);
     setAdjustAmount('');
     setAdjustReason('');
     setPointsError(false);
@@ -202,6 +219,7 @@ export default function UsersPage() {
         if (data.success) {
           setUserClaims(data.claims || []);
           setUserLotteryRecords(data.lotteryRecords || []);
+          setUserAchievements(data.achievements || []);
         }
       }
 
@@ -274,6 +292,41 @@ export default function UsersPage() {
       alert('积分调整失败');
     } finally {
       setAdjusting(false);
+    }
+  };
+
+  const handleToggleContributorAchievement = async () => {
+    if (!selectedUser || achievementUpdating) return;
+
+    const contributor = userAchievements.find((item) => item.id === 'contributor');
+    const shouldRevoke = Boolean(contributor?.unlocked);
+    if (shouldRevoke && !window.confirm('确认撤销该用户的“奉献者”成就吗？')) {
+      return;
+    }
+
+    setAchievementUpdating(true);
+    try {
+      const res = await fetch(`/api/admin/users/${selectedUser.id}/achievements`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          achievementId: 'contributor',
+          action: shouldRevoke ? 'revoke' : 'grant',
+        }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setUserAchievements(data.achievements || []);
+        alert(data.message || (shouldRevoke ? '成就已撤销' : '成就颁发成功'));
+      } else {
+        alert(data.message || '成就操作失败');
+      }
+    } catch (error) {
+      console.error('Update achievement error:', error);
+      alert('成就操作失败');
+    } finally {
+      setAchievementUpdating(false);
     }
   };
 
@@ -660,6 +713,59 @@ export default function UsersPage() {
                         首次访问: {new Date(selectedUser.firstSeen).toLocaleString()}
                       </p>
                     </div>
+                  </div>
+
+                  {/* 成就管理 */}
+                  <div>
+                    <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wide mb-3 flex items-center gap-2">
+                      <Sparkles className="w-4 h-4" />
+                      成就管理
+                    </h3>
+                    {(() => {
+                      const contributor = userAchievements.find((item) => item.id === 'contributor');
+                      const unlocked = Boolean(contributor?.unlocked);
+
+                      return (
+                        <div className="p-4 bg-gradient-to-r from-orange-50 to-amber-50 rounded-xl border border-orange-100">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-xl">{contributor?.emoji ?? '🤝'}</span>
+                                <span className="font-bold text-stone-800">
+                                  {contributor?.name ?? '奉献者'}
+                                </span>
+                                {unlocked && (
+                                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold">
+                                    已颁发
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-stone-500 leading-relaxed">
+                                {contributor?.desc ?? '提出 10 条或以上有用反馈后，由管理员颁发'}
+                              </p>
+                              {contributor?.grantedAt && (
+                                <p className="text-[11px] text-stone-400 mt-2">
+                                  颁发时间: {new Date(contributor.grantedAt).toLocaleString()}
+                                </p>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleToggleContributorAchievement}
+                              disabled={achievementUpdating}
+                              className={`shrink-0 px-3 py-2 rounded-lg text-xs font-bold transition-colors flex items-center gap-2 ${
+                                unlocked
+                                  ? 'bg-white text-red-500 border border-red-100 hover:bg-red-50'
+                                  : 'bg-orange-500 text-white hover:bg-orange-600'
+                              } disabled:opacity-60`}
+                            >
+                              {achievementUpdating && <Loader2 className="w-3 h-3 animate-spin" />}
+                              {unlocked ? '撤销' : '颁发'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* 用户积分 */}

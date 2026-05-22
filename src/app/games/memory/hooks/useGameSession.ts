@@ -17,6 +17,7 @@ interface GameSession {
   matchedCards: number[];
   firstFlippedCard: number | null;
   moveCount: number;
+  startedAt: number;
   expiresAt: number;
   config: MemoryDifficultyConfig;
 }
@@ -155,7 +156,7 @@ export function useGameSession() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId: session.sessionId,
-          moves,
+          moves: isRestored ? [] : moves,
           completed,
           duration,
         }),
@@ -181,7 +182,7 @@ export function useGameSession() {
     } finally {
       setLoading(false);
     }
-  }, [session, fetchStatus]);
+  }, [session, isRestored, fetchStatus]);
 
   const resetSubmitFlag = useCallback(() => {
     hasSubmittedRef.current = false;

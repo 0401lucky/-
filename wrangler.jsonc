@@ -51,6 +51,6 @@
 		"binding": "IMAGES"
 	},
 	"triggers": {
-		"crons": ["0 3 * * *"]
+		"crons": ["0 16 * * *", "*/10 * * * *"]
 	}
 }

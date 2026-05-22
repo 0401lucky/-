@@ -6,14 +6,19 @@ import {
   getNativeGameLeaderboardRows,
   getNativeOverallBreakdownRows,
   getNativePointsLeaderboardRows,
+  getNativePositivePointsLeaderboardRowsByRange,
   getNativeRankingCache,
   isNativeHotStoreReady,
   listNativeCheckinDates,
   setNativeRankingCache,
 } from './hot-d1';
+import { getCustomUserProfile } from './user-profile';
+import { getEquippedAchievementForUser } from './user-achievements';
+import type { PublicAchievement } from './profile-achievements';
 
 const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 const MAX_RECORD_SCAN = 200;
+const MAX_POINT_HISTORY_SCAN = 2000;
 const MAX_STREAK_DAYS = 400;
 const ALL_GAMES_RANKING_CACHE_TTL_SECONDS = 30;
 const OTHER_RANKING_CACHE_TTL_SECONDS = 30;
@@ -21,7 +26,7 @@ const OTHER_RANKING_CACHE_TTL_SECONDS = 30;
 export type RankingPeriod = 'daily' | 'weekly' | 'monthly';
 export type PointsRankingPeriod = 'all' | 'monthly';
 export type CheckinRankingPeriod = 'all' | 'monthly';
-export type SupportedRankingGame = Extract<GameType, 'slot' | 'linkgame' | 'match3' | 'memory' | 'pachinko' | 'tower'>;
+export type SupportedRankingGame = Extract<GameType, 'linkgame' | 'match3' | 'memory' | 'whack_mole' | 'roguelite' | 'minesweeper'>;
 
 interface BaseRecord {
   score?: number;
@@ -33,6 +38,11 @@ export interface GameLeaderboardEntry {
   rank: number;
   userId: number;
   username: string;
+  // 个人主页设置的自定义昵称；未设置或缓存命中旧数据时为 undefined/null
+  displayName?: string | null;
+  // 个人主页设置的自定义头像（http(s) URL 或 data:image/* base64）
+  avatarUrl?: string | null;
+  equippedAchievement?: PublicAchievement | null;
   gameType: SupportedRankingGame;
   totalScore: number;
   totalPoints: number;
@@ -49,6 +59,9 @@ export interface OverallLeaderboardEntry {
   rank: number;
   userId: number;
   username: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  equippedAchievement?: PublicAchievement | null;
   totalScore: number;
   totalPoints: number;
   gamesPlayed: number;
@@ -71,10 +84,31 @@ export interface AllGamesRankingSnapshot {
   overall: OverallLeaderboardEntry[];
 }
 
+export interface MonthlyPeakHistoryItem {
+  monthKey: string;
+  monthLabel: string;
+  startAt: number;
+  endAt: number;
+  leaderboard: Array<PointsLeaderboardEntry & {
+    displayName: string | null;
+    avatarUrl: string | null;
+    equippedAchievement: PublicAchievement | null;
+  }>;
+}
+
+export interface MonthlyPeakHistoryResult {
+  generatedAt: number;
+  months: MonthlyPeakHistoryItem[];
+  topLimit: number;
+}
+
 export interface PointsLeaderboardEntry {
   rank: number;
   userId: number;
   username: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  equippedAchievement?: PublicAchievement | null;
   points: number;
 }
 
@@ -82,16 +116,19 @@ export interface CheckinStreakLeaderboardEntry {
   rank: number;
   userId: number;
   username: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  equippedAchievement?: PublicAchievement | null;
   streak: number;
 }
 
 const GAME_RECORD_KEY: Record<SupportedRankingGame, (userId: number) => string> = {
-  slot: (userId) => `slot:records:${userId}`,
   linkgame: (userId) => `linkgame:records:${userId}`,
   match3: (userId) => `match3:records:${userId}`,
   memory: (userId) => `memory:records:${userId}`,
-  pachinko: (userId) => `game:records:${userId}`,
-  tower: (userId) => `tower:records:${userId}`,
+  whack_mole: (userId) => `whack_mole:records:${userId}`,
+  roguelite: (userId) => `roguelite:records:${userId}`,
+  minesweeper: (userId) => `minesweeper:records:${userId}`,
 };
 
 function getChinaDate(date: Date = new Date()): Date {
@@ -170,6 +207,34 @@ function getPointsRankingCacheKey(period: PointsRankingPeriod, limit: number): s
 
 function getCheckinRankingCacheKey(period: CheckinRankingPeriod, limit: number): string {
   return `rankings:checkin:${period}:${Math.max(1, Math.min(100, Math.floor(limit)))}`;
+}
+
+/**
+ * 给排行榜条目附加自定义昵称和头像（来自 user-profile KV）。
+ * 排行榜的本体计算/缓存层只关心打分数据，自定义资料每次查询时按需注入，
+ * 这样个人主页改了昵称/头像，下一次拉取就能立刻反映出来。
+ */
+async function enrichEntriesWithProfile<T extends { userId: number }>(
+  entries: T[],
+): Promise<Array<T & { displayName: string | null; avatarUrl: string | null; equippedAchievement: PublicAchievement | null }>> {
+  if (entries.length === 0) {
+    return [] as Array<T & { displayName: string | null; avatarUrl: string | null; equippedAchievement: PublicAchievement | null }>;
+  }
+  const profiles = await Promise.all(
+    entries.map(async (entry) => {
+      const [profile, equippedAchievement] = await Promise.all([
+        getCustomUserProfile(entry.userId),
+        getEquippedAchievementForUser(entry.userId),
+      ]);
+      return { profile, equippedAchievement };
+    })
+  );
+  return entries.map((entry, index) => ({
+    ...entry,
+    displayName: profiles[index].profile.displayName ?? null,
+    avatarUrl: profiles[index].profile.avatarUrl ?? null,
+    equippedAchievement: profiles[index].equippedAchievement,
+  }));
 }
 
 function formatChinaDateFromOffset(base: Date, offset: number): string {
@@ -280,7 +345,8 @@ export async function getGameLeaderboard(
   limit = 20,
 ): Promise<GameLeaderboardEntry[]> {
   const startAt = getPeriodStartUtc(period);
-  return getGameLeaderboardByRange(gameType, startAt, Number.POSITIVE_INFINITY, limit);
+  const base = await getGameLeaderboardByRange(gameType, startAt, Number.POSITIVE_INFINITY, limit);
+  return enrichEntriesWithProfile(base);
 }
 
 export async function getAllGamesLeaderboardByRange(
@@ -291,7 +357,7 @@ export async function getAllGamesLeaderboardByRange(
   const limitPerGame = Math.max(1, Math.min(100, Math.floor(options.limitPerGame ?? 20)));
   const overallLimit = Math.max(1, Math.min(100, Math.floor(options.overallLimit ?? 20)));
 
-  const gameTypes: SupportedRankingGame[] = ['slot', 'linkgame', 'match3', 'memory', 'pachinko', 'tower'];
+  const gameTypes: SupportedRankingGame[] = ['linkgame', 'match3', 'memory', 'whack_mole', 'roguelite', 'minesweeper'];
 
   const allLeaderboards = await Promise.all(
     gameTypes.map((gameType) => getGameLeaderboardByRange(gameType, startAt, endAt, limitPerGame))
@@ -382,7 +448,7 @@ export async function getAllGamesLeaderboard(
   if (await isNativeHotStoreReady()) {
     const cached = await getNativeRankingCache<AllGamesRankingResult>(cacheKey);
     if (cached && Array.isArray(cached.games) && Array.isArray(cached.overall)) {
-      return cached;
+      return enrichAllGamesResult(cached);
     }
 
     const snapshot = await getAllGamesLeaderboardByRange(
@@ -406,12 +472,12 @@ export async function getAllGamesLeaderboard(
       ALL_GAMES_RANKING_CACHE_TTL_SECONDS,
       result,
     );
-    return result;
+    return enrichAllGamesResult(result);
   }
 
   const cached = await kv.get<AllGamesRankingResult>(cacheKey);
   if (cached && Array.isArray(cached.games) && Array.isArray(cached.overall)) {
-    return cached;
+    return enrichAllGamesResult(cached);
   }
 
   const snapshot = await getAllGamesLeaderboardByRange(
@@ -429,7 +495,22 @@ export async function getAllGamesLeaderboard(
   };
 
   await kv.set(cacheKey, result, { ex: ALL_GAMES_RANKING_CACHE_TTL_SECONDS });
-  return result;
+  return enrichAllGamesResult(result);
+}
+
+async function enrichAllGamesResult(result: AllGamesRankingResult): Promise<AllGamesRankingResult> {
+  const [enrichedOverall, ...enrichedGameLeaderboards] = await Promise.all([
+    enrichEntriesWithProfile(result.overall),
+    ...result.games.map((group) => enrichEntriesWithProfile(group.leaderboard)),
+  ]);
+  return {
+    ...result,
+    overall: enrichedOverall,
+    games: result.games.map((group, index) => ({
+      gameType: group.gameType,
+      leaderboard: enrichedGameLeaderboards[index],
+    })),
+  };
 }
 
 function getMonthlyStartUtc(): number {
@@ -437,6 +518,130 @@ function getMonthlyStartUtc(): number {
   chinaNow.setUTCDate(1);
   chinaNow.setUTCHours(0, 0, 0, 0);
   return chinaNow.getTime() - CHINA_TZ_OFFSET_MS;
+}
+
+function formatChinaMonthKey(chinaDate: Date): string {
+  const year = chinaDate.getUTCFullYear();
+  const month = String(chinaDate.getUTCMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
+function formatChinaMonthLabel(chinaDate: Date): string {
+  return `${chinaDate.getUTCFullYear()} 年 ${chinaDate.getUTCMonth() + 1} 月`;
+}
+
+function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(num)));
+}
+
+function getCompletedMonthRanges(
+  monthCount: number,
+  referenceTime: number = Date.now(),
+): Array<{ monthKey: string; monthLabel: string; startAt: number; endAt: number }> {
+  const safeCount = clampInteger(monthCount, 12, 1, 12);
+  const currentMonthStart = getChinaDate(new Date(referenceTime));
+  currentMonthStart.setUTCDate(1);
+  currentMonthStart.setUTCHours(0, 0, 0, 0);
+
+  return Array.from({ length: safeCount }, (_, index) => {
+    const endChina = new Date(currentMonthStart);
+    endChina.setUTCMonth(currentMonthStart.getUTCMonth() - index);
+
+    const startChina = new Date(currentMonthStart);
+    startChina.setUTCMonth(currentMonthStart.getUTCMonth() - index - 1);
+
+    return {
+      monthKey: formatChinaMonthKey(startChina),
+      monthLabel: formatChinaMonthLabel(startChina),
+      startAt: startChina.getTime() - CHINA_TZ_OFFSET_MS,
+      endAt: endChina.getTime() - CHINA_TZ_OFFSET_MS,
+    };
+  });
+}
+
+async function getPositivePointsLeaderboardByRange(
+  startAt: number,
+  endAt: number,
+  limit: number,
+): Promise<PointsLeaderboardEntry[]> {
+  const safeLimit = clampInteger(limit, 10, 1, 100);
+
+  if (await isNativeHotStoreReady()) {
+    const rows = await getNativePositivePointsLeaderboardRowsByRange(startAt, endAt, safeLimit);
+    return rows.map((row, index) => ({
+      rank: index + 1,
+      userId: row.userId,
+      username: row.username,
+      points: row.points,
+    }));
+  }
+
+  const users = await getAllUsers();
+  const validUsers = users
+    .map((user) => ({ id: ensurePositiveInteger(user.id), username: user.username }))
+    .filter((u) => u.id > 0);
+
+  const allPoints = await Promise.all(
+    validUsers.map(async (user) => {
+      const logs = await kv.lrange<{ amount?: number; createdAt?: number }>(
+        `points_log:${user.id}`,
+        0,
+        MAX_POINT_HISTORY_SCAN - 1,
+      );
+
+      return (logs ?? []).reduce((sum, item) => {
+        const createdAt = toFiniteNumber(item?.createdAt);
+        if (createdAt < startAt || createdAt >= endAt) return sum;
+        const amount = toFiniteNumber(item?.amount);
+        return amount > 0 ? sum + amount : sum;
+      }, 0);
+    }),
+  );
+
+  return validUsers
+    .map((user, index) => ({
+      userId: user.id,
+      username: user.username || `#${user.id}`,
+      points: allPoints[index],
+    }))
+    .filter((row) => row.points > 0)
+    .sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      return a.userId - b.userId;
+    })
+    .slice(0, safeLimit)
+    .map((row, index) => ({ rank: index + 1, ...row }));
+}
+
+export async function getMonthlyPeakHistory(
+  options: { months?: number; topLimit?: number; referenceTime?: number } = {},
+): Promise<MonthlyPeakHistoryResult> {
+  const monthCount = clampInteger(options.months, 12, 1, 12);
+  const topLimit = clampInteger(options.topLimit, 10, 1, 10);
+  const ranges = getCompletedMonthRanges(monthCount, options.referenceTime);
+
+  const months = await Promise.all(
+    ranges.map(async (range): Promise<MonthlyPeakHistoryItem> => {
+      const leaderboard = await getPositivePointsLeaderboardByRange(
+        range.startAt,
+        range.endAt,
+        topLimit,
+      );
+
+      return {
+        ...range,
+        leaderboard: await enrichEntriesWithProfile(leaderboard),
+      };
+    }),
+  );
+
+  return {
+    generatedAt: Date.now(),
+    months,
+    topLimit,
+  };
 }
 
 export async function getPointsLeaderboard(
@@ -449,7 +654,7 @@ export async function getPointsLeaderboard(
   if (await isNativeHotStoreReady()) {
     const cached = await getNativeRankingCache<{ period: PointsRankingPeriod; generatedAt: number; leaderboard: PointsLeaderboardEntry[] }>(cacheKey);
     if (cached) {
-      return cached;
+      return { ...cached, leaderboard: await enrichEntriesWithProfile(cached.leaderboard) };
     }
 
     const rows = await getNativePointsLeaderboardRows(
@@ -468,7 +673,7 @@ export async function getPointsLeaderboard(
       })),
     };
     await setNativeRankingCache(cacheKey, 'points', period, OTHER_RANKING_CACHE_TTL_SECONDS, result);
-    return result;
+    return { ...result, leaderboard: await enrichEntriesWithProfile(result.leaderboard) };
   }
 
   const users = await getAllUsers();
@@ -492,7 +697,8 @@ export async function getPointsLeaderboard(
       return (logs ?? []).reduce((sum, item) => {
         const createdAt = toFiniteNumber(item?.createdAt);
         if (createdAt < startAt) return sum;
-        return sum + toFiniteNumber(item?.amount);
+        const amount = toFiniteNumber(item?.amount);
+        return amount > 0 ? sum + amount : sum;
       }, 0);
     })
   );
@@ -514,7 +720,7 @@ export async function getPointsLeaderboard(
   return {
     period,
     generatedAt: Date.now(),
-    leaderboard,
+    leaderboard: await enrichEntriesWithProfile(leaderboard),
   };
 }
 
@@ -619,7 +825,7 @@ export async function getCheckinStreakLeaderboard(
   if (await isNativeHotStoreReady()) {
     const cached = await getNativeRankingCache<{ period: CheckinRankingPeriod; generatedAt: number; leaderboard: CheckinStreakLeaderboardEntry[] }>(cacheKey);
     if (cached) {
-      return cached;
+      return { ...cached, leaderboard: await enrichEntriesWithProfile(cached.leaderboard) };
     }
 
     const chinaNow = getChinaDate();
@@ -666,7 +872,7 @@ export async function getCheckinStreakLeaderboard(
     };
 
     await setNativeRankingCache(cacheKey, 'checkin', period, OTHER_RANKING_CACHE_TTL_SECONDS, result);
-    return result;
+    return { ...result, leaderboard: await enrichEntriesWithProfile(result.leaderboard) };
   }
 
   const users = await getAllUsers();
@@ -696,6 +902,6 @@ export async function getCheckinStreakLeaderboard(
   return {
     period,
     generatedAt: Date.now(),
-    leaderboard,
+    leaderboard: await enrichEntriesWithProfile(leaderboard),
   };
 }

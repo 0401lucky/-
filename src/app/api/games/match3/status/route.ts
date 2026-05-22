@@ -33,8 +33,6 @@ export async function GET() {
       cooldownRemaining = await getCooldownRemaining(user.id);
     }
 
-    const pointsLimitReached = dailyStats && dailyStats.pointsEarned >= dailyPointsLimit;
-
     return NextResponse.json({
       success: true,
       data: {
@@ -48,7 +46,7 @@ export async function GET() {
         inCooldown,
         cooldownRemaining,
         dailyLimit: dailyPointsLimit,
-        pointsLimitReached,
+        pointsLimitReached: false,
         records,
         activeSession: activeSession
           ? {

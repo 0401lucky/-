@@ -1,10 +1,21 @@
 import { kv } from '@/lib/d1-kv';
 import { CARDS } from "./config";
 import { CardConfig, Rarity } from "./types";
-import { RARITY_PROBABILITIES, RARITY_LEVELS, FRAGMENT_VALUES } from "./constants";
+import { RARITY_PROBABILITIES, RARITY_LEVELS } from "./constants";
 import { getGuaranteedRarity, normalizePityCounters, type PityCounters } from "./pity";
+import { getCardRulesConfig, type CardRulesConfig } from "./rules";
 import { secureRandomFloat, secureRandomIndex } from "../random";
 import { withUserEconomyLock } from "../economy-lock";
+
+export interface RecentDraw {
+  cardId: string;
+  rarity: Rarity;
+  isDuplicate: boolean;
+  fragmentsAdded: number;
+  timestamp: number;
+}
+
+const RECENT_DRAWS_LIMIT = 10;
 
 export interface UserCards {
   inventory: string[];
@@ -20,6 +31,8 @@ export interface UserCards {
   pityLegendaryRare?: number;
   drawsAvailable: number;
   collectionRewards: string[];
+  /** 最近抽卡历史，最多保留 RECENT_DRAWS_LIMIT 条，最新在前 */
+  recentDraws?: RecentDraw[];
 }
 
 const DEFAULT_USER_CARDS: UserCards = {
@@ -32,6 +45,7 @@ const DEFAULT_USER_CARDS: UserCards = {
   pityLegendaryRare: 0,
   drawsAvailable: 1,
   collectionRewards: [],
+  recentDraws: [],
 };
 
 export function createDefaultUserCards(drawsAvailable: number = DEFAULT_USER_CARDS.drawsAvailable): UserCards {
@@ -45,6 +59,7 @@ export function createDefaultUserCards(drawsAvailable: number = DEFAULT_USER_CAR
     pityLegendaryRare: 0,
     drawsAvailable,
     collectionRewards: [],
+    recentDraws: [],
   };
 }
 
@@ -83,6 +98,30 @@ export function normalizeUserCards(data: Partial<UserCards> | null | undefined):
     ? data.collectionRewards.filter((id): id is string => typeof id === "string")
     : [];
 
+  // 兼容老数据：recentDraws 缺失或非数组时返回 []
+  const VALID_RARITIES: Rarity[] = ['legendary_rare', 'legendary', 'epic', 'rare', 'common'];
+  const recentDraws: RecentDraw[] = Array.isArray(data?.recentDraws)
+    ? data.recentDraws
+        .map((entry): RecentDraw | null => {
+          if (!entry || typeof entry !== 'object') return null;
+          const e = entry as Partial<RecentDraw>;
+          if (typeof e.cardId !== 'string' || !e.cardId) return null;
+          if (typeof e.rarity !== 'string' || !VALID_RARITIES.includes(e.rarity as Rarity)) return null;
+          const ts = Number(e.timestamp);
+          if (!Number.isFinite(ts) || ts <= 0) return null;
+          const fragments = Number(e.fragmentsAdded);
+          return {
+            cardId: e.cardId,
+            rarity: e.rarity as Rarity,
+            isDuplicate: !!e.isDuplicate,
+            fragmentsAdded: Number.isFinite(fragments) ? Math.max(0, Math.floor(fragments)) : 0,
+            timestamp: Math.floor(ts),
+          };
+        })
+        .filter((r): r is RecentDraw => r !== null)
+        .slice(0, RECENT_DRAWS_LIMIT)
+    : [];
+
   return {
     inventory,
     fragments,
@@ -93,6 +132,7 @@ export function normalizeUserCards(data: Partial<UserCards> | null | undefined):
     pityLegendaryRare,
     drawsAvailable,
     collectionRewards,
+    recentDraws,
   };
 }
 
@@ -124,15 +164,17 @@ export function selectCardByRarity(rarity: Rarity): CardConfig {
  * First selects a rarity tier based on RARITY_PROBABILITIES,
  * then selects a random card within that tier.
  */
-export function selectCardByProbability(): CardConfig {
-  const rarities = Object.keys(RARITY_PROBABILITIES) as Rarity[];
-  const totalWeight = rarities.reduce((sum, r) => sum + RARITY_PROBABILITIES[r], 0);
+export function selectCardByProbability(
+  probabilities: Record<Rarity, number> = RARITY_PROBABILITIES,
+): CardConfig {
+  const rarities = Object.keys(probabilities) as Rarity[];
+  const totalWeight = rarities.reduce((sum, r) => sum + probabilities[r], 0);
 
   let random = secureRandomFloat() * totalWeight;
   let selectedRarity: Rarity = "common";
 
   for (const rarity of rarities) {
-    random -= RARITY_PROBABILITIES[rarity];
+    random -= probabilities[rarity];
     if (random <= 0) {
       selectedRarity = rarity;
       break;
@@ -145,9 +187,9 @@ export function selectCardByProbability(): CardConfig {
 /**
  * Select card based on pity counter (after increment).
  */
-function selectCardForDraw(counters: PityCounters): CardConfig {
-  const guaranteed = getGuaranteedRarity(counters);
-  if (!guaranteed) return selectCardByProbability();
+function selectCardForDraw(counters: PityCounters, rules: CardRulesConfig): CardConfig {
+  const guaranteed = getGuaranteedRarity(counters, rules.pityThresholds);
+  if (!guaranteed) return selectCardByProbability(rules.rarityProbabilities);
 
   const minLevel = RARITY_LEVELS[guaranteed];
   const eligibleCards = CARDS.filter((c) => RARITY_LEVELS[c.rarity] >= minLevel);
@@ -232,6 +274,16 @@ async function finalizeDraw(
   }
   userData.pityCounter = userData.pityLegendaryRare ?? 0;
 
+  // 追加最近抽卡历史（最新在前），保留最近 RECENT_DRAWS_LIMIT 条
+  const draw: RecentDraw = {
+    cardId,
+    rarity: rarity as Rarity,
+    isDuplicate,
+    fragmentsAdded,
+    timestamp: Date.now(),
+  };
+  userData.recentDraws = [draw, ...(userData.recentDraws ?? [])].slice(0, RECENT_DRAWS_LIMIT);
+
   await kv.set(userKey, userData);
 
   return {
@@ -285,9 +337,10 @@ export async function drawCard(userId: string): Promise<{
       return { success: false, message: "抽卡次数不足" };
     }
 
+    const rules = await getCardRulesConfig();
     const pityCounters = normalizePityCounters(reserve.pityCounters!);
-    const card = selectCardForDraw(pityCounters);
-    const fragmentValue = FRAGMENT_VALUES[card.rarity];
+    const card = selectCardForDraw(pityCounters, rules);
+    const fragmentValue = rules.fragmentValues[card.rarity];
 
     try {
       const result = await finalizeDraw(userKey, card.id, card.rarity, fragmentValue);

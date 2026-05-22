@@ -3,6 +3,7 @@ import { drawCard, getUserCardData, updateUserCardData, selectCardByProbability,
 import { kv } from '@/lib/d1-kv';
 import { CARDS } from '../config';
 import { FRAGMENT_VALUES } from '../constants';
+import { getDefaultCardRulesConfig } from '../rules';
 
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
@@ -27,6 +28,7 @@ describe('Card Draw System', () => {
     pityLegendaryRare: 0,
     drawsAvailable: 1,
     collectionRewards: [],
+    recentDraws: [],
   });
 
   const mockKvGet = vi.mocked(kv.get);
@@ -118,6 +120,8 @@ describe('Card Draw System', () => {
       const userData = getFreshMockData();
       // Phase 1: reserveDraw reads user data (has 1 draw available)
       mockKvGet.mockResolvedValueOnce({ ...userData });
+      // Dynamic rule config is read between reserve and finalize
+      mockKvGet.mockResolvedValueOnce(getDefaultCardRulesConfig());
       // Phase 2: finalizeDraw reads user data (after reserve decremented draws)
       mockKvGet.mockResolvedValueOnce({
         ...userData,
@@ -136,8 +140,8 @@ describe('Card Draw System', () => {
       expect(CARDS).toContain(result.card);
       expect(result.isDuplicate).toBe(false);
 
-      // Verify kv.get called twice (phase 1 + phase 2) and kv.set called twice
-      expect(kv.get).toHaveBeenCalledTimes(2);
+      // Verify kv.get called three times (rules config + two draw phases) and kv.set called twice
+      expect(kv.get).toHaveBeenCalledTimes(3);
       expect(kv.set).toHaveBeenCalledTimes(2);
     });
 
@@ -149,6 +153,8 @@ describe('Card Draw System', () => {
 
       // Phase 1: reserveDraw reads user data
       mockKvGet.mockResolvedValueOnce({ ...userData });
+      // Dynamic rule config is read between reserve and finalize
+      mockKvGet.mockResolvedValueOnce(getDefaultCardRulesConfig());
       // Phase 2: finalizeDraw reads user data (after reserve)
       mockKvGet.mockResolvedValueOnce({
         ...userData,

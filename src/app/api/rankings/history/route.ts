@@ -3,6 +3,7 @@ import {
   listRankingSettlementHistory,
   type RankingSettlementPeriod,
 } from '@/lib/ranking-settlement';
+import { getMonthlyPeakHistory } from '@/lib/rankings';
 import { withAuthenticatedUser } from '@/lib/rate-limit';
 import {
   buildKvUnavailablePayload,
@@ -28,10 +29,38 @@ function normalizeLimit(value: string | null): number {
   return Math.max(1, Math.min(50, Math.floor(num)));
 }
 
+function normalizeHistoryMonths(value: string | null): number {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 12;
+  return Math.max(1, Math.min(12, Math.floor(num)));
+}
+
+function normalizeTopLimit(value: string | null): number {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 10;
+  return Math.max(1, Math.min(10, Math.floor(num)));
+}
+
 export const GET = withAuthenticatedUser(
   async (request) => {
     try {
       const { searchParams } = new URL(request.url);
+      const mode = searchParams.get('mode');
+
+      if (mode === 'monthly-peaks') {
+        const data = await getMonthlyPeakHistory({
+          months: normalizeHistoryMonths(searchParams.get('months')),
+          topLimit: normalizeTopLimit(searchParams.get('limit')),
+        });
+
+        const response = NextResponse.json({
+          success: true,
+          data,
+        });
+        response.headers.set('Cache-Control', PRIVATE_RANKING_CACHE_CONTROL);
+        return response;
+      }
+
       const period = normalizePeriod(searchParams.get('period'));
       const page = normalizePage(searchParams.get('page'));
       const limit = normalizeLimit(searchParams.get('limit'));
