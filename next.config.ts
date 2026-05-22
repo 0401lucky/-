@@ -12,6 +12,8 @@ const securityHeaders = [
 initOpenNextCloudflareForDev();
 
 const nextConfig: NextConfig = {
+  output: "standalone",
+
   // 启用压缩
   compress: true,
 
