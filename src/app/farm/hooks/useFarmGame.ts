@@ -91,6 +91,7 @@ export function useFarmGame(): UseFarmGameReturn {
 
     pendingActionCountRef.current += 1;
     setActionLoading(true);
+    setToast({ type: 'info', text: '操作已提交，正在处理...' });
     const run = async (): Promise<T | null> => {
       try {
         const r = await fn();
