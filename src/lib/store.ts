@@ -344,7 +344,14 @@ export async function exchangeItem(
   userId: number,
   itemId: string,
   quantity: number = 1
-): Promise<{ success: boolean; message: string; log?: ExchangeLog; uncertain?: boolean; drawsAvailable?: number }> {
+): Promise<{
+  success: boolean;
+  message: string;
+  log?: ExchangeLog;
+  uncertain?: boolean;
+  drawsAvailable?: number;
+  balance?: number;
+}> {
   if (!Number.isSafeInteger(quantity) || quantity < 1) {
     return { success: false, message: '数量参数错误' };
   }
@@ -502,22 +509,20 @@ export async function exchangeItem(
       message: rewardMessage,
     });
 
-    try {
-      await logExchange(uncertainLog);
-    } catch (logError) {
-      console.error('Exchange log write failed (uncertain):', logError);
-    }
+    const [logResult, uncertainLogResult, countResult] = await Promise.allSettled([
+      logExchange(uncertainLog),
+      logUncertainExchange(uncertainLog, rewardMessage),
+      kv.hincrby(STORE_ITEM_PURCHASE_COUNTS_KEY, itemId, quantity),
+    ]);
 
-    try {
-      await logUncertainExchange(uncertainLog, rewardMessage);
-    } catch (uncertainLogError) {
-      console.error('Uncertain exchange log write failed:', uncertainLogError);
+    if (logResult.status === 'rejected') {
+      console.error('Exchange log write failed (uncertain):', logResult.reason);
     }
-
-    try {
-      await kv.hincrby(STORE_ITEM_PURCHASE_COUNTS_KEY, itemId, quantity);
-    } catch (countError) {
-      console.error('Store item purchase count increment failed (uncertain, non-critical):', countError);
+    if (uncertainLogResult.status === 'rejected') {
+      console.error('Uncertain exchange log write failed:', uncertainLogResult.reason);
+    }
+    if (countResult.status === 'rejected') {
+      console.error('Store item purchase count increment failed (uncertain, non-critical):', countResult.reason);
     }
 
     const uncertainHint = '本次兑换已登记为待确认状态，请勿重复兑换，稍后查看账户余额。';
@@ -526,6 +531,7 @@ export async function exchangeItem(
       message: `${rewardMessage}（${uncertainHint}）`,
       uncertain: true,
       log: uncertainLog,
+      balance: deductResult.balance,
     };
   }
 
@@ -566,18 +572,17 @@ export async function exchangeItem(
     createdAt: Date.now(),
   };
   
-  try {
-    await logExchange(log);
-  } catch (logError) {
-    // 日志写入失败不影响兑换成功，仅记录错误
-    console.error('Exchange log write failed (non-critical):', logError);
-  }
+  const [logResult, countResult] = await Promise.allSettled([
+    logExchange(log),
+    kv.hincrby(STORE_ITEM_PURCHASE_COUNTS_KEY, itemId, quantity),
+  ]);
 
-  // 7. 统计商品被兑换次数（best-effort，失败不影响成功响应）
-  try {
-    await kv.hincrby(STORE_ITEM_PURCHASE_COUNTS_KEY, itemId, quantity);
-  } catch (countError) {
-    console.error('Store item purchase count increment failed (non-critical):', countError);
+  if (logResult.status === 'rejected') {
+    // 日志写入失败不影响兑换成功，仅记录错误
+    console.error('Exchange log write failed (non-critical):', logResult.reason);
+  }
+  if (countResult.status === 'rejected') {
+    console.error('Store item purchase count increment failed (non-critical):', countResult.reason);
   }
 
   return { 
@@ -585,6 +590,7 @@ export async function exchangeItem(
     message: rewardMessage,
     log,
     drawsAvailable,
+    balance: deductResult.balance,
   };
 }
 

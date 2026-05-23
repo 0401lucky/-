@@ -106,6 +106,14 @@ describe('exchangeItem store safety', () => {
     expect(mockKvDecrby).toHaveBeenCalledTimes(1); // rollback the incrby
   });
 
+  it('returns updated balance after successful exchange', async () => {
+    const result = await exchangeItem(1004, 'item-1');
+
+    expect(result.success).toBe(true);
+    expect(result.balance).toBe(9999);
+    expect(mockKvHincrby).toHaveBeenCalledWith('store:item:purchase_counts', 'item-1', 1);
+  });
+
   it('does not rollback points or daily limit when direct credit is uncertain', async () => {
     mockCreditQuotaToUser.mockResolvedValue({
       success: false,
@@ -117,6 +125,7 @@ describe('exchangeItem store safety', () => {
 
     expect(result.success).toBe(true);
     expect(result.uncertain).toBe(true);
+    expect(result.balance).toBe(9999);
     expect(result.message).toContain('充值结果不确定');
     expect(mockApplyPointsDelta).not.toHaveBeenCalled();
     expect(mockKvDecr).not.toHaveBeenCalled();

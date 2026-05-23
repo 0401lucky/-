@@ -233,7 +233,7 @@ function StoreContent() {
   const fetchAll = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true);
     else setLoading(true);
-    setMessage(null);
+    if (!silent) setMessage(null);
 
     try {
       const [meRes, profileRes, storeRes, projectsRes, rafflesRes] = await Promise.all([
@@ -372,7 +372,6 @@ function StoreContent() {
         setBalance(data.data?.newBalance ?? balance);
         setQuantityItem(null);
         setQuantity(1);
-        void fetchAll(true);
       } else {
         setMessage({ type: 'error', text: data.message || data.error || '兑换失败' });
       }
@@ -1240,6 +1239,7 @@ function StoreContent() {
                   min={1}
                   max={maxAffordableQuantity}
                   value={clampedQuantity}
+                  disabled={isExchangingQuantityItem}
                   onChange={(e) => {
                     const n = Math.floor(Number(e.target.value));
                     if (!Number.isFinite(n)) return;
@@ -1275,11 +1275,11 @@ function StoreContent() {
               <button
                 type="button"
                 className="lwf-btn-primary"
-                onClick={() => handleExchange(quantityItem.id, clampedQuantity)}
+                onClick={() => void handleExchange(quantityItem.id, clampedQuantity)}
                 disabled={!canAffordTotal || isExchangingQuantityItem}
               >
                 {isExchangingQuantityItem ? <Loader2 className="ic-action-spin" size={14} /> : <BadgeCheck size={14} />}
-                确认兑换
+                {isExchangingQuantityItem ? '兑换中' : '确认兑换'}
               </button>
             </div>
           </div>

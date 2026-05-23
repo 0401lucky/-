@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { exchangeItem } from '@/lib/store';
-import { getUserPoints } from '@/lib/points';
 import { withUserRateLimit } from '@/lib/rate-limit';
 
 export const POST = withUserRateLimit('store:exchange', async (request, user) => {
@@ -26,16 +25,13 @@ export const POST = withUserRateLimit('store:exchange', async (request, user) =>
       }, { status: 400 });
     }
 
-    // 返回更新后的积分余额
-    const newBalance = await getUserPoints(user.id);
-
     return NextResponse.json({
       success: result.success || !!result.uncertain,
       message: result.message,
       uncertain: result.uncertain,
       data: {
         log: result.log,
-        newBalance,
+        newBalance: result.balance,
         drawsAvailable: result.drawsAvailable,
       },
     });
