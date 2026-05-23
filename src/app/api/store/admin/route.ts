@@ -294,6 +294,11 @@ export async function PUT(request: NextRequest) {
  * PATCH - 创建或更新商品分类
  */
 export async function PATCH(request: NextRequest) {
+  const blocked = enforceTrustedApiRequest(request);
+  if (blocked) {
+    return blocked;
+  }
+
   const auth = await checkAdmin();
   if (!auth.authorized) {
     return auth.response;
