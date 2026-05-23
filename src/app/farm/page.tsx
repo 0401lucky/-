@@ -561,6 +561,7 @@ export default function FarmPage() {
         inventory={state.inventory}
         purchasedSkillBooks={state.purchasedSkillBooks}
         learnedSkills={state.pet?.learnedSkills}
+        shopDailyPurchases={game.status.shopDailyPurchases}
         seedInventory={state.seedInventory}
         balance={state.points}
         unlockedLandCount={unlockedLandCount}

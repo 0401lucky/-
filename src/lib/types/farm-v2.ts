@@ -219,6 +219,8 @@ export interface FarmStatusResponse {
   world: WorldStateV2;
   /** 天气预报 */
   weatherForecast: WeatherForecastV2;
+  /** 今日商店限购道具已购买数量（中国时区） */
+  shopDailyPurchases?: Partial<Record<ShopItemKey, number>>;
   serverNow: number;
   /** 当前季节可种作物 */
   plantableCrops: CropIdV2[];

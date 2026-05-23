@@ -424,6 +424,7 @@ interface ShopModalProps {
   inventory: Inventory;
   purchasedSkillBooks?: Partial<Record<PetSkillBookKey, boolean>>;
   learnedSkills?: PetSkill[];
+  shopDailyPurchases?: Partial<Record<ShopItemKey, number>>;
   seedInventory: Partial<Record<CropIdV2, number>>;
   balance: number;
   unlockedLandCount: number;
@@ -461,6 +462,9 @@ type ShopPurchaseTarget =
       unitCost: number;
       stock: number;
       emoji: string;
+      dailyLimit?: number;
+      dailyPurchased?: number;
+      dailyRemaining?: number;
     };
 
 function clampPurchaseQty(value: number, maxQty: number): number {
@@ -469,7 +473,7 @@ function clampPurchaseQty(value: number, maxQty: number): number {
 }
 
 export function ShopModal({
-  open, inventory, purchasedSkillBooks, learnedSkills, seedInventory, balance,
+  open, inventory, purchasedSkillBooks, learnedSkills, shopDailyPurchases, seedInventory, balance,
   unlockedLandCount, scarecrowUntil, bellUntil, onClose, onBuy, onBuySeed,
 }: ShopModalProps) {
   const [tab, setTab] = useState<typeof SHOP_TABS[number]['id']>('seeds');
@@ -485,7 +489,12 @@ export function ShopModal({
   const items = tab === 'seeds' ? [] : Object.values(SHOP_ITEMS_V2).filter(i => i.category === tab && i.cost > 0);
   const targetIsSkillBook = purchaseTarget?.kind === 'item' && PET_SKILL_BOOK_KEYS.includes(purchaseTarget.itemKey as PetSkillBookKey);
   const targetIsOneTime = purchaseTarget?.kind === 'item' && ONE_TIME_SHOP_ITEM_KEYS.includes(purchaseTarget.itemKey as (typeof ONE_TIME_SHOP_ITEM_KEYS)[number]);
-  const maxPurchaseQty = purchaseTarget ? Math.min(targetIsSkillBook || targetIsOneTime ? 1 : 99, Math.floor(balance / purchaseTarget.unitCost)) : 1;
+  const targetDailyRemaining = purchaseTarget?.kind === 'item' && purchaseTarget.dailyLimit
+    ? purchaseTarget.dailyRemaining ?? 0
+    : 99;
+  const maxPurchaseQty = purchaseTarget
+    ? Math.min(targetIsSkillBook || targetIsOneTime ? 1 : 99, Math.floor(balance / purchaseTarget.unitCost), targetDailyRemaining)
+    : 1;
   const purchaseTotal = purchaseTarget ? purchaseTarget.unitCost * purchaseQty : 0;
   const canConfirmPurchase = !!purchaseTarget && maxPurchaseQty >= 1 && purchaseQty >= 1 && purchaseTotal <= balance;
   const openPurchase = (target: ShopPurchaseTarget) => {
@@ -553,6 +562,11 @@ export function ShopModal({
             const skillBookPurchased = !!skillBookKey
               && (!!purchasedSkillBooks?.[skillBookKey] || cnt > 0 || (!!learnedSkill && (learnedSkills ?? []).includes(learnedSkill)));
             const oneTimePurchased = ONE_TIME_SHOP_ITEM_KEYS.includes(it.key as (typeof ONE_TIME_SHOP_ITEM_KEYS)[number]) && cnt > 0;
+            const dailyLimit = Number(it.dailyLimit ?? 0);
+            const hasDailyLimit = Number.isSafeInteger(dailyLimit) && dailyLimit > 0;
+            const purchasedToday = hasDailyLimit ? shopDailyPurchases?.[it.key] ?? 0 : 0;
+            const dailyRemaining = hasDailyLimit ? Math.max(0, dailyLimit - purchasedToday) : 99;
+            const dailyLimitedOut = hasDailyLimit && dailyRemaining <= 0;
             return (
               <div key={it.key} className="shop-row">
                 <div className="shop-emoji">{it.emoji}</div>
@@ -561,13 +575,16 @@ export function ShopModal({
                     {it.name}
                     <span className="shop-stock">背包 {cnt}</span>
                     {skillBookKey && <span className="shop-stock">限购 1 本</span>}
+                    {hasDailyLimit && !skillBookKey && (
+                      <span className="shop-stock">今日 {Math.min(purchasedToday, dailyLimit)}/{dailyLimit}</span>
+                    )}
                   </div>
                   <div className="shop-desc">{it.description}</div>
                 </div>
                 <div className="shop-actions">
                   <button
                     className="shop-btn buy"
-                    disabled={balance < it.cost || skillBookPurchased || oneTimePurchased}
+                    disabled={balance < it.cost || skillBookPurchased || oneTimePurchased || dailyLimitedOut}
                     onClick={() => openPurchase({
                       kind: 'item',
                       itemKey: it.key,
@@ -576,9 +593,12 @@ export function ShopModal({
                       unitCost: it.cost,
                       stock: cnt,
                       emoji: it.emoji,
+                      dailyLimit: hasDailyLimit ? dailyLimit : undefined,
+                      dailyPurchased: hasDailyLimit ? purchasedToday : undefined,
+                      dailyRemaining: hasDailyLimit ? dailyRemaining : undefined,
                     })}
                   >
-                    {skillBookPurchased || oneTimePurchased ? '已购' : `${it.cost} 积分`}
+                    {skillBookPurchased || oneTimePurchased ? '已购' : dailyLimitedOut ? '今日已达上限' : `${it.cost} 积分`}
                   </button>
                 </div>
               </div>
@@ -666,6 +686,14 @@ function PurchaseQuantityModal({
 }) {
   if (!target) return null;
   const isSeed = target.kind === 'seed';
+  const dailyLimit = !isSeed ? target.dailyLimit : undefined;
+  const dailyPurchased = !isSeed ? target.dailyPurchased ?? 0 : 0;
+  const dailyRemaining = !isSeed ? target.dailyRemaining : undefined;
+  const blockedReason = !canConfirm
+    ? dailyLimit && dailyRemaining !== undefined && dailyRemaining <= 0
+      ? `今日限购 ${dailyLimit} 个，已经买满了`
+      : '积分不足，暂时不能购买'
+    : null;
 
   return (
     <ModalShell
@@ -700,6 +728,9 @@ function PurchaseQuantityModal({
       <div className="purchase-summary">
         <span>单价 <strong>{target.unitCost}</strong> 积分</span>
         <span>余额 <strong>{balance}</strong> 积分</span>
+        {dailyLimit && (
+          <span>今日 <strong>{Math.min(dailyPurchased, dailyLimit)}/{dailyLimit}</strong></span>
+        )}
         <span>最多可买 <strong>{Math.max(0, maxQty)}</strong></span>
       </div>
 
@@ -736,7 +767,7 @@ function PurchaseQuantityModal({
 
       <div className={`purchase-total ${canConfirm ? '' : 'disabled'}`}>
         合计 <strong>{total}</strong> 积分
-        {!canConfirm && <span>积分不足，暂时不能购买</span>}
+        {blockedReason && <span>{blockedReason}</span>}
       </div>
     </ModalShell>
   );

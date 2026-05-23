@@ -270,7 +270,8 @@ export function SiteSidebar({ activeNav }: SiteSidebarProps) {
 
       <style jsx global>{`
         .site-sidebar {
-          width: 40%;
+          flex: 0 0 clamp(420px, 38vw, 720px);
+          width: auto;
           padding: 4rem 5rem;
           position: sticky;
           top: 0;
@@ -278,7 +279,6 @@ export function SiteSidebar({ activeNav }: SiteSidebarProps) {
           display: flex;
           flex-direction: column;
           justify-content: space-between;
-          flex-shrink: 0;
           font-family: 'Outfit', 'Noto Sans SC', sans-serif;
           color: #0f172a;
           box-sizing: border-box;

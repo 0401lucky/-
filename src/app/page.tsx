@@ -928,8 +928,9 @@ export default function HomePage() {
         .layout {
           display: flex;
           height: 100vh;
-          max-width: 1600px;
-          margin: 0 auto;
+          width: 100%;
+          max-width: none;
+          margin: 0;
           overflow: hidden;
         }
 
@@ -1061,10 +1062,11 @@ export default function HomePage() {
         }
 
         .panel-right {
-          width: 60%;
+          flex: 1 1 0;
+          width: auto;
           padding: 4rem 5rem 4rem 0;
           display: grid;
-          grid-template-columns: repeat(2, 1fr);
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           /* 第 1 行（热门福利）自适应；后续每行 = 卡片高度的 1/10
              这样错位 3 行 = 30%、同列卡间空 2 行 = 间距 */
           grid-template-rows: auto;
@@ -1072,7 +1074,7 @@ export default function HomePage() {
           row-gap: 0;
           column-gap: 22px;
           align-content: start;
-          max-width: 880px;
+          max-width: none;
           min-width: 0;
           height: 100vh;
           overflow-y: auto;
@@ -2034,7 +2036,7 @@ export default function HomePage() {
           .panel-right {
             padding: 3rem 3rem 3rem 0;
             column-gap: 16px;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             grid-template-rows: auto;
             grid-auto-rows: 18px;
           }
@@ -2136,7 +2138,7 @@ export default function HomePage() {
             overflow-y: auto;
             overflow-x: hidden;
             -webkit-overflow-scrolling: touch;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             grid-auto-rows: auto;
             gap: 16px;
           }

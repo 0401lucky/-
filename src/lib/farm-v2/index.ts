@@ -68,7 +68,14 @@ async function acquireLock(userId: number): Promise<Lock | null> {
 }
 
 async function releaseLock(lock: Lock): Promise<void> {
-  kv.del(lock.key).catch(() => {});
+  try {
+    const current = await kv.get<string>(lock.key);
+    if (current === lock.token) {
+      await kv.del(lock.key);
+    }
+  } catch (error) {
+    console.error('释放农场状态锁失败:', error);
+  }
 }
 
 /** 从 KV 读取或创建初始状态 */
@@ -135,6 +142,23 @@ function normalizeState(s: FarmStateV2): FarmStateV2 {
     s.lands = Array.from({ length: MAX_LAND_COUNT }, (_, i) => s.lands?.[i] ?? { index: i + 1, status: i < INITIAL_LAND_COUNT ? 'empty' : 'locked', crop: null });
   }
   return s;
+}
+
+async function getShopDailyPurchaseCounts(
+  userId: number,
+  date = getChinaDateString(Date.now()),
+): Promise<Partial<Record<ShopItemKey, number>>> {
+  const items = await getEffectiveFarmShopItems();
+  const limitedItems = Object.values(items).filter((item) => {
+    const limit = Number(item.dailyLimit ?? 0);
+    return Number.isSafeInteger(limit) && limit > 0;
+  });
+  const entries = await Promise.all(limitedItems.map(async (item) => {
+    const key = `farmv2:shop:daily:${userId}:${date}:${item.key}`;
+    const count = Number(await kv.get<number>(key)) || 0;
+    return [item.key, Math.max(0, count)] as const;
+  }));
+  return Object.fromEntries(entries) as Partial<Record<ShopItemKey, number>>;
 }
 
 async function syncStatePointsFromLedger(state: FarmStateV2): Promise<void> {
@@ -533,6 +557,7 @@ export async function getFarmStatus(userId: number): Promise<FarmStatusResponse>
   const tomorrowDate = getChinaDateString(tomorrowAtMidnight);
   const tomorrowWeather = getWeatherForDate(tomorrowDate, tomorrowSeason);
   const computedLands = buildComputedLands(state, now);
+  const shopDailyPurchases = await getShopDailyPurchaseCounts(userId, date);
   return {
     state,
     computedLands,
@@ -545,6 +570,7 @@ export async function getFarmStatus(userId: number): Promise<FarmStatusResponse>
         generatedAt: now,
       },
     },
+    shopDailyPurchases,
     serverNow: now,
     plantableCrops: getPlantableCrops(state, season),
     nextSeasonInMs: getNextSeasonChangeMs(now),
