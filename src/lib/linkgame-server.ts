@@ -44,6 +44,7 @@ const COOLDOWN_TTL = 5; // 5秒
 const MIN_GAME_DURATION = 5000; // 5秒
 const MAX_RECORD_ENTRIES = 50;
 const START_LOCK_TTL = 3;
+const SUBMIT_LOCK_TTL = 20;
 
 // Key 格式
 const SESSION_KEY = (sessionId: string) => `linkgame:session:${sessionId}`;
@@ -393,7 +394,7 @@ export async function submitLinkGameResult(
   const useNativeHotStore = await isNativeHotStoreReady();
   // 幂等锁
   const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
-  const lockToken = await acquireGameLock(lockKey, SESSION_TTL, useNativeHotStore);
+  const lockToken = await acquireGameLock(lockKey, SUBMIT_LOCK_TTL, useNativeHotStore);
   if (!lockToken) {
     return { success: false, message: '请勿重复提交' };
   }

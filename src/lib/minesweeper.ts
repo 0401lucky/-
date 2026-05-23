@@ -39,6 +39,7 @@ const COOLDOWN_TTL = 5;
 const MAX_RECORD_ENTRIES = 50;
 const STEP_LOCK_TTL = 3;
 const START_LOCK_TTL = 3;
+const SUBMIT_LOCK_TTL = 20;
 
 const SESSION_KEY = (sessionId: string) => `minesweeper:session:${sessionId}`;
 const ACTIVE_SESSION_KEY = (userId: number) => `minesweeper:active:${userId}`;
@@ -447,7 +448,7 @@ export async function submitMinesweeperResult(
 
   const useNativeHotStore = await isNativeHotStoreReady();
   const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
-  const lockToken = await acquireGameLock(lockKey, SESSION_TTL, useNativeHotStore);
+  const lockToken = await acquireGameLock(lockKey, SUBMIT_LOCK_TTL, useNativeHotStore);
   if (!lockToken) {
     return { success: false, message: '请勿重复提交' };
   }

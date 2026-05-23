@@ -392,6 +392,7 @@ export default function WhackMolePage() {
     } catch (err) {
       submittedRef.current = false;
       setRoundPhase('finished');
+      setLastHit('结算未完成，请重试本局结算');
       setError(err instanceof Error ? err.message : '结算失败，请稍后重试');
     } finally {
       setLoading(false);
@@ -557,22 +558,27 @@ export default function WhackMolePage() {
   const refreshHint = getWhackMoleRefreshMs(elapsedMs);
   const bombHint = getWhackMoleBombCount(elapsedMs);
   const rewardPreview = calculateWhackMolePointReward(localScore);
+  const canRetrySettlement = phase === 'finished' && !result && session !== null;
   const phaseText = phase === 'playing' ? '进行中' : phase === 'submitting' ? '结算中' : phase === 'finished' ? '已结算' : '待开始';
   const commandLine = phase === 'playing'
     ? '按规则敲击目标：普通加分，金色优先，炸弹会扣分并清空连击。'
     : phase === 'submitting'
       ? '本局正在由服务端复算分数。'
       : phase === 'finished'
-        ? '结算完成，可以返回游戏中心或再来一局。'
+        ? canRetrySettlement
+          ? '本局还没有完成结算，可以重试提交。'
+          : '结算完成，可以返回游戏中心或再来一局。'
         : '每局 60 秒，刷新会越来越快，后半段炸弹数量会上升。';
   const primaryButtonLabel = phase === 'playing'
     ? '结束游戏'
     : phase === 'submitting'
       ? '结算中...'
       : phase === 'finished'
-        ? '再来一局'
+        ? canRetrySettlement
+          ? '重试结算'
+          : '再来一局'
         : '开始游戏';
-  const isPrimaryDisabled = loading || phase === 'submitting' || (phase !== 'playing' && Boolean(status?.inCooldown));
+  const isPrimaryDisabled = loading || phase === 'submitting' || (!canRetrySettlement && phase !== 'playing' && Boolean(status?.inCooldown));
   const actionLabel = status?.inCooldown && phase !== 'playing'
     ? `冷却中 ${status.cooldownRemaining}s`
     : primaryButtonLabel;
@@ -640,7 +646,15 @@ export default function WhackMolePage() {
 
             <button
               onClick={() => {
-                void (phase === 'playing' ? cancelGame() : startGame());
+                if (phase === 'playing') {
+                  void cancelGame();
+                  return;
+                }
+                if (canRetrySettlement && sessionRef.current) {
+                  void submitResult(sessionRef.current);
+                  return;
+                }
+                void startGame();
               }}
               disabled={isPrimaryDisabled}
               className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 text-sm font-bold text-white shadow-lg shadow-emerald-200 transition-all hover:-translate-y-0.5 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-emerald-700/40 disabled:shadow-none"

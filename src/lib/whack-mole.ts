@@ -36,11 +36,13 @@ import type { GameSessionStatus } from './types/game';
 export { getDailyStats };
 
 const GAME_TYPE = 'whack_mole' as const;
-const SESSION_TTL = 90;
+const SESSION_TTL = 5 * 60;
 const COOLDOWN_TTL = 5;
 const MAX_RECORD_ENTRIES = 50;
 const START_LOCK_TTL = 3;
+const SUBMIT_LOCK_TTL = 20;
 const HIT_LOCK_TTL = 2;
+const SUBMIT_EARLY_GRACE_MS = 5_000;
 const HIT_GRACE_MAX_MS = 350;
 const HIT_GRACE_STEP_MS = 20;
 const HIT_CLIENT_LATENCY_MS = 1500;
@@ -565,7 +567,7 @@ export async function submitWhackMoleResult(
 
   const useNativeHotStore = await isNativeHotStoreReady();
   const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
-  const lockToken = await acquireGameLock(lockKey, SESSION_TTL, useNativeHotStore);
+  const lockToken = await acquireGameLock(lockKey, SUBMIT_LOCK_TTL, useNativeHotStore);
   if (!lockToken) {
     return { success: false, message: '请勿重复提交' };
   }
@@ -596,12 +598,6 @@ export async function submitWhackMoleResult(
     return { success: false, message: '游戏会话已结束' };
   }
 
-  const serverDuration = Date.now() - session.startedAt;
-  if (serverDuration < WHACK_MOLE_GAME_DURATION_MS) {
-    await releaseLock();
-    return { success: false, message: '游戏尚未结束' };
-  }
-
   if (Date.now() > session.expiresAt) {
     if (!useNativeHotStore) {
       await clearLegacySession(payload.sessionId, userId);
@@ -619,6 +615,11 @@ export async function submitWhackMoleResult(
     return { success: false, message: rateCheck.message };
   }
 
+  const serverDuration = Date.now() - session.startedAt;
+  if (serverDuration < WHACK_MOLE_GAME_DURATION_MS - SUBMIT_EARLY_GRACE_MS) {
+    await releaseLock();
+    return { success: false, message: '游戏尚未结束' };
+  }
   const scored = scoreWhackMoleEvents(session.seed, candidateEvents);
   const pointReward = calculateWhackMolePointReward(scored.score);
   const dailyPointsLimit = await getDailyPointsLimit();
@@ -643,7 +644,7 @@ export async function submitWhackMoleResult(
     misses: stats.misses,
     bombs: stats.bombs,
     maxCombo: stats.maxCombo,
-    duration: Math.min(serverDuration, WHACK_MOLE_GAME_DURATION_MS),
+    duration: WHACK_MOLE_GAME_DURATION_MS,
     createdAt: Date.now(),
   };
 

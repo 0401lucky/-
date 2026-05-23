@@ -228,14 +228,25 @@ describe('whack mole server authority', () => {
     expect(hit.data?.score).toBeGreaterThan(0);
   });
 
-  it('rejects settlement before the full round has elapsed', async () => {
+  it('rejects settlement too far before the full round has elapsed', async () => {
     const started = await startWhackMoleGame(1001);
     const session = started.session!;
 
-    vi.setSystemTime(new Date(Date.now() + 55_000));
+    vi.setSystemTime(new Date(Date.now() + 54_000));
     const result = await submitWhackMoleResult(1001, { sessionId: session.id });
 
     expect(result.success).toBe(false);
     expect(result.message).toBe('游戏尚未结束');
+  });
+
+  it('accepts settlement near the end of the round to tolerate client clock drift', async () => {
+    const started = await startWhackMoleGame(1001);
+    const session = started.session!;
+
+    vi.setSystemTime(new Date(Date.now() + 56_000));
+    const result = await submitWhackMoleResult(1001, { sessionId: session.id });
+
+    expect(result.success).toBe(true);
+    expect(result.record?.duration).toBe(WHACK_MOLE_GAME_DURATION_MS);
   });
 });

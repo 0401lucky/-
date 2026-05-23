@@ -182,6 +182,10 @@ export async function addGamePointsWithLimit(
       dailyEarned: newDailyEarned,
       limitReached: false,
     };
+  }, {
+    maxRetries: 80,
+    retryMs: 50,
+    timeoutMessage: 'GAME_POINTS_LOCK_TIMEOUT',
   });
 }
 

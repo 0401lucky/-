@@ -25,12 +25,13 @@ import type { Match3Config, Match3Move } from './match3-engine';
 const GAME_TYPE = 'match3' as const;
 
 const TIME_LIMIT_MS = 60 * 1000;
-const SESSION_TTL = 2 * 60; // 2分钟：60s对局 + 提交缓冲
+const SESSION_TTL = 5 * 60; // 5分钟：60s对局 + 提交缓冲
 const COOLDOWN_TTL = 5; // 5秒
 const MIN_GAME_DURATION = 10_000; // 10秒
 const MAX_RECORD_ENTRIES = 50;
 const MAX_MOVES_PER_GAME = 250;
 const START_LOCK_TTL = 3;
+const SUBMIT_LOCK_TTL = 20;
 
 // Key 格式
 const SESSION_KEY = (sessionId: string) => `match3:session:${sessionId}`;
@@ -246,7 +247,7 @@ export async function submitMatch3Result(
   if (!payloadCheck.ok) return { success: false, message: payloadCheck.message };
 
   const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
-  const lockToken = await acquireGameLock(lockKey, SESSION_TTL, useNativeHotStore);
+  const lockToken = await acquireGameLock(lockKey, SUBMIT_LOCK_TTL, useNativeHotStore);
   if (!lockToken) {
     return { success: false, message: '请勿重复提交' };
   }

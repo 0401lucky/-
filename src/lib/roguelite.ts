@@ -42,6 +42,7 @@ const MAX_ACTIONS = 360;
 const STEP_LOCK_TTL = 3;
 const MIN_FINISH_DURATION_MS = 2_000;
 const START_LOCK_TTL = 3;
+const SUBMIT_LOCK_TTL = 20;
 
 const SESSION_KEY = (sessionId: string) => `roguelite:session:${sessionId}`;
 const ACTIVE_SESSION_KEY = (userId: number) => `roguelite:active:${userId}`;
@@ -460,7 +461,7 @@ export async function submitRogueliteResult(
 
   const useNativeHotStore = await isNativeHotStoreReady();
   const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
-  const lockToken = await acquireGameLock(lockKey, SESSION_TTL, useNativeHotStore);
+  const lockToken = await acquireGameLock(lockKey, SUBMIT_LOCK_TTL, useNativeHotStore);
   if (!lockToken) {
     return { success: false, message: '请勿重复提交' };
   }

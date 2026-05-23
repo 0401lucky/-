@@ -36,6 +36,7 @@ const COOLDOWN_TTL = 5; // 5秒
 const MIN_GAME_DURATION = 5000; // 5秒（记忆游戏可以更快）
 const MAX_RECORD_ENTRIES = 50;
 const START_LOCK_TTL = 3;
+const SUBMIT_LOCK_TTL = 20;
 
 // 难度配置
 export const DIFFICULTY_CONFIG: Record<MemoryDifficulty, MemoryDifficultyConfig> = {
@@ -513,7 +514,7 @@ export async function submitMemoryResult(
   const useNativeHotStore = await isNativeHotStoreReady();
   // 幂等锁
   const lockKey = SUBMIT_LOCK_KEY(result.sessionId);
-  const lockToken = await acquireGameLock(lockKey, SESSION_TTL, useNativeHotStore);
+  const lockToken = await acquireGameLock(lockKey, SUBMIT_LOCK_TTL, useNativeHotStore);
   if (!lockToken) {
     return { success: false, message: '请勿重复提交' };
   }
