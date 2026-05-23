@@ -362,6 +362,39 @@ export interface ClaimRecord {
   creditedAt?: number;
 }
 
+function readDirectRewardNumber(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeDirectPointsFromValues(primary: unknown, fallback?: unknown): number | null {
+  const raw = readDirectRewardNumber(primary) ?? readDirectRewardNumber(fallback);
+  if (raw == null || raw <= 0) return null;
+  const points = Math.round(raw);
+  return Number.isSafeInteger(points) && points > 0 ? points : null;
+}
+
+export function normalizeProjectDirectPoints(project: Pick<Project, "directPoints" | "directDollars">): number | null {
+  return normalizeDirectPointsFromValues(project.directPoints, project.directDollars);
+}
+
+export function toPublicProject(project: Project): Project {
+  if (project.rewardType !== "direct") return project;
+  const points = normalizeProjectDirectPoints(project);
+  if (points == null) return project;
+  const publicProject: Project = { ...project, directPoints: points };
+  delete publicProject.directDollars;
+  return publicProject;
+}
+
 const NEW_USER_BENEFIT_KEY = (userId: number) => `user:newbie:benefit:${userId}`;
 const NEW_USER_PENDING_PREFIX = "pending:";
 const NEW_USER_CLAIMED_PREFIX = "claimed:";
@@ -610,8 +643,8 @@ export async function reserveDirectClaim(
 
     if (project.status === 'paused') return { success: false, message: '该项目已暂停领取' };
 
-    const points = Number(project.directPoints ?? project.directDollars ?? 0);
-    if (!Number.isSafeInteger(points) || points <= 0) {
+    const points = normalizeProjectDirectPoints(project);
+    if (points == null) {
       return { success: false, message: '项目直充积分配置异常，请联系管理员' };
     }
 
@@ -735,8 +768,8 @@ export async function creditDirectProjectPoints(
     };
   }
 
-  const points = Number(record.creditedPoints ?? record.creditedDollars ?? 0);
-  if (!Number.isSafeInteger(points) || points <= 0) {
+  const points = normalizeDirectPointsFromValues(record.creditedPoints, record.creditedDollars);
+  if (points == null) {
     return { success: false, message: '项目直充积分配置异常，请联系管理员' };
   }
 

@@ -56,6 +56,9 @@ export function useFarmGame(): UseFarmGameReturn {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<UseFarmGameReturn['toast']>(null);
   const tickerRef = useRef<NodeJS.Timeout | null>(null);
+  const actionQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingActionCountRef = useRef(0);
+  const pendingActionKeysRef = useRef<Map<string, Promise<unknown>>>(new Map());
 
   const refresh = useCallback(async () => {
     try {
@@ -80,18 +83,33 @@ export function useFarmGame(): UseFarmGameReturn {
     };
   }, [refresh]);
 
-  const wrap = useCallback(async <T>(fn: () => Promise<T>): Promise<T | null> => {
-    setActionLoading(true);
-    try {
-      const r = await fn();
-      return r;
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '操作失败';
-      setToast({ type: 'error', text: msg });
-      return null;
-    } finally {
-      setActionLoading(false);
+  const wrap = useCallback(<T>(fn: () => Promise<T>, actionKey?: string): Promise<T | null> => {
+    if (actionKey) {
+      const pending = pendingActionKeysRef.current.get(actionKey);
+      if (pending) return pending as Promise<T | null>;
     }
+
+    pendingActionCountRef.current += 1;
+    setActionLoading(true);
+    const run = async (): Promise<T | null> => {
+      try {
+        const r = await fn();
+        return r;
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : '操作失败';
+        setToast({ type: 'error', text: msg });
+        return null;
+      } finally {
+        pendingActionCountRef.current = Math.max(0, pendingActionCountRef.current - 1);
+        if (actionKey) pendingActionKeysRef.current.delete(actionKey);
+        if (pendingActionCountRef.current === 0) setActionLoading(false);
+      }
+    };
+
+    const queued = actionQueueRef.current.then(run, run);
+    actionQueueRef.current = queued.then(() => undefined, () => undefined);
+    if (actionKey) pendingActionKeysRef.current.set(actionKey, queued);
+    return queued;
   }, []);
 
   const plant = useCallback(async (plotIndex: number, cropId: CropIdV2) => {
@@ -99,7 +117,7 @@ export function useFarmGame(): UseFarmGameReturn {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/plant', { plotIndex, cropId });
       setStatus(r.data);
       setToast({ type: 'success', text: '种植成功' });
-    });
+    }, `plant:${plotIndex}:${cropId}`);
   }, [wrap]);
 
   const water = useCallback(async (plotIndex: number) => {
@@ -107,7 +125,7 @@ export function useFarmGame(): UseFarmGameReturn {
       const r = await callApi<{ data: FarmStatusResponse; bonus?: number }>('/api/farm/water', { plotIndex });
       setStatus(r.data);
       setToast({ type: 'success', text: r.bonus ? `浇水成功 +${r.bonus} 引导奖励` : '浇水完成' });
-    });
+    }, `water:${plotIndex}`);
   }, [wrap]);
 
   const waterAll = useCallback(async () => {
@@ -115,7 +133,7 @@ export function useFarmGame(): UseFarmGameReturn {
       const r = await callApi<{ data: FarmStatusResponse; count: number }>('/api/farm/water-all');
       setStatus(r.data);
       setToast({ type: 'success', text: r.count > 0 ? `一键浇水 ${r.count} 块` : '没有需要浇水的作物' });
-    });
+    }, 'water-all');
   }, [wrap]);
 
   const harvest = useCallback(async (plotIndex: number) => {
@@ -123,7 +141,7 @@ export function useFarmGame(): UseFarmGameReturn {
       const r = await callApi<{ data: FarmStatusResponse; harvest: HarvestResult }>('/api/farm/harvest', { plotIndex });
       setStatus(r.data);
       return r.harvest;
-    });
+    }, `harvest:${plotIndex}`);
   }, [wrap]);
 
   const harvestAll = useCallback(async () => {
@@ -131,14 +149,14 @@ export function useFarmGame(): UseFarmGameReturn {
       const r = await callApi<{ data: FarmStatusResponse; harvests: HarvestResult[]; total: number }>('/api/farm/harvest-all');
       setStatus(r.data);
       return { results: r.harvests, total: r.total };
-    });
+    }, 'harvest-all');
   }, [wrap]);
 
   const removeWithered = useCallback(async (plotIndex: number) => {
     await wrap(async () => {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/remove', { plotIndex });
       setStatus(r.data);
-    });
+    }, `remove:${plotIndex}`);
   }, [wrap]);
 
   const buyLand = useCallback(async (landIndex: number) => {
@@ -146,7 +164,7 @@ export function useFarmGame(): UseFarmGameReturn {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/buy-land', { landIndex });
       setStatus(r.data);
       setToast({ type: 'success', text: `第 ${landIndex} 块土地已开垦` });
-    });
+    }, `buy-land:${landIndex}`);
   }, [wrap]);
 
   const buyItem = useCallback(async (key: ShopItemKey, qty = 1) => {
@@ -154,7 +172,7 @@ export function useFarmGame(): UseFarmGameReturn {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/shop/buy', { key, qty });
       setStatus(r.data);
       setToast({ type: 'success', text: `购买成功 x${qty}` });
-    });
+    }, `buy-item:${key}:${qty}`);
   }, [wrap]);
 
   const buySeed = useCallback(async (cropId: CropIdV2, qty = 1) => {
@@ -162,7 +180,7 @@ export function useFarmGame(): UseFarmGameReturn {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/seeds/buy', { cropId, qty });
       setStatus(r.data);
       setToast({ type: 'success', text: `种子购买成功 x${qty}` });
-    });
+    }, `buy-seed:${cropId}:${qty}`);
   }, [wrap]);
 
   const useItem = useCallback(async (key: ShopItemKey, plotIndex?: number) => {
@@ -170,7 +188,7 @@ export function useFarmGame(): UseFarmGameReturn {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/shop/use', { key, plotIndex });
       setStatus(r.data);
       setToast({ type: 'success', text: '使用成功' });
-    });
+    }, `use-item:${key}:${plotIndex ?? 'none'}`);
   }, [wrap]);
 
   const adoptPet = useCallback(async (type: PetType, name?: string) => {
@@ -181,42 +199,42 @@ export function useFarmGame(): UseFarmGameReturn {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('farm:pet-updated'));
       }
-    });
+    }, `adopt-pet:${type}:${name ?? ''}`);
   }, [wrap]);
 
   const feedPet = useCallback(async (kind: 'normal' | 'premium') => {
     await wrap(async () => {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/pet/feed', { kind });
       setStatus(r.data);
-    });
+    }, `feed-pet:${kind}`);
   }, [wrap]);
 
   const carePet = useCallback(async (itemKey?: ShopItemKey) => {
     await wrap(async () => {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/pet/wash', { itemKey });
       setStatus(r.data);
-    });
+    }, `care-pet:${itemKey ?? 'free'}`);
   }, [wrap]);
 
   const drinkPet = useCallback(async (itemKey?: ShopItemKey) => {
     await wrap(async () => {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/pet/drink', { itemKey });
       setStatus(r.data);
-    });
+    }, `drink-pet:${itemKey ?? 'free'}`);
   }, [wrap]);
 
   const restPet = useCallback(async (itemKey?: ShopItemKey) => {
     await wrap(async () => {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/pet/play', { mode: 'rest', itemKey });
       setStatus(r.data);
-    });
+    }, `rest-pet:${itemKey ?? 'free'}`);
   }, [wrap]);
 
   const playPet = useCallback(async (itemKey?: ShopItemKey) => {
     await wrap(async () => {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/pet/play', { mode: 'play', itemKey });
       setStatus(r.data);
-    });
+    }, `play-pet:${itemKey ?? 'free'}`);
   }, [wrap]);
 
   const dispatchPet = useCallback(async (task: Exclude<PetTask, null>) => {
@@ -224,7 +242,7 @@ export function useFarmGame(): UseFarmGameReturn {
       const r = await callApi<{ data: FarmStatusResponse; message?: string }>('/api/farm/pet/dispatch', { task });
       setStatus(r.data);
       setToast({ type: 'success', text: r.message ?? '宠物技能已发动' });
-    });
+    }, `dispatch-pet:${task}`);
   }, [wrap]);
 
   const loadStealList = useCallback(async (): Promise<StealCandidate[]> => {
@@ -243,7 +261,7 @@ export function useFarmGame(): UseFarmGameReturn {
       );
       setStatus(r.data);
       return r.steal;
-    });
+    }, `steal:${targetUserId}:${landIndex}`);
   }, [wrap]);
 
   return {

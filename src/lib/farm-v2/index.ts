@@ -47,8 +47,8 @@ import {
 const FARM_V2_LOCK_KEY = (userId: number) => `farmv2:lock:${userId}`;
 const FARM_MATURITY_EMAIL_SCAN_CURSOR_KEY = 'farmv2:mature-mail:scan-cursor';
 const LOCK_TTL_SECONDS = 6;
-const LOCK_RETRY_MS = 50;
-const LOCK_MAX_RETRIES = 8;
+const LOCK_RETRY_MS = 80;
+const LOCK_MAX_RETRIES = 25;
 const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 const FRIDAY_EVENT_CROP_DELAY_MS = 10 * 60 * 1000;
 

@@ -7,7 +7,7 @@ import {
   Coins, Droplets, Scissors, ShoppingBag, PawPrint, ScrollText,
   Lock, Cloud, Sun, CloudRain, CloudSnow, Wind, CloudFog, CloudLightning,
   Trees, Backpack, Cherry, Tv,
-  Calendar, Leaf,
+  Calendar, Leaf, Eye, EyeOff,
 } from 'lucide-react';
 import { useFarmGame } from './hooks/useFarmGame';
 import CropSprite from './components/CropSprite';
@@ -25,6 +25,11 @@ import {
   PET_ITEM_EFFECTS, PET_FREE_FALLBACK, SHOP_ITEMS_V2, PET_SKILL_LABEL, type PetActionCategory,
 } from '@/lib/farm-v2/config';
 import type { PublicAchievement } from '@/lib/profile-achievements';
+import {
+  LS_HIDDEN_KEY as DESKTOP_PET_HIDDEN_KEY,
+  PET_VISIBILITY_EVENT,
+  type DesktopPetVisibilityChangeDetail,
+} from '@/components/desktop-pet/petConfig';
 
 const DEFAULT_PET_NAMES: Record<PetType, string> = {
   cat: '小白',
@@ -59,6 +64,65 @@ const WEATHER_ICONS: Record<WeatherV2, React.ReactNode> = {
   snow: <CloudSnow size={16} />, fog: <CloudFog size={16} />,
 };
 
+function readDesktopPetVisiblePreference(): boolean {
+  if (typeof window === 'undefined') return true;
+  try {
+    return window.localStorage.getItem(DESKTOP_PET_HIDDEN_KEY) !== '1';
+  } catch {
+    return true;
+  }
+}
+
+function persistDesktopPetVisiblePreference(nextVisible: boolean): void {
+  try {
+    if (nextVisible) window.localStorage.removeItem(DESKTOP_PET_HIDDEN_KEY);
+    else window.localStorage.setItem(DESKTOP_PET_HIDDEN_KEY, '1');
+  } catch {
+    // 忽略本地存储异常，仍然同步当前页面状态
+  }
+  window.dispatchEvent(new CustomEvent<DesktopPetVisibilityChangeDetail>(
+    PET_VISIBILITY_EVENT,
+    { detail: { hidden: !nextVisible } },
+  ));
+}
+
+function useDesktopPetVisiblePreference() {
+  const [desktopPetVisible, setDesktopPetVisible] = useState(true);
+
+  useEffect(() => {
+    const syncVisiblePreference = () => setDesktopPetVisible(readDesktopPetVisiblePreference());
+    const onVisibilityChanged = (event: Event) => {
+      const detail = (event as CustomEvent<DesktopPetVisibilityChangeDetail>).detail;
+      if (typeof detail?.hidden === 'boolean') {
+        setDesktopPetVisible(!detail.hidden);
+        return;
+      }
+      syncVisiblePreference();
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === DESKTOP_PET_HIDDEN_KEY) syncVisiblePreference();
+    };
+
+    syncVisiblePreference();
+    window.addEventListener(PET_VISIBILITY_EVENT, onVisibilityChanged);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(PET_VISIBILITY_EVENT, onVisibilityChanged);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  const toggleDesktopPetVisible = useCallback(() => {
+    setDesktopPetVisible((current) => {
+      const next = !current;
+      persistDesktopPetVisiblePreference(next);
+      return next;
+    });
+  }, []);
+
+  return { desktopPetVisible, toggleDesktopPetVisible };
+}
+
 export default function FarmPage() {
   const game = useFarmGame();
   const [user, setUser] = useState<AuthMeUser | null>(null);
@@ -79,6 +143,7 @@ export default function FarmPage() {
   const [landDetailIndex, setLandDetailIndex] = useState<number | null>(null);
   const [harvestPopup, setHarvestPopup] = useState<{ results: HarvestResult[]; total: number } | null>(null);
   const [now, setNow] = useState(Date.now());
+  const { desktopPetVisible, toggleDesktopPetVisible } = useDesktopPetVisiblePreference();
 
   // 加载用户信息（用于 topbar 显示）
   useEffect(() => {
@@ -460,6 +525,8 @@ export default function FarmPage() {
               onPlay={(itemKey) => game.playPet(itemKey)}
               onOpenPicker={(cat) => setPetPicker(cat)}
               onDispatch={(t) => game.dispatchPet(t)}
+              desktopPetVisible={desktopPetVisible}
+              onToggleDesktopPet={toggleDesktopPetVisible}
             />
           </aside>
         </div>
@@ -784,6 +851,7 @@ function LandCard({
 
 function PetPanel({
   pet, inventory, now, onAdopt, onCare, onDrink, onRest, onPlay, onOpenPicker, onDispatch,
+  desktopPetVisible, onToggleDesktopPet,
 }: {
   pet: import('@/lib/types/farm-v2').PetState | null;
   inventory: Inventory;
@@ -795,6 +863,8 @@ function PetPanel({
   onPlay: (itemKey?: ShopItemKey) => void | Promise<void>;
   onOpenPicker: (cat: PetActionCategory) => void;
   onDispatch: (t: Exclude<PetTask, null>) => void | Promise<void>;
+  desktopPetVisible: boolean;
+  onToggleDesktopPet: () => void;
 }) {
   const [reaction, setReaction] = useState<PetExpression | null>(null);
   const [showSkills, setShowSkills] = useState(false);
@@ -875,6 +945,20 @@ function PetPanel({
             <em className={`pet-title-mood mood-${moodStatus.tone}`}>{moodStatus.text}</em>
           </span>
         </div>
+        <button
+          type="button"
+          className={`pet-visibility-toggle ${desktopPetVisible ? 'is-on' : 'is-off'}`}
+          onClick={onToggleDesktopPet}
+          aria-pressed={desktopPetVisible}
+          aria-label={desktopPetVisible ? '隐藏桌宠' : '显示桌宠'}
+          title={desktopPetVisible ? '隐藏桌宠' : '显示桌宠'}
+        >
+          <span className="pet-visibility-icon" aria-hidden="true">
+            {desktopPetVisible ? <Eye size={15} /> : <EyeOff size={15} />}
+          </span>
+          <span className="pet-visibility-text">桌宠</span>
+          <span className="pet-visibility-switch" aria-hidden="true"><span /></span>
+        </button>
       </div>
       <div className="pet-sprite-row">
         <div
@@ -1858,11 +1942,70 @@ function FarmStyles() {
         border-bottom: 1px dashed rgba(132,204,22,0.25);
         margin-bottom: 14px;
       }
+      .lucky-farm .pet-card .side-card-title { min-width: 0; }
       .lucky-farm .pet-card .side-card-title strong { font-size: 18px; letter-spacing: -0.2px; }
       .lucky-farm .pet-card .grp-icon.orange {
         width: 40px; height: 40px; border-radius: 14px;
         box-shadow: 0 10px 18px rgba(249,115,22,0.32);
       }
+      .lucky-farm .pet-visibility-toggle {
+        margin-left: auto;
+        flex: 0 0 auto;
+        min-width: 104px;
+        height: 38px;
+        padding: 0 8px 0 10px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        border-radius: 999px;
+        border: 1px solid rgba(15,23,42,0.08);
+        background: rgba(255,255,255,0.78);
+        color: #64748b;
+        font-size: 12px;
+        font-weight: 900;
+        cursor: pointer;
+        box-shadow: 0 8px 18px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,1);
+        transition: transform .18s ease, box-shadow .18s ease, color .18s ease, border-color .18s ease, background .18s ease;
+      }
+      .lucky-farm .pet-visibility-toggle:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 24px rgba(15,23,42,0.12), inset 0 1px 0 rgba(255,255,255,1);
+      }
+      .lucky-farm .pet-visibility-toggle:focus-visible {
+        outline: 3px solid rgba(22,163,74,0.28);
+        outline-offset: 3px;
+      }
+      .lucky-farm .pet-visibility-toggle.is-on {
+        border-color: rgba(34,197,94,0.28);
+        background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(240,253,244,0.92));
+        color: #15803d;
+      }
+      .lucky-farm .pet-visibility-toggle.is-off {
+        background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(241,245,249,0.86));
+      }
+      .lucky-farm .pet-visibility-icon {
+        width: 22px; height: 22px; border-radius: 50%;
+        display: inline-flex; align-items: center; justify-content: center;
+        background: rgba(15,23,42,0.06);
+        color: currentColor;
+      }
+      .lucky-farm .pet-visibility-text { line-height: 1; white-space: nowrap; }
+      .lucky-farm .pet-visibility-switch {
+        position: relative;
+        width: 28px; height: 16px; border-radius: 999px;
+        background: rgba(100,116,139,0.24);
+        transition: background .18s ease;
+      }
+      .lucky-farm .pet-visibility-switch span {
+        position: absolute; top: 2px; left: 2px;
+        width: 12px; height: 12px; border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 2px 5px rgba(15,23,42,0.18);
+        transition: transform .18s ease;
+      }
+      .lucky-farm .pet-visibility-toggle.is-on .pet-visibility-switch { background: rgba(34,197,94,0.75); }
+      .lucky-farm .pet-visibility-toggle.is-on .pet-visibility-switch span { transform: translateX(12px); }
 
       .lucky-farm .pet-empty-card { text-align: center; padding: 28px 18px; }
       .lucky-farm .pet-empty-icon { width: 64px; height: 64px; border-radius: 50%; background: rgba(249,115,22,0.12); color: var(--c-orange); display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; }

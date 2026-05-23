@@ -3,6 +3,7 @@ import {
   getProject,
   claimCode,
   getClaimRecord,
+  normalizeProjectDirectPoints,
   reserveNewUserBenefit,
   confirmNewUserBenefit,
   rollbackNewUserBenefit,
@@ -11,6 +12,7 @@ import {
   finalizeDirectClaim,
   rollbackDirectClaim,
   creditDirectProjectPoints,
+  toPublicProject,
 } from "@/lib/kv";
 import { getAuthUser } from "@/lib/auth";
 import { withUserRateLimit } from "@/lib/rate-limit";
@@ -40,7 +42,7 @@ export async function GET(
 
     return NextResponse.json({
       success: true,
-      project,
+      project: toPublicProject(project),
       claimed: claimRecord ? {
         code: claimRecord.code,
         claimedAt: claimRecord.claimedAt,
@@ -84,8 +86,7 @@ export const POST = withUserRateLimit(
 
     if (
       project.rewardType === "direct" &&
-      (!Number.isFinite(project.directPoints ?? project.directDollars)
-        || Number(project.directPoints ?? project.directDollars) <= 0)
+      normalizeProjectDirectPoints(project) == null
     ) {
       return NextResponse.json(
         { success: false, message: "项目直充积分配置异常，请联系管理员" },

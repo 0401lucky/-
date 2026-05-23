@@ -11,6 +11,8 @@ import {
   PET_ASSETS,
   PET_DISPLAY_NAME,
   PET_UPDATED_EVENT,
+  PET_VISIBILITY_EVENT,
+  type DesktopPetVisibilityChangeDetail,
   type DesktopPetType,
   type PetAssetConfig,
   type PetStateName,
@@ -188,6 +190,15 @@ interface FetchedPet {
   name: string;
 }
 
+function readHiddenPreference(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(LS_HIDDEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 function useAdoptedPet(): { loading: boolean; pet: FetchedPet | null } {
   const [pet, setPet] = useState<FetchedPet | null>(null);
   const [loading, setLoading] = useState(true);
@@ -253,14 +264,29 @@ interface DesktopPetProps {
 
 export default function DesktopPet({ scale = DEFAULT_PET_SCALE }: DesktopPetProps) {
   const { loading, pet } = useAdoptedPet();
-  const [hidden, setHidden] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    try {
-      return window.localStorage.getItem(LS_HIDDEN_KEY) === '1';
-    } catch {
-      return false;
-    }
-  });
+  const [hidden, setHidden] = useState<boolean>(() => readHiddenPreference());
+
+  useEffect(() => {
+    const syncHiddenPreference = () => setHidden(readHiddenPreference());
+    const onVisibilityChanged = (event: Event) => {
+      const detail = (event as CustomEvent<DesktopPetVisibilityChangeDetail>).detail;
+      if (typeof detail?.hidden === 'boolean') {
+        setHidden(detail.hidden);
+        return;
+      }
+      syncHiddenPreference();
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === LS_HIDDEN_KEY) syncHiddenPreference();
+    };
+
+    window.addEventListener(PET_VISIBILITY_EVENT, onVisibilityChanged);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(PET_VISIBILITY_EVENT, onVisibilityChanged);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
 
   const persistHidden = useCallback((next: boolean) => {
     setHidden(next);
@@ -270,6 +296,10 @@ export default function DesktopPet({ scale = DEFAULT_PET_SCALE }: DesktopPetProp
     } catch {
       // 忽略
     }
+    window.dispatchEvent(new CustomEvent<DesktopPetVisibilityChangeDetail>(
+      PET_VISIBILITY_EVENT,
+      { detail: { hidden: next } },
+    ));
   }, []);
 
   if (loading) return null;

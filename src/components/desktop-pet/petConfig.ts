@@ -93,6 +93,13 @@ export const DEFAULT_PET_SCALE = 0.55;
 export const LS_HIDDEN_KEY = 'desktop-pet:hidden';
 export const LS_POSITION_KEY = 'desktop-pet:position-x';
 
+export interface DesktopPetVisibilityChangeDetail {
+  hidden: boolean;
+}
+
+/** 自定义事件：同一个页面内切换桌宠显示状态时同步组件 */
+export const PET_VISIBILITY_EVENT = 'desktop-pet:visibility-changed';
+
 /** 行为参数 */
 export const BEHAVIOR = {
   /** 单次行为段最短/最长时长（毫秒） */

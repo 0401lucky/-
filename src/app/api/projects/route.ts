@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAllProjects } from "@/lib/kv";
+import { getAllProjects, toPublicProject } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +23,7 @@ export async function GET() {
     
     return NextResponse.json({
       success: true,
-      projects: sortedProjects,
+      projects: sortedProjects.map(toPublicProject),
     });
   } catch (error) {
     console.error("Get projects error:", error);
