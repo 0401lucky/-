@@ -22,6 +22,7 @@ const MAX_POINT_HISTORY_SCAN = 2000;
 const MAX_STREAK_DAYS = 400;
 const ALL_GAMES_RANKING_CACHE_TTL_SECONDS = 30;
 const OTHER_RANKING_CACHE_TTL_SECONDS = 30;
+const OPEN_ENDED_RANGE_END = 8_640_000_000_000_000; // Date 的最大安全时间戳，避免 D1 绑定 Infinity 后查询为空
 
 export type RankingPeriod = 'daily' | 'weekly' | 'monthly';
 export type PointsRankingPeriod = 'all' | 'monthly';
@@ -181,6 +182,10 @@ function ensurePositiveInteger(value: unknown): number {
   return Number.isFinite(num) ? Math.max(0, Math.floor(num)) : 0;
 }
 
+function normalizeRangeEndAt(endAt: number): number {
+  return Number.isFinite(endAt) ? endAt : OPEN_ENDED_RANGE_END;
+}
+
 function sortByScore<T extends { totalScore: number; totalPoints: number; gamesPlayed: number; userId: number }>(
   list: T[]
 ): T[] {
@@ -290,7 +295,7 @@ async function getGameLeaderboardByRange(
   limit = 20,
 ): Promise<GameLeaderboardEntry[]> {
   if (await isNativeHotStoreReady()) {
-    const rows = await getNativeGameLeaderboardRows(gameType, startAt, endAt, limit);
+    const rows = await getNativeGameLeaderboardRows(gameType, startAt, normalizeRangeEndAt(endAt), limit);
     return rows.map((row, index) => ({
       rank: index + 1,
       userId: row.userId,
@@ -371,7 +376,7 @@ export async function getAllGamesLeaderboardByRange(
   const overallMap = new Map<number, Omit<OverallLeaderboardEntry, 'rank'>>();
 
   if (await isNativeHotStoreReady()) {
-    const nativeRows = await getNativeOverallBreakdownRows(startAt, endAt);
+    const nativeRows = await getNativeOverallBreakdownRows(startAt, normalizeRangeEndAt(endAt));
     for (const row of nativeRows) {
       if (!gameTypes.includes(row.gameType as SupportedRankingGame)) {
         continue;

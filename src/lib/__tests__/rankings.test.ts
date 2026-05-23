@@ -9,6 +9,13 @@ import {
   getPointsLeaderboard,
 } from '../rankings';
 import { getAllUsers } from '../kv';
+import {
+  getNativeGameLeaderboardRows,
+  getNativeOverallBreakdownRows,
+  getNativeRankingCache,
+  isNativeHotStoreReady,
+  setNativeRankingCache,
+} from '../hot-d1';
 
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
@@ -21,6 +28,18 @@ vi.mock('@/lib/d1-kv', () => ({
 
 vi.mock('../kv', () => ({
   getAllUsers: vi.fn(),
+}));
+
+vi.mock('../hot-d1', () => ({
+  getNativeCheckinEntries: vi.fn(),
+  getNativeGameLeaderboardRows: vi.fn(),
+  getNativeOverallBreakdownRows: vi.fn(),
+  getNativePointsLeaderboardRows: vi.fn(),
+  getNativePositivePointsLeaderboardRowsByRange: vi.fn(),
+  getNativeRankingCache: vi.fn(),
+  isNativeHotStoreReady: vi.fn(),
+  listNativeCheckinDates: vi.fn(),
+  setNativeRankingCache: vi.fn(),
 }));
 
 vi.mock('../user-profile', () => ({
@@ -37,6 +56,11 @@ describe('rankings', () => {
   const mockKvSet = vi.mocked(kv.set);
   const mockKvMget = vi.mocked(kv.mget);
   const mockGetAllUsers = vi.mocked(getAllUsers);
+  const mockIsNativeHotStoreReady = vi.mocked(isNativeHotStoreReady);
+  const mockGetNativeGameLeaderboardRows = vi.mocked(getNativeGameLeaderboardRows);
+  const mockGetNativeOverallBreakdownRows = vi.mocked(getNativeOverallBreakdownRows);
+  const mockGetNativeRankingCache = vi.mocked(getNativeRankingCache);
+  const mockSetNativeRankingCache = vi.mocked(setNativeRankingCache);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -48,6 +72,11 @@ describe('rankings', () => {
     mockKvGet.mockResolvedValue(0);
     mockKvSet.mockResolvedValue('OK');
     mockKvMget.mockResolvedValue([]);
+    mockIsNativeHotStoreReady.mockResolvedValue(false);
+    mockGetNativeGameLeaderboardRows.mockResolvedValue([]);
+    mockGetNativeOverallBreakdownRows.mockResolvedValue([]);
+    mockGetNativeRankingCache.mockResolvedValue(null);
+    mockSetNativeRankingCache.mockResolvedValue(undefined);
   });
 
   it('builds game leaderboard and sorts by total score', async () => {
@@ -133,6 +162,25 @@ describe('rankings', () => {
     expect(result).toEqual(cached);
     expect(mockKvLrange).not.toHaveBeenCalled();
     expect(mockKvSet).not.toHaveBeenCalled();
+  });
+
+  it('uses a finite end time for open-ended native game ranking queries', async () => {
+    mockIsNativeHotStoreReady.mockResolvedValue(true);
+
+    await getAllGamesLeaderboard('daily', {
+      limitPerGame: 10,
+      overallLimit: 10,
+    });
+
+    expect(mockGetNativeGameLeaderboardRows).toHaveBeenCalledTimes(6);
+    for (const call of mockGetNativeGameLeaderboardRows.mock.calls) {
+      expect(Number.isFinite(call[2])).toBe(true);
+      expect(call[2]).toBe(8_640_000_000_000_000);
+    }
+    expect(mockGetNativeOverallBreakdownRows).toHaveBeenCalledWith(
+      expect.any(Number),
+      8_640_000_000_000_000,
+    );
   });
 
   it('builds points leaderboard for all and monthly period', async () => {
