@@ -38,6 +38,7 @@ interface SingleDrawResult {
 interface DrawResponse {
   success: boolean;
   message?: string;
+  drawsAvailable?: number;
   data?: {
     success: boolean;
     card?: CardConfig;
@@ -46,6 +47,7 @@ interface DrawResponse {
     message?: string;
     isDuplicate?: boolean;
     fragmentsAdded?: number;
+    drawsAvailable?: number;
   };
 }
 
@@ -149,6 +151,8 @@ export default function DrawPage() {
   const [lastDrawCount, setLastDrawCount] = useState(1);
 
   const drawTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const drawInFlightRef = useRef(false);
+  const repeatDrawQueuedRef = useRef(false);
 
   const clearDrawTimeouts = useCallback(() => {
     for (const t of drawTimeoutsRef.current) clearTimeout(t);
@@ -202,6 +206,18 @@ export default function DrawPage() {
 
   // ----- 派生数据（全部基于真实 API/常量） -----
   const drawsAvailable = cardData?.drawsAvailable ?? 0;
+
+  const syncDrawsAvailable = useCallback((value: unknown) => {
+    const next = Number(value);
+    if (!Number.isFinite(next)) return;
+    setCardData((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        drawsAvailable: Math.max(0, Math.floor(next)),
+      };
+    });
+  }, []);
 
   // 三档保底剩余抽数：阈值 - 已积累
   const pityRemain = useMemo(
@@ -258,7 +274,8 @@ export default function DrawPage() {
   // ----- 抽卡 -----
   const handleDraw = useCallback(
     async (count: number) => {
-      if (drawing || drawsAvailable < count) return;
+      if (drawInFlightRef.current || drawing || drawsAvailable < count) return;
+      drawInFlightRef.current = true;
       setDrawing(true);
       setLastDrawCount(count);
       setStagePulling(true);
@@ -279,9 +296,13 @@ export default function DrawPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ count }),
         });
-        const data: DrawResponse = await res.json();
+        const data: DrawResponse = await res.json().catch(() => ({
+          success: false,
+          message: res.ok ? '抽卡响应异常，请稍后重试' : '抽卡服务异常，请稍后重试',
+        }));
 
         if (!data.success || !data.data?.success) {
+          syncDrawsAvailable(data.data?.drawsAvailable ?? data.drawsAvailable);
           alert(data.data?.message || data.message || '抽卡失败，请重试');
           return;
         }
@@ -300,6 +321,8 @@ export default function DrawPage() {
         }
 
         if (results.length === 0) return;
+
+        syncDrawsAvailable(data.data.drawsAvailable);
 
         setRevealResults(results);
         setFlippedIndices([]);
@@ -329,19 +352,24 @@ export default function DrawPage() {
         console.error('Draw failed', err);
         alert('网络错误，请稍后重试');
       } finally {
+        drawInFlightRef.current = false;
         setDrawing(false);
         setStagePulling(false);
       }
     },
-    [drawing, drawsAvailable, fetchInventory, clearDrawTimeouts],
+    [drawing, drawsAvailable, fetchInventory, clearDrawTimeouts, syncDrawsAvailable],
   );
 
   const handleAgain = useCallback(() => {
-    if (drawsAvailable < lastDrawCount) return;
+    if (repeatDrawQueuedRef.current || drawInFlightRef.current || drawing || drawsAvailable < lastDrawCount) return;
+    repeatDrawQueuedRef.current = true;
     closeReveal();
-    const t = setTimeout(() => void handleDraw(lastDrawCount), 300);
+    const t = setTimeout(() => {
+      repeatDrawQueuedRef.current = false;
+      void handleDraw(lastDrawCount);
+    }, 300);
     drawTimeoutsRef.current.push(t);
-  }, [drawsAvailable, lastDrawCount, closeReveal, handleDraw]);
+  }, [drawing, drawsAvailable, lastDrawCount, closeReveal, handleDraw]);
 
   // ESC 关闭弹层 / 抽卡记录 / 抽卡规则弹窗
   useEffect(() => {
@@ -632,7 +660,7 @@ export default function DrawPage() {
                 type="button"
                 className="reveal-btn again"
                 onClick={handleAgain}
-                disabled={drawsAvailable < lastDrawCount}
+                disabled={drawing || drawsAvailable < lastDrawCount}
               >
                 <RefreshCw size={14} strokeWidth={2.6} />
                 再抽一次

@@ -7,6 +7,7 @@ import { getAuthUser } from '@/lib/auth';
 import { checkinToNewApi } from '@/lib/new-api';
 import { cookies } from 'next/headers';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { withUserEconomyLock } from '@/lib/economy-lock';
 import { NextRequest, NextResponse } from 'next/server';
 
 // Helper to create mock NextRequest
@@ -103,6 +104,7 @@ describe('Checkin and Card Draw Integration', () => {
   const mockKvLpush = vi.mocked(kv.lpush);
   const mockKvLtrim = vi.mocked(kv.ltrim);
   const mockCookies = cookies as unknown as ReturnType<typeof vi.fn>;
+  const mockWithUserEconomyLock = vi.mocked(withUserEconomyLock);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -118,6 +120,7 @@ describe('Checkin and Card Draw Integration', () => {
     mockKvExpire.mockResolvedValue(1);
     mockKvLpush.mockResolvedValue(1);
     mockKvLtrim.mockResolvedValue(undefined);
+    mockWithUserEconomyLock.mockImplementation(async (_userId: string | number, handler: () => Promise<unknown>) => handler());
   });
 
   describe('Checkin rewards', () => {
@@ -254,26 +257,17 @@ describe('Checkin and Card Draw Integration', () => {
         collectionRewards: [],
       };
 
-      // drawCard route first calls getUserCardData to check drawsAvailable
-      // Then drawCard() calls reserveDraw (kv.get + kv.set) and finalizeDraw (kv.get + kv.set)
+      // drawCards 在一次用户锁内完成检查、结算与最终写入
       mockKvGet
-        .mockResolvedValueOnce(userData)  // getUserCardData check in route
-        .mockResolvedValueOnce(userData)  // Phase 1: reserveDraw reads user data
-        .mockResolvedValueOnce({          // Phase 2: finalizeDraw reads user data
-          ...userData,
-          drawsAvailable: 0,
-          pityRare: 1,
-          pityEpic: 1,
-          pityLegendary: 1,
-          pityLegendaryRare: 1,
-          pityCounter: 1,
-        });
+        .mockResolvedValueOnce(userData)
+        .mockResolvedValueOnce(null);
 
       const response = await drawPOST(createMockRequest({ count: 1 }));
       const data = await response.json();
 
       expect(data.success).toBe(true);
       expect(data.data?.card).toBeDefined();
+      expect(data.data?.drawsAvailable).toBe(0);
     });
 
     it('should return error if no draws available', async () => {
@@ -307,6 +301,17 @@ describe('Checkin and Card Draw Integration', () => {
 
       expect(response.status).toBe(401);
       expect(data.success).toBe(false);
+    });
+
+    it('should return a retryable error when draw lock is occupied', async () => {
+      mockWithUserEconomyLock.mockRejectedValueOnce(new Error('LOCK_TIMEOUT:lock:user:economy:123'));
+
+      const response = await drawPOST(createMockRequest({ count: 5 }));
+      const data = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(data.success).toBe(false);
+      expect(data.message).toContain('抽卡处理中');
     });
   });
 });

@@ -1,17 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
-import { drawCard, getUserCardData } from "@/lib/cards/draw";
+import { drawCards } from "@/lib/cards/draw";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
-import { CardConfig } from "@/lib/cards/types";
 import { enforceTrustedApiRequest } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
-
-interface DrawResult {
-  card: CardConfig;
-  isDuplicate: boolean;
-  fragmentsAdded?: number;
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -43,45 +36,25 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const count = Math.min(Math.max(Number(body.count) || 1, 1), 10); // 1-10次
 
-    // 检查抽卡次数是否足够
-    const userData = await getUserCardData(user.id.toString());
-    if (userData.drawsAvailable < count) {
+    const result = await drawCards(user.id.toString(), count);
+    if (!result.success || !result.results) {
       return NextResponse.json(
-        { success: false, message: `抽卡次数不足，需要${count}次，当前${userData.drawsAvailable}次` },
+        { success: false, message: result.message || "抽卡失败，请稍后重试", drawsAvailable: result.drawsAvailable },
         { status: 400 }
       );
     }
 
-    // 执行多次抽卡
-    const results: DrawResult[] = [];
-    for (let i = 0; i < count; i++) {
-      const result = await drawCard(user.id.toString());
-      if (!result.success) {
-        // 如果中途失败，返回已抽到的卡
-        if (results.length > 0) {
-          break;
-        }
-        return NextResponse.json(
-          { success: false, message: result.message },
-          { status: 400 }
-        );
-      }
-      results.push({
-        card: result.card!,
-        isDuplicate: result.isDuplicate || false,
-        fragmentsAdded: result.fragmentsAdded,
-      });
-    }
-
     // 单抽返回旧格式，多抽返回新格式
     if (count === 1) {
+      const firstResult = result.results[0];
       return NextResponse.json({
         success: true,
         data: {
           success: true,
-          card: results[0].card,
-          isDuplicate: results[0].isDuplicate,
-          fragmentsAdded: results[0].fragmentsAdded,
+          card: firstResult.card,
+          isDuplicate: firstResult.isDuplicate,
+          fragmentsAdded: firstResult.fragmentsAdded,
+          drawsAvailable: result.drawsAvailable,
         },
       });
     }
@@ -90,11 +63,20 @@ export async function POST(request: NextRequest) {
       success: true,
       data: {
         success: true,
-        cards: results,
-        count: results.length,
+        cards: result.results,
+        count: result.results.length,
+        drawsAvailable: result.drawsAvailable,
       },
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    if (message.startsWith("LOCK_TIMEOUT:")) {
+      return NextResponse.json(
+        { success: false, message: "抽卡处理中，请稍后再试" },
+        { status: 409 }
+      );
+    }
+
     console.error("Draw API error:", error);
     return NextResponse.json(
       { success: false, message: "抽卡服务异常" },

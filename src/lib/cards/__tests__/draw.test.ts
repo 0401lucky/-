@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { drawCard, getUserCardData, updateUserCardData, selectCardByProbability, UserCards } from '../draw';
+import { drawCard, drawCards, getUserCardData, updateUserCardData, selectCardByProbability, UserCards } from '../draw';
 import { kv } from '@/lib/d1-kv';
 import { CARDS } from '../config';
 import { FRAGMENT_VALUES } from '../constants';
@@ -172,6 +172,40 @@ describe('Card Draw System', () => {
       expect(result.card).toBeDefined();
       expect(result.isDuplicate).toBe(true);
       expect(result.fragmentsAdded).toBe(FRAGMENT_VALUES[result.card!.rarity]);
+    });
+  });
+
+  describe('drawCards', () => {
+    it('should draw multiple cards with a single final write', async () => {
+      const userData = { ...getFreshMockData(), drawsAvailable: 5 };
+
+      mockKvGet
+        .mockResolvedValueOnce({ ...userData })
+        .mockResolvedValueOnce(getDefaultCardRulesConfig());
+
+      const result = await drawCards(userId, 5);
+
+      expect(result.success).toBe(true);
+      expect(result.results).toHaveLength(5);
+      expect(result.drawsAvailable).toBe(0);
+      expect(kv.get).toHaveBeenCalledTimes(2);
+      expect(kv.set).toHaveBeenCalledTimes(1);
+
+      const storedData = mockKvSet.mock.calls[0]?.[1] as UserCards;
+      expect(storedData.drawsAvailable).toBe(0);
+      expect(storedData.recentDraws).toHaveLength(5);
+    });
+
+    it('should not write data when draws are insufficient', async () => {
+      mockKvGet.mockResolvedValueOnce({ ...getFreshMockData(), drawsAvailable: 4 });
+
+      const result = await drawCards(userId, 5);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('抽卡次数不足');
+      expect(result.drawsAvailable).toBe(4);
+      expect(kv.get).toHaveBeenCalledTimes(1);
+      expect(kv.set).not.toHaveBeenCalled();
     });
   });
 });

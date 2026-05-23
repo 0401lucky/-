@@ -23,6 +23,12 @@ export interface RecentDraw {
 
 const RECENT_DRAWS_LIMIT = 10;
 
+export interface CardDrawResult {
+  card: CardConfig;
+  isDuplicate: boolean;
+  fragmentsAdded?: number;
+}
+
 export interface UserCards {
   inventory: string[];
   fragments: number;
@@ -306,6 +312,119 @@ function selectCardForDraw(counters: PityCounters, rules: CardRulesConfig): Card
   return eligibleCards[secureRandomIndex(eligibleCards.length)]!;
 }
 
+function incrementPityCounters(userData: UserCards): PityCounters {
+  userData.pityRare = (userData.pityRare ?? 0) + 1;
+  userData.pityEpic = (userData.pityEpic ?? 0) + 1;
+  userData.pityLegendary = (userData.pityLegendary ?? 0) + 1;
+  userData.pityLegendaryRare = (userData.pityLegendaryRare ?? 0) + 1;
+  userData.pityCounter = userData.pityLegendaryRare;
+
+  return {
+    rare: userData.pityRare,
+    epic: userData.pityEpic,
+    legendary: userData.pityLegendary,
+    legendary_rare: userData.pityLegendaryRare,
+  };
+}
+
+function resetPityCountersAfterDraw(userData: UserCards, rarity: Rarity): void {
+  if (rarity === "legendary_rare") {
+    userData.pityRare = 0;
+    userData.pityEpic = 0;
+    userData.pityLegendary = 0;
+    userData.pityLegendaryRare = 0;
+  } else if (rarity === "legendary") {
+    userData.pityRare = 0;
+    userData.pityEpic = 0;
+    userData.pityLegendary = 0;
+  } else if (rarity === "epic") {
+    userData.pityRare = 0;
+    userData.pityEpic = 0;
+  } else if (rarity === "rare") {
+    userData.pityRare = 0;
+  }
+
+  userData.pityCounter = userData.pityLegendaryRare ?? 0;
+}
+
+function applyDrawToUserCards(
+  userData: UserCards,
+  card: CardConfig,
+  rules: CardRulesConfig,
+  timestamp: number,
+): CardDrawResult {
+  const isDuplicate = userData.inventory.includes(card.id);
+  const fragmentValue = rules.fragmentValues[card.rarity];
+  let fragmentsAdded = 0;
+
+  if (isDuplicate) {
+    userData.fragments += fragmentValue;
+    fragmentsAdded = fragmentValue;
+  } else {
+    userData.inventory.push(card.id);
+  }
+
+  resetPityCountersAfterDraw(userData, card.rarity);
+
+  const draw: RecentDraw = {
+    cardId: card.id,
+    rarity: card.rarity,
+    isDuplicate,
+    fragmentsAdded,
+    timestamp,
+  };
+  userData.recentDraws = [draw, ...(userData.recentDraws ?? [])].slice(0, RECENT_DRAWS_LIMIT);
+
+  return {
+    card,
+    isDuplicate,
+    fragmentsAdded: fragmentsAdded > 0 ? fragmentsAdded : undefined,
+  };
+}
+
+export async function drawCards(userId: string, count: number): Promise<{
+  success: boolean;
+  results?: CardDrawResult[];
+  drawsAvailable?: number;
+  message?: string;
+}> {
+  const drawCount = Math.floor(Number(count));
+  if (!Number.isSafeInteger(drawCount) || drawCount < 1 || drawCount > 10) {
+    return { success: false, message: "抽卡次数参数无效" };
+  }
+
+  return withUserEconomyLock(userId, async () => {
+    const userData = await getUserCardData(userId);
+
+    if (userData.drawsAvailable < drawCount) {
+      return {
+        success: false,
+        drawsAvailable: userData.drawsAvailable,
+        message: `抽卡次数不足，需要${drawCount}次，当前${userData.drawsAvailable}次`,
+      };
+    }
+
+    const rules = await getCardRulesConfig();
+    const results: CardDrawResult[] = [];
+    const now = Date.now();
+
+    for (let index = 0; index < drawCount; index += 1) {
+      userData.drawsAvailable -= 1;
+      const pityCounters = normalizePityCounters(incrementPityCounters(userData));
+      const card = selectCardForDraw(pityCounters, rules);
+      results.push(applyDrawToUserCards(userData, card, rules, now + index));
+    }
+
+    await updateUserCardData(userId, userData);
+
+    return {
+      success: true,
+      results,
+      drawsAvailable: userData.drawsAvailable,
+    };
+  });
+}
+
 /**
  * Phase 1: Reserve draw.
  * Reads user data, checks drawsAvailable, decrements it, increments pity counters.
@@ -323,22 +442,13 @@ async function reserveDraw(userKey: string): Promise<{
   }
 
   userData.drawsAvailable -= 1;
-  userData.pityRare = (userData.pityRare ?? 0) + 1;
-  userData.pityEpic = (userData.pityEpic ?? 0) + 1;
-  userData.pityLegendary = (userData.pityLegendary ?? 0) + 1;
-  userData.pityLegendaryRare = (userData.pityLegendaryRare ?? 0) + 1;
-  userData.pityCounter = userData.pityLegendaryRare;
+  const pityCounters = incrementPityCounters(userData);
 
   await updateUserCardData(userId, userData);
 
   return {
     success: true,
-    pityCounters: {
-      rare: userData.pityRare,
-      epic: userData.pityEpic,
-      legendary: userData.pityLegendary,
-      legendary_rare: userData.pityLegendaryRare,
-    },
+    pityCounters,
     status: "ok",
   };
 }
@@ -366,23 +476,7 @@ async function finalizeDraw(
     userData.inventory.push(cardId);
   }
 
-  // Reset pity tiers based on drawn rarity (tiered cyclic pity)
-  if (rarity === "legendary_rare") {
-    userData.pityRare = 0;
-    userData.pityEpic = 0;
-    userData.pityLegendary = 0;
-    userData.pityLegendaryRare = 0;
-  } else if (rarity === "legendary") {
-    userData.pityRare = 0;
-    userData.pityEpic = 0;
-    userData.pityLegendary = 0;
-  } else if (rarity === "epic") {
-    userData.pityRare = 0;
-    userData.pityEpic = 0;
-  } else if (rarity === "rare") {
-    userData.pityRare = 0;
-  }
-  userData.pityCounter = userData.pityLegendaryRare ?? 0;
+  resetPityCountersAfterDraw(userData, rarity as Rarity);
 
   const draw: RecentDraw = {
     cardId,
