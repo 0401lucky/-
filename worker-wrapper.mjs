@@ -239,11 +239,11 @@ async function maybeHandleCardImage(request, env, ctx) {
   }
 
   if (!object) {
-    return new Response(null, { status: 404 });
+    return null;
   }
 
   if (!object.body) {
-    return new Response(null, { status: 404 });
+    return null;
   }
 
   const headers = buildImageHeaders(object, resolvedKey);
