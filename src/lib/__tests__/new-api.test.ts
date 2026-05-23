@@ -88,6 +88,8 @@ describe('creditQuotaToUser', () => {
       success: true,
       message: '成功充值 $2',
       newQuota: 1002000,
+      newBalanceDollars: 2,
+      newBalanceWholeDollars: 2,
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -126,6 +128,54 @@ describe('creditQuotaToUser', () => {
     expect(methods).not.toContain('PUT');
   });
 
+  it('deducts quota with subtract mode and returns the updated balance', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(createJsonResponse({
+        success: true,
+        data: {
+          id: 123,
+          username: 'alice',
+          display_name: 'Alice',
+          role: 1,
+          status: 1,
+          email: 'alice@example.com',
+          quota: 1500000,
+          used_quota: 0,
+        },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        success: true,
+        message: '',
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { deductQuotaFromUser } = await import('../new-api');
+    const result = await deductQuotaFromUser(123, 2);
+
+    expect(result).toEqual({
+      success: true,
+      message: '成功扣减 $2',
+      newQuota: 500000,
+      newBalanceDollars: 1,
+      newBalanceWholeDollars: 1,
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://newapi.example.com/api/user/manage',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          id: 123,
+          action: 'add_quota',
+          mode: 'subtract',
+          value: 1000000,
+        }),
+      }),
+    );
+  });
+
   it('verifies quota by GET when manage API returns failure', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(createJsonResponse({
@@ -162,6 +212,8 @@ describe('creditQuotaToUser', () => {
       success: true,
       message: '充值已确认成功',
       newQuota: 500000,
+      newBalanceDollars: 1,
+      newBalanceWholeDollars: 1,
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(3);

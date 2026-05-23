@@ -116,6 +116,8 @@ export interface TopupResult {
   message: string;
   balance?: number;
   pointsGained?: number;
+  newApiBalanceDollars?: number;
+  newApiBalanceWholeDollars?: number;
   uncertain?: boolean;
 }
 
@@ -136,7 +138,12 @@ export async function executeTopup(
   const deductResult = await deductQuotaFromUser(userId, preview.spentDollars);
 
   if (!deductResult.success && !deductResult.uncertain) {
-    return { success: false, message: deductResult.message || '账户额度扣减失败' };
+    return {
+      success: false,
+      message: deductResult.message || '账户额度扣减失败',
+      newApiBalanceDollars: deductResult.newBalanceDollars,
+      newApiBalanceWholeDollars: deductResult.newBalanceWholeDollars,
+    };
   }
 
   const grantResult = await applyPointsDelta(
@@ -170,6 +177,8 @@ export async function executeTopup(
       message: `已为您加上 ${preview.pointsGained} 积分；账户额度扣减结果待确认，请稍后核对新 API 余额`,
       balance: grantResult.balance,
       pointsGained: preview.pointsGained,
+      newApiBalanceDollars: deductResult.newBalanceDollars,
+      newApiBalanceWholeDollars: deductResult.newBalanceWholeDollars,
       uncertain: true,
     };
   }
@@ -179,5 +188,7 @@ export async function executeTopup(
     message: `成功用 $${preview.spentDollars} 充值 ${preview.pointsGained} 积分`,
     balance: grantResult.balance,
     pointsGained: preview.pointsGained,
+    newApiBalanceDollars: deductResult.newBalanceDollars,
+    newApiBalanceWholeDollars: deductResult.newBalanceWholeDollars,
   };
 }

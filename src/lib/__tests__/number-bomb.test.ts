@@ -16,6 +16,7 @@ vi.mock('@/lib/d1-kv', () => ({
 
 vi.mock('../points', () => ({
   applyPointsDelta: vi.fn(),
+  applyPointsDeltaInsideUserEconomyLock: vi.fn(),
   getUserPoints: vi.fn(),
 }));
 
@@ -42,7 +43,7 @@ vi.mock('nanoid', () => ({
 
 // 在 mock 完成后再导入被测模块
 import { kv } from '@/lib/d1-kv';
-import { applyPointsDelta, getUserPoints } from '../points';
+import { applyPointsDeltaInsideUserEconomyLock, getUserPoints } from '../points';
 import {
   cancelNumberBombBet,
   getPreviousDateString,
@@ -58,7 +59,7 @@ const mockKvSmembers = vi.mocked(kv.smembers);
 const mockKvLpush = vi.mocked(kv.lpush);
 const mockKvExpire = vi.mocked(kv.expire);
 
-const mockApplyPoints = vi.mocked(applyPointsDelta);
+const mockApplyPoints = vi.mocked(applyPointsDeltaInsideUserEconomyLock);
 const mockGetPoints = vi.mocked(getUserPoints);
 
 const TODAY = '2026-05-05';

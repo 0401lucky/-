@@ -9,6 +9,7 @@ const USER_QUOTA_LOCK_PREFIX = 'newapi:quota:credit:lock:';
 const USER_QUOTA_LOCK_TTL_SECONDS = 15;
 const USER_QUOTA_LOCK_RETRY_MS = 120;
 const USER_QUOTA_LOCK_MAX_RETRIES = 25;
+export const NEW_API_QUOTA_PER_DOLLAR = 500000;
 
 type UserQuotaLock = {
   key: string;
@@ -84,7 +85,59 @@ export interface CreditQuotaResult {
   success: boolean;
   message: string;
   newQuota?: number;
+  newBalanceDollars?: number;
+  newBalanceWholeDollars?: number;
   uncertain?: boolean;
+}
+
+export interface NewApiQuotaBalanceResult {
+  success: boolean;
+  message: string;
+  quota?: number;
+  usedQuota?: number;
+  balanceDollars?: number;
+  balanceWholeDollars?: number;
+}
+
+export function dollarsToNewApiQuota(dollars: number): number {
+  return Math.floor(dollars * NEW_API_QUOTA_PER_DOLLAR);
+}
+
+export function newApiQuotaToDollars(quota: number): number {
+  const safeQuota = Number.isFinite(quota) ? Math.max(0, quota) : 0;
+  return Math.round((safeQuota / NEW_API_QUOTA_PER_DOLLAR) * 100) / 100;
+}
+
+export function newApiQuotaToWholeDollars(quota: number): number {
+  const safeQuota = Number.isFinite(quota) ? Math.max(0, quota) : 0;
+  return Math.floor(safeQuota / NEW_API_QUOTA_PER_DOLLAR);
+}
+
+function readQuotaValue(value: unknown): number {
+  const quota = Number(value ?? 0);
+  return Number.isFinite(quota) ? Math.floor(quota) : 0;
+}
+
+async function fetchUserByAdmin(
+  userId: number,
+  authHeaders: Record<string, string>,
+): Promise<{ success: boolean; message: string; data?: Record<string, unknown> }> {
+  try {
+    const baseUrl = getNewApiUrl();
+    const response = await fetch(`${baseUrl}/api/user/${userId}`, {
+      headers: authHeaders,
+    });
+    const data = await response.json();
+
+    if (data?.success && data.data && typeof data.data === 'object') {
+      return { success: true, message: data.message || '', data: data.data };
+    }
+
+    return { success: false, message: data?.message || '获取用户信息失败' };
+  } catch (error) {
+    console.error('Fetch new-api user error:', error);
+    return { success: false, message: '连接 new-api 失败' };
+  }
 }
 
 export async function loginToNewApi(username: string, password: string): Promise<{ success: boolean; message: string; cookies?: string; user?: NewApiUser }> {
@@ -247,11 +300,43 @@ export function getAdminAuthHeaders(): Record<string, string> {
   };
 }
 
+export async function getNewApiQuotaBalanceForUser(
+  userId: number,
+): Promise<NewApiQuotaBalanceResult> {
+  let authHeaders: Record<string, string>;
+  try {
+    authHeaders = getAdminAuthHeaders();
+  } catch (error) {
+    console.error('Admin access token not configured:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '管理员凭证未配置',
+    };
+  }
+
+  const userResult = await fetchUserByAdmin(userId, authHeaders);
+  if (!userResult.success || !userResult.data) {
+    return { success: false, message: userResult.message };
+  }
+
+  const quota = readQuotaValue(userResult.data.quota);
+  const usedQuota = readQuotaValue(userResult.data.used_quota);
+
+  return {
+    success: true,
+    message: '获取余额成功',
+    quota,
+    usedQuota,
+    balanceDollars: newApiQuotaToDollars(quota),
+    balanceWholeDollars: newApiQuotaToWholeDollars(quota),
+  };
+}
+
 async function verifyQuotaUpdate(
   userId: number,
   expectedQuota: number | undefined,
   authHeaders: Record<string, string>
-): Promise<{ success: boolean; message: string; newQuota?: number; uncertain?: boolean }> {
+): Promise<CreditQuotaResult> {
   try {
     const baseUrl = getNewApiUrl();
     const verifyResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
@@ -263,12 +348,20 @@ async function verifyQuotaUpdate(
       const currentQuota = verifyData.data.quota || 0;
 
       if (expectedQuota !== undefined && currentQuota >= expectedQuota) {
-        return { success: true, message: '充值已确认成功', newQuota: currentQuota };
+        return {
+          success: true,
+          message: '充值已确认成功',
+          newQuota: currentQuota,
+          newBalanceDollars: newApiQuotaToDollars(currentQuota),
+          newBalanceWholeDollars: newApiQuotaToWholeDollars(currentQuota),
+        };
       } else if (expectedQuota === undefined) {
         return {
           success: false,
           message: '无法确认充值结果',
           newQuota: currentQuota,
+          newBalanceDollars: newApiQuotaToDollars(currentQuota),
+          newBalanceWholeDollars: newApiQuotaToWholeDollars(currentQuota),
           uncertain: true,
         };
       } else {
@@ -290,7 +383,7 @@ async function verifyQuotaDeducted(
   userId: number,
   expectedQuota: number | undefined,
   authHeaders: Record<string, string>
-): Promise<{ success: boolean; message: string; newQuota?: number; uncertain?: boolean }> {
+): Promise<CreditQuotaResult> {
   try {
     const baseUrl = getNewApiUrl();
     const verifyResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
@@ -302,13 +395,21 @@ async function verifyQuotaDeducted(
       const currentQuota = verifyData.data.quota || 0;
 
       if (expectedQuota !== undefined && currentQuota <= expectedQuota) {
-        return { success: true, message: '扣减已确认成功', newQuota: currentQuota };
+        return {
+          success: true,
+          message: '扣减已确认成功',
+          newQuota: currentQuota,
+          newBalanceDollars: newApiQuotaToDollars(currentQuota),
+          newBalanceWholeDollars: newApiQuotaToWholeDollars(currentQuota),
+        };
       }
       if (expectedQuota === undefined) {
         return {
           success: false,
           message: '无法确认扣减结果',
           newQuota: currentQuota,
+          newBalanceDollars: newApiQuotaToDollars(currentQuota),
+          newBalanceWholeDollars: newApiQuotaToWholeDollars(currentQuota),
           uncertain: true,
         };
       }
@@ -352,20 +453,17 @@ export async function creditQuotaToUser(
 
   try {
     try {
-      const userResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
-        headers: authHeaders,
-      });
-      const userData = await userResponse.json();
+      const userData = await fetchUserByAdmin(userId, authHeaders);
 
       console.log('Get user response:', { success: userData.success, userId: maskUserId(userId), hasData: !!userData.data });
 
       if (!userData.success || !userData.data) {
-        return { success: false, message: '获取用户信息失败' };
+        return { success: false, message: userData.message || '获取用户信息失败' };
       }
 
       const user = userData.data;
-      const currentQuota = user.quota || 0;
-      const quotaToAdd = Math.floor(dollars * 500000);
+      const currentQuota = readQuotaValue(user.quota);
+      const quotaToAdd = dollarsToNewApiQuota(dollars);
       const newQuota = currentQuota + quotaToAdd;
       expectedQuota = newQuota;
 
@@ -403,6 +501,8 @@ export async function creditQuotaToUser(
           success: true,
           message: `成功充值 $${dollars}`,
           newQuota,
+          newBalanceDollars: newApiQuotaToDollars(newQuota),
+          newBalanceWholeDollars: newApiQuotaToWholeDollars(newQuota),
         };
       }
 
@@ -470,24 +570,27 @@ export async function deductQuotaFromUser(
 
   try {
     try {
-      const userResponse = await fetch(`${baseUrl}/api/user/${userId}`, {
-        headers: authHeaders,
-      });
-      const userData = await userResponse.json();
+      const userData = await fetchUserByAdmin(userId, authHeaders);
 
       if (!userData.success || !userData.data) {
-        return { success: false, message: '获取用户信息失败' };
+        return { success: false, message: userData.message || '获取用户信息失败' };
       }
 
       const user = userData.data;
-      const currentQuota = user.quota || 0;
-      const quotaToDeduct = Math.floor(dollars * 500000);
+      const currentQuota = readQuotaValue(user.quota);
+      const quotaToDeduct = dollarsToNewApiQuota(dollars);
 
       if (quotaToDeduct <= 0) {
         return { success: false, message: '扣减金额无效' };
       }
       if (currentQuota < quotaToDeduct) {
-        return { success: false, message: '账户额度不足，无法兑换为积分' };
+        return {
+          success: false,
+          message: `账户额度不足，可用 $${newApiQuotaToDollars(currentQuota).toFixed(2)}`,
+          newQuota: currentQuota,
+          newBalanceDollars: newApiQuotaToDollars(currentQuota),
+          newBalanceWholeDollars: newApiQuotaToWholeDollars(currentQuota),
+        };
       }
 
       const newQuota = currentQuota - quotaToDeduct;
@@ -502,7 +605,7 @@ export async function deductQuotaFromUser(
         body: JSON.stringify({
           id: userId,
           action: 'add_quota',
-          mode: 'sub',
+          mode: 'subtract',
           value: quotaToDeduct,
         }),
       });
@@ -520,6 +623,8 @@ export async function deductQuotaFromUser(
           success: true,
           message: `成功扣减 $${dollars}`,
           newQuota,
+          newBalanceDollars: newApiQuotaToDollars(newQuota),
+          newBalanceWholeDollars: newApiQuotaToWholeDollars(newQuota),
         };
       }
 

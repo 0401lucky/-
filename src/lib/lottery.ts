@@ -48,6 +48,7 @@ export interface LotteryConfig {
   enabled: boolean;
   mode: 'code' | 'direct' | 'hybrid' | 'points';
   dailyDirectLimit: number;
+  dailySpinLimit: number;
   tiers: LotteryTier[];
 }
 
@@ -65,6 +66,9 @@ export interface LotteryPageState {
   canSpin: boolean;
   hasSpunToday: boolean;
   extraSpins: number;
+  dailySpinLimit: number;
+  dailySpinUsed: number;
+  dailySpinRemaining: number;
   allTiersHaveCodes: boolean;
 }
 
@@ -119,6 +123,7 @@ const DEFAULT_CONFIG: LotteryConfig = {
   enabled: true,
   mode: 'points',         // 默认使用积分模式
   dailyDirectLimit: 2000, // 仅 direct/hybrid 模式仍读取此值，points 模式无视
+  dailySpinLimit: 10,
   tiers: DEFAULT_TIERS,
 };
 
@@ -131,6 +136,7 @@ const LOTTERY_USER_RECORDS_PREFIX = "lottery:user:records:";
 const LOTTERY_RANK_PERIOD_KEY = (period: LotteryRankingPeriod, periodKey: string) => `lottery:rank:${period}:${periodKey}`;
 const LOTTERY_RANK_PERIOD_USER_KEY = (period: LotteryRankingPeriod, periodKey: string, userId: string | number) => `lottery:rank:${period}:${periodKey}:user:${userId}`;
 const LOTTERY_DAILY_DIRECT_LOCK_KEY = "lottery:daily_direct_lock:";
+const LOTTERY_DAILY_SPIN_KEY = (date: string, userId: number) => `lottery:daily_spin:${date}:user:${userId}`;
 const LOTTERY_DAILY_TTL_BUFFER_SECONDS = 3600;
 const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 const LOTTERY_CODE_PICK_RETRY_LIMIT = 6;
@@ -171,6 +177,46 @@ function getCurrentLotteryPeriodKey(period: LotteryRankingPeriod): string {
 
 function getLotteryDailyTtlSeconds(): number {
   return getSecondsUntilMidnight() + LOTTERY_DAILY_TTL_BUFFER_SECONDS;
+}
+
+export async function getLotteryDailySpinUsage(
+  userId: number,
+  date: string = getTodayDateString(),
+): Promise<number> {
+  const count = await kv.get<number>(LOTTERY_DAILY_SPIN_KEY(date, userId));
+  const normalized = Number(count ?? 0);
+  return Number.isFinite(normalized) ? Math.max(0, Math.floor(normalized)) : 0;
+}
+
+async function reserveDailySpin(
+  userId: number,
+  dailySpinLimit: number,
+): Promise<{ success: boolean; message?: string; rollback: () => Promise<void> }> {
+  const limit = Math.max(1, Math.floor(dailySpinLimit));
+  const key = LOTTERY_DAILY_SPIN_KEY(getTodayDateString(), userId);
+  const count = await kv.incrby(key, 1);
+  if (count === 1) {
+    await kv.expire(key, getLotteryDailyTtlSeconds());
+  }
+
+  const rollback = async () => {
+    try {
+      await kv.decrby(key, 1);
+    } catch (error) {
+      console.error("回滚每日抽奖次数失败:", error);
+    }
+  };
+
+  if (count > limit) {
+    await rollback();
+    return {
+      success: false,
+      message: `今日抽奖次数已达上限（${limit} 次），明天再来吧`,
+      rollback,
+    };
+  }
+
+  return { success: true, rollback };
 }
 
 function getLotteryRankingTtlSeconds(period: LotteryRankingPeriod): number {
@@ -300,6 +346,11 @@ function sanitizeLotteryConfig(config: Partial<LotteryConfig>): LotteryConfig {
     return {
       ...fallback,
       enabled: typeof config.enabled === 'boolean' ? config.enabled : fallback.enabled,
+      dailySpinLimit: typeof config.dailySpinLimit === "number"
+        && Number.isFinite(config.dailySpinLimit)
+        && config.dailySpinLimit >= 1
+        ? Math.floor(config.dailySpinLimit)
+        : fallback.dailySpinLimit,
     };
   }
 
@@ -329,6 +380,11 @@ function sanitizeLotteryConfig(config: Partial<LotteryConfig>): LotteryConfig {
     dailyDirectLimit: typeof config.dailyDirectLimit === "number" && Number.isFinite(config.dailyDirectLimit)
       ? config.dailyDirectLimit
       : fallback.dailyDirectLimit,
+    dailySpinLimit: typeof config.dailySpinLimit === "number"
+      && Number.isFinite(config.dailySpinLimit)
+      && config.dailySpinLimit >= 1
+      ? Math.floor(config.dailySpinLimit)
+      : fallback.dailySpinLimit,
     tiers,
   };
 }
@@ -733,11 +789,23 @@ async function consumeSpinCount(
 ): Promise<SpinCountConsumption> {
   let usedExtraSpin = false;
   let usedDailyFree = false;
+  let rollbackDailySpin: (() => Promise<void>) | null = null;
 
   const rollback = async () => {
     try {
-      if (usedExtraSpin) await rollbackExtraSpin(userId);
-      if (usedDailyFree) await releaseDailyFree(userId);
+      if (usedExtraSpin) {
+        await rollbackExtraSpin(userId);
+        usedExtraSpin = false;
+      }
+      if (usedDailyFree) {
+        await releaseDailyFree(userId);
+        usedDailyFree = false;
+      }
+      if (rollbackDailySpin) {
+        const rollbackDaily = rollbackDailySpin;
+        rollbackDailySpin = null;
+        await rollbackDaily();
+      }
     } catch (e) {
       console.error("回滚次数失败:", e);
     }
@@ -748,6 +816,17 @@ async function consumeSpinCount(
   }
 
   try {
+    const config = await getLotteryConfig();
+    const dailySpinResult = await reserveDailySpin(userId, config.dailySpinLimit);
+    if (!dailySpinResult.success) {
+      return {
+        success: false,
+        message: dailySpinResult.message,
+        rollback,
+      };
+    }
+    rollbackDailySpin = dailySpinResult.rollback;
+
     const extraResult = await tryUseExtraSpin(userId);
     if (extraResult.success) {
       usedExtraSpin = true;
@@ -756,6 +835,7 @@ async function consumeSpinCount(
 
     const dailyResult = await tryClaimDailyFree(userId);
     if (!dailyResult) {
+      await rollback();
       return {
         success: false,
         message: "今日免费次数已用完，请签到获取更多机会",
@@ -767,6 +847,7 @@ async function consumeSpinCount(
     return { success: true, rollback };
   } catch (spinCountError) {
     console.error("扣次数阶段异常:", spinCountError);
+    await rollback();
     return {
       success: false,
       message: "系统繁忙，请稍后再试",
@@ -1165,9 +1246,10 @@ export async function getLotteryPageState(
   options?: { bypassSpinLimit?: boolean }
 ): Promise<LotteryPageState> {
   const config = await getLotteryConfig();
-  const [hasSpunToday, extraSpins, tiersStats] = await Promise.all([
+  const [hasSpunToday, extraSpins, dailySpinUsed, tiersStats] = await Promise.all([
     checkDailyLimit(userId),
     getExtraSpinCount(userId),
+    getLotteryDailySpinUsage(userId),
     getTiersStats(config),
   ]);
 
@@ -1209,14 +1291,19 @@ export async function getLotteryPageState(
   }
 
   const bypassSpinLimit = options?.bypassSpinLimit === true;
+  const dailySpinRemaining = Math.max(0, config.dailySpinLimit - dailySpinUsed);
+  const hasDailySpinQuota = bypassSpinLimit || dailySpinRemaining > 0;
 
   return {
     enabled: config.enabled,
     mode: config.mode,
     tiers,
-    canSpin: config.enabled && canSpinByMode && (bypassSpinLimit || !hasSpunToday || extraSpins > 0),
+    canSpin: config.enabled && canSpinByMode && hasDailySpinQuota && (bypassSpinLimit || !hasSpunToday || extraSpins > 0),
     hasSpunToday,
     extraSpins,
+    dailySpinLimit: config.dailySpinLimit,
+    dailySpinUsed,
+    dailySpinRemaining: bypassSpinLimit ? config.dailySpinLimit : dailySpinRemaining,
     allTiersHaveCodes,
   };
 }

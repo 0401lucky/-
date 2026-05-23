@@ -46,6 +46,7 @@ interface LotteryConfigState {
   enabled: boolean;
   mode: 'points';
   dailyDirectLimit: number;
+  dailySpinLimit: number;
 }
 
 interface NumberBombPreview {
@@ -81,6 +82,7 @@ export default function AdminLotteryPage() {
     enabled: true,
     mode: 'points',
     dailyDirectLimit: 2000,
+    dailySpinLimit: 10,
   });
   const [tiers, setTiers] = useState<TierStats[]>([]);
   const [records, setRecords] = useState<LotteryRecord[]>([]);
@@ -128,6 +130,7 @@ export default function AdminLotteryPage() {
         enabled: data.config?.enabled ?? true,
         mode: 'points',
         dailyDirectLimit: data.config?.dailyDirectLimit ?? 2000,
+        dailySpinLimit: data.config?.dailySpinLimit ?? 10,
       });
       setTiers((data.tiers || []).map(normalizeTier));
       setRecords(data.records || []);
@@ -170,6 +173,7 @@ export default function AdminLotteryPage() {
         body: JSON.stringify({
           enabled: config.enabled,
           mode: 'points',
+          dailySpinLimit: config.dailySpinLimit,
           tiers: tiers.map((tier) => ({
             id: tier.id,
             name: tier.name,
@@ -219,6 +223,25 @@ export default function AdminLotteryPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex items-center gap-2 rounded-2xl bg-white/80 px-4 py-2 text-xs font-bold text-stone-600 shadow-sm ring-1 ring-orange-100">
+              每日上限
+              <input
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                value={config.dailySpinLimit}
+                onChange={(event) => {
+                  const next = Number.parseInt(event.target.value, 10);
+                  setConfig((prev) => ({
+                    ...prev,
+                    dailySpinLimit: Number.isSafeInteger(next) ? Math.min(100, Math.max(1, next)) : prev.dailySpinLimit,
+                  }));
+                }}
+                className="w-16 rounded-xl border border-orange-100 bg-white px-2 py-1 text-center text-sm font-black text-stone-900 outline-none focus:border-orange-300"
+              />
+              次
+            </label>
             <button
               type="button"
               onClick={() => setConfig((prev) => ({ ...prev, enabled: !prev.enabled }))}

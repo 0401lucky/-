@@ -60,6 +60,7 @@ vi.mock('../lottery', async (importOriginal) => {
       enabled: true,
       mode: 'direct' as const,
       dailyDirectLimit: 2000,
+      dailySpinLimit: 10,
       tiers: [],
     })),
   };
@@ -93,6 +94,7 @@ describe('raffle robustness', () => {
           enabled: true,
           mode: 'direct' as const,
           dailyDirectLimit: 2000,
+          dailySpinLimit: 10,
           tiers: [],
         };
       }

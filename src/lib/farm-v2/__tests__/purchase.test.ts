@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { kv } from '@/lib/d1-kv';
-import { deductPoints } from '@/lib/points';
+import { deductPoints, getUserPoints } from '@/lib/points';
 import type { FarmStateV2 } from '@/lib/types/farm-v2';
-import { buyItem } from '../index';
+import { buyItem, getFarmStatus } from '../index';
 
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
@@ -26,6 +26,7 @@ describe('farm-v2 shop purchases', () => {
   const mockKvGet = vi.mocked(kv.get);
   const mockKvDel = vi.mocked(kv.del);
   const mockDeductPoints = vi.mocked(deductPoints);
+  const mockGetUserPoints = vi.mocked(getUserPoints);
   let store: Map<string, unknown>;
 
   beforeEach(() => {
@@ -67,6 +68,17 @@ describe('farm-v2 shop purchases', () => {
     expect(state.inventory.pet_skill_plant?.count).toBe(1);
     expect(state.purchasedSkillBooks?.pet_skill_plant).toBe(true);
     expect(mockDeductPoints).toHaveBeenCalledTimes(1);
+  });
+
+  it('读取农场状态时同步积分总账余额', async () => {
+    store.set(stateKey, { ...createFarmState(), points: 30 });
+    mockGetUserPoints.mockResolvedValueOnce(100297);
+
+    const status = await getFarmStatus(userId);
+    const savedState = store.get(stateKey) as FarmStateV2;
+
+    expect(status.state.points).toBe(100297);
+    expect(savedState.points).toBe(100297);
   });
 });
 

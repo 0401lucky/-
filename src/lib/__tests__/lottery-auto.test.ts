@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kv } from '@/lib/d1-kv';
-import { spinLotteryAuto, getLotteryDailyRanking } from '../lottery';
-import { tryUseExtraSpin, tryClaimDailyFree, rollbackExtraSpin, releaseDailyFree } from '../kv';
+import { spinLotteryAuto, getLotteryDailyRanking, getLotteryPageState } from '../lottery';
+import {
+  checkDailyLimit,
+  getExtraSpinCount,
+  tryUseExtraSpin,
+  tryClaimDailyFree,
+  rollbackExtraSpin,
+  releaseDailyFree,
+} from '../kv';
 import { creditQuotaToUser } from '../new-api';
 
 vi.mock('@/lib/d1-kv', () => ({
@@ -29,6 +36,8 @@ vi.mock('@/lib/d1-kv', () => ({
 }));
 
 vi.mock('../kv', () => ({
+  checkDailyLimit: vi.fn(),
+  getExtraSpinCount: vi.fn(),
   tryUseExtraSpin: vi.fn(),
   tryClaimDailyFree: vi.fn(),
   rollbackExtraSpin: vi.fn(),
@@ -69,6 +78,8 @@ describe('spinLotteryAuto hybrid mode', () => {
   const mockKvTtl = vi.mocked(kv.ttl);
   const mockKvExpire = vi.mocked(kv.expire);
 
+  const mockCheckDailyLimit = vi.mocked(checkDailyLimit);
+  const mockGetExtraSpinCount = vi.mocked(getExtraSpinCount);
   const mockTryUseExtraSpin = vi.mocked(tryUseExtraSpin);
   const mockTryClaimDailyFree = vi.mocked(tryClaimDailyFree);
   const mockRollbackExtraSpin = vi.mocked(rollbackExtraSpin);
@@ -102,6 +113,8 @@ describe('spinLotteryAuto hybrid mode', () => {
 
     mockTryUseExtraSpin.mockResolvedValue({ success: true, remaining: 0 } as any);
     mockTryClaimDailyFree.mockResolvedValue(false);
+    mockCheckDailyLimit.mockResolvedValue(false);
+    mockGetExtraSpinCount.mockResolvedValue(0);
     mockRollbackExtraSpin.mockResolvedValue(undefined as any);
     mockReleaseDailyFree.mockResolvedValue(undefined as any);
 
@@ -265,5 +278,42 @@ describe('spinLotteryAuto hybrid mode', () => {
       withScores: true,
     });
     expect(mockKvZcard).toHaveBeenCalledWith('lottery:rank:daily:2026-02-10');
+  });
+
+  it('blocks page spin availability when daily spin cap is reached', async () => {
+    mockKvGet.mockImplementation(async (key: string) => {
+      if (key === 'lottery:config') {
+        return {
+          ...hybridConfig,
+          mode: 'points',
+          dailySpinLimit: 3,
+          tiers: [
+            {
+              id: 'pts_10',
+              name: '小猫 10积分',
+              value: 10,
+              probability: 100,
+              color: '#06b6d4',
+              codesCount: 0,
+              usedCount: 0,
+              enabled: true,
+            },
+          ],
+        };
+      }
+      if (key === 'lottery:daily_spin:2026-02-10:user:1003') {
+        return 3;
+      }
+      return null;
+    });
+    mockCheckDailyLimit.mockResolvedValue(false);
+    mockGetExtraSpinCount.mockResolvedValue(5);
+
+    const state = await getLotteryPageState(1003);
+
+    expect(state.canSpin).toBe(false);
+    expect(state.dailySpinLimit).toBe(3);
+    expect(state.dailySpinUsed).toBe(3);
+    expect(state.dailySpinRemaining).toBe(0);
   });
 });

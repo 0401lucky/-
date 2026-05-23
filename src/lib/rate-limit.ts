@@ -150,6 +150,7 @@ export const RATE_LIMITS = {
 
   // 商店相关
   'store:exchange': { windowSeconds: 60, maxRequests: 20, prefix: 'ratelimit:store:exchange' },
+  'store:balance': { windowSeconds: 60, maxRequests: 30, prefix: 'ratelimit:store:balance' },
 
   // 签到
   'checkin': { windowSeconds: 60, maxRequests: 5, prefix: 'ratelimit:checkin' },

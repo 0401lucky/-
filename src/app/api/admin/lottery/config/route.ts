@@ -27,6 +27,16 @@ export const PATCH = withAdmin(async (request: NextRequest) => {
       await updateLotteryConfig({ dailyDirectLimit: body.dailyDirectLimit });
     }
 
+    if (typeof body.dailySpinLimit !== "undefined") {
+      if (!Number.isSafeInteger(body.dailySpinLimit) || body.dailySpinLimit < 1 || body.dailySpinLimit > 100) {
+        return NextResponse.json(
+          { success: false, message: "每日抽奖次数上限必须是 1-100 的整数" },
+          { status: 400 }
+        );
+      }
+      await updateLotteryConfig({ dailySpinLimit: body.dailySpinLimit });
+    }
+
     // 更新概率配置
     if (Array.isArray(body.tiers)) {
       // [M4修复] 获取当前配置，确保提交了所有档位
@@ -117,6 +127,7 @@ export const PATCH = withAdmin(async (request: NextRequest) => {
         enabled: updatedConfig.enabled,
         mode: updatedConfig.mode,
         dailyDirectLimit: updatedConfig.dailyDirectLimit,
+        dailySpinLimit: updatedConfig.dailySpinLimit,
         tiers: updatedConfig.tiers.map((t) => ({
           id: t.id,
           name: t.name,

@@ -31,7 +31,10 @@ export const POST = withUserRateLimit(
         balance: result.balance,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : '下注失败';
+      const rawMessage = error instanceof Error ? error.message : '下注失败';
+      const message = rawMessage.startsWith('LOCK_TIMEOUT:')
+        ? '积分账户正在处理上一笔操作，请稍后再试'
+        : rawMessage;
       console.error('Number bomb bet error:', error);
       return NextResponse.json(
         { success: false, message },

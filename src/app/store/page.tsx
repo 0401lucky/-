@@ -118,6 +118,14 @@ interface MyProfile {
   equippedAchievement: PublicAchievement | null;
 }
 
+interface NewApiBalance {
+  dollars: number;
+  wholeDollars: number;
+  quota: number;
+  usedQuota: number;
+  quotaPerDollar: number;
+}
+
 type FilterKey = string;
 
 // ============================================================================
@@ -217,6 +225,9 @@ function StoreContent() {
   const [topupInput, setTopupInput] = useState<string>(String(MIN_TOPUP_DOLLARS));
   const [walletSubmitting, setWalletSubmitting] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
+  const [newApiBalance, setNewApiBalance] = useState<NewApiBalance | null>(null);
+  const [newApiBalanceLoading, setNewApiBalanceLoading] = useState(false);
+  const [newApiBalanceError, setNewApiBalanceError] = useState<string | null>(null);
 
   // ---------- 数据加载 ----------
   const fetchAll = useCallback(async (silent = false) => {
@@ -395,6 +406,46 @@ function StoreContent() {
       ),
     [topupValue],
   );
+  const topupBalanceExceeded = Boolean(
+    topupPreview.ok
+      && newApiBalance
+      && topupPreview.spentDollars > newApiBalance.wholeDollars,
+  );
+  const topupSubmitDisabled = walletSubmitting
+    || !topupPreview.ok
+    || newApiBalanceLoading
+    || topupBalanceExceeded;
+
+  const loadNewApiBalance = useCallback(async () => {
+    setNewApiBalanceLoading(true);
+    setNewApiBalanceError(null);
+    try {
+      const res = await fetch('/api/store/topup', { cache: 'no-store' });
+      const data = await res.json().catch(() => ({ success: false }));
+      if (!res.ok || !data?.success) {
+        setNewApiBalanceError(data?.message ?? '读取账户额度失败');
+        return;
+      }
+
+      setNewApiBalance({
+        dollars: Number(data.data?.newApiBalanceDollars ?? 0),
+        wholeDollars: Number(data.data?.newApiBalanceWholeDollars ?? 0),
+        quota: Number(data.data?.newApiQuota ?? 0),
+        usedQuota: Number(data.data?.newApiUsedQuota ?? 0),
+        quotaPerDollar: Number(data.data?.quotaPerDollar ?? 500000),
+      });
+    } catch {
+      setNewApiBalanceError('读取账户额度失败');
+    } finally {
+      setNewApiBalanceLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (walletOpen && walletTab === 'topup') {
+      void loadNewApiBalance();
+    }
+  }, [walletOpen, walletTab, loadNewApiBalance]);
 
   const closeWallet = () => {
     if (walletSubmitting) return;
@@ -442,6 +493,10 @@ function StoreContent() {
       setWalletError(topupPreview.message ?? '请检查输入');
       return;
     }
+    if (topupBalanceExceeded) {
+      setWalletError(`账户额度不足，当前最多可充值 $${newApiBalance?.wholeDollars ?? 0}`);
+      return;
+    }
 
     setWalletSubmitting(true);
     try {
@@ -451,6 +506,18 @@ function StoreContent() {
         body: JSON.stringify({ dollars: topupPreview.spentDollars }),
       });
       const data = await res.json().catch(() => ({ success: false }));
+      if (
+        typeof data?.data?.newApiBalanceDollars === 'number'
+        && typeof data?.data?.newApiBalanceWholeDollars === 'number'
+      ) {
+        setNewApiBalance((current) => ({
+          dollars: data.data.newApiBalanceDollars,
+          wholeDollars: data.data.newApiBalanceWholeDollars,
+          quota: current?.quota ?? 0,
+          usedQuota: current?.usedQuota ?? 0,
+          quotaPerDollar: current?.quotaPerDollar ?? 500000,
+        }));
+      }
       if (data?.success) {
         setMessage({ type: 'success', text: data.message ?? '充值成功' });
         if (typeof data.data?.newBalance === 'number') setBalance(data.data.newBalance);
@@ -1446,6 +1513,39 @@ function StoreContent() {
                     <span className="wallet-input-suffix">$</span>
                   </div>
 
+                  <div className={`wallet-balance-card ${newApiBalanceError ? 'is-error' : ''}`}>
+                    <div>
+                      <div className="wallet-balance-label">New API 可用额度</div>
+                      <div className="wallet-balance-value">
+                        {newApiBalanceLoading ? (
+                          <>
+                            <Loader2 className="ic-action-spin" size={14} />
+                            读取中
+                          </>
+                        ) : newApiBalanceError ? (
+                          newApiBalanceError
+                        ) : newApiBalance ? (
+                          <>
+                            ${newApiBalance.dollars.toFixed(2)}
+                            <span>可充值 ${newApiBalance.wholeDollars}</span>
+                          </>
+                        ) : (
+                          '暂未读取'
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="wallet-refresh-btn"
+                      onClick={loadNewApiBalance}
+                      disabled={newApiBalanceLoading || walletSubmitting}
+                      title="刷新账户额度"
+                      aria-label="刷新账户额度"
+                    >
+                      <RefreshCw size={14} />
+                    </button>
+                  </div>
+
                   <div className="wallet-preview">
                     {topupPreview.ok ? (
                       <>
@@ -1461,6 +1561,19 @@ function StoreContent() {
                           <span>到账积分</span>
                           <strong className="wallet-final">+{formatNumber(topupPreview.pointsGained)} 积分</strong>
                         </div>
+                        {newApiBalance && (
+                          <div className="wallet-preview-row">
+                            <span>充值后额度</span>
+                            <strong>
+                              ${Math.max(0, newApiBalance.dollars - topupPreview.spentDollars).toFixed(2)}
+                            </strong>
+                          </div>
+                        )}
+                        {topupBalanceExceeded && (
+                          <div className="wallet-preview-warning">
+                            账户额度不足，当前最多可充值 ${newApiBalance?.wholeDollars ?? 0}
+                          </div>
+                        )}
                       </>
                     ) : (
                       <div className="wallet-preview-empty">
@@ -1502,7 +1615,7 @@ function StoreContent() {
                   type="button"
                   className="lwf-btn-primary"
                   onClick={handleTopup}
-                  disabled={walletSubmitting || !topupPreview.ok}
+                  disabled={topupSubmitDisabled}
                 >
                   {walletSubmitting ? <Loader2 className="ic-action-spin" size={14} /> : <ArrowDownLeft size={14} />}
                   确认充值
@@ -2969,6 +3082,58 @@ function StoreContent() {
         .lucky-store .wallet-max-btn:hover:not(:disabled) { background: rgba(249, 115, 22, 0.15); }
         .lucky-store .wallet-max-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+        .lucky-store .wallet-balance-card {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin: 0 0 14px;
+          padding: 12px 14px;
+          background: rgba(16, 185, 129, 0.07);
+          border: 1px solid rgba(16, 185, 129, 0.2);
+          border-radius: 14px;
+        }
+        .lucky-store .wallet-balance-card.is-error {
+          background: rgba(244, 63, 94, 0.07);
+          border-color: rgba(244, 63, 94, 0.22);
+        }
+        .lucky-store .wallet-balance-label {
+          font-size: 11px;
+          color: var(--text-light);
+          font-weight: 800;
+          margin-bottom: 3px;
+        }
+        .lucky-store .wallet-balance-value {
+          display: flex;
+          align-items: baseline;
+          gap: 8px;
+          font-size: 17px;
+          font-weight: 900;
+          color: var(--c-green);
+        }
+        .lucky-store .wallet-balance-card.is-error .wallet-balance-value { color: var(--c-red); font-size: 12.5px; }
+        .lucky-store .wallet-balance-value span {
+          font-size: 11.5px;
+          color: var(--text-light);
+          font-weight: 800;
+        }
+        .lucky-store .wallet-refresh-btn {
+          width: 32px;
+          height: 32px;
+          border-radius: 10px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          background: #fff;
+          color: var(--text-light);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: all 0.2s;
+          flex-shrink: 0;
+        }
+        .lucky-store .wallet-refresh-btn:hover:not(:disabled) { color: var(--text-main); transform: rotate(15deg); }
+        .lucky-store .wallet-refresh-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
         .lucky-store .wallet-preview {
           padding: 14px 16px;
           background: #f8fafc;
@@ -3001,6 +3166,13 @@ function StoreContent() {
           text-align: center;
           padding: 8px 0;
           font-weight: 600;
+        }
+        .lucky-store .wallet-preview-warning {
+          padding-top: 10px;
+          border-top: 1px dashed rgba(244, 63, 94, 0.18);
+          color: var(--c-red);
+          font-size: 12px;
+          font-weight: 800;
         }
 
         .lucky-store .wallet-fee-table {

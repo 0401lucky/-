@@ -50,6 +50,7 @@ export const GET = withAdmin(async (request: NextRequest) => {
         enabled: config.enabled,
         mode: config.mode,
         dailyDirectLimit: config.dailyDirectLimit,
+        dailySpinLimit: config.dailySpinLimit,
       },
       todayDirectTotal,
       tiers: tiersWithStats,

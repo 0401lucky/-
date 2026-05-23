@@ -22,9 +22,13 @@ export const POST = withUserRateLimit(
         balance: result.balance,
       });
     } catch (error) {
+      const rawMessage = error instanceof Error ? error.message : '取消失败';
+      const message = rawMessage.startsWith('LOCK_TIMEOUT:')
+        ? '积分账户正在处理上一笔操作，请稍后再试'
+        : '取消失败';
       console.error('Number bomb cancel error:', error);
       return NextResponse.json(
-        { success: false, message: '取消失败' },
+        { success: false, message },
         { status: 500 },
       );
     }

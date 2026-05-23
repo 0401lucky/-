@@ -2,6 +2,39 @@ import { NextResponse } from 'next/server';
 import { withUserRateLimit } from '@/lib/rate-limit';
 import { executeTopup, MIN_TOPUP_DOLLARS } from '@/lib/wallet';
 import { getUserPoints } from '@/lib/points';
+import {
+  NEW_API_QUOTA_PER_DOLLAR,
+  getNewApiQuotaBalanceForUser,
+} from '@/lib/new-api';
+
+export const dynamic = 'force-dynamic';
+
+export const GET = withUserRateLimit(
+  'store:balance',
+  async (_request, user) => {
+    const result = await getNewApiQuotaBalanceForUser(user.id);
+
+    if (!result.success) {
+      return NextResponse.json(
+        { success: false, message: result.message },
+        { status: 502 },
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: result.message,
+      data: {
+        newApiQuota: result.quota,
+        newApiUsedQuota: result.usedQuota,
+        newApiBalanceDollars: result.balanceDollars,
+        newApiBalanceWholeDollars: result.balanceWholeDollars,
+        quotaPerDollar: NEW_API_QUOTA_PER_DOLLAR,
+      },
+    });
+  },
+  { unauthorizedMessage: '请先登录' },
+);
 
 // POST /api/store/topup
 // body: { dollars: number }
@@ -51,7 +84,11 @@ export const POST = withUserRateLimit(
         {
           success: false,
           message: result.message,
-          data: { newBalance: balance },
+          data: {
+            newBalance: balance,
+            newApiBalanceDollars: result.newApiBalanceDollars,
+            newApiBalanceWholeDollars: result.newApiBalanceWholeDollars,
+          },
         },
         { status: 400 },
       );
@@ -64,6 +101,8 @@ export const POST = withUserRateLimit(
       data: {
         newBalance: balance,
         pointsGained: result.pointsGained,
+        newApiBalanceDollars: result.newApiBalanceDollars,
+        newApiBalanceWholeDollars: result.newApiBalanceWholeDollars,
       },
     });
   },

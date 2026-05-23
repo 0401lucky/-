@@ -96,6 +96,9 @@ interface LotteryApiPayload {
   canSpin: boolean;
   hasSpunToday: boolean;
   extraSpins: number;
+  dailySpinLimit: number;
+  dailySpinUsed: number;
+  dailySpinRemaining: number;
 }
 
 interface LotterySpinResponse {
@@ -153,6 +156,8 @@ export default function LotteryPage() {
   const [canSpin, setCanSpin] = useState(false);
   const [hasSpunToday, setHasSpunToday] = useState(false);
   const [extraSpins, setExtraSpins] = useState(0);
+  const [dailySpinLimit, setDailySpinLimit] = useState(10);
+  const [dailySpinRemaining, setDailySpinRemaining] = useState(0);
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [spinTransition, setSpinTransition] = useState<string>('none');
@@ -217,6 +222,8 @@ export default function LotteryPage() {
       setCanSpin(Boolean(data.canSpin));
       setHasSpunToday(Boolean(data.hasSpunToday));
       setExtraSpins(typeof data.extraSpins === 'number' ? data.extraSpins : 0);
+      setDailySpinLimit(typeof data.dailySpinLimit === 'number' ? data.dailySpinLimit : 10);
+      setDailySpinRemaining(typeof data.dailySpinRemaining === 'number' ? data.dailySpinRemaining : 0);
       setError(null);
 
       if (profileRes && profileRes.ok) {
@@ -383,10 +390,12 @@ export default function LotteryPage() {
           setCanSpin(true);
         } else if (extraSpins > 0) {
           setExtraSpins((prev) => Math.max(0, prev - 1));
-          setCanSpin(true);
+          setDailySpinRemaining((prev) => Math.max(0, prev - 1));
+          setCanSpin(dailySpinRemaining > 1);
           setHasSpunToday(true);
         } else {
           setHasSpunToday(true);
+          setDailySpinRemaining((prev) => Math.max(0, prev - 1));
           setCanSpin(false);
         }
 
@@ -438,7 +447,7 @@ export default function LotteryPage() {
       setError('抽奖请求失败，请稍后重试');
       setSpinning(false);
     }
-  }, [canSpin, spinning, fetchData, extraSpins, user?.isAdmin]);
+  }, [canSpin, spinning, fetchData, extraSpins, user?.isAdmin, dailySpinRemaining]);
 
   // ---------- 复制 ----------
   const handleCopy = () => {
@@ -457,6 +466,8 @@ export default function LotteryPage() {
       ? '网络异常，请稍后刷新重试'
       : canSpin
         ? '点击按钮开始抽奖'
+        : dailySpinRemaining <= 0
+          ? `今日已达 ${dailySpinLimit} 次上限`
         : '今日机会已耗尽 · 请签到获取更多次数';
 
   // ---------- 派生 ----------
@@ -688,6 +699,13 @@ export default function LotteryPage() {
                 </span>
                 <span className="label">额外:</span>
                 <span className="num">{loading ? '—' : extraSpins}</span>
+              </div>
+              <div className={`chance-pill quota ${dailySpinRemaining > 0 ? '' : 'is-empty'}`}>
+                <span className="ico">
+                  <Ticket />
+                </span>
+                <span className="label">今日剩余:</span>
+                <span className="num">{loading ? '—' : `${dailySpinRemaining}/${dailySpinLimit}`}</span>
               </div>
             </div>
 

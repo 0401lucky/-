@@ -137,6 +137,10 @@ function normalizeState(s: FarmStateV2): FarmStateV2 {
   return s;
 }
 
+async function syncStatePointsFromLedger(state: FarmStateV2): Promise<void> {
+  state.points = await getUserPoints(state.userId);
+}
+
 type FridayRandomEvent = {
   apply: (
     state: FarmStateV2,
@@ -498,6 +502,7 @@ async function withLock<T>(userId: number, fn: (state: FarmStateV2) => Promise<T
     const state = await getOrCreateFarmV2(userId);
     const now = Date.now();
     tickFarm(state, now);
+    await syncStatePointsFromLedger(state);
     const result = await fn(state);
     await saveState(state);
     return { result };
@@ -514,6 +519,7 @@ export async function getFarmStatus(userId: number): Promise<FarmStatusResponse>
     state = await getOrCreateFarmV2(userId);
     const now = Date.now();
     tickFarm(state, now);
+    await syncStatePointsFromLedger(state);
     if (lock) await saveState(state);
   } finally {
     if (lock) await releaseLock(lock);

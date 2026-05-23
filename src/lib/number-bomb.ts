@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid';
 import { kv } from '@/lib/d1-kv';
-import { applyPointsDelta, getUserPoints } from './points';
+import { applyPointsDeltaInsideUserEconomyLock, getUserPoints } from './points';
 import { getTodayDateString } from './time';
 import { withKvLock, withUserEconomyLock } from './economy-lock';
 import { createUserNotification } from './notifications';
@@ -201,7 +201,7 @@ export async function placeNumberBombBet(
     const delta = previousCost - ticketCost;
     if (delta !== 0) {
       const source = delta > 0 ? 'number_bomb_refund' : 'number_bomb_bet';
-      const result = await applyPointsDelta(
+      const result = await applyPointsDeltaInsideUserEconomyLock(
         user.id,
         delta,
         source,
@@ -254,7 +254,7 @@ export async function cancelNumberBombBet(
       return { success: false, message: '当前投注不能取消' };
     }
 
-    const result = await applyPointsDelta(
+    const result = await applyPointsDeltaInsideUserEconomyLock(
       userId,
       currentBet.ticketCost,
       'number_bomb_refund',
@@ -292,7 +292,7 @@ async function settleSingleBet(date: string, userId: number, systemNumber: numbe
     let balance = await getUserPoints(userId);
 
     if (won) {
-      const result = await applyPointsDelta(
+      const result = await applyPointsDeltaInsideUserEconomyLock(
         userId,
         rewardPoints,
         'number_bomb_reward',

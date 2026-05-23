@@ -272,7 +272,7 @@ describe('Feedback API Permission & Flow', () => {
     const response = await userCreatePOST(
       new NextRequest('http://localhost/api/feedback', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
         body: JSON.stringify({
           content: '截图反馈',
           images: [
@@ -350,7 +350,7 @@ describe('Feedback API Permission & Flow', () => {
     const response = await userMessagePOST(
       new NextRequest('http://localhost/api/feedback/fb-4/messages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
         body: JSON.stringify({
           content: '补充截图',
           images: [
