@@ -100,12 +100,12 @@ export async function addPoints(
 
 /**
  * 原子化游戏积分发放。
- * v2 取消每日封顶，仍记录今日累计值用于展示与统计。
+ * 按系统每日上限发放：未达上限时最多补齐到上限，达到后不再增加积分。
  */
 export async function addGamePointsWithLimit(
   userId: number,
   score: number,
-  _dailyLimit: number,
+  dailyLimit: number,
   source: PointsSource,
   description: string
 ): Promise<{ 
@@ -143,7 +143,7 @@ export async function addGamePointsWithLimit(
       const result = await addNativeGamePointsWithLimit(
         userId,
         score,
-        Number.MAX_SAFE_INTEGER,
+        dailyLimit,
         source,
         description,
         nanoid(),
@@ -151,10 +151,26 @@ export async function addGamePointsWithLimit(
       if (result.pointsEarned > 0) {
         await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
       }
-      return { ...result, limitReached: false };
+      return result;
     }
 
-    const grant = score;
+    const currentDailyEarned = await kv.get<number>(dailyEarnedKey) ?? 0;
+    const normalizedLimit = Number.isFinite(dailyLimit)
+      ? Math.max(0, Math.floor(dailyLimit))
+      : 0;
+    const remaining = Math.max(0, normalizedLimit - currentDailyEarned);
+    const grant = Math.min(score, remaining);
+
+    if (grant <= 0) {
+      return {
+        success: true,
+        pointsEarned: 0,
+        balance: await getUserPoints(userId),
+        dailyEarned: currentDailyEarned,
+        limitReached: normalizedLimit <= currentDailyEarned,
+      };
+    }
+
     const [balance, newDailyEarned] = await Promise.all([
       kv.incrby(pointsKey, grant),
       kv.incrby(dailyEarnedKey, grant),
@@ -180,7 +196,7 @@ export async function addGamePointsWithLimit(
       pointsEarned: grant,
       balance,
       dailyEarned: newDailyEarned,
-      limitReached: false,
+      limitReached: newDailyEarned >= normalizedLimit,
     };
   }, {
     maxRetries: 80,

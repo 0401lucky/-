@@ -976,7 +976,7 @@ export async function getNativeDailyGamePoints(
 export async function addNativeGamePointsWithLimit(
   userId: number,
   score: number,
-  _dailyLimit: number,
+  dailyLimit: number,
   source: PointsSource,
   description: string,
   logId: string,
@@ -991,8 +991,11 @@ export async function addNativeGamePointsWithLimit(
   await ensureHotSchema();
   const statDate = getTodayDateString();
   const dailyEarned = await getNativeDailyGamePoints(userId, statDate);
-  // v2: 取消每日上限，全额发放
-  const grant = Math.max(0, score);
+  const normalizedLimit = Number.isFinite(dailyLimit)
+    ? Math.max(0, Math.floor(dailyLimit))
+    : 0;
+  const remaining = Math.max(0, normalizedLimit - dailyEarned);
+  const grant = Math.min(Math.max(0, score), remaining);
   const currentBalance = await getNativeUserPoints(userId);
   const nextBalance = currentBalance + grant;
   const nextDailyEarned = dailyEarned + grant;
@@ -1028,7 +1031,7 @@ export async function addNativeGamePointsWithLimit(
     pointsEarned: grant,
     balance: nextBalance,
     dailyEarned: nextDailyEarned,
-    limitReached: false,
+    limitReached: nextDailyEarned >= normalizedLimit,
   };
 }
 

@@ -122,39 +122,39 @@ describe('addGamePointsWithLimit', () => {
     expect(mockLtrim).toHaveBeenCalledTimes(1);
   });
 
-  it('returns full score when daily limit param ignored (v2)', async () => {
-    // v2：取消每日上限。即使 dailyEarned 已达 100，仍全额发放
+  it('returns no points when daily limit is already reached', async () => {
     mockGet.mockResolvedValueOnce(100); // dailyEarned = 100
-    mockIncrby
-      .mockResolvedValueOnce(110) // points balance after +10
-      .mockResolvedValueOnce(110); // dailyEarned after +10
-    mockExpire.mockResolvedValue(1);
-    mockLpush.mockResolvedValue(1);
-    mockLtrim.mockResolvedValue('OK' as any);
+    mockGet.mockResolvedValueOnce(500); // current balance
 
     const result = await addGamePointsWithLimit(1, 10, 100, 'game_play', 'played');
 
-    expect(result.success).toBe(true);
-    expect(result.pointsEarned).toBe(10);
-    expect(result.limitReached).toBe(false);
+    expect(result).toEqual({
+      success: true,
+      pointsEarned: 0,
+      balance: 500,
+      dailyEarned: 100,
+      limitReached: true,
+    });
+    expect(mockIncrby).not.toHaveBeenCalled();
+    expect(mockLpush).not.toHaveBeenCalled();
   });
 
-  it('grants full score regardless of remaining quota (v2)', async () => {
-    // v2：dailyEarned=95、score=10，依然全额 10 而非截断为 5
+  it('grants only remaining points when score exceeds daily quota', async () => {
     mockGet.mockResolvedValueOnce(95);
     mockIncrby
-      .mockResolvedValueOnce(110) // points balance after +10
-      .mockResolvedValueOnce(105); // dailyEarned after +10 = 105
+      .mockResolvedValueOnce(105) // points balance after +5
+      .mockResolvedValueOnce(100); // dailyEarned after +5
     mockExpire.mockResolvedValue(1);
     mockLpush.mockResolvedValue(1);
     mockLtrim.mockResolvedValue('OK' as any);
 
     const result = await addGamePointsWithLimit(1, 10, 100, 'game_play', 'played');
 
-    expect(result.pointsEarned).toBe(10);
-    expect(result.limitReached).toBe(false);
+    expect(result.pointsEarned).toBe(5);
+    expect(result.dailyEarned).toBe(100);
+    expect(result.limitReached).toBe(true);
     expect(mockLpush).toHaveBeenCalledWith('points_log:1', expect.objectContaining({
-      amount: 10,
+      amount: 5,
     }));
   });
 
