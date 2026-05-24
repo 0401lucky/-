@@ -198,4 +198,40 @@ describe('farm-v2 shop item use', () => {
     expect(state.inventory.pet_skill_plant?.count).toBe(1);
     expect(state.pet.learnedSkills).not.toContain('plant');
   });
+
+  it('同一只宠物不能重复学习相同技能书且不消耗库存', () => {
+    const state = createFarmState();
+    state.pet = {
+      type: 'dog',
+      name: '豆豆',
+      stage: 'adult',
+      growth: 240,
+      hunger: 80,
+      cleanliness: 90,
+      mood: 75,
+      thirst: 80,
+      hydrationVersion: 2,
+      health: 90,
+      learnedSkills: ['harvest'],
+      currentTask: null,
+      taskStartAt: null,
+      taskEndAt: null,
+      cooldownEndAt: null,
+      stealTarget: null,
+      feedToday: { normal: 0, premium: 0 },
+      washToday: 0,
+      waterToday: 0,
+      playToday: 0,
+      toyToday: 0,
+      dailyResetAt: 0,
+    };
+    state.inventory.pet_skill_harvest = { count: 2, updatedAt: 0 };
+
+    const result = applyItemUse(state, 'pet_skill_harvest', 10_000);
+
+    expect(result.ok).toBe(false);
+    expect(result.msg).toBe('宠物已经学会收菜');
+    expect(state.inventory.pet_skill_harvest?.count).toBe(2);
+    expect(state.pet.learnedSkills).toEqual(['harvest']);
+  });
 });

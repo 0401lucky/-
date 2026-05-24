@@ -13,6 +13,9 @@ import {
   deleteRaffle,
   getRaffleEntries,
   processQueuedRaffleDeliveries,
+  normalizeRaffleRewardPoints,
+  getRaffleMode,
+  normalizeRedPacketConfig,
 } from "@/lib/raffle";
 import type { UpdateRaffleInput } from "@/lib/types/raffle";
 
@@ -64,14 +67,70 @@ export const PUT = withAdmin(async (
   try {
     const { id } = await context.params;
     const body = await request.json() as UpdateRaffleInput;
-
-    const raffle = await updateRaffle(id, body);
-    if (!raffle) {
+    const currentRaffle = await getRaffle(id);
+    if (!currentRaffle) {
       return NextResponse.json(
         { success: false, message: "活动不存在" },
         { status: 404 }
       );
     }
+
+    const nextMode = body.mode === "red_packet"
+      ? "red_packet"
+      : body.mode === "draw"
+        ? "draw"
+        : getRaffleMode(currentRaffle);
+
+    if (nextMode === "draw" && body.prizes) {
+      for (const prize of body.prizes) {
+        if (!prize.name?.trim()) {
+          return NextResponse.json(
+            { success: false, message: "奖品名称不能为空" },
+            { status: 400 }
+          );
+        }
+        if (normalizeRaffleRewardPoints(prize.points, prize.dollars) === null) {
+          return NextResponse.json(
+            { success: false, message: "奖品积分必须大于0" },
+            { status: 400 }
+          );
+        }
+        if (!Number.isSafeInteger(prize.quantity) || prize.quantity <= 0) {
+          return NextResponse.json(
+            { success: false, message: "奖品数量必须为正整数" },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
+    if (nextMode === "red_packet") {
+      try {
+        normalizeRedPacketConfig({
+          redPacketTotalPoints: body.redPacketTotalPoints ?? currentRaffle.redPacketTotalPoints,
+          redPacketTotalSlots: body.redPacketTotalSlots ?? currentRaffle.redPacketTotalSlots,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "红包配置不正确";
+        return NextResponse.json(
+          { success: false, message },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (
+      nextMode === "draw"
+      && body.triggerType === "threshold"
+      && (!Number.isSafeInteger(body.threshold) || (body.threshold ?? 0) <= 0)
+    ) {
+      return NextResponse.json(
+        { success: false, message: "人数阈值必须为正整数" },
+        { status: 400 }
+      );
+    }
+
+    const raffle = await updateRaffle(id, body);
 
     return NextResponse.json({
       success: true,

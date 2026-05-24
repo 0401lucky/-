@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kv } from '@/lib/d1-kv';
-import { sendFarmMaturityEmail, isFarmMaturityEmailConfigured } from '@/lib/email';
+import { sendFarmMaturityEmail, sendFarmWaterReminderEmail, isFarmMaturityEmailConfigured } from '@/lib/email';
 import { getCustomUserProfile } from '@/lib/user-profile';
 import type { FarmStateV2, PetStage } from '@/lib/types/farm-v2';
 import { processMaturityEmailEventsForState } from '../maturity-email';
@@ -15,6 +15,7 @@ vi.mock('@/lib/d1-kv', () => ({
 vi.mock('@/lib/email', () => ({
   isFarmMaturityEmailConfigured: vi.fn(),
   sendFarmMaturityEmail: vi.fn(),
+  sendFarmWaterReminderEmail: vi.fn(),
 }));
 
 vi.mock('@/lib/user-profile', () => ({
@@ -95,6 +96,7 @@ describe('processMaturityEmailEventsForState', () => {
   const mockDel = vi.mocked(kv.del);
   const mockConfigured = vi.mocked(isFarmMaturityEmailConfigured);
   const mockSend = vi.mocked(sendFarmMaturityEmail);
+  const mockWaterSend = vi.mocked(sendFarmWaterReminderEmail);
   const mockProfile = vi.mocked(getCustomUserProfile);
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -105,6 +107,7 @@ describe('processMaturityEmailEventsForState', () => {
     mockDel.mockResolvedValue(1);
     mockConfigured.mockReturnValue(true);
     mockSend.mockResolvedValue({ sent: true });
+    mockWaterSend.mockResolvedValue({ sent: true });
     mockProfile.mockResolvedValue({ qqEmail: '123456@qq.com' });
   });
 
@@ -127,6 +130,35 @@ describe('processMaturityEmailEventsForState', () => {
       matureAt: 1_700_000_000_000,
       petName: '雪球',
     }));
+    expect(mockWaterSend).not.toHaveBeenCalled();
+  });
+
+  it('sends one water reminder when crop enters the 10 minute watering window', async () => {
+    const now = 1_700_000_010_000;
+    const state = createState();
+    state.events = [];
+    state.lands[0].status = 'growing';
+    state.lands[0].crop!.plantedAt = now - 20 * 60 * 1000;
+    state.lands[0].crop!.matureAt = now + 60 * 60 * 1000;
+    state.lands[0].crop!.nextWaterDueAt = now + 10 * 60 * 1000;
+    state.lands[0].crop!.waterMissCount = 0;
+
+    const result = await processMaturityEmailEventsForState(state, now);
+
+    expect(result).toEqual({ checked: 1, sent: 1, skipped: 0, failed: 0 });
+    expect(mockSet).toHaveBeenCalledWith(
+      `farmv2:water-mail:sent:1:1:${now - 20 * 60 * 1000}:${now + 10 * 60 * 1000}:0`,
+      { claimedAt: now },
+      { nx: true, ex: expect.any(Number) },
+    );
+    expect(mockWaterSend).toHaveBeenCalledWith(expect.objectContaining({
+      to: '123456@qq.com',
+      cropName: '小麦',
+      landIndex: 1,
+      waterDueAt: now + 10 * 60 * 1000,
+      petName: '雪球',
+    }));
+    expect(mockSend).not.toHaveBeenCalled();
   });
 
   it('skips when pet is not adult', async () => {
@@ -134,6 +166,7 @@ describe('processMaturityEmailEventsForState', () => {
 
     expect(result).toEqual({ checked: 1, sent: 0, skipped: 1, failed: 0 });
     expect(mockSend).not.toHaveBeenCalled();
+    expect(mockWaterSend).not.toHaveBeenCalled();
     expect(mockProfile).not.toHaveBeenCalled();
   });
 

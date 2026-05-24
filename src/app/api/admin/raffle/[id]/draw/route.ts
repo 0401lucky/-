@@ -5,7 +5,7 @@
 import { NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
 import type { AuthUser } from "@/lib/auth";
-import { executeRaffleDraw, getRaffle, processQueuedRaffleDeliveries } from "@/lib/raffle";
+import { executeRaffleDraw, getRaffle, getRaffleMode, processQueuedRaffleDeliveries } from "@/lib/raffle";
 
 export const POST = withAdmin(async (
   _request: Request,
@@ -27,6 +27,13 @@ export const POST = withAdmin(async (
     if (raffle.status !== "active") {
       return NextResponse.json(
         { success: false, message: "只能对进行中的活动开奖" },
+        { status: 400 }
+      );
+    }
+
+    if (getRaffleMode(raffle) === "red_packet") {
+      return NextResponse.json(
+        { success: false, message: "抢红包活动会在名额抢完后自动结束，无需手动开奖" },
         { status: 400 }
       );
     }

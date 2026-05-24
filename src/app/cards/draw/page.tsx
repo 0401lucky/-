@@ -69,6 +69,7 @@ const RARITY_META: Record<
 };
 
 const RARITY_RATE_ORDER: Rarity[] = ['legendary_rare', 'legendary', 'epic', 'rare', 'common'];
+const DRAW_COOLDOWN_MS = 5000;
 
 // 格式化相对时间：刚刚 / X 分钟前 / X 小时前 / X 天前 / 具体日期
 function formatRelativeTime(ts: number): string {
@@ -151,13 +152,43 @@ export default function DrawPage() {
   const [lastDrawCount, setLastDrawCount] = useState(1);
 
   const drawTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const drawCooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const drawCooldownUntilRef = useRef(0);
   const drawInFlightRef = useRef(false);
   const repeatDrawQueuedRef = useRef(false);
+  const [drawCooldownRemaining, setDrawCooldownRemaining] = useState(0);
 
   const clearDrawTimeouts = useCallback(() => {
     for (const t of drawTimeoutsRef.current) clearTimeout(t);
     drawTimeoutsRef.current = [];
   }, []);
+
+  const clearDrawCooldown = useCallback(() => {
+    if (drawCooldownTimerRef.current) {
+      clearInterval(drawCooldownTimerRef.current);
+      drawCooldownTimerRef.current = null;
+    }
+    drawCooldownUntilRef.current = 0;
+    setDrawCooldownRemaining(0);
+  }, []);
+
+  const refreshDrawCooldown = useCallback(() => {
+    const remaining = Math.max(0, Math.ceil((drawCooldownUntilRef.current - Date.now()) / 1000));
+    setDrawCooldownRemaining(remaining);
+    if (remaining <= 0 && drawCooldownTimerRef.current) {
+      clearInterval(drawCooldownTimerRef.current);
+      drawCooldownTimerRef.current = null;
+    }
+  }, []);
+
+  const startDrawCooldown = useCallback(() => {
+    drawCooldownUntilRef.current = Date.now() + DRAW_COOLDOWN_MS;
+    refreshDrawCooldown();
+    if (drawCooldownTimerRef.current) {
+      clearInterval(drawCooldownTimerRef.current);
+    }
+    drawCooldownTimerRef.current = setInterval(refreshDrawCooldown, 250);
+  }, [refreshDrawCooldown]);
 
   // ----- 数据加载 -----
   const fetchInventory = useCallback(async () => {
@@ -202,10 +233,14 @@ export default function DrawPage() {
     };
   }, [router, fetchInventory, fetchRules]);
 
-  useEffect(() => () => clearDrawTimeouts(), [clearDrawTimeouts]);
+  useEffect(() => () => {
+    clearDrawTimeouts();
+    clearDrawCooldown();
+  }, [clearDrawTimeouts, clearDrawCooldown]);
 
   // ----- 派生数据（全部基于真实 API/常量） -----
   const drawsAvailable = cardData?.drawsAvailable ?? 0;
+  const drawCoolingDown = drawCooldownRemaining > 0;
 
   const syncDrawsAvailable = useCallback((value: unknown) => {
     const next = Number(value);
@@ -274,7 +309,12 @@ export default function DrawPage() {
   // ----- 抽卡 -----
   const handleDraw = useCallback(
     async (count: number) => {
-      if (drawInFlightRef.current || drawing || drawsAvailable < count) return;
+      if (
+        drawInFlightRef.current ||
+        drawing ||
+        drawCooldownUntilRef.current > Date.now() ||
+        drawsAvailable < count
+      ) return;
       drawInFlightRef.current = true;
       setDrawing(true);
       setLastDrawCount(count);
@@ -323,6 +363,7 @@ export default function DrawPage() {
         if (results.length === 0) return;
 
         syncDrawsAvailable(data.data.drawsAvailable);
+        startDrawCooldown();
 
         setRevealResults(results);
         setFlippedIndices([]);
@@ -357,11 +398,18 @@ export default function DrawPage() {
         setStagePulling(false);
       }
     },
-    [drawing, drawsAvailable, fetchInventory, clearDrawTimeouts, syncDrawsAvailable],
+    [drawing, drawsAvailable, fetchInventory, clearDrawTimeouts, syncDrawsAvailable, startDrawCooldown],
   );
 
   const handleAgain = useCallback(() => {
-    if (repeatDrawQueuedRef.current || drawInFlightRef.current || drawing || drawsAvailable < lastDrawCount) return;
+    if (
+      repeatDrawQueuedRef.current ||
+      drawInFlightRef.current ||
+      drawing ||
+      drawCooldownUntilRef.current > Date.now() ||
+      drawCooldownRemaining > 0 ||
+      drawsAvailable < lastDrawCount
+    ) return;
     repeatDrawQueuedRef.current = true;
     closeReveal();
     const t = setTimeout(() => {
@@ -369,7 +417,7 @@ export default function DrawPage() {
       void handleDraw(lastDrawCount);
     }, 300);
     drawTimeoutsRef.current.push(t);
-  }, [drawing, drawsAvailable, lastDrawCount, closeReveal, handleDraw]);
+  }, [drawing, drawCooldownRemaining, drawsAvailable, lastDrawCount, closeReveal, handleDraw]);
 
   // ESC 关闭弹层 / 抽卡记录 / 抽卡规则弹窗
   useEffect(() => {
@@ -507,9 +555,9 @@ export default function DrawPage() {
         <div className="stage">
           <button
             type="button"
-            className={`gacha-card ${stagePulling ? 'pulling' : ''} ${drawing ? 'is-drawing' : ''}`}
+            className={`gacha-card ${stagePulling ? 'pulling' : ''} ${drawing ? 'is-drawing' : ''} ${drawCoolingDown ? 'is-cooling' : ''}`}
             onClick={() => void handleDraw(1)}
-            disabled={drawing || drawsAvailable < 1}
+            disabled={drawing || drawCoolingDown || drawsAvailable < 1}
             aria-label="点击抽一次"
           >
             <div className="card-stars" aria-hidden>
@@ -532,8 +580,12 @@ export default function DrawPage() {
                 </span>
               </div>
               <div className="card-bottom">
-                <div className="card-tap">{drawing ? 'DRAWING…' : 'TAP TO OPEN'}</div>
-                <div className="card-hint">点击或抽卡按钮揭晓你的命运</div>
+                <div className="card-tap">
+                  {drawing ? 'DRAWING…' : drawCoolingDown ? `COOLDOWN ${drawCooldownRemaining}s` : 'TAP TO OPEN'}
+                </div>
+                <div className="card-hint">
+                  {drawCoolingDown ? '卡牌能量正在重置，稍等一下再抽' : '点击或抽卡按钮揭晓你的命运'}
+                </div>
               </div>
             </div>
           </button>
@@ -545,27 +597,27 @@ export default function DrawPage() {
             type="button"
             className="draw-btn single"
             onClick={() => void handleDraw(1)}
-            disabled={drawing || drawsAvailable < 1}
+            disabled={drawing || drawCoolingDown || drawsAvailable < 1}
           >
             <span className="shine" />
             <span className="ico">
               <Star size={18} fill="currentColor" strokeWidth={0} />
             </span>
-            单抽
-            <span className="cost">−1</span>
+            {drawCoolingDown ? '冷却中' : '单抽'}
+            <span className="cost">{drawCoolingDown ? `${drawCooldownRemaining}s` : '−1'}</span>
           </button>
           <button
             type="button"
             className="draw-btn multi"
             onClick={() => void handleDraw(5)}
-            disabled={drawing || drawsAvailable < 5}
+            disabled={drawing || drawCoolingDown || drawsAvailable < 5}
           >
             <span className="shine" />
             <span className="ico">
               <Zap size={18} fill="currentColor" strokeWidth={0} />
             </span>
-            五连抽
-            <span className="cost">−5</span>
+            {drawCoolingDown ? '冷却中' : '五连抽'}
+            <span className="cost">{drawCoolingDown ? `${drawCooldownRemaining}s` : '−5'}</span>
           </button>
         </div>
 
@@ -621,7 +673,7 @@ export default function DrawPage() {
                       <div className="rarity-tag">{meta.short}</div>
                       <div className="r-image">
                         <Image
-                          src={result.card.image}
+                          src={result.card.thumbnailImage ?? result.card.image}
                           alt={result.card.name}
                           fill
                           sizes="156px"
@@ -660,11 +712,11 @@ export default function DrawPage() {
                 type="button"
                 className="reveal-btn again"
                 onClick={handleAgain}
-                disabled={drawing || drawsAvailable < lastDrawCount}
+                disabled={drawing || drawCoolingDown || drawsAvailable < lastDrawCount}
               >
                 <RefreshCw size={14} strokeWidth={2.6} />
-                再抽一次
-                <span className="cost">−{lastDrawCount}</span>
+                {drawCoolingDown ? '冷却中' : '再抽一次'}
+                <span className="cost">{drawCoolingDown ? `${drawCooldownRemaining}s` : `−${lastDrawCount}`}</span>
               </button>
               <button type="button" className="reveal-btn confirm" onClick={closeReveal}>
                 <Check size={14} strokeWidth={3} />
@@ -805,7 +857,7 @@ export default function DrawPage() {
                         <div className="rm-index">#{idx + 1}</div>
                         <div className="rm-thumb">
                           <Image
-                            src={card.image}
+                            src={card.thumbnailImage ?? card.image}
                             alt={card.name}
                             fill
                             sizes="64px"

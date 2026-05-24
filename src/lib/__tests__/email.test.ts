@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { isFarmMaturityEmailConfigured, sendFarmMaturityEmail } from '../email';
+import { isFarmMaturityEmailConfigured, sendFarmMaturityEmail, sendFarmWaterReminderEmail } from '../email';
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -62,6 +62,32 @@ describe('farm maturity email', () => {
     expect(body.from).toBe('farm@example.com');
     expect(body.to).toEqual(['123456@qq.com']);
     expect(body.subject).toContain('小麦');
+    expect(body.text).toContain('小白猫');
+  });
+
+  it('sends watering reminder email through configured HTTP provider', async () => {
+    process.env.RESEND_API_KEY = 'test-key';
+    process.env.FARM_MAIL_FROM = 'farm@example.com';
+    process.env.RESEND_API_URL = 'https://mail.test/emails';
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await sendFarmWaterReminderEmail({
+      to: '123456@qq.com',
+      cropName: '胡萝卜',
+      landIndex: 2,
+      waterDueAt: 1_700_000_000_000,
+      petName: '小白猫',
+    });
+
+    expect(result).toEqual({ sent: true });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.to).toEqual(['123456@qq.com']);
+    expect(body.subject).toContain('第 2 块地');
+    expect(body.text).toContain('胡萝卜');
     expect(body.text).toContain('小白猫');
   });
 

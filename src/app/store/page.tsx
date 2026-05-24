@@ -87,12 +87,14 @@ interface Project {
 interface RafflePrize {
   id: string;
   name: string;
-  dollars: number;
+  points?: number;
+  dollars?: number;
   quantity: number;
 }
 
 interface RaffleItem {
   id: string;
+  mode?: 'draw' | 'red_packet';
   title: string;
   description: string;
   prizes: RafflePrize[];
@@ -102,6 +104,10 @@ interface RaffleItem {
   participantsCount: number;
   winnersCount: number;
   drawnAt?: number;
+  redPacketTotalPoints?: number;
+  redPacketTotalSlots?: number;
+  redPacketRemainingPoints?: number;
+  redPacketRemainingSlots?: number;
   createdAt: number;
 }
 
@@ -128,6 +134,22 @@ interface NewApiBalance {
 
 type FilterKey = string;
 
+type WalletResultKind = 'success' | 'error' | 'warning';
+
+interface WalletResultDetail {
+  label: string;
+  value: string;
+  tone?: 'success' | 'danger' | 'warning';
+}
+
+interface WalletResult {
+  kind: WalletResultKind;
+  operation: 'withdraw' | 'topup';
+  title: string;
+  message: string;
+  details: WalletResultDetail[];
+}
+
 // ============================================================================
 // 辅助
 // ============================================================================
@@ -136,6 +158,15 @@ function getStoreItemTheme(type: StoreItemType): string {
   if (type === 'quota_direct') return 't-green';
   if (type === 'makeup_card') return 't-green';
   return 't-cyan';
+}
+
+function getRafflePrizePoints(prize: { points?: number; dollars?: number }): number {
+  const normalize = (value: unknown) => {
+    const points = Number(value);
+    if (!Number.isFinite(points) || points <= 0) return null;
+    return Math.max(0, Math.round(points));
+  };
+  return normalize(prize.points) ?? normalize(prize.dollars) ?? 0;
 }
 
 function getStoreItemTagClass(type: StoreItemType): string {
@@ -228,6 +259,7 @@ function StoreContent() {
   const [newApiBalance, setNewApiBalance] = useState<NewApiBalance | null>(null);
   const [newApiBalanceLoading, setNewApiBalanceLoading] = useState(false);
   const [newApiBalanceError, setNewApiBalanceError] = useState<string | null>(null);
+  const [walletResult, setWalletResult] = useState<WalletResult | null>(null);
 
   // ---------- 数据加载 ----------
   const fetchAll = useCallback(async (silent = false) => {
@@ -472,15 +504,52 @@ function StoreContent() {
       });
       const data = await res.json().catch(() => ({ success: false }));
       if (data?.success) {
+        const resultKind: WalletResultKind = data.uncertain ? 'warning' : 'success';
+        const newBalance = typeof data.data?.newBalance === 'number' ? data.data.newBalance : balance;
         setMessage({ type: 'success', text: data.message ?? '提现成功' });
         if (typeof data.data?.newBalance === 'number') setBalance(data.data.newBalance);
         setWalletOpen(false);
+        setWalletResult({
+          kind: resultKind,
+          operation: 'withdraw',
+          title: resultKind === 'success' ? '提现成功' : '提现结果待确认',
+          message: data.message ?? (resultKind === 'success' ? '提现成功' : '提现请求已提交，请稍后核对账户额度'),
+          details: [
+            { label: '提现积分', value: `${formatNumber(withdrawPreview.deducted)} 积分` },
+            { label: '手续费', value: `${formatNumber(data.data?.feePoints ?? withdrawPreview.feePoints)} 积分`, tone: 'danger' },
+            { label: '到账额度', value: `$${Number(data.data?.dollars ?? withdrawPreview.dollars).toFixed(2)}`, tone: resultKind === 'success' ? 'success' : 'warning' },
+            { label: '当前积分', value: `${formatNumber(newBalance)} 积分` },
+          ],
+        });
         void fetchAll(true);
       } else {
-        setWalletError(data?.message ?? '提现失败');
+        const errorMessage = data?.message ?? '提现失败';
+        setWalletError(errorMessage);
+        setWalletResult({
+          kind: 'error',
+          operation: 'withdraw',
+          title: '提现失败',
+          message: errorMessage,
+          details: [
+            { label: '申请提现', value: `${formatNumber(withdrawPreview.deducted)} 积分` },
+            { label: '预计到账', value: `$${withdrawPreview.dollars.toFixed(2)}` },
+            { label: '当前积分', value: `${formatNumber(data.data?.newBalance ?? balance)} 积分` },
+          ],
+        });
       }
     } catch {
-      setWalletError('网络错误');
+      const errorMessage = '网络错误，请稍后重试';
+      setWalletError(errorMessage);
+      setWalletResult({
+        kind: 'error',
+        operation: 'withdraw',
+        title: '提现失败',
+        message: errorMessage,
+        details: [
+          { label: '申请提现', value: `${formatNumber(withdrawPreview.deducted)} 积分` },
+          { label: '预计到账', value: `$${withdrawPreview.dollars.toFixed(2)}` },
+        ],
+      });
     } finally {
       setWalletSubmitting(false);
     }
@@ -518,15 +587,57 @@ function StoreContent() {
         }));
       }
       if (data?.success) {
+        const resultKind: WalletResultKind = data.uncertain ? 'warning' : 'success';
+        const newBalance = typeof data.data?.newBalance === 'number' ? data.data.newBalance : balance;
         setMessage({ type: 'success', text: data.message ?? '充值成功' });
         if (typeof data.data?.newBalance === 'number') setBalance(data.data.newBalance);
         setWalletOpen(false);
+        setWalletResult({
+          kind: resultKind,
+          operation: 'topup',
+          title: resultKind === 'success' ? '充值成功' : '充值结果待确认',
+          message: data.message ?? (resultKind === 'success' ? '充值成功' : '积分已处理，请稍后核对账户额度'),
+          details: [
+            { label: '充值金额', value: `$${topupPreview.spentDollars}` },
+            { label: '到账积分', value: `+${formatNumber(data.data?.pointsGained ?? topupPreview.pointsGained)} 积分`, tone: 'success' },
+            { label: '当前积分', value: `${formatNumber(newBalance)} 积分` },
+            ...(typeof data.data?.newApiBalanceDollars === 'number'
+              ? [{ label: '剩余额度', value: `$${data.data.newApiBalanceDollars.toFixed(2)}` }]
+              : []),
+          ],
+        });
         void fetchAll(true);
       } else {
-        setWalletError(data?.message ?? '充值失败');
+        const errorMessage = data?.message ?? '充值失败';
+        setWalletError(errorMessage);
+        setWalletResult({
+          kind: 'error',
+          operation: 'topup',
+          title: '充值失败',
+          message: errorMessage,
+          details: [
+            { label: '充值金额', value: `$${topupPreview.spentDollars}` },
+            { label: '预计积分', value: `+${formatNumber(topupPreview.pointsGained)} 积分` },
+            { label: '当前积分', value: `${formatNumber(data.data?.newBalance ?? balance)} 积分` },
+            ...(typeof data.data?.newApiBalanceDollars === 'number'
+              ? [{ label: '当前额度', value: `$${data.data.newApiBalanceDollars.toFixed(2)}` }]
+              : []),
+          ],
+        });
       }
     } catch {
-      setWalletError('网络错误');
+      const errorMessage = '网络错误，请稍后重试';
+      setWalletError(errorMessage);
+      setWalletResult({
+        kind: 'error',
+        operation: 'topup',
+        title: '充值失败',
+        message: errorMessage,
+        details: [
+          { label: '充值金额', value: `$${topupPreview.spentDollars}` },
+          { label: '预计积分', value: `+${formatNumber(topupPreview.pointsGained)} 积分` },
+        ],
+      });
     } finally {
       setWalletSubmitting(false);
     }
@@ -998,20 +1109,32 @@ function StoreContent() {
 
               {filteredRaffles.map((raffle) => {
                 // 多人抽奖卡片：作为免费福利的一种类型展示
-                const totalPool = raffle.prizes.reduce(
-                  (sum, p) => sum + (p.dollars || 0) * (p.quantity || 0),
-                  0,
-                );
-                const totalQuantity = raffle.prizes.reduce(
-                  (sum, p) => sum + (p.quantity || 0),
-                  0,
-                );
+                const isRedPacket = raffle.mode === 'red_packet';
+                const totalPool = isRedPacket
+                  ? raffle.redPacketTotalPoints ?? 0
+                  : raffle.prizes.reduce(
+                      (sum, p) => sum + getRafflePrizePoints(p) * (p.quantity || 0),
+                      0,
+                    );
+                const totalQuantity = isRedPacket
+                  ? raffle.redPacketTotalSlots ?? 0
+                  : raffle.prizes.reduce(
+                      (sum, p) => sum + (p.quantity || 0),
+                      0,
+                    );
+                const remainingSlots = isRedPacket
+                  ? raffle.redPacketRemainingSlots ?? Math.max(0, totalQuantity - raffle.participantsCount)
+                  : 0;
                 const isThreshold = raffle.triggerType === 'threshold' && raffle.threshold > 0;
                 // 阈值触发：参与人数/阈值；手动触发：粗略估算（参与即 60%）
-                const progress = isThreshold
+                const progress = isRedPacket && totalQuantity > 0
+                  ? Math.min(100, Math.round((raffle.participantsCount / totalQuantity) * 100))
+                  : isThreshold
                   ? Math.min(100, Math.round((raffle.participantsCount / raffle.threshold) * 100))
                   : Math.min(100, raffle.participantsCount > 0 ? 60 : 8);
-                const isHot = isThreshold && raffle.participantsCount / raffle.threshold >= 0.5;
+                const isHot = isRedPacket
+                  ? totalQuantity > 0 && raffle.participantsCount / totalQuantity >= 0.5
+                  : isThreshold && raffle.participantsCount / raffle.threshold >= 0.5;
                 return (
                   <Link
                     key={`raffle-${raffle.id}`}
@@ -1026,13 +1149,15 @@ function StoreContent() {
                     )}
                     <div className="ic-head">
                       <div className="ic-icon">
-                        <Users strokeWidth={2.2} />
+                        {isRedPacket ? <Gift strokeWidth={2.2} /> : <Users strokeWidth={2.2} />}
                       </div>
                       <div className="ic-title-area">
                         <div className="ic-title">{raffle.title}</div>
                         <div className="ic-tags">
-                          <span className="ic-tag cat-raffle">抽奖福利</span>
-                          {isThreshold ? (
+                          <span className="ic-tag cat-raffle">{isRedPacket ? '抢红包' : '抽奖福利'}</span>
+                          {isRedPacket ? (
+                            <span className="ic-tag limit">剩 {remainingSlots} 个红包</span>
+                          ) : isThreshold ? (
                             <span className="ic-tag limit">满 {raffle.threshold} 人开奖</span>
                           ) : (
                             <span className="ic-tag limit">手动开奖</span>
@@ -1045,15 +1170,19 @@ function StoreContent() {
                       </div>
                     </div>
 
-                    <div className="ic-desc">{raffle.description || '邀请好友免费参与，奖池满额即开奖'}</div>
+                    <div className="ic-desc">
+                      {raffle.description || (isRedPacket ? '点击即随机抢到整数积分，名额有限先到先得' : '邀请好友免费参与，奖池满额即开奖')}
+                    </div>
 
                     <div className="ic-progress-section">
                       <div className="ic-progress-text">
                         <span>
-                          已参与 <span className="num received">{formatNumber(raffle.participantsCount)}</span>
+                          {isRedPacket ? '已抢' : '已参与'} <span className="num received">{formatNumber(raffle.participantsCount)}</span>
                         </span>
                         <span>
-                          {isThreshold ? (
+                          {isRedPacket ? (
+                            <>剩 <span className="num">{formatNumber(remainingSlots)}</span> 个</>
+                          ) : isThreshold ? (
                             <>差 <span className="num">{formatNumber(Math.max(0, raffle.threshold - raffle.participantsCount))}</span> 人</>
                           ) : (
                             <>奖品 <span className="num">{formatNumber(totalQuantity)}</span> 份</>
@@ -1067,14 +1196,14 @@ function StoreContent() {
 
                     <div className="ic-foot">
                       <div className="ic-price">
-                        <div className="ic-price-label">奖池总额</div>
+                        <div className="ic-price-label">{isRedPacket ? '红包总额' : '奖池积分'}</div>
                         <div className="ic-price-row">
-                          <span className="ic-price-num raffle-free-color">${formatNumber(totalPool)}</span>
+                          <span className="ic-price-num raffle-free-color">{formatNumber(totalPool)} 积分</span>
                         </div>
                       </div>
                       <span className="ic-action-btn pink">
                         <Trophy size={14} />
-                        去参与
+                        {isRedPacket ? '去抢红包' : '去参与'}
                       </span>
                     </div>
                   </Link>
@@ -1626,6 +1755,53 @@ function StoreContent() {
         </div>
       )}
 
+      {/* 提现充值结果弹窗 */}
+      {walletResult && (
+        <div className="lwf-modal-mask wallet-result-layer" role="dialog" aria-modal="true" aria-label={walletResult.title}>
+          <div className="lwf-modal-backdrop" onClick={() => setWalletResult(null)} />
+          <div className={`lwf-modal wallet-result-modal is-${walletResult.kind}`}>
+            <button
+              type="button"
+              className="wallet-result-close"
+              onClick={() => setWalletResult(null)}
+              aria-label="关闭结果弹窗"
+            >
+              <X />
+            </button>
+
+            <div className="wallet-result-body">
+              <div className="wallet-result-mark" aria-hidden>
+                {walletResult.kind === 'success' ? <BadgeCheck /> : <Info />}
+              </div>
+              <div className="wallet-result-kicker">
+                {walletResult.operation === 'withdraw' ? '积分提现' : '额度充值'}
+              </div>
+              <h3>{walletResult.title}</h3>
+              <p>{walletResult.message}</p>
+
+              <div className="wallet-result-details">
+                {walletResult.details.map((detail) => (
+                  <div key={detail.label} className="wallet-result-detail">
+                    <span>{detail.label}</span>
+                    <strong className={detail.tone ? `tone-${detail.tone}` : undefined}>
+                      {detail.value}
+                    </strong>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="wallet-result-primary"
+                onClick={() => setWalletResult(null)}
+              >
+                {walletResult.kind === 'error' ? '返回修改' : '知道了'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style jsx global>{`
         .lucky-store {
           --text-main: #0f172a;
@@ -1880,7 +2056,7 @@ function StoreContent() {
               transparent 55%
             ),
             /* 主图 */
-            url('/images/store/hero.webp') center 45% / cover no-repeat,
+            url('/images-optimized/ui/store/hero.webp') center 45% / cover no-repeat,
             /* 兜底渐变（图片未加载时呈现原配色） */
             linear-gradient(135deg, #422006 0%, #92400e 25%, #ea580c 55%, #f59e0b 100%);
           color: #fff;
@@ -2669,6 +2845,167 @@ function StoreContent() {
         }
         .lucky-store .lwf-modal-rules { max-width: 560px; }
         .lucky-store .lwf-modal-wallet { max-width: 520px; }
+        .lucky-store .wallet-result-layer { z-index: 1020; }
+        .lucky-store .wallet-result-modal {
+          max-width: 420px;
+          overflow: visible;
+        }
+        .lucky-store .wallet-result-modal::before {
+          content: '';
+          position: absolute;
+          inset: -1px;
+          border-radius: 24px;
+          pointer-events: none;
+          opacity: 0.18;
+        }
+        .lucky-store .wallet-result-modal.is-success::before {
+          background: linear-gradient(135deg, var(--c-green), transparent 58%);
+        }
+        .lucky-store .wallet-result-modal.is-error::before {
+          background: linear-gradient(135deg, var(--c-red), transparent 58%);
+        }
+        .lucky-store .wallet-result-modal.is-warning::before {
+          background: linear-gradient(135deg, var(--c-amber), transparent 58%);
+        }
+        .lucky-store .wallet-result-close {
+          position: absolute;
+          top: 14px;
+          right: 14px;
+          width: 34px;
+          height: 34px;
+          border: 0;
+          border-radius: 12px;
+          background: rgba(15, 23, 42, 0.05);
+          color: var(--text-light);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: all 0.2s;
+          z-index: 2;
+        }
+        .lucky-store .wallet-result-close:hover {
+          background: rgba(15, 23, 42, 0.09);
+          color: var(--text-main);
+        }
+        .lucky-store .wallet-result-close svg { width: 16px; height: 16px; }
+        .lucky-store .wallet-result-body {
+          position: relative;
+          z-index: 1;
+          padding: 34px 28px 26px;
+          text-align: center;
+        }
+        .lucky-store .wallet-result-mark {
+          width: 72px;
+          height: 72px;
+          border-radius: 24px;
+          margin: 0 auto 16px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: #fff;
+          box-shadow: 0 18px 32px rgba(15, 23, 42, 0.14);
+        }
+        .lucky-store .wallet-result-modal.is-success .wallet-result-mark {
+          background: var(--grad-green);
+          box-shadow: 0 18px 32px rgba(16, 185, 129, 0.28);
+        }
+        .lucky-store .wallet-result-modal.is-error .wallet-result-mark {
+          background: linear-gradient(135deg, #fb7185, #f43f5e);
+          box-shadow: 0 18px 32px rgba(244, 63, 94, 0.28);
+        }
+        .lucky-store .wallet-result-modal.is-warning .wallet-result-mark {
+          background: var(--grad-amber);
+          color: #92400e;
+          box-shadow: 0 18px 32px rgba(251, 191, 36, 0.28);
+        }
+        .lucky-store .wallet-result-mark svg {
+          width: 34px;
+          height: 34px;
+          stroke-width: 2.4;
+        }
+        .lucky-store .wallet-result-kicker {
+          color: var(--text-light);
+          font-size: 11px;
+          font-weight: 900;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          margin-bottom: 6px;
+        }
+        .lucky-store .wallet-result-body h3 {
+          margin: 0;
+          color: var(--text-main);
+          font-size: 24px;
+          line-height: 1.18;
+          font-weight: 900;
+          letter-spacing: -0.5px;
+        }
+        .lucky-store .wallet-result-body p {
+          margin: 10px auto 0;
+          max-width: 320px;
+          color: var(--text-light);
+          font-size: 13.5px;
+          font-weight: 600;
+          line-height: 1.65;
+        }
+        .lucky-store .wallet-result-details {
+          margin-top: 18px;
+          padding: 14px 16px;
+          border-radius: 16px;
+          background: rgba(248, 250, 252, 0.92);
+          border: 1px solid rgba(15, 23, 42, 0.06);
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          text-align: left;
+        }
+        .lucky-store .wallet-result-detail {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          color: var(--text-light);
+          font-size: 12.5px;
+          font-weight: 700;
+        }
+        .lucky-store .wallet-result-detail strong {
+          color: var(--text-main);
+          font-size: 13.5px;
+          font-weight: 900;
+          text-align: right;
+          white-space: nowrap;
+        }
+        .lucky-store .wallet-result-detail strong.tone-success { color: var(--c-green); }
+        .lucky-store .wallet-result-detail strong.tone-danger { color: var(--c-red); }
+        .lucky-store .wallet-result-detail strong.tone-warning { color: #b45309; }
+        .lucky-store .wallet-result-primary {
+          width: 100%;
+          margin-top: 18px;
+          height: 46px;
+          border: 0;
+          border-radius: 14px;
+          color: #fff;
+          font-size: 14px;
+          font-weight: 900;
+          cursor: pointer;
+          transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .lucky-store .wallet-result-primary:hover {
+          transform: translateY(-1px);
+        }
+        .lucky-store .wallet-result-modal.is-success .wallet-result-primary {
+          background: var(--grad-green);
+          box-shadow: 0 12px 24px rgba(16, 185, 129, 0.24);
+        }
+        .lucky-store .wallet-result-modal.is-error .wallet-result-primary {
+          background: linear-gradient(135deg, #fb7185, #f43f5e);
+          box-shadow: 0 12px 24px rgba(244, 63, 94, 0.24);
+        }
+        .lucky-store .wallet-result-modal.is-warning .wallet-result-primary {
+          background: var(--grad-amber);
+          color: #92400e;
+          box-shadow: 0 12px 24px rgba(251, 191, 36, 0.24);
+        }
         @keyframes lwfSlideUp {
           from { transform: translateY(20px); opacity: 0; }
           to { transform: translateY(0); opacity: 1; }

@@ -7,14 +7,16 @@ import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
 import {
   createEmptyWhackMoleBoard,
   getWhackMoleBoard,
+  getWhackMoleDifficultyConfig,
   getWhackMoleRefreshMs,
   getWhackMoleTickIndex,
-  WHACK_MOLE_GAME_DURATION_MS,
   WHACK_MOLE_HOLE_COUNT,
   WHACK_MOLE_MAX_EVENTS,
   WHACK_MOLE_MAX_EVENTS_PER_SECOND,
   calculateWhackMolePointReward,
+  normalizeWhackMoleDifficulty,
   scoreWhackMoleEvents,
+  type WhackMoleDifficulty,
   type WhackMoleCell,
   type WhackMoleHitEvent,
   type WhackMoleHitResult,
@@ -48,8 +50,11 @@ const HIT_GRACE_STEP_MS = 20;
 const HIT_CLIENT_LATENCY_MS = 1500;
 const HIT_CLIENT_FUTURE_TOLERANCE_MS = 160;
 
-export function getDynamicGraceMs(elapsedMs: number): number {
-  const refreshMs = getWhackMoleRefreshMs(elapsedMs);
+export function getDynamicGraceMs(
+  elapsedMs: number,
+  difficulty: WhackMoleDifficulty = 'normal',
+): number {
+  const refreshMs = getWhackMoleRefreshMs(elapsedMs, difficulty);
   const dynamic = Math.floor(refreshMs * 0.6);
   return Math.min(HIT_GRACE_MAX_MS, Math.max(HIT_GRACE_STEP_MS, dynamic));
 }
@@ -67,6 +72,7 @@ export interface WhackMoleGameSession {
   userId: number;
   gameType: typeof GAME_TYPE;
   seed: string;
+  difficulty: WhackMoleDifficulty;
   startedAt: number;
   expiresAt: number;
   status: GameSessionStatus;
@@ -78,6 +84,7 @@ export interface WhackMoleGameRecord {
   userId: number;
   sessionId: string;
   gameType: typeof GAME_TYPE;
+  difficulty: WhackMoleDifficulty;
   score: number;
   pointsEarned: number;
   hits: number;
@@ -106,6 +113,7 @@ export interface WhackMoleSessionView {
   startedAt: number;
   expiresAt: number;
   durationMs: number;
+  difficulty: WhackMoleDifficulty;
   board: WhackMoleCell[];
   boardTick: number;
   timeLeftMs: number;
@@ -124,13 +132,14 @@ function generateSeed(): string {
   return randomBytes(16).toString('hex');
 }
 
-function buildSession(userId: number): WhackMoleGameSession {
+function buildSession(userId: number, difficulty: WhackMoleDifficulty): WhackMoleGameSession {
   const now = Date.now();
   return {
     id: nanoid(),
     userId,
     gameType: GAME_TYPE,
     seed: generateSeed(),
+    difficulty,
     startedAt: now,
     expiresAt: now + SESSION_TTL * 1000,
     status: 'playing',
@@ -138,7 +147,11 @@ function buildSession(userId: number): WhackMoleGameSession {
   };
 }
 
-function normalizeEvents(events: unknown): WhackMoleHitEvent[] {
+function normalizeEvents(
+  events: unknown,
+  difficulty: WhackMoleDifficulty = 'normal',
+): WhackMoleHitEvent[] {
+  const config = getWhackMoleDifficultyConfig(difficulty);
   if (!Array.isArray(events)) return [];
   return events
     .filter((event): event is { index: number; elapsedMs: number } =>
@@ -157,7 +170,7 @@ function normalizeEvents(events: unknown): WhackMoleHitEvent[] {
       && event.index < WHACK_MOLE_HOLE_COUNT
       && Number.isInteger(event.elapsedMs)
       && event.elapsedMs >= 0
-      && event.elapsedMs < WHACK_MOLE_GAME_DURATION_MS
+      && event.elapsedMs < config.durationMs
     )
     .sort((a, b) => a.elapsedMs - b.elapsedMs);
 }
@@ -177,35 +190,40 @@ function normalizeSession(raw: unknown): WhackMoleGameSession | null {
     return null;
   }
 
+  const difficulty = normalizeWhackMoleDifficulty(session.difficulty);
   return {
     id: session.id,
     userId: session.userId,
     gameType: GAME_TYPE,
     seed: session.seed,
+    difficulty,
     startedAt: session.startedAt,
     expiresAt: session.expiresAt,
     status: session.status as GameSessionStatus,
-    events: normalizeEvents(session.events),
+    events: normalizeEvents(session.events, difficulty),
   };
 }
 
 function buildSessionView(session: WhackMoleGameSession, now: number = Date.now()): WhackMoleSessionView {
-  const events = normalizeEvents(session.events);
+  const difficulty = normalizeWhackMoleDifficulty(session.difficulty);
+  const config = getWhackMoleDifficultyConfig(difficulty);
+  const events = normalizeEvents(session.events, difficulty);
   const elapsedMs = Math.max(0, now - session.startedAt);
-  const boardElapsedMs = Math.min(elapsedMs, WHACK_MOLE_GAME_DURATION_MS - 1);
-  const scored = scoreWhackMoleEvents(session.seed, events);
+  const boardElapsedMs = Math.min(elapsedMs, config.durationMs - 1);
+  const scored = scoreWhackMoleEvents(session.seed, events, difficulty);
 
   return {
     sessionId: session.id,
     seed: session.seed,
     startedAt: session.startedAt,
     expiresAt: session.expiresAt,
-    durationMs: WHACK_MOLE_GAME_DURATION_MS,
-    board: elapsedMs >= WHACK_MOLE_GAME_DURATION_MS
+    durationMs: config.durationMs,
+    difficulty,
+    board: elapsedMs >= config.durationMs
       ? createEmptyWhackMoleBoard()
-      : getWhackMoleBoard(session.seed, boardElapsedMs),
-    boardTick: getWhackMoleTickIndex(boardElapsedMs),
-    timeLeftMs: Math.max(0, WHACK_MOLE_GAME_DURATION_MS - elapsedMs),
+      : getWhackMoleBoard(session.seed, boardElapsedMs, difficulty),
+    boardTick: getWhackMoleTickIndex(boardElapsedMs, difficulty),
+    timeLeftMs: Math.max(0, config.durationMs - elapsedMs),
     score: scored.score,
     combo: scored.combo,
     eventsCount: events.length,
@@ -284,11 +302,12 @@ export function resolveHitWithGrace(
   index: number,
   serverElapsedMs: number,
   clientElapsedMs?: number,
+  difficulty: WhackMoleDifficulty = 'normal',
 ) {
   const scoreAt = (hitElapsedMs: number) => {
     const hitEvent = { index, elapsedMs: hitElapsedMs };
     const events = [...existingEvents, hitEvent].sort((a, b) => a.elapsedMs - b.elapsedMs);
-    const scored = scoreWhackMoleEvents(seed, events);
+    const scored = scoreWhackMoleEvents(seed, events, difficulty);
     const hitEventIndex = events.indexOf(hitEvent);
     return {
       events,
@@ -303,7 +322,7 @@ export function resolveHitWithGrace(
       return current;
     }
 
-    const graceMs = getDynamicGraceMs(elapsedMs);
+    const graceMs = getDynamicGraceMs(elapsedMs, difficulty);
     for (let offset = HIT_GRACE_STEP_MS; offset <= graceMs; offset += HIT_GRACE_STEP_MS) {
       const candidateElapsed = Math.max(0, elapsedMs - offset);
       const candidate = scoreAt(candidateElapsed);
@@ -347,9 +366,11 @@ function validateHitPayload(
 function normalizeClientHitElapsedMs(
   clientElapsedMs: number | undefined,
   serverElapsedMs: number,
+  difficulty: WhackMoleDifficulty,
 ): number | undefined {
+  const config = getWhackMoleDifficultyConfig(difficulty);
   if (clientElapsedMs === undefined) return undefined;
-  if (clientElapsedMs < 0 || clientElapsedMs >= WHACK_MOLE_GAME_DURATION_MS) return undefined;
+  if (clientElapsedMs < 0 || clientElapsedMs >= config.durationMs) return undefined;
   if (clientElapsedMs > serverElapsedMs + HIT_CLIENT_FUTURE_TOLERANCE_MS) return undefined;
   if (serverElapsedMs - clientElapsedMs > HIT_CLIENT_LATENCY_MS) return undefined;
 
@@ -409,9 +430,10 @@ export async function getActiveWhackMoleSession(userId: number): Promise<WhackMo
 
 export async function startWhackMoleGame(
   userId: number,
-  options: { restartActive?: boolean } = {},
+  options: { restartActive?: boolean; difficulty?: WhackMoleDifficulty } = {},
 ): Promise<{ success: boolean; session?: WhackMoleGameSession; message?: string }> {
   const useNativeHotStore = await isNativeHotStoreReady();
+  const difficulty = normalizeWhackMoleDifficulty(options.difficulty);
   const startLockKey = START_LOCK_KEY(userId);
   const startLockToken = await acquireGameLock(startLockKey, START_LOCK_TTL, useNativeHotStore);
   if (!startLockToken) {
@@ -446,7 +468,7 @@ export async function startWhackMoleGame(
     }
   }
 
-  const session = buildSession(userId);
+  const session = buildSession(userId, difficulty);
   await saveSession(session, useNativeHotStore);
 
   return { success: true, session };
@@ -513,17 +535,20 @@ export async function hitWhackMoleTarget(
       return { success: false, message: '游戏已结束' };
     }
 
-    const existingEvents = normalizeEvents(session.events);
-    const clientElapsedMs = normalizeClientHitElapsedMs(payloadCheck.clientElapsedMs, elapsedMs);
-    if (elapsedMs >= WHACK_MOLE_GAME_DURATION_MS && clientElapsedMs === undefined) {
+    const difficulty = normalizeWhackMoleDifficulty(session.difficulty);
+    const config = getWhackMoleDifficultyConfig(difficulty);
+    const existingEvents = normalizeEvents(session.events, difficulty);
+    const clientElapsedMs = normalizeClientHitElapsedMs(payloadCheck.clientElapsedMs, elapsedMs, difficulty);
+    if (elapsedMs >= config.durationMs && clientElapsedMs === undefined) {
       return { success: false, message: '游戏已结束' };
     }
     const hitResolution = resolveHitWithGrace(
       session.seed,
       existingEvents,
       payloadCheck.index,
-      Math.min(elapsedMs, WHACK_MOLE_GAME_DURATION_MS - 1),
+      Math.min(elapsedMs, config.durationMs - 1),
       clientElapsedMs,
+      difficulty,
     );
     const nextEvents = hitResolution.events;
     const rateCheck = validateEventsRate(nextEvents);
@@ -606,9 +631,11 @@ export async function submitWhackMoleResult(
     return { success: false, message: '游戏会话已过期' };
   }
 
+  const difficulty = normalizeWhackMoleDifficulty(session.difficulty);
+  const config = getWhackMoleDifficultyConfig(difficulty);
   const candidateEvents = payload.events !== undefined
-    ? normalizeEvents(payload.events)
-    : normalizeEvents(session.events);
+    ? normalizeEvents(payload.events, difficulty)
+    : normalizeEvents(session.events, difficulty);
   const rateCheck = validateEventsRate(candidateEvents);
   if (!rateCheck.ok) {
     await releaseLock();
@@ -616,19 +643,19 @@ export async function submitWhackMoleResult(
   }
 
   const serverDuration = Date.now() - session.startedAt;
-  if (serverDuration < WHACK_MOLE_GAME_DURATION_MS - SUBMIT_EARLY_GRACE_MS) {
+  if (serverDuration < config.durationMs - SUBMIT_EARLY_GRACE_MS) {
     await releaseLock();
     return { success: false, message: '游戏尚未结束' };
   }
-  const scored = scoreWhackMoleEvents(session.seed, candidateEvents);
-  const pointReward = calculateWhackMolePointReward(scored.score);
+  const scored = scoreWhackMoleEvents(session.seed, candidateEvents, difficulty);
+  const pointReward = calculateWhackMolePointReward(scored.score, difficulty);
   const dailyPointsLimit = await getDailyPointsLimit();
   const pointsResult = await addGamePointsWithLimit(
     userId,
     pointReward,
     dailyPointsLimit,
     'game_play',
-    `打地鼠得分 ${scored.score}，福利积分 ${pointReward}`,
+    `打地鼠（${config.label}）得分 ${scored.score}，福利积分 ${pointReward}`,
   );
 
   const stats: WhackMoleScoreStats = scored.stats;
@@ -637,6 +664,7 @@ export async function submitWhackMoleResult(
     userId,
     sessionId: payload.sessionId,
     gameType: GAME_TYPE,
+    difficulty,
     score: scored.score,
     pointsEarned: pointsResult.pointsEarned,
     hits: stats.hits,
@@ -644,7 +672,7 @@ export async function submitWhackMoleResult(
     misses: stats.misses,
     bombs: stats.bombs,
     maxCombo: stats.maxCombo,
-    duration: WHACK_MOLE_GAME_DURATION_MS,
+    duration: config.durationMs,
     createdAt: Date.now(),
   };
 

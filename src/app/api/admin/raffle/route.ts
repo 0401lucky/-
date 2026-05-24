@@ -5,7 +5,13 @@
 
 import { NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
-import { getRaffleList, createRaffle, processQueuedRaffleDeliveries } from "@/lib/raffle";
+import {
+  getRaffleList,
+  createRaffle,
+  processQueuedRaffleDeliveries,
+  normalizeRaffleRewardPoints,
+  normalizeRedPacketConfig,
+} from "@/lib/raffle";
 import type { CreateRaffleInput } from "@/lib/types/raffle";
 
 export const GET = withAdmin(async (request: Request) => {
@@ -40,6 +46,7 @@ export const GET = withAdmin(async (request: Request) => {
 export const POST = withAdmin(async (request: Request, user) => {
   try {
     const body = await request.json() as CreateRaffleInput;
+    const mode = body.mode === "red_packet" ? "red_packet" : "draw";
 
     // 验证必填字段
     if (!body.title?.trim()) {
@@ -56,38 +63,54 @@ export const POST = withAdmin(async (request: Request, user) => {
       );
     }
 
-    if (!body.prizes || body.prizes.length === 0) {
+    if (mode === "draw" && (!body.prizes || body.prizes.length === 0)) {
       return NextResponse.json(
         { success: false, message: "请至少配置一个奖品" },
         { status: 400 }
       );
     }
 
-    // 验证奖品配置
-    for (const prize of body.prizes) {
-      if (!prize.name?.trim()) {
-        return NextResponse.json(
-          { success: false, message: "奖品名称不能为空" },
-          { status: 400 }
-        );
+    if (mode === "draw") {
+      // 验证奖品配置
+      for (const prize of body.prizes ?? []) {
+        if (!prize.name?.trim()) {
+          return NextResponse.json(
+            { success: false, message: "奖品名称不能为空" },
+            { status: 400 }
+          );
+        }
+        if (normalizeRaffleRewardPoints(prize.points, prize.dollars) === null) {
+          return NextResponse.json(
+            { success: false, message: "奖品积分必须大于0" },
+            { status: 400 }
+          );
+        }
+        if (!Number.isSafeInteger(prize.quantity) || prize.quantity <= 0) {
+          return NextResponse.json(
+            { success: false, message: "奖品数量必须为正整数" },
+            { status: 400 }
+          );
+        }
       }
-      if (typeof prize.dollars !== "number" || prize.dollars <= 0) {
+    } else {
+      try {
+        normalizeRedPacketConfig(body);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "红包配置不正确";
         return NextResponse.json(
-          { success: false, message: "奖品金额必须大于0" },
-          { status: 400 }
-        );
-      }
-      if (typeof prize.quantity !== "number" || prize.quantity <= 0) {
-        return NextResponse.json(
-          { success: false, message: "奖品数量必须大于0" },
+          { success: false, message },
           { status: 400 }
         );
       }
     }
 
-    if (body.triggerType === "threshold" && (!body.threshold || body.threshold <= 0)) {
+    if (
+      mode === "draw"
+      && body.triggerType === "threshold"
+      && (!Number.isSafeInteger(body.threshold) || (body.threshold ?? 0) <= 0)
+    ) {
       return NextResponse.json(
-        { success: false, message: "人数阈值必须大于0" },
+        { success: false, message: "人数阈值必须为正整数" },
         { status: 400 }
       );
     }

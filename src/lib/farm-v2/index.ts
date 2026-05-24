@@ -150,6 +150,7 @@ async function getShopDailyPurchaseCounts(
 ): Promise<Partial<Record<ShopItemKey, number>>> {
   const items = await getEffectiveFarmShopItems();
   const limitedItems = Object.values(items).filter((item) => {
+    if (PET_SKILL_BOOK_TO_SKILL[item.key as PetSkillBookKey]) return false;
     const limit = Number(item.dailyLimit ?? 0);
     return Number.isSafeInteger(limit) && limit > 0;
   });
@@ -163,6 +164,11 @@ async function getShopDailyPurchaseCounts(
 
 async function syncStatePointsFromLedger(state: FarmStateV2): Promise<void> {
   state.points = await getUserPoints(state.userId);
+}
+
+function shouldRunPassivePetSkills(result: unknown): boolean {
+  if (!result || typeof result !== 'object' || !('ok' in result)) return true;
+  return (result as { ok?: unknown }).ok !== false;
 }
 
 type FridayRandomEvent = {
@@ -528,6 +534,9 @@ async function withLock<T>(userId: number, fn: (state: FarmStateV2) => Promise<T
     tickFarm(state, now);
     await syncStatePointsFromLedger(state);
     const result = await fn(state);
+    if (shouldRunPassivePetSkills(result)) {
+      await processPassivePetSkills(state, Date.now());
+    }
     await saveState(state);
     return { result };
   } finally {
@@ -544,7 +553,10 @@ export async function getFarmStatus(userId: number): Promise<FarmStatusResponse>
     const now = Date.now();
     tickFarm(state, now);
     await syncStatePointsFromLedger(state);
-    if (lock) await saveState(state);
+    if (lock) {
+      await processPassivePetSkills(state, now);
+      await saveState(state);
+    }
   } finally {
     if (lock) await releaseLock(lock);
   }
@@ -820,6 +832,66 @@ export async function harvestAllPlots(userId: number): Promise<{ ok: boolean; ms
   return r.error ? { ok: false, msg: r.error } : (r.result as any);
 }
 
+function hasAdultPetPassiveSkill(state: FarmStateV2, skill: 'harvest' | 'plant'): boolean {
+  if (!state.pet) return false;
+  const pet = normalizePetState(state.pet);
+  return pet.stage === 'adult' && (pet.learnedSkills ?? []).includes(skill);
+}
+
+async function processPassivePetHarvest(state: FarmStateV2, now: number): Promise<void> {
+  if (!hasAdultPetPassiveSkill(state, 'harvest')) return;
+  const matureIndexes = state.lands
+    .map((land, index) => (land.status === 'mature' && land.crop ? index : -1))
+    .filter((index) => index >= 0);
+  if (matureIndexes.length === 0) return;
+
+  const results = matureIndexes.map((index) => doHarvestSingle(state, index, now));
+  const total = results.reduce((sum, item) => sum + item.finalYield, 0);
+  const pointResult = await addPoints(state.userId, total, 'game_play', `宠物被动收菜: ${results.length} 块`);
+  state.points = pointResult.balance;
+  if (!state.bonuses.firstHarvest) {
+    state.bonuses.firstHarvest = true;
+    const bonus = await addPoints(state.userId, ONBOARDING_BONUS.firstHarvest, 'game_play', '农场首次收获奖励');
+    state.points = bonus.balance;
+  }
+  pushEvent(state, {
+    id: nanoid(),
+    ts: now,
+    type: 'pet_task',
+    text: `宠物收菜被动触发，收获 ${results.length} 块作物，获得 ${total} 积分`,
+  });
+}
+
+function processPassivePetPlant(state: FarmStateV2, now: number): void {
+  if (!hasAdultPetPassiveSkill(state, 'plant')) return;
+  const season = getCurrentSeason(now);
+  const weather = getWeatherForDate(getChinaDateString(now), season);
+  const planted: CropIdV2[] = [];
+
+  for (const land of state.lands) {
+    if (land.status !== 'empty' && land.status !== 'eaten') continue;
+    const cropId = pickPetPlantCrop(state, season);
+    if (!cropId) break;
+    if (plantCropFromInventory(state, land.index - 1, cropId, now, season, weather)) {
+      planted.push(cropId);
+    }
+  }
+  if (planted.length === 0) return;
+
+  const names = planted.map((cropId) => CROPS_V2[cropId].name).join('、');
+  pushEvent(state, {
+    id: nanoid(),
+    ts: now,
+    type: 'pet_task',
+    text: `宠物种菜被动触发，自动播种 ${planted.length} 块：${names}`,
+  });
+}
+
+async function processPassivePetSkills(state: FarmStateV2, now: number): Promise<void> {
+  await processPassivePetHarvest(state, now);
+  processPassivePetPlant(state, now);
+}
+
 /** 清除枯萎作物 */
 export async function removeWithered(userId: number, plotIndex: number): Promise<{ ok: boolean; msg?: string }> {
   const r = await withLock(userId, async (state) => {
@@ -886,19 +958,11 @@ export async function buyItem(userId: number, key: ShopItemKey, qty: number): Pr
     if (qty <= 0 || qty > 99) return { ok: false, msg: '数量无效' };
     const skill = PET_SKILL_BOOK_TO_SKILL[key as PetSkillBookKey];
     const oneTimeItem = ONE_TIME_SHOP_ITEM_KEYS.includes(key as (typeof ONE_TIME_SHOP_ITEM_KEYS)[number]);
-    if (skill) {
-      if (qty !== 1) return { ok: false, msg: '技能书每种限购 1 本' };
-      const skillBookKey = key as PetSkillBookKey;
-      const alreadyPurchased = state.purchasedSkillBooks?.[skillBookKey]
-        || (state.inventory[skillBookKey]?.count ?? 0) > 0
-        || (state.pet?.learnedSkills ?? []).includes(skill);
-      if (alreadyPurchased) return { ok: false, msg: '该技能书已购买，不能重复购买' };
-    }
     if (oneTimeItem) {
       if (qty !== 1) return { ok: false, msg: '该设备每个账号只能购买 1 台' };
       if ((state.inventory[key]?.count ?? 0) > 0) return { ok: false, msg: '该设备已购买，不能重复购买' };
     }
-    const dailyLimit = Number(def.dailyLimit ?? 0);
+    const dailyLimit = skill ? 0 : Number(def.dailyLimit ?? 0);
     let dailyKey: string | null = null;
     if (Number.isSafeInteger(dailyLimit) && dailyLimit > 0) {
       const today = getChinaDateString(Date.now());
@@ -927,9 +991,6 @@ export async function buyItem(userId: number, key: ShopItemKey, qty: number): Pr
       if (count === qty) {
         await store.expire?.(dailyKey, 48 * 60 * 60);
       }
-    }
-    if (skill) {
-      state.purchasedSkillBooks = { ...(state.purchasedSkillBooks ?? {}), [key as PetSkillBookKey]: true };
     }
     return { ok: true, balance: state.points };
   });

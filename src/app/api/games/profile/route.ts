@@ -7,7 +7,7 @@ import { MATCH3_WIN_SCORE } from '@/lib/match3-engine';
 import { getMinesweeperRecords } from '@/lib/minesweeper';
 import { getMemoryRecords } from '@/lib/memory';
 import { getWhackMoleRecords } from '@/lib/whack-mole';
-import { WHACK_MOLE_WIN_SCORE } from '@/lib/whack-mole-engine';
+import { getWhackMoleDifficultyConfig, normalizeWhackMoleDifficulty } from '@/lib/whack-mole-engine';
 import { getRogueliteRecords } from '@/lib/roguelite';
 import { getLinkGameRecords } from '@/lib/linkgame-server';
 
@@ -127,7 +127,10 @@ async function getRogueliteProgress(userId: number): Promise<GameProgress> {
 
 async function getWhackMoleProgress(userId: number): Promise<GameProgress> {
   const records = await getWhackMoleRecords(userId, RECORD_FETCH_LIMIT);
-  const isWin = (r: (typeof records)[number]) => r.score >= WHACK_MOLE_WIN_SCORE;
+  const isWin = (r: (typeof records)[number]) => {
+    const difficulty = normalizeWhackMoleDifficulty(r.difficulty);
+    return r.score >= getWhackMoleDifficultyConfig(difficulty).winScore;
+  };
   return {
     totalPlays: records.length,
     bestScore: records.reduce((m, r) => Math.max(m, r.score), 0),

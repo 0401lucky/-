@@ -24,6 +24,8 @@ interface Props {
   className?: string;
 }
 
+const FARM_PET_IMAGE_BASE = '/images-optimized/ui/farm/pets';
+
 function petScale(stage: PetStage): number {
   if (stage === 'child') return 0.9;
   return 1;
@@ -55,7 +57,7 @@ export default function PetSprite({ type, stage, size = 100, emotion = 'normal',
       <g transform={`translate(50 ${54 + offset}) scale(${scale}) translate(-50 -54)`}>
         <image
           className="farm-pet-pixel-image"
-          href={`/images/farm/pets/${sprite.dir}/${stage}/${expression}.png`}
+          href={`${FARM_PET_IMAGE_BASE}/${sprite.dir}/${stage}/${expression}.webp`}
           x={sprite.x}
           y={sprite.y}
           width={sprite.width}

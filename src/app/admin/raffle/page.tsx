@@ -11,12 +11,14 @@ import {
 interface RafflePrize {
   id: string;
   name: string;
-  dollars: number;
+  points?: number;
+  dollars?: number;
   quantity: number;
 }
 
 interface RaffleItem {
   id: string;
+  mode?: 'draw' | 'red_packet';
   title: string;
   description: string;
   coverImage?: string;
@@ -27,6 +29,10 @@ interface RaffleItem {
   participantsCount: number;
   winnersCount: number;
   drawnAt?: number;
+  redPacketTotalPoints?: number;
+  redPacketTotalSlots?: number;
+  redPacketRemainingPoints?: number;
+  redPacketRemainingSlots?: number;
   createdAt: number;
 }
 
@@ -93,8 +99,20 @@ export default function AdminRaffleListPage() {
     }
   };
 
-  const getTotalPrizeValue = (prizes: RafflePrize[]) => {
-    return prizes.reduce((sum, p) => sum + p.dollars * p.quantity, 0);
+  const getTotalPrizeValue = (raffle: RaffleItem) => {
+    if (raffle.mode === 'red_packet') {
+      return raffle.redPacketTotalPoints ?? 0;
+    }
+
+    return raffle.prizes.reduce((sum, p) => {
+      const normalize = (value: unknown) => {
+        const points = Number(value);
+        if (!Number.isFinite(points) || points <= 0) return null;
+        return Math.max(0, Math.round(points));
+      };
+      const points = normalize(p.points) ?? normalize(p.dollars) ?? 0;
+      return sum + points * p.quantity;
+    }, 0);
   };
 
   if (loading) {
@@ -161,7 +179,10 @@ export default function AdminRaffleListPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {raffles.map((raffle) => (
+            {raffles.map((raffle) => {
+              const isRedPacket = raffle.mode === 'red_packet';
+              const remainingSlots = raffle.redPacketRemainingSlots ?? Math.max(0, (raffle.redPacketTotalSlots ?? 0) - raffle.participantsCount);
+              return (
               <div key={raffle.id} className="bg-white rounded-2xl border border-stone-200 p-6 hover:shadow-lg transition-shadow">
                 <div className="flex items-start gap-4">
                   {/* 封面 */}
@@ -175,6 +196,11 @@ export default function AdminRaffleListPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3 mb-2">
                       <h3 className="text-lg font-bold text-stone-800 truncate">{raffle.title}</h3>
+                      <span className={`px-2 py-1 text-xs font-bold rounded-full ${
+                        isRedPacket ? 'bg-red-100 text-red-700' : 'bg-pink-100 text-pink-700'
+                      }`}>
+                        {isRedPacket ? '抢红包' : '普通抽奖'}
+                      </span>
                       {getStatusBadge(raffle.status)}
                     </div>
 
@@ -183,13 +209,18 @@ export default function AdminRaffleListPage() {
                     <div className="flex flex-wrap items-center gap-4 text-sm">
                       <div className="flex items-center gap-1 text-stone-500">
                         <Trophy className="w-4 h-4" />
-                        <span>${getTotalPrizeValue(raffle.prizes)} 奖池</span>
+                        <span>{getTotalPrizeValue(raffle).toLocaleString('zh-CN')} 积分奖池</span>
                       </div>
                       <div className="flex items-center gap-1 text-stone-500">
                         <Users className="w-4 h-4" />
-                        <span>{raffle.participantsCount} 人参与</span>
+                        <span>{isRedPacket ? `${raffle.participantsCount} 人已抢` : `${raffle.participantsCount} 人参与`}</span>
                       </div>
-                      {raffle.triggerType === 'threshold' && (
+                      {isRedPacket ? (
+                        <div className="flex items-center gap-1 text-stone-500">
+                          <Clock className="w-4 h-4" />
+                          <span>剩 {remainingSlots} 个红包</span>
+                        </div>
+                      ) : raffle.triggerType === 'threshold' && (
                         <div className="flex items-center gap-1 text-stone-500">
                           <Clock className="w-4 h-4" />
                           <span>满 {raffle.threshold} 人开奖</span>
@@ -255,7 +286,8 @@ export default function AdminRaffleListPage() {
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
     </div>

@@ -152,7 +152,7 @@ export interface FarmStateV2 {
   /** 我今日偷过的目标: targetId -> count */
   myStealMap: Record<string, number>;
   inventory: Inventory;
-  /** 技能书每种限购 1 本 */
+  /** 旧存档字段：过去用于技能书限购，当前仅保留兼容 */
   purchasedSkillBooks?: Partial<Record<PetSkillBookKey, boolean>>;
   /** 种子库存：作物 -> 数量 */
   seedInventory: Partial<Record<CropIdV2, number>>;

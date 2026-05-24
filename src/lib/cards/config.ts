@@ -1,5 +1,5 @@
 import type { CardConfig, CardAlbum, Rarity } from "./types";
-import { getCardImagePath, RARITY_CARD_BACKS, RARITY_PROBABILITIES } from "./constants";
+import { getCardImagePath, getOptimizedImagePath, RARITY_CARD_BACKS, RARITY_PROBABILITIES } from "./constants";
 
 // Card Albums Definition
 export const ALBUMS: CardAlbum[] = [
@@ -7,7 +7,7 @@ export const ALBUMS: CardAlbum[] = [
     id: "animal-s1",
     name: "动物伙伴图鉴",
     description: "收集可爱的动物卡牌，解锁专属奖励",
-    coverImage: "/images/动物卡/熊猫.png",
+    coverImage: getOptimizedImagePath("/images/动物卡/熊猫.png", "thumb"),
     reward: 100,
     season: "第一季",
     tierRewards: {
@@ -22,7 +22,7 @@ export const ALBUMS: CardAlbum[] = [
     id: "animal-s2",
     name: "动物伙伴图鉴 II",
     description: "更多可爱动物等你收集，全新冒险开启",
-    coverImage: "/images/动物2/传说稀有/哈士奇.png",
+    coverImage: getOptimizedImagePath("/images/动物2/传说稀有/哈士奇.png", "thumb"),
     reward: 200,
     season: "第二季",
     tierRewards: {
@@ -37,7 +37,7 @@ export const ALBUMS: CardAlbum[] = [
     id: "tarot",
     name: "神秘塔罗牌",
     description: "收集78张经典塔罗牌，揭示命运的奥秘",
-    coverImage: "/images/塔罗/传说稀有/0-The Fool-愚者.png",
+    coverImage: getOptimizedImagePath("/images/塔罗/传说稀有/0-The Fool-愚者.png", "thumb"),
     reward: 500,
     season: "特别篇",
     tierRewards: {
@@ -50,15 +50,20 @@ export const ALBUMS: CardAlbum[] = [
   },
 ];
 
-const createCard = (name: string, rarity: Rarity, albumId: string, imagePath?: string): CardConfig => ({
-  id: `${albumId}-${rarity}-${name}`,
-  name,
-  rarity,
-  image: imagePath || getCardImagePath(name),
-  backImage: RARITY_CARD_BACKS[rarity],
-  probability: RARITY_PROBABILITIES[rarity],
-  albumId,
-});
+const createCard = (name: string, rarity: Rarity, albumId: string, imagePath?: string): CardConfig => {
+  const originalImage = imagePath || getCardImagePath(name);
+  return {
+    id: `${albumId}-${rarity}-${name}`,
+    name,
+    rarity,
+    image: getOptimizedImagePath(originalImage, "large"),
+    thumbnailImage: getOptimizedImagePath(originalImage, "thumb"),
+    originalImage,
+    backImage: RARITY_CARD_BACKS[rarity],
+    probability: RARITY_PROBABILITIES[rarity],
+    albumId,
+  };
+};
 
 // Animal Album S1 Cards
 const animalS1AlbumId = "animal-s1";

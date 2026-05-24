@@ -5,13 +5,14 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Gift, Loader2, Users, Trophy, Play, XCircle, Crown, Check,
-  AlertTriangle, RefreshCw, Eye, Pencil, Plus, Trash2, DollarSign, Save, X
+  AlertTriangle, RefreshCw, Eye, Pencil, Plus, Trash2, Coins, Save, X
 } from 'lucide-react';
 
 interface RafflePrize {
   id: string;
   name: string;
-  dollars: number;
+  points?: number;
+  dollars?: number;
   quantity: number;
 }
 
@@ -21,7 +22,8 @@ interface RaffleWinner {
   username: string;
   prizeId: string;
   prizeName: string;
-  dollars: number;
+  points?: number;
+  dollars?: number;
   rewardStatus: 'pending' | 'delivered' | 'failed';
   rewardMessage?: string;
   rewardAttemptedAt?: number;
@@ -51,6 +53,7 @@ interface RaffleEntry {
 
 interface Raffle {
   id: string;
+  mode?: 'draw' | 'red_packet';
   title: string;
   description: string;
   coverImage?: string;
@@ -62,6 +65,10 @@ interface Raffle {
   winnersCount: number;
   drawnAt?: number;
   winners?: RaffleWinner[];
+  redPacketTotalPoints?: number;
+  redPacketTotalSlots?: number;
+  redPacketRemainingPoints?: number;
+  redPacketRemainingSlots?: number;
   createdBy: number;
   createdAt: number;
   updatedAt: number;
@@ -69,8 +76,21 @@ interface Raffle {
 
 interface PrizeInput {
   name: string;
-  dollars: number;
+  points: number;
   quantity: number;
+}
+
+function getPrizePoints(prize: { points?: number; dollars?: number }): number {
+  const normalize = (value: unknown) => {
+    const points = Number(value);
+    if (!Number.isFinite(points) || points <= 0) return null;
+    return Math.max(0, Math.round(points));
+  };
+  return normalize(prize.points) ?? normalize(prize.dollars) ?? 0;
+}
+
+function formatPoints(points: number): string {
+  return `${points.toLocaleString('zh-CN')} 积分`;
 }
 
 export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -95,21 +115,31 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editCoverImage, setEditCoverImage] = useState('');
+  const [editMode, setEditMode] = useState<'draw' | 'red_packet'>('draw');
   const [editTriggerType, setEditTriggerType] = useState<'threshold' | 'manual'>('threshold');
   const [editThreshold, setEditThreshold] = useState(100);
+  const [editRedPacketTotalPoints, setEditRedPacketTotalPoints] = useState(1000);
+  const [editRedPacketTotalSlots, setEditRedPacketTotalSlots] = useState(20);
   const [editPrizes, setEditPrizes] = useState<PrizeInput[]>([]);
 
   const initEditForm = useCallback((r: Raffle) => {
     setEditTitle(r.title);
     setEditDescription(r.description);
     setEditCoverImage(r.coverImage || '');
+    setEditMode(r.mode === 'red_packet' ? 'red_packet' : 'draw');
     setEditTriggerType(r.triggerType);
     setEditThreshold(r.threshold);
-    setEditPrizes(r.prizes.map(p => ({
-      name: p.name,
-      dollars: p.dollars,
-      quantity: p.quantity,
-    })));
+    setEditRedPacketTotalPoints(r.redPacketTotalPoints ?? 1000);
+    setEditRedPacketTotalSlots(r.redPacketTotalSlots ?? 20);
+    setEditPrizes(
+      r.prizes.length > 0
+        ? r.prizes.map(p => ({
+            name: p.name,
+            points: getPrizePoints(p),
+            quantity: p.quantity,
+          }))
+        : [{ name: '一等奖', points: 100, quantity: 1 }]
+    );
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -239,7 +269,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
 
   // 编辑相关函数
   const addPrize = () => {
-    setEditPrizes([...editPrizes, { name: '', dollars: 1, quantity: 1 }]);
+    setEditPrizes([...editPrizes, { name: '', points: 100, quantity: 1 }]);
   };
 
   const removePrize = (index: number) => {
@@ -251,8 +281,8 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
     const updated = [...editPrizes];
     if (field === 'name') {
       updated[index].name = value as string;
-    } else if (field === 'dollars') {
-      updated[index].dollars = Number(value) || 0;
+    } else if (field === 'points') {
+      updated[index].points = Number(value) || 0;
     } else if (field === 'quantity') {
       updated[index].quantity = Number(value) || 0;
     }
@@ -260,7 +290,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
   };
 
   const getEditTotalPrizeValue = () => {
-    return editPrizes.reduce((sum, p) => sum + p.dollars * p.quantity, 0);
+    return editPrizes.reduce((sum, p) => sum + p.points * p.quantity, 0);
   };
 
   const getEditTotalPrizeCount = () => {
@@ -289,21 +319,36 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
       setError('请填写活动描述');
       return;
     }
-    if (editPrizes.some(p => !p.name.trim())) {
-      setError('请填写所有奖品名称');
-      return;
-    }
-    if (editPrizes.some(p => p.dollars <= 0)) {
-      setError('奖品金额必须大于0');
-      return;
-    }
-    if (editPrizes.some(p => p.quantity <= 0)) {
-      setError('奖品数量必须大于0');
-      return;
-    }
-    if (editTriggerType === 'threshold' && editThreshold <= 0) {
-      setError('人数阈值必须大于0');
-      return;
+    if (editMode === 'draw') {
+      if (editPrizes.some(p => !p.name.trim())) {
+        setError('请填写所有奖品名称');
+        return;
+      }
+      if (editPrizes.some(p => !Number.isSafeInteger(p.points) || p.points <= 0)) {
+        setError('奖品积分必须为正整数');
+        return;
+      }
+      if (editPrizes.some(p => !Number.isSafeInteger(p.quantity) || p.quantity <= 0)) {
+        setError('奖品数量必须为正整数');
+        return;
+      }
+      if (editTriggerType === 'threshold' && (!Number.isSafeInteger(editThreshold) || editThreshold <= 0)) {
+        setError('人数阈值必须为正整数');
+        return;
+      }
+    } else {
+      if (!Number.isSafeInteger(editRedPacketTotalPoints) || editRedPacketTotalPoints <= 0) {
+        setError('红包总积分必须为正整数');
+        return;
+      }
+      if (!Number.isSafeInteger(editRedPacketTotalSlots) || editRedPacketTotalSlots <= 0) {
+        setError('可参与人数必须为正整数');
+        return;
+      }
+      if (editRedPacketTotalPoints < editRedPacketTotalSlots) {
+        setError('红包总积分不能小于可参与人数');
+        return;
+      }
     }
 
     setSaving(true);
@@ -316,13 +361,21 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
           title: editTitle.trim(),
           description: editDescription.trim(),
           coverImage: editCoverImage.trim() || undefined,
-          triggerType: editTriggerType,
-          threshold: editThreshold,
-          prizes: editPrizes.map(p => ({
-            name: p.name.trim(),
-            dollars: p.dollars,
-            quantity: p.quantity,
-          })),
+          mode: editMode,
+          ...(editMode === 'draw'
+            ? {
+                triggerType: editTriggerType,
+                threshold: editThreshold,
+                prizes: editPrizes.map(p => ({
+                  name: p.name.trim(),
+                  points: p.points,
+                  quantity: p.quantity,
+                })),
+              }
+            : {
+                redPacketTotalPoints: editRedPacketTotalPoints,
+                redPacketTotalSlots: editRedPacketTotalSlots,
+              }),
         }),
       });
 
@@ -342,14 +395,14 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
     }
   };
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, redPacket = false) => {
     switch (status) {
       case 'draft':
         return <span className="px-3 py-1 bg-stone-100 text-stone-600 text-sm font-bold rounded-full">草稿</span>;
       case 'active':
         return <span className="px-3 py-1 bg-green-100 text-green-700 text-sm font-bold rounded-full">进行中</span>;
       case 'ended':
-        return <span className="px-3 py-1 bg-blue-100 text-blue-700 text-sm font-bold rounded-full">已开奖</span>;
+        return <span className="px-3 py-1 bg-blue-100 text-blue-700 text-sm font-bold rounded-full">{redPacket ? '已结束' : '已开奖'}</span>;
       case 'cancelled':
         return <span className="px-3 py-1 bg-red-100 text-red-700 text-sm font-bold rounded-full">已取消</span>;
       default:
@@ -358,7 +411,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
   };
 
   const getTotalPrizeValue = (prizes: RafflePrize[]) => {
-    return prizes.reduce((sum, p) => sum + p.dollars * p.quantity, 0);
+    return prizes.reduce((sum, p) => sum + getPrizePoints(p) * p.quantity, 0);
   };
 
   if (loading) {
@@ -383,6 +436,19 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
 
   if (!raffle) return null;
 
+  const isRedPacket = raffle.mode === 'red_packet';
+  const totalPool = isRedPacket
+    ? raffle.redPacketTotalPoints ?? 0
+    : getTotalPrizeValue(raffle.prizes);
+  const totalSlots = isRedPacket
+    ? raffle.redPacketTotalSlots ?? 0
+    : raffle.prizes.reduce((sum, p) => sum + p.quantity, 0);
+  const remainingSlots = isRedPacket
+    ? raffle.redPacketRemainingSlots ?? Math.max(0, totalSlots - raffle.participantsCount)
+    : 0;
+  const remainingPoints = isRedPacket
+    ? raffle.redPacketRemainingPoints ?? 0
+    : 0;
   const now = Date.now();
   const failedRewards = raffle.winners?.filter(w => w.rewardStatus === 'failed') || [];
   const retryablePendingRewards = raffle.winners?.filter((winner) =>
@@ -477,7 +543,52 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
             </div>
           </div>
 
+          {/* 活动类型 */}
+          <div className="bg-white rounded-2xl border border-stone-200 p-6 mb-6">
+            <h2 className="text-lg font-bold text-stone-800 mb-4 flex items-center gap-2">
+              <Gift className="w-5 h-5 text-pink-500" />
+              活动类型
+            </h2>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <label className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                editMode === 'draw'
+                  ? 'border-pink-500 bg-pink-50'
+                  : 'border-stone-200 hover:border-stone-300'
+              }`}>
+                <input
+                  type="radio"
+                  name="editMode"
+                  value="draw"
+                  checked={editMode === 'draw'}
+                  onChange={() => setEditMode('draw')}
+                  className="sr-only"
+                />
+                <div className="font-bold text-stone-800 mb-1">普通抽奖</div>
+                <div className="text-sm text-stone-500">按奖品档位开奖，中奖后发放积分</div>
+              </label>
+
+              <label className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                editMode === 'red_packet'
+                  ? 'border-red-500 bg-red-50'
+                  : 'border-stone-200 hover:border-stone-300'
+              }`}>
+                <input
+                  type="radio"
+                  name="editMode"
+                  value="red_packet"
+                  checked={editMode === 'red_packet'}
+                  onChange={() => setEditMode('red_packet')}
+                  className="sr-only"
+                />
+                <div className="font-bold text-stone-800 mb-1">抢红包</div>
+                <div className="text-sm text-stone-500">用户点击即随机抢到整数积分</div>
+              </label>
+            </div>
+          </div>
+
           {/* 开奖条件 */}
+          {editMode === 'draw' && (
           <div className="bg-white rounded-2xl border border-stone-200 p-6 mb-6">
             <h2 className="text-lg font-bold text-stone-800 mb-4 flex items-center gap-2">
               <Users className="w-5 h-5 text-purple-500" />
@@ -538,16 +649,71 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
               )}
             </div>
           </div>
+          )}
+
+          {/* 红包配置 */}
+          {editMode === 'red_packet' && (
+            <div className="bg-white rounded-2xl border border-stone-200 p-6 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold text-stone-800 flex items-center gap-2">
+                  <Coins className="w-5 h-5 text-red-500" />
+                  红包配置
+                </h2>
+                <div className="text-sm text-stone-500">
+                  人均约 <span className="font-bold text-red-600">
+                    {editRedPacketTotalSlots > 0
+                      ? Math.floor(editRedPacketTotalPoints / editRedPacketTotalSlots).toLocaleString('zh-CN')
+                      : 0} 积分
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-1">
+                    红包总积分 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={editRedPacketTotalPoints}
+                    onChange={(e) => setEditRedPacketTotalPoints(Number(e.target.value))}
+                    min={1}
+                    step={1}
+                    className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-1">
+                    可参与人数 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={editRedPacketTotalSlots}
+                    onChange={(e) => setEditRedPacketTotalSlots(Number(e.target.value))}
+                    min={1}
+                    step={1}
+                    className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              <p className="text-xs text-stone-400 mt-3">
+                发布时会自动拆成 {editRedPacketTotalSlots || 0} 个随机整数红包，每个用户最多抢一次。
+              </p>
+            </div>
+          )}
 
           {/* 奖品配置 */}
+          {editMode === 'draw' && (
           <div className="bg-white rounded-2xl border border-stone-200 p-6 mb-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-stone-800 flex items-center gap-2">
-                <DollarSign className="w-5 h-5 text-green-500" />
+                <Coins className="w-5 h-5 text-amber-500" />
                 奖品配置
               </h2>
               <div className="text-sm text-stone-500">
-                总价值: <span className="font-bold text-pink-600">${getEditTotalPrizeValue()}</span>
+                总积分: <span className="font-bold text-pink-600">{formatPoints(getEditTotalPrizeValue())}</span>
                 {' · '}
                 共 <span className="font-bold">{getEditTotalPrizeCount()}</span> 份
               </div>
@@ -572,13 +738,13 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-stone-500 mb-1">金额（美元）</label>
+                      <label className="block text-xs text-stone-500 mb-1">奖励积分</label>
                       <input
                         type="number"
-                        value={prize.dollars}
-                        onChange={(e) => updatePrize(index, 'dollars', e.target.value)}
-                        min={0.01}
-                        step={0.01}
+                        value={prize.points}
+                        onChange={(e) => updatePrize(index, 'points', e.target.value)}
+                        min={1}
+                        step={1}
                         className="w-full px-3 py-2 rounded-lg border border-stone-200 focus:border-pink-500 outline-none text-sm"
                       />
                     </div>
@@ -615,6 +781,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
               添加奖品
             </button>
           </div>
+          )}
         </div>
       </div>
     );
@@ -630,7 +797,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
             <div>
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-bold text-stone-800">{raffle.title}</h1>
-                {getStatusBadge(raffle.status)}
+                {getStatusBadge(raffle.status, isRedPacket)}
               </div>
               <p className="text-stone-500 text-sm mt-1">
                 创建于 {new Date(raffle.createdAt).toLocaleDateString()}
@@ -674,18 +841,20 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
 
               {raffle.status === 'active' && (
                 <>
-                  <button
-                    onClick={handleDraw}
-                    disabled={drawing}
-                    className="flex items-center gap-2 px-4 py-2 bg-pink-500 text-white rounded-xl font-bold hover:bg-pink-600 transition-colors disabled:opacity-50"
-                  >
-                    {drawing ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Trophy className="w-4 h-4" />
-                    )}
-                    立即开奖
-                  </button>
+                  {!isRedPacket && (
+                    <button
+                      onClick={handleDraw}
+                      disabled={drawing}
+                      className="flex items-center gap-2 px-4 py-2 bg-pink-500 text-white rounded-xl font-bold hover:bg-pink-600 transition-colors disabled:opacity-50"
+                    >
+                      {drawing ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Trophy className="w-4 h-4" />
+                      )}
+                      立即开奖
+                    </button>
+                  )}
                   <button
                     onClick={handleCancel}
                     disabled={cancelling}
@@ -714,32 +883,54 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
         {/* 统计卡片 */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-white rounded-2xl p-4 border border-stone-200">
-            <div className="text-sm text-stone-500 mb-1">参与人数</div>
+            <div className="text-sm text-stone-500 mb-1">{isRedPacket ? '已抢人数' : '参与人数'}</div>
             <div className="text-2xl font-black text-stone-800">{raffle.participantsCount}</div>
           </div>
           <div className="bg-white rounded-2xl p-4 border border-stone-200">
-            <div className="text-sm text-stone-500 mb-1">中奖人数</div>
-            <div className="text-2xl font-black text-pink-600">{raffle.winnersCount}</div>
+            <div className="text-sm text-stone-500 mb-1">{isRedPacket ? '剩余名额' : '中奖人数'}</div>
+            <div className="text-2xl font-black text-pink-600">
+              {isRedPacket ? remainingSlots : raffle.winnersCount}
+            </div>
           </div>
           <div className="bg-white rounded-2xl p-4 border border-stone-200">
-            <div className="text-sm text-stone-500 mb-1">奖池总额</div>
-            <div className="text-2xl font-black text-green-600">${getTotalPrizeValue(raffle.prizes)}</div>
+            <div className="text-sm text-stone-500 mb-1">{isRedPacket ? '剩余积分' : '奖池积分'}</div>
+            <div className="text-2xl font-black text-green-600">
+              {formatPoints(isRedPacket ? remainingPoints : totalPool)}
+            </div>
           </div>
           <div className="bg-white rounded-2xl p-4 border border-stone-200">
-            <div className="text-sm text-stone-500 mb-1">开奖条件</div>
+            <div className="text-sm text-stone-500 mb-1">{isRedPacket ? '活动模式' : '开奖条件'}</div>
             <div className="text-lg font-bold text-stone-800">
-              {raffle.triggerType === 'threshold' ? `满${raffle.threshold}人` : '手动'}
+              {isRedPacket
+                ? `红包 ${totalSlots} 人`
+                : raffle.triggerType === 'threshold' ? `满${raffle.threshold}人` : '手动'}
             </div>
           </div>
         </div>
 
-        {/* 奖品列表 */}
+        {/* 奖品/红包配置 */}
         <div className="bg-white rounded-2xl border border-stone-200 p-6 mb-6">
           <h2 className="text-lg font-bold text-stone-800 mb-4 flex items-center gap-2">
             <Gift className="w-5 h-5 text-pink-500" />
-            奖品配置
+            {isRedPacket ? '红包配置' : '奖品配置'}
           </h2>
 
+          {isRedPacket ? (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="p-4 bg-red-50 rounded-xl">
+                <div className="text-sm text-red-500 mb-1">红包总积分</div>
+                <div className="text-xl font-black text-red-700">{formatPoints(totalPool)}</div>
+              </div>
+              <div className="p-4 bg-orange-50 rounded-xl">
+                <div className="text-sm text-orange-500 mb-1">可参与人数</div>
+                <div className="text-xl font-black text-orange-700">{totalSlots} 人</div>
+              </div>
+              <div className="p-4 bg-stone-50 rounded-xl">
+                <div className="text-sm text-stone-500 mb-1">发放方式</div>
+                <div className="text-xl font-black text-stone-800">随机整数</div>
+              </div>
+            </div>
+          ) : (
           <div className="space-y-3">
             {raffle.prizes.map((prize, index) => (
               <div key={prize.id} className="flex items-center gap-4 p-3 bg-stone-50 rounded-xl">
@@ -753,21 +944,22 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
                 </div>
                 <div className="flex-1">
                   <div className="font-bold text-stone-800">{prize.name}</div>
-                  <div className="text-sm text-stone-500">{prize.quantity} 份 × ${prize.dollars}</div>
+                  <div className="text-sm text-stone-500">{prize.quantity} 份 x {formatPoints(getPrizePoints(prize))}</div>
                 </div>
-                <div className="text-lg font-bold text-pink-600">${prize.dollars * prize.quantity}</div>
+                <div className="text-lg font-bold text-pink-600">{formatPoints(getPrizePoints(prize) * prize.quantity)}</div>
               </div>
             ))}
           </div>
+          )}
         </div>
 
-        {/* 中奖者列表 */}
-        {raffle.status === 'ended' && raffle.winners && raffle.winners.length > 0 && (
+        {/* 中奖者/红包领取列表 */}
+        {raffle.winners && raffle.winners.length > 0 && (
           <div className="bg-white rounded-2xl border border-stone-200 p-6 mb-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-stone-800 flex items-center gap-2">
                 <Crown className="w-5 h-5 text-yellow-500" />
-                中奖名单
+                {isRedPacket ? '红包领取记录' : '中奖名单'}
               </h2>
 
               {retryableRewardsCount > 0 && (
@@ -796,8 +988,8 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
                 <thead>
                   <tr className="border-b border-stone-100">
                     <th className="text-left py-2 px-3 text-stone-500 font-medium">用户</th>
-                    <th className="text-left py-2 px-3 text-stone-500 font-medium">奖品</th>
-                    <th className="text-left py-2 px-3 text-stone-500 font-medium">金额</th>
+                    <th className="text-left py-2 px-3 text-stone-500 font-medium">{isRedPacket ? '类型' : '奖品'}</th>
+                    <th className="text-left py-2 px-3 text-stone-500 font-medium">积分</th>
                     <th className="text-left py-2 px-3 text-stone-500 font-medium">状态</th>
                   </tr>
                 </thead>
@@ -809,7 +1001,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
                         <div className="text-xs text-stone-400">ID: {winner.userId}</div>
                       </td>
                       <td className="py-3 px-3 text-stone-600">{winner.prizeName}</td>
-                      <td className="py-3 px-3 font-bold text-pink-600">${winner.dollars}</td>
+                      <td className="py-3 px-3 font-bold text-pink-600">{formatPoints(getPrizePoints(winner))}</td>
                       <td className="py-3 px-3">
                         {winner.rewardStatus === 'delivered' && (
                           <span className="flex items-center gap-1 text-green-600">

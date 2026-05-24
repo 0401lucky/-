@@ -77,22 +77,22 @@ interface ApiResponse<T> {
 type Phase = 'ready' | 'playing' | 'finished';
 type RoguelitePendingView = NonNullable<RogueliteStateView['pending']>;
 
-const ROGUELITE_ART_BASE = '/images/games/roguelite';
-const ROGUELITE_BOARD_ART = `${ROGUELITE_ART_BASE}/board-background-premium-clean.png`;
+const ROGUELITE_ART_BASE = '/images-optimized/ui/games/roguelite';
+const ROGUELITE_BOARD_ART = `${ROGUELITE_ART_BASE}/board-background-premium-clean.webp`;
 
 const ROGUELITE_CELL_ART: Record<RogueliteCellView['type'], string> = {
-  hidden: `${ROGUELITE_ART_BASE}/fog.png`,
-  start: `${ROGUELITE_ART_BASE}/start.png`,
-  empty: `${ROGUELITE_ART_BASE}/empty.png`,
-  monster: `${ROGUELITE_ART_BASE}/monster.png`,
-  boss: `${ROGUELITE_ART_BASE}/boss.png`,
-  stardust: `${ROGUELITE_ART_BASE}/stardust.png`,
-  relic: `${ROGUELITE_ART_BASE}/relic.png`,
-  event: `${ROGUELITE_ART_BASE}/event.png`,
-  shop: `${ROGUELITE_ART_BASE}/shop.png`,
-  rift: `${ROGUELITE_ART_BASE}/rift.png`,
-  chest: `${ROGUELITE_ART_BASE}/chest.png`,
-  exit: `${ROGUELITE_ART_BASE}/exit.png`,
+  hidden: `${ROGUELITE_ART_BASE}/fog.webp`,
+  start: `${ROGUELITE_ART_BASE}/start.webp`,
+  empty: `${ROGUELITE_ART_BASE}/empty.webp`,
+  monster: `${ROGUELITE_ART_BASE}/monster.webp`,
+  boss: `${ROGUELITE_ART_BASE}/boss.webp`,
+  stardust: `${ROGUELITE_ART_BASE}/stardust.webp`,
+  relic: `${ROGUELITE_ART_BASE}/relic.webp`,
+  event: `${ROGUELITE_ART_BASE}/event.webp`,
+  shop: `${ROGUELITE_ART_BASE}/shop.webp`,
+  rift: `${ROGUELITE_ART_BASE}/rift.webp`,
+  chest: `${ROGUELITE_ART_BASE}/chest.webp`,
+  exit: `${ROGUELITE_ART_BASE}/exit.webp`,
 };
 
 async function parseJson<T>(res: Response): Promise<ApiResponse<T> | null> {
@@ -496,6 +496,7 @@ export default function RoguelitePage() {
         <PendingActionModal
           pending={state.pending}
           player={player}
+          outcome={lastOutcome}
           loading={loading}
           onAction={(action) => void stepGame(action)}
         />
@@ -727,6 +728,45 @@ export default function RoguelitePage() {
           padding: 12px 14px;
           box-shadow: 0 12px 24px rgba(15, 23, 42, 0.05);
         }
+        .rogue-page .rogue-applied-card {
+          display: flex;
+          width: 100%;
+          align-items: center;
+          gap: 12px;
+          border-radius: 20px;
+          border: 1px solid rgba(221, 214, 254, 0.9);
+          background: rgba(255, 255, 255, 0.9);
+          padding: 12px;
+          box-shadow: 0 12px 26px rgba(88, 28, 135, 0.08);
+        }
+        .rogue-page .rogue-applied-card.in-modal {
+          margin-top: 14px;
+          background: rgba(255, 255, 255, 0.78);
+        }
+        .rogue-page .rogue-applied-icon {
+          display: flex;
+          width: 46px;
+          height: 46px;
+          flex: none;
+          align-items: center;
+          justify-content: center;
+          border-radius: 16px;
+          background: linear-gradient(135deg, #f5f3ff, #ede9fe);
+          color: #7c3aed;
+          font-size: 24px;
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+        }
+        .rogue-page .rogue-applied-tag {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          border-radius: 999px;
+          background: #dcfce7;
+          padding: 4px 8px;
+          color: #15803d;
+          font-size: 11px;
+          font-weight: 900;
+        }
         .rogue-page .rogue-modal-overlay {
           position: fixed;
           inset: 0;
@@ -770,6 +810,53 @@ export default function RoguelitePage() {
         .rogue-page .rogue-event-modal.result.lost {
           border-color: rgba(254, 205, 211, 0.95);
           background: linear-gradient(180deg, #ffffff 0%, #fff1f2 100%);
+        }
+        .rogue-page .rogue-modal-snapshot {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 8px;
+          margin-top: 16px;
+        }
+        .rogue-page .rogue-modal-stat {
+          min-width: 0;
+          border-radius: 16px;
+          border: 1px solid rgba(226, 232, 240, 0.95);
+          background: rgba(255, 255, 255, 0.76);
+          padding: 10px;
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
+        }
+        .rogue-page .rogue-modal-stat.hp {
+          border-color: rgba(254, 205, 211, 0.95);
+          background: rgba(255, 241, 242, 0.72);
+        }
+        .rogue-page .rogue-modal-stat.shield {
+          border-color: rgba(186, 230, 253, 0.95);
+          background: rgba(240, 249, 255, 0.72);
+        }
+        .rogue-page .rogue-modal-stat.attack {
+          border-color: rgba(254, 215, 170, 0.95);
+          background: rgba(255, 247, 237, 0.72);
+        }
+        .rogue-page .rogue-modal-stat.stardust {
+          border-color: rgba(167, 243, 208, 0.95);
+          background: rgba(236, 253, 245, 0.72);
+        }
+        .rogue-page .rogue-modal-stat-label {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          color: #64748b;
+          font-size: 11px;
+          font-weight: 900;
+        }
+        .rogue-page .rogue-modal-stat-value {
+          margin-top: 4px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          color: #0f172a;
+          font-size: 18px;
+          font-weight: 900;
         }
         .rogue-page .rogue-result-icon {
           display: flex;
@@ -858,6 +945,12 @@ export default function RoguelitePage() {
           .rogue-page .rogue-event-modal {
             border-radius: 22px;
             padding: 18px;
+          }
+          .rogue-page .rogue-modal-snapshot {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+          .rogue-page .rogue-applied-card {
+            align-items: flex-start;
           }
           .rogue-page .rogue-result-stats {
             grid-template-columns: 1fr;
@@ -980,6 +1073,31 @@ function RelicRibbon({ player }: { player: RogueliteStateView['player'] | null }
   );
 }
 
+function AppliedItemCard({ relic, inModal = false }: { relic?: RogueliteRelicType; inModal?: boolean }) {
+  if (!relic) return null;
+
+  return (
+    <div className={`rogue-applied-card${inModal ? ' in-modal' : ''}`} aria-live="polite">
+      <div className="rogue-applied-icon" aria-hidden>
+        {ROGUELITE_RELIC_ICONS[relic]}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-black text-violet-600">获得道具</div>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <div className="font-black text-slate-950">{ROGUELITE_RELIC_LABELS[relic]}</div>
+          <span className="rogue-applied-tag">
+            <Sparkles className="h-3 w-3" />
+            已生效
+          </span>
+        </div>
+        <div className="mt-1 text-sm font-semibold leading-5 text-slate-500">
+          {ROGUELITE_RELIC_DESCRIPTIONS[relic]}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OutcomePulse({ outcome }: { outcome: RogueliteOutcomeView | null }) {
   if (!outcome) return null;
 
@@ -1007,11 +1125,60 @@ function OutcomePulse({ outcome }: { outcome: RogueliteOutcomeView | null }) {
       ) : (
         <span className="text-sm font-semibold text-slate-500">没有资源变化，局势保持稳定。</span>
       )}
-      {outcome.relicGained && (
-        <span className="inline-flex items-center rounded-full bg-violet-50 px-3 py-1.5 text-xs font-black text-violet-700">
-          获得遗物：{ROGUELITE_RELIC_LABELS[outcome.relicGained]}
-        </span>
-      )}
+      <AppliedItemCard relic={outcome.relicGained} />
+    </div>
+  );
+}
+
+function ModalPlayerSnapshot({ player }: { player: RogueliteStateView['player'] }) {
+  return (
+    <div className="rogue-modal-snapshot" aria-label="当前角色状态">
+      <ModalSnapshotMetric
+        tone="hp"
+        icon={<Heart className="h-3.5 w-3.5 text-rose-500" />}
+        label="生命"
+        value={`${player.hp}/${player.maxHp}`}
+      />
+      <ModalSnapshotMetric
+        tone="shield"
+        icon={<Shield className="h-3.5 w-3.5 text-sky-500" />}
+        label="护盾"
+        value={player.shield}
+      />
+      <ModalSnapshotMetric
+        tone="attack"
+        icon={<Sword className="h-3.5 w-3.5 text-orange-500" />}
+        label="攻击"
+        value={player.attack}
+      />
+      <ModalSnapshotMetric
+        tone="stardust"
+        icon={<Gem className="h-3.5 w-3.5 text-emerald-500" />}
+        label="星尘"
+        value={player.stardust}
+      />
+    </div>
+  );
+}
+
+function ModalSnapshotMetric({
+  tone,
+  icon,
+  label,
+  value,
+}: {
+  tone: 'hp' | 'shield' | 'attack' | 'stardust';
+  icon: ReactNode;
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className={`rogue-modal-stat ${tone}`}>
+      <div className="rogue-modal-stat-label">
+        {icon}
+        {label}
+      </div>
+      <div className="rogue-modal-stat-value">{value}</div>
     </div>
   );
 }
@@ -1067,14 +1234,18 @@ function ScorePreviewPanel({ state }: { state: RogueliteStateView }) {
 function PendingActionModal({
   pending,
   player,
+  outcome,
   loading,
   onAction,
 }: {
   pending: RoguelitePendingView;
   player: RogueliteStateView['player'];
+  outcome: RogueliteOutcomeView | null;
   loading: boolean;
   onAction: (action: RogueliteAction) => void;
 }) {
+  const appliedItemCard = <AppliedItemCard relic={outcome?.relicGained} inModal />;
+
   if (pending.type === 'combat') {
     const monster = pending.monster;
     return (
@@ -1088,6 +1259,8 @@ function PendingActionModal({
           <p className="mt-2 text-sm leading-6 text-slate-500">
             怪物挡住了路线。选择攻击、防御，或消耗星尘释放星爆。
           </p>
+          <ModalPlayerSnapshot player={player} />
+          {appliedItemCard}
           <div className="mt-5 grid grid-cols-3 gap-2 text-sm">
             <ScoreLine label="生命" value={monster.hp} />
             <ScoreLine label="攻击" value={monster.attack} />
@@ -1115,6 +1288,8 @@ function PendingActionModal({
           <p className="mt-2 text-sm leading-6 text-slate-500">
             选择一个事件效果后继续探索。当前行动会由服务端结算。
           </p>
+          <ModalPlayerSnapshot player={player} />
+          {appliedItemCard}
           <div className="modal-option-grid">
             {pending.options.map((option) => (
               <button
@@ -1146,6 +1321,8 @@ function PendingActionModal({
           <p className="mt-2 text-sm leading-6 text-slate-500">
             使用星尘购买补给。买完物品可继续购买，也可以直接离开商店。
           </p>
+          <ModalPlayerSnapshot player={player} />
+          {appliedItemCard}
           <div className="modal-option-grid">
             {pending.items.map((item) => (
               <button

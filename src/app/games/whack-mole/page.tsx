@@ -3,25 +3,22 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, BookOpen, Bomb, Hammer, RotateCcw, Sparkles, Target, Timer, Trophy, X, Zap } from 'lucide-react';
+import { ArrowLeft, BookOpen, Bomb, Hammer, Loader2, Play, RotateCcw, Sparkles, Target, Timer, Trophy, X, Zap } from 'lucide-react';
 import {
-  WHACK_MOLE_BOMB_PENALTY,
-  WHACK_MOLE_END_REFRESH_MS,
   WHACK_MOLE_GAME_DURATION_MS,
-  WHACK_MOLE_GOLDEN_POINTS,
-  WHACK_MOLE_MAX_BOMBS,
-  WHACK_MOLE_MAX_COMBO_BONUS,
-  WHACK_MOLE_NORMAL_POINTS,
-  WHACK_MOLE_START_REFRESH_MS,
-  WHACK_MOLE_WIN_SCORE,
+  WHACK_MOLE_DIFFICULTIES,
+  WHACK_MOLE_DIFFICULTY_CONFIG,
   calculateWhackMolePointReward,
   createEmptyWhackMoleBoard,
+  getWhackMoleDifficultyConfig,
   getWhackMoleBoard,
   getWhackMoleBombCount,
   getWhackMoleRefreshMs,
   getWhackMoleScoreDelta,
   getWhackMoleTickIndex,
+  normalizeWhackMoleDifficulty,
   scoreWhackMoleEvents,
+  type WhackMoleDifficulty,
   type WhackMoleCell,
   type WhackMoleHitEvent,
   type WhackMoleHitResult,
@@ -37,6 +34,7 @@ interface WhackMoleSessionView {
   startedAt: number;
   expiresAt: number;
   durationMs: number;
+  difficulty: WhackMoleDifficulty;
   board: WhackMoleCell[];
   boardTick: number;
   timeLeftMs: number;
@@ -51,10 +49,12 @@ interface WhackMoleSession {
   startedAt: number;
   expiresAt: number;
   durationMs: number;
+  difficulty: WhackMoleDifficulty;
 }
 
 interface WhackMoleRecord {
   id: string;
+  difficulty?: WhackMoleDifficulty;
   score: number;
   pointsEarned: number;
   hits: number;
@@ -91,12 +91,43 @@ const BEST_SCORE_KEY = 'lucky-whack-mole-best-score';
 const EVENTS_PERSIST_KEY = 'lucky-whack-mole-events';
 const FEEDBACK_DURATION_MS = 520;
 const TIMER_TICK_MS = 80;
-const MOLE_IMAGE_SRC = '/images/games/whack-mole.png';
-const GOLDEN_MOLE_IMAGE_SRC = '/images/games/whack-mole-golden.png';
-const HIT_MOLE_IMAGE_SRC = '/images/games/whack-mole-hit.png';
-const GOLDEN_HIT_MOLE_IMAGE_SRC = '/images/games/whack-mole-golden-hit.png';
-const HOLE_BACKGROUND_IMAGE_SRC = '/images/games/whack-mole-hole-bg.png';
-const BOMB_IMAGE_SRC = '/images/games/whack-mole-bomb.png';
+const WHACK_MOLE_ART_BASE = '/images-optimized/ui/games';
+const MOLE_IMAGE_SRC = `${WHACK_MOLE_ART_BASE}/whack-mole.webp`;
+const GOLDEN_MOLE_IMAGE_SRC = `${WHACK_MOLE_ART_BASE}/whack-mole-golden.webp`;
+const HIT_MOLE_IMAGE_SRC = `${WHACK_MOLE_ART_BASE}/whack-mole-hit.webp`;
+const GOLDEN_HIT_MOLE_IMAGE_SRC = `${WHACK_MOLE_ART_BASE}/whack-mole-golden-hit.webp`;
+const HOLE_BACKGROUND_IMAGE_SRC = `${WHACK_MOLE_ART_BASE}/whack-mole-hole-bg.webp`;
+const BOMB_IMAGE_SRC = `${WHACK_MOLE_ART_BASE}/whack-mole-bomb.webp`;
+
+const WHACK_DIFFICULTY_META: Record<WhackMoleDifficulty, {
+  icon: ReactNode;
+  toneClass: string;
+  accentClass: string;
+  summary: string;
+  borderClass: string;
+}> = {
+  easy: {
+    icon: <Sparkles />,
+    toneClass: 'easy',
+    accentClass: 'text-sky-700',
+    summary: '慢节奏，低风险',
+    borderClass: 'border-sky-200',
+  },
+  normal: {
+    icon: <Hammer />,
+    toneClass: 'normal',
+    accentClass: 'text-emerald-700',
+    summary: '标准规则，均衡收益',
+    borderClass: 'border-emerald-200',
+  },
+  hard: {
+    icon: <Bomb />,
+    toneClass: 'hard',
+    accentClass: 'text-rose-700',
+    summary: '高速度，高回报',
+    borderClass: 'border-rose-200',
+  },
+};
 
 async function parseJson<T>(res: Response): Promise<{ success?: boolean; data?: T; message?: string } | null> {
   try {
@@ -134,10 +165,16 @@ function getCellResult(cell: WhackMoleCell): WhackMoleHitResult {
   return 'miss';
 }
 
-function projectHit(cell: WhackMoleCell, scoreBefore: number, comboBefore: number) {
+function projectHit(
+  cell: WhackMoleCell,
+  scoreBefore: number,
+  comboBefore: number,
+  difficulty: WhackMoleDifficulty,
+) {
+  const config = getWhackMoleDifficultyConfig(difficulty);
   const result = getCellResult(cell);
   if (cell === 'mole' || cell === 'golden') {
-    const scoreDelta = getWhackMoleScoreDelta(cell, comboBefore);
+    const scoreDelta = getWhackMoleScoreDelta(cell, comboBefore, difficulty);
     return {
       result,
       scoreDelta,
@@ -147,7 +184,7 @@ function projectHit(cell: WhackMoleCell, scoreBefore: number, comboBefore: numbe
   }
 
   if (cell === 'bomb') {
-    const nextScore = Math.max(0, scoreBefore - WHACK_MOLE_BOMB_PENALTY);
+    const nextScore = Math.max(0, scoreBefore - config.bombPenalty);
     return {
       result,
       scoreDelta: nextScore - scoreBefore,
@@ -164,7 +201,7 @@ function projectHit(cell: WhackMoleCell, scoreBefore: number, comboBefore: numbe
   };
 }
 
-function loadPersistedEvents(sessionId: string): WhackMoleHitEvent[] {
+function loadPersistedEvents(sessionId: string, durationMs: number): WhackMoleHitEvent[] {
   try {
     const raw = window.localStorage.getItem(EVENTS_PERSIST_KEY);
     if (!raw) return [];
@@ -187,7 +224,7 @@ function loadPersistedEvents(sessionId: string): WhackMoleHitEvent[] {
         && event.index < 16
         && Number.isInteger(event.elapsedMs)
         && event.elapsedMs >= 0
-        && event.elapsedMs < WHACK_MOLE_GAME_DURATION_MS,
+        && event.elapsedMs < durationMs,
       );
   } catch {
     return [];
@@ -213,6 +250,7 @@ function clearPersistedEvents() {
 
 export default function WhackMolePage() {
   const [phase, setPhase] = useState<GamePhase>('ready');
+  const [selectedDifficulty, setSelectedDifficulty] = useState<WhackMoleDifficulty>('normal');
   const [session, setSession] = useState<WhackMoleSession | null>(null);
   const [status, setStatus] = useState<WhackMoleStatus | null>(null);
   const [board, setBoard] = useState<WhackMoleCell[]>(() => createEmptyWhackMoleBoard());
@@ -278,19 +316,21 @@ export default function WhackMolePage() {
     setLocalCombo(nextCombo);
   }, []);
 
-  const setBoardForElapsed = useCallback((seed: string, elapsedMs: number) => {
-    const boardElapsedMs = Math.min(Math.max(0, elapsedMs), WHACK_MOLE_GAME_DURATION_MS - 1);
-    const nextBoard = elapsedMs >= WHACK_MOLE_GAME_DURATION_MS
+  const setBoardForElapsed = useCallback((seed: string, elapsedMs: number, difficulty: WhackMoleDifficulty) => {
+    const config = getWhackMoleDifficultyConfig(difficulty);
+    const boardElapsedMs = Math.min(Math.max(0, elapsedMs), config.durationMs - 1);
+    const nextBoard = elapsedMs >= config.durationMs
       ? createEmptyWhackMoleBoard()
-      : getWhackMoleBoard(seed, boardElapsedMs);
-    const nextTick = getWhackMoleTickIndex(boardElapsedMs);
+      : getWhackMoleBoard(seed, boardElapsedMs, difficulty);
+    const nextTick = getWhackMoleTickIndex(boardElapsedMs, difficulty);
     boardRef.current = nextBoard;
     boardTickRef.current = nextTick;
     setBoard(nextBoard);
     setBoardTick(nextTick);
   }, []);
 
-  const resetRoundView = useCallback(() => {
+  const resetRoundView = useCallback((difficulty: WhackMoleDifficulty = selectedDifficulty) => {
+    const config = getWhackMoleDifficultyConfig(difficulty);
     hiddenTargetKeysRef.current.clear();
     eventsRef.current = [];
     updateLocalProgress(0, 0);
@@ -298,23 +338,25 @@ export default function WhackMolePage() {
     boardRef.current = createEmptyWhackMoleBoard();
     boardTickRef.current += 1;
     setBoardTick(boardTickRef.current);
-    setTimeLeftMs(WHACK_MOLE_GAME_DURATION_MS);
+    setTimeLeftMs(config.durationMs);
     clearHitFeedback();
-  }, [clearHitFeedback, updateLocalProgress]);
+  }, [clearHitFeedback, selectedDifficulty, updateLocalProgress]);
 
   const applySession = useCallback((view: WhackMoleSessionView) => {
     submittedRef.current = false;
     hiddenTargetKeysRef.current.clear();
     clearHitFeedback();
 
-    const restored = loadPersistedEvents(view.sessionId);
+    const difficulty = normalizeWhackMoleDifficulty(view.difficulty);
+    const config = getWhackMoleDifficultyConfig(difficulty);
+    const restored = loadPersistedEvents(view.sessionId, config.durationMs);
     eventsRef.current = restored;
-    const scored = scoreWhackMoleEvents(view.seed, restored);
+    const scored = scoreWhackMoleEvents(view.seed, restored, difficulty);
     updateLocalProgress(scored.score, scored.combo);
 
     const elapsedMs = Math.max(0, Math.floor(Date.now() - view.startedAt));
-    setBoardForElapsed(view.seed, elapsedMs);
-    setTimeLeftMs(Math.max(0, WHACK_MOLE_GAME_DURATION_MS - elapsedMs));
+    setBoardForElapsed(view.seed, elapsedMs, difficulty);
+    setTimeLeftMs(Math.max(0, config.durationMs - elapsedMs));
 
     const nextSession: WhackMoleSession = {
       sessionId: view.sessionId,
@@ -322,7 +364,9 @@ export default function WhackMolePage() {
       startedAt: view.startedAt,
       expiresAt: view.expiresAt,
       durationMs: view.durationMs,
+      difficulty,
     };
+    setSelectedDifficulty(difficulty);
     setSession(nextSession);
     sessionRef.current = nextSession;
     setResult(null);
@@ -375,6 +419,7 @@ export default function WhackMolePage() {
 
       const record = data.data.record;
       setResult(record);
+      setSelectedDifficulty(normalizeWhackMoleDifficulty(record.difficulty));
       clearPersistedEvents();
       eventsRef.current = [];
       setBestScore((current) => {
@@ -437,7 +482,8 @@ export default function WhackMolePage() {
     if (phase !== 'playing' || !session) return;
 
     let previousTick = getWhackMoleTickIndex(
-      Math.min(Date.now() - session.startedAt, WHACK_MOLE_GAME_DURATION_MS - 1),
+      Math.min(Date.now() - session.startedAt, session.durationMs - 1),
+      session.difficulty,
     );
 
     const timer = window.setInterval(() => {
@@ -445,21 +491,21 @@ export default function WhackMolePage() {
       if (!activeSession) return;
 
       const elapsedMs = Date.now() - activeSession.startedAt;
-      const nextTimeLeft = Math.max(0, WHACK_MOLE_GAME_DURATION_MS - elapsedMs);
+      const nextTimeLeft = Math.max(0, activeSession.durationMs - elapsedMs);
       setTimeLeftMs(nextTimeLeft);
 
-      if (elapsedMs >= WHACK_MOLE_GAME_DURATION_MS) {
+      if (elapsedMs >= activeSession.durationMs) {
         window.clearInterval(timer);
         void submitResult(activeSession);
         return;
       }
 
-      const nextTick = getWhackMoleTickIndex(elapsedMs);
+      const nextTick = getWhackMoleTickIndex(elapsedMs, activeSession.difficulty);
       if (nextTick !== previousTick) {
         previousTick = nextTick;
         hiddenTargetKeysRef.current = new Set();
         clearHitFeedback();
-        setBoardForElapsed(activeSession.seed, elapsedMs);
+        setBoardForElapsed(activeSession.seed, elapsedMs, activeSession.difficulty);
       }
     }, TIMER_TICK_MS);
 
@@ -471,13 +517,13 @@ export default function WhackMolePage() {
     setError(null);
     setResult(null);
     clearPersistedEvents();
-    resetRoundView();
+    resetRoundView(selectedDifficulty);
 
     try {
       const res = await fetch('/api/games/whack-mole/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: restart ? JSON.stringify({ restart: true }) : JSON.stringify({}),
+        body: JSON.stringify({ restart, difficulty: selectedDifficulty }),
       });
       const data = await parseJson<WhackMoleSessionView>(res);
       if (!res.ok || !data?.success || !data.data) {
@@ -489,7 +535,7 @@ export default function WhackMolePage() {
     } finally {
       setLoading(false);
     }
-  }, [applySession, resetRoundView]);
+  }, [applySession, resetRoundView, selectedDifficulty]);
 
   const cancelGame = useCallback(async () => {
     if (!sessionRef.current) return;
@@ -530,14 +576,14 @@ export default function WhackMolePage() {
     if (phaseRef.current !== 'playing' || !activeSession) return;
 
     const elapsedMs = Math.max(0, Math.floor(Date.now() - activeSession.startedAt));
-    if (elapsedMs >= WHACK_MOLE_GAME_DURATION_MS) return;
+    if (elapsedMs >= activeSession.durationMs) return;
 
     const currentTick = boardTickRef.current;
     const targetKey = `${currentTick}:${index}`;
     if (hiddenTargetKeysRef.current.has(targetKey)) return;
 
     const cell = boardRef.current[index] ?? 'empty';
-    const projected = projectHit(cell, localScoreRef.current, localComboRef.current);
+    const projected = projectHit(cell, localScoreRef.current, localComboRef.current, activeSession.difficulty);
 
     if (projected.feedbackState) {
       hiddenTargetKeysRef.current.add(targetKey);
@@ -554,10 +600,12 @@ export default function WhackMolePage() {
     setLastHit(getHitMessage(projected.result, projected.scoreDelta, nextCombo));
   }, [showHoleFeedback, updateLocalProgress]);
 
-  const elapsedMs = WHACK_MOLE_GAME_DURATION_MS - timeLeftMs;
-  const refreshHint = getWhackMoleRefreshMs(elapsedMs);
-  const bombHint = getWhackMoleBombCount(elapsedMs);
-  const rewardPreview = calculateWhackMolePointReward(localScore);
+  const activeDifficulty = session?.difficulty ?? selectedDifficulty;
+  const activeConfig = getWhackMoleDifficultyConfig(activeDifficulty);
+  const elapsedMs = activeConfig.durationMs - timeLeftMs;
+  const refreshHint = getWhackMoleRefreshMs(elapsedMs, activeDifficulty);
+  const bombHint = getWhackMoleBombCount(elapsedMs, activeDifficulty);
+  const rewardPreview = calculateWhackMolePointReward(localScore, activeDifficulty);
   const canRetrySettlement = phase === 'finished' && !result && session !== null;
   const phaseText = phase === 'playing' ? '进行中' : phase === 'submitting' ? '结算中' : phase === 'finished' ? '已结算' : '待开始';
   const commandLine = phase === 'playing'
@@ -568,7 +616,7 @@ export default function WhackMolePage() {
         ? canRetrySettlement
           ? '本局还没有完成结算，可以重试提交。'
           : '结算完成，可以返回游戏中心或再来一局。'
-        : '每局 60 秒，刷新会越来越快，后半段炸弹数量会上升。';
+        : `${activeConfig.label}难度：${Math.round(activeConfig.durationMs / 1000)} 秒挑战，每 ${activeConfig.rewardDivisor} 分换 1 积分。`;
   const primaryButtonLabel = phase === 'playing'
     ? '结束游戏'
     : phase === 'submitting'
@@ -629,12 +677,95 @@ export default function WhackMolePage() {
           </button>
         </section>
 
+        {phase !== 'playing' && phase !== 'submitting' && (
+          <section className="glass-card stage-card whack-difficulty-stage" aria-label="选择难度">
+            <div className="whack-difficulty-stage-head">
+              <h2 className="whack-section-title">
+                <span className="whack-st-icon">
+                  <Hammer size={18} />
+                </span>
+                选择难度
+              </h2>
+              <span className="whack-cute-pill">
+                <Sparkles className="h-4 w-4" />
+                不同难度 = 不同节奏与奖励上限
+              </span>
+            </div>
+            <div className="whack-difficulty-wrap">
+              <h3 className="whack-difficulty-headline">选择你的挑战节奏</h3>
+              <div className="whack-difficulty-grid">
+                {WHACK_MOLE_DIFFICULTIES.map((difficulty, index) => {
+                  const config = WHACK_MOLE_DIFFICULTY_CONFIG[difficulty];
+                  const meta = WHACK_DIFFICULTY_META[difficulty];
+                  const selected = selectedDifficulty === difficulty;
+                  return (
+                    <button
+                      key={difficulty}
+                      type="button"
+                      aria-pressed={selected}
+                      disabled={loading || Boolean(status?.inCooldown)}
+                      onClick={() => {
+                        if (selected) {
+                          void startGame(phase === 'finished');
+                          return;
+                        }
+                        setSelectedDifficulty(difficulty);
+                        resetRoundView(difficulty);
+                      }}
+                      className={`whack-difficulty-card group ${meta.toneClass} ${meta.borderClass} ${selected ? 'is-selected' : ''}`}
+                      style={{ animationDelay: `${index * 100}ms` }}
+                    >
+                      <span className={`whack-difficulty-glow ${meta.toneClass}`} />
+                      <span className="difficulty-content">
+                        <span className="difficulty-topline">
+                          <span className={`difficulty-icon ${meta.toneClass} ${meta.accentClass}`}>
+                            {meta.icon}
+                          </span>
+                          <span className={`difficulty-size-pill ${meta.toneClass}`}>
+                            {Math.round(config.durationMs / 1000)} 秒
+                          </span>
+                        </span>
+
+                        <span className="difficulty-copy">
+                          <span className={`difficulty-label ${meta.toneClass}`}>{config.label}</span>
+                          <span className="difficulty-summary">{config.description}</span>
+                        </span>
+
+                        <span className={`whack-selected-start ${selected ? 'is-visible' : ''}`}>
+                          {loading && selected ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                          {selected ? (status?.inCooldown ? `冷却 ${status.cooldownRemaining}s` : '再点开始') : '轻触选择'}
+                        </span>
+
+                        <span className="difficulty-stats">
+                          <span>
+                            <span>速度</span>
+                            <strong>{config.startRefreshMs}→{config.endRefreshMs}ms</strong>
+                          </span>
+                          <span>
+                            <span>炸弹</span>
+                            <strong>最多 {config.maxBombs}</strong>
+                          </span>
+                          <span>
+                            <span>奖励</span>
+                            <strong>每 {config.rewardDivisor} 分 1 积分</strong>
+                          </span>
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {(phase === 'playing' || phase === 'submitting' || canRetrySettlement) && (
         <section className="glass-card stage-card whack-game-card">
           <section className="whack-status-dock">
             <div className="min-w-0">
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-black text-white">{phaseText}</span>
-                <span className="text-xs font-bold text-slate-400">60 秒挑战</span>
+                <span className="text-xs font-bold text-slate-400">{activeConfig.label} · {Math.round(activeConfig.durationMs / 1000)} 秒挑战</span>
               </div>
               <div className="whack-status-metrics">
                 <StatusMetric icon={<Timer className="h-4 w-4" />} label="时间" value={`${formatTime(timeLeftMs)}s`} tone="text-emerald-700" />
@@ -666,27 +797,27 @@ export default function WhackMolePage() {
           </section>
 
           <section className="whack-board-panel">
-            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-              <div>
+            <div className="whack-board-heading">
+              <div className="whack-board-title">
                 <div className="text-sm font-bold text-slate-400">规则挑战区</div>
                 <h2 className="text-2xl font-black text-slate-900">
                   {phase === 'finished' ? '本局结束' : phase === 'submitting' ? '正在结算' : '洞口棋盘'}
                 </h2>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700">{BOARD_SIZE} × {BOARD_SIZE}</span>
-                <span className="rounded-full bg-rose-50 px-3 py-1.5 text-xs font-black text-rose-600">炸弹 {bombHint}</span>
-                <span className="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-black text-amber-700">{refreshHint}ms</span>
-                <span className="rounded-full bg-sky-50 px-3 py-1.5 text-xs font-black text-sky-700">预计奖励 {rewardPreview}</span>
+              <div className="whack-board-badges">
+                <span className="whack-board-badge rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700">{BOARD_SIZE} × {BOARD_SIZE}</span>
+                <span className="whack-board-badge rounded-full bg-rose-50 px-3 py-1.5 text-xs font-black text-rose-600">炸弹 {bombHint}</span>
+                <span className="whack-board-badge rounded-full bg-amber-50 px-3 py-1.5 text-xs font-black text-amber-700">{refreshHint}ms</span>
+                <span className="whack-board-badge rounded-full bg-sky-50 px-3 py-1.5 text-xs font-black text-sky-700">预计奖励 {rewardPreview}</span>
               </div>
             </div>
 
             <div className="whack-rule-strip" aria-label="局内规则">
-              <RuleChip icon={<Hammer />} text={`普通 +${WHACK_MOLE_NORMAL_POINTS}`} />
-              <RuleChip icon={<Sparkles />} text={`金色 +${WHACK_MOLE_GOLDEN_POINTS}`} />
-              <RuleChip icon={<Zap />} text={`连击 +2 / 上限 +${WHACK_MOLE_MAX_COMBO_BONUS}`} />
-              <RuleChip icon={<Bomb />} text={`炸弹 -${WHACK_MOLE_BOMB_PENALTY}`} />
-              <RuleChip icon={<Timer />} text={`${WHACK_MOLE_START_REFRESH_MS}ms → ${WHACK_MOLE_END_REFRESH_MS}ms`} />
+              <RuleChip icon={<Hammer />} text={`普通 +${activeConfig.normalPoints}`} />
+              <RuleChip icon={<Sparkles />} text={`金色 +${activeConfig.goldenPoints}`} />
+              <RuleChip icon={<Zap />} text={`连击 +${activeConfig.comboBonusStep} / 最高 +${activeConfig.maxComboBonus}`} />
+              <RuleChip icon={<Bomb />} text={`炸弹 -${activeConfig.bombPenalty}`} />
+              <RuleChip icon={<Timer />} text={`${activeConfig.startRefreshMs}→${activeConfig.endRefreshMs}ms`} />
             </div>
 
             {phase !== 'playing' && (
@@ -774,14 +905,15 @@ export default function WhackMolePage() {
             </div>
           </section>
 
-          {status?.inCooldown && phase === 'ready' && (
-            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm font-bold text-amber-700">
-              冷却中，请等待 {status.cooldownRemaining} 秒
-            </div>
-          )}
         </section>
+        )}
 
-        {showRules && <WhackMoleRulesModal onClose={() => setShowRules(false)} />}
+        {showRules && (
+          <WhackMoleRulesModal
+            difficulty={activeDifficulty}
+            onClose={() => setShowRules(false)}
+          />
+        )}
         {phase === 'finished' && result && (
           <WhackMoleResultModal
             result={result}
@@ -946,12 +1078,324 @@ export default function WhackMolePage() {
           background: rgba(255, 255, 255, 0.78);
           padding: 10px 12px;
         }
+        .whack-page .whack-difficulty-stage {
+          margin-bottom: 22px;
+        }
+        .whack-page .whack-difficulty-stage-head {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 20px;
+        }
+        .whack-page .whack-section-title {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin: 0;
+          font-size: 20px;
+          font-weight: 950;
+          color: #0f172a;
+        }
+        .whack-page .whack-st-icon {
+          display: inline-flex;
+          width: 36px;
+          height: 36px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 12px;
+          color: #fff;
+          background: linear-gradient(135deg, #34d399, #059669);
+          box-shadow: 0 10px 18px rgba(5, 150, 105, 0.22);
+        }
+        .whack-page .whack-cute-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          border-radius: 999px;
+          border: 1px solid rgba(167, 243, 208, 0.9);
+          background: rgba(236, 253, 245, 0.82);
+          padding: 8px 13px;
+          color: #047857;
+          font-size: 12px;
+          font-weight: 900;
+        }
+        .whack-page .whack-difficulty-wrap {
+          width: 100%;
+          max-width: 940px;
+          margin: 0 auto;
+        }
+        .whack-page .whack-difficulty-headline {
+          margin: 0;
+          text-align: center;
+          font-size: 30px;
+          font-weight: 950;
+          letter-spacing: -0.01em;
+          color: #1e293b;
+        }
+        .whack-page .whack-difficulty-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 24px;
+          margin-top: 34px;
+        }
+        .whack-page .whack-difficulty-card {
+          position: relative;
+          overflow: hidden;
+          min-height: 254px;
+          border-width: 4px;
+          border-style: solid;
+          border-radius: 32px;
+          background: rgba(255, 255, 255, 0.8);
+          padding: 24px;
+          text-align: left;
+          box-shadow: 0 18px 34px rgba(15, 23, 42, 0.06);
+          backdrop-filter: blur(14px);
+          transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+          animation: whack-card-in 0.42s ease both;
+        }
+        .whack-page .whack-difficulty-card:hover:not(:disabled) {
+          transform: translateY(-8px);
+          border-color: #fff;
+          box-shadow: 0 24px 44px rgba(15, 23, 42, 0.1);
+        }
+        .whack-page .whack-difficulty-card:active:not(:disabled) {
+          transform: scale(0.98);
+        }
+        .whack-page .whack-difficulty-card.is-selected {
+          border-color: #fff;
+          box-shadow: 0 20px 42px rgba(16, 185, 129, 0.18), 0 0 0 3px rgba(16, 185, 129, 0.24);
+        }
+        .whack-page .whack-difficulty-card:disabled {
+          cursor: not-allowed;
+          opacity: 0.52;
+          transform: none;
+        }
+        .whack-page .whack-difficulty-card.easy {
+          border-color: #bae6fd;
+        }
+        .whack-page .whack-difficulty-card.normal {
+          border-color: #a7f3d0;
+        }
+        .whack-page .whack-difficulty-card.hard {
+          border-color: #fecdd3;
+        }
+        .whack-page .whack-difficulty-glow {
+          position: absolute;
+          inset: 0;
+          opacity: 0;
+          transition: opacity 0.5s ease;
+        }
+        .whack-page .whack-difficulty-glow.easy {
+          background: linear-gradient(135deg, #38bdf8, #0ea5e9);
+        }
+        .whack-page .whack-difficulty-glow.normal {
+          background: linear-gradient(135deg, #34d399, #059669);
+        }
+        .whack-page .whack-difficulty-glow.hard {
+          background: linear-gradient(135deg, #fb7185, #be123c);
+        }
+        .whack-page .whack-difficulty-card:hover .whack-difficulty-glow,
+        .whack-page .whack-difficulty-card.is-selected .whack-difficulty-glow {
+          opacity: 1;
+        }
+        .whack-page .difficulty-content {
+          position: relative;
+          z-index: 1;
+          display: flex;
+          min-height: 206px;
+          flex-direction: column;
+        }
+        .whack-page .difficulty-topline {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 18px;
+        }
+        .whack-page .difficulty-icon {
+          display: inline-flex;
+          width: 56px;
+          height: 56px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 20px;
+          background: rgba(255, 255, 255, 0.56);
+          filter: drop-shadow(0 8px 12px rgba(15, 23, 42, 0.1));
+          transform-origin: left center;
+          transition: transform 0.3s ease, background 0.3s ease, color 0.3s ease;
+        }
+        .whack-page .difficulty-icon svg {
+          width: 26px;
+          height: 26px;
+          stroke-width: 2.4;
+        }
+        .whack-page .whack-difficulty-card:hover .difficulty-icon {
+          transform: scale(1.08) rotate(10deg);
+          background: rgba(255, 255, 255, 0.22);
+          color: #fff;
+        }
+        .whack-page .difficulty-size-pill {
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.54);
+          padding: 5px 11px;
+          font-size: 11px;
+          font-weight: 950;
+          letter-spacing: 0.8px;
+          text-transform: uppercase;
+          backdrop-filter: blur(10px);
+          transition: background 0.3s ease, color 0.3s ease;
+        }
+        .whack-page .difficulty-size-pill.easy {
+          color: #0369a1;
+        }
+        .whack-page .difficulty-size-pill.normal {
+          color: #047857;
+        }
+        .whack-page .difficulty-size-pill.hard {
+          color: #be123c;
+        }
+        .whack-page .whack-difficulty-card:hover .difficulty-size-pill,
+        .whack-page .whack-difficulty-card.is-selected .difficulty-size-pill {
+          background: rgba(255, 255, 255, 0.22);
+          color: #fff;
+        }
+        .whack-page .difficulty-copy {
+          display: flex;
+          min-width: 0;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .whack-page .difficulty-label {
+          font-size: 32px;
+          font-weight: 950;
+          line-height: 1;
+          transition: color 0.3s ease;
+        }
+        .whack-page .difficulty-label.easy {
+          color: #0369a1;
+        }
+        .whack-page .difficulty-label.normal {
+          color: #047857;
+        }
+        .whack-page .difficulty-label.hard {
+          color: #be123c;
+        }
+        .whack-page .difficulty-summary {
+          color: #64748b;
+          font-size: 14px;
+          font-weight: 800;
+          line-height: 1.55;
+          transition: color 0.3s ease;
+        }
+        .whack-page .whack-difficulty-card:hover .difficulty-label,
+        .whack-page .whack-difficulty-card.is-selected .difficulty-label {
+          color: #fff;
+        }
+        .whack-page .whack-difficulty-card:hover .difficulty-summary,
+        .whack-page .whack-difficulty-card.is-selected .difficulty-summary {
+          color: rgba(255, 255, 255, 0.9);
+        }
+        .whack-page .whack-selected-start {
+          display: inline-flex;
+          width: fit-content;
+          min-height: 34px;
+          align-items: center;
+          gap: 8px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.7);
+          padding: 8px 12px;
+          color: #334155;
+          font-size: 12px;
+          font-weight: 950;
+          opacity: 0.72;
+          transition: background 0.3s ease, color 0.3s ease, opacity 0.3s ease;
+          margin-top: 18px;
+        }
+        .whack-page .whack-difficulty-card:hover .whack-selected-start,
+        .whack-page .whack-selected-start.is-visible {
+          background: rgba(255, 255, 255, 0.22);
+          color: #fff;
+          opacity: 1;
+        }
+        .whack-page .difficulty-stats {
+          display: grid;
+          gap: 8px;
+          margin-top: auto;
+          border-top: 1px solid rgba(226, 232, 240, 0.88);
+          padding-top: 16px;
+          transition: border-color 0.3s ease;
+        }
+        .whack-page .difficulty-stats > span {
+          display: flex;
+          min-width: 0;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          color: #64748b;
+          font-size: 13px;
+          font-weight: 850;
+          transition: color 0.3s ease;
+        }
+        .whack-page .difficulty-stats strong {
+          border-radius: 10px;
+          background: rgba(255, 255, 255, 0.46);
+          padding: 3px 7px;
+          color: #334155;
+          font-size: 12px;
+          font-weight: 950;
+          transition: background 0.3s ease, color 0.3s ease;
+        }
+        .whack-page .whack-difficulty-card:hover .difficulty-stats,
+        .whack-page .whack-difficulty-card.is-selected .difficulty-stats {
+          border-color: rgba(255, 255, 255, 0.24);
+        }
+        .whack-page .whack-difficulty-card:hover .difficulty-stats > span,
+        .whack-page .whack-difficulty-card.is-selected .difficulty-stats > span {
+          color: rgba(255, 255, 255, 0.76);
+        }
+        .whack-page .whack-difficulty-card:hover .difficulty-stats strong,
+        .whack-page .whack-difficulty-card.is-selected .difficulty-stats strong {
+          background: rgba(255, 255, 255, 0.2);
+          color: #fff;
+        }
+        @keyframes whack-card-in {
+          from { opacity: 0; transform: translateY(14px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
         .whack-page .whack-board-panel {
           border-radius: 26px;
           border: 1px solid rgba(209, 250, 229, 0.86);
           background: rgba(255, 255, 255, 0.72);
           padding: 18px;
           box-shadow: 0 14px 36px rgba(15, 23, 42, 0.06);
+        }
+        .whack-page .whack-board-heading {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          align-items: start;
+          gap: 12px;
+          margin-bottom: 20px;
+        }
+        .whack-page .whack-board-title {
+          min-width: 0;
+        }
+        .whack-page .whack-board-badges {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 8px;
+          max-width: min(100%, 420px);
+        }
+        .whack-page .whack-board-badge {
+          display: inline-flex;
+          min-height: 28px;
+          align-items: center;
+          justify-content: center;
+          line-height: 1.15;
+          text-align: center;
+          white-space: nowrap;
         }
         .whack-page .whack-rule-strip {
           margin: 0 auto 14px;
@@ -972,9 +1416,13 @@ export default function WhackMolePage() {
           color: #334155;
           font-size: 12px;
           font-weight: 900;
+          line-height: 1.15;
+          min-width: 0;
+          text-align: center;
           box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
         }
         .whack-page .whack-rule-chip svg {
+          flex: 0 0 auto;
           width: 14px;
           height: 14px;
           color: #059669;
@@ -1108,9 +1556,93 @@ export default function WhackMolePage() {
           .whack-page .whack-status-metrics {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
+          .whack-page .whack-difficulty-stage {
+            margin-bottom: 16px;
+          }
+          .whack-page .whack-difficulty-stage-head {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 10px;
+            margin-bottom: 14px;
+          }
+          .whack-page .whack-cute-pill {
+            width: 100%;
+            justify-content: center;
+          }
+          .whack-page .whack-difficulty-headline {
+            font-size: 24px;
+          }
+          .whack-page .whack-difficulty-grid {
+            grid-template-columns: 1fr;
+            gap: 16px;
+            margin-top: 22px;
+          }
+          .whack-page .whack-difficulty-card {
+            min-height: 224px;
+            border-radius: 26px;
+            padding: 20px;
+          }
+          .whack-page .difficulty-content {
+            min-height: 176px;
+          }
+          .whack-page .difficulty-topline {
+            margin-bottom: 14px;
+          }
+          .whack-page .difficulty-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 18px;
+          }
+          .whack-page .difficulty-icon svg {
+            width: 23px;
+            height: 23px;
+          }
+          .whack-page .difficulty-label {
+            font-size: 28px;
+          }
+          .whack-page .difficulty-summary {
+            font-size: 13px;
+            line-height: 1.45;
+          }
+          .whack-page .whack-selected-start {
+            margin-top: 14px;
+          }
+          .whack-page .difficulty-stats {
+            gap: 7px;
+            padding-top: 14px;
+          }
+          .whack-page .difficulty-stats > span {
+            font-size: 12px;
+          }
+          .whack-page .difficulty-stats strong {
+            max-width: 58%;
+            overflow-wrap: anywhere;
+            text-align: right;
+          }
           .whack-page .whack-board-panel {
             border-radius: 22px;
             padding: 14px;
+          }
+          .whack-page .whack-board-heading {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 10px;
+            margin-bottom: 14px;
+          }
+          .whack-page .whack-board-badges {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            justify-content: stretch;
+            gap: 8px;
+            max-width: none;
+          }
+          .whack-page .whack-board-badge {
+            width: 100%;
+            min-width: 0;
+            min-height: 30px;
+            padding: 6px 8px;
+            white-space: normal;
           }
           .whack-page .whack-board {
             max-width: min(100%, calc(100vw - 64px));
@@ -1118,13 +1650,23 @@ export default function WhackMolePage() {
             padding: 6px;
           }
           .whack-page .whack-rule-strip {
-            justify-content: flex-start;
-            overflow-x: auto;
-            flex-wrap: nowrap;
-            padding-bottom: 4px;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            justify-content: stretch;
+            overflow: visible;
+            gap: 8px;
+            padding-bottom: 0;
           }
           .whack-page .whack-rule-chip {
-            flex: 0 0 auto;
+            width: 100%;
+            min-width: 0;
+            justify-content: center;
+            padding: 7px 8px;
+            overflow-wrap: anywhere;
+            white-space: normal;
+          }
+          .whack-page .whack-rule-chip:last-child {
+            grid-column: 1 / -1;
           }
           .whack-page .whack-rules-modal,
           .whack-page .whack-result-modal {
@@ -1161,7 +1703,14 @@ function RuleChip({ icon, text }: { icon: ReactNode; text: string }) {
   );
 }
 
-function WhackMoleRulesModal({ onClose }: { onClose: () => void }) {
+function WhackMoleRulesModal({
+  difficulty,
+  onClose,
+}: {
+  difficulty: WhackMoleDifficulty;
+  onClose: () => void;
+}) {
+  const config = getWhackMoleDifficultyConfig(difficulty);
   return (
     <div className="whack-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="whack-rules-title">
       <div className="whack-rules-modal">
@@ -1173,7 +1722,7 @@ function WhackMoleRulesModal({ onClose }: { onClose: () => void }) {
             </div>
             <h2 id="whack-rules-title" className="text-2xl font-black text-slate-950">打地鼠规则</h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              每局 60 秒，越到后面刷新越快、炸弹越多。服务端按实际敲击时间复算得分。
+              当前为 {config.label} 难度，每局 {Math.round(config.durationMs / 1000)} 秒。服务端按实际敲击时间复算得分。
             </p>
           </div>
           <button
@@ -1187,12 +1736,12 @@ function WhackMoleRulesModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <RuleCard icon={<Hammer />} title="普通地鼠" text={`命中 +${WHACK_MOLE_NORMAL_POINTS} 分，连续命中会继续叠加连击。`} />
-          <RuleCard icon={<Sparkles />} title="金色地鼠" text={`命中 +${WHACK_MOLE_GOLDEN_POINTS} 分，是优先级最高的目标。`} />
-          <RuleCard icon={<Zap />} title="连击加成" text={`每次连击额外 +2 分，最高额外 +${WHACK_MOLE_MAX_COMBO_BONUS} 分。`} />
-          <RuleCard icon={<Bomb />} title="炸弹" text={`敲到炸弹扣 ${WHACK_MOLE_BOMB_PENALTY} 分，并清空当前连击，后期最多同时出现 ${WHACK_MOLE_MAX_BOMBS} 个。`} />
-          <RuleCard icon={<Timer />} title="速度曲线" text={`刷新从 ${WHACK_MOLE_START_REFRESH_MS}ms 加快到 ${WHACK_MOLE_END_REFRESH_MS}ms。`} />
-          <RuleCard icon={<Trophy />} title="优秀线" text={`达到 ${WHACK_MOLE_WIN_SCORE} 分可以视为高分通关。`} />
+          <RuleCard icon={<Hammer />} title="普通地鼠" text={`命中 +${config.normalPoints} 分，连续命中会继续叠加连击。`} />
+          <RuleCard icon={<Sparkles />} title="金色地鼠" text={`命中 +${config.goldenPoints} 分，是优先级最高的目标。`} />
+          <RuleCard icon={<Zap />} title="连击加成" text={`每次连击额外 +${config.comboBonusStep} 分，最高额外 +${config.maxComboBonus} 分。`} />
+          <RuleCard icon={<Bomb />} title="炸弹" text={`敲到炸弹扣 ${config.bombPenalty} 分，并清空当前连击，后期最多同时出现 ${config.maxBombs} 个。`} />
+          <RuleCard icon={<Timer />} title="速度曲线" text={`刷新从 ${config.startRefreshMs}ms 加快到 ${config.endRefreshMs}ms。`} />
+          <RuleCard icon={<Trophy />} title="奖励结算" text={`积分 = floor(得分 / ${config.rewardDivisor})，本难度不设奖励上限。`} />
         </div>
       </div>
     </div>
@@ -1210,8 +1759,10 @@ function WhackMoleResultModal({
   cooldownRemaining: number;
   onStart: () => void;
 }) {
-  const won = result.score >= WHACK_MOLE_WIN_SCORE;
-  const expectedReward = calculateWhackMolePointReward(result.score);
+  const difficulty = normalizeWhackMoleDifficulty(result.difficulty);
+  const config = getWhackMoleDifficultyConfig(difficulty);
+  const won = result.score >= config.winScore;
+  const expectedReward = calculateWhackMolePointReward(result.score, difficulty);
 
   return (
     <div className="whack-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="whack-result-title">
@@ -1221,18 +1772,18 @@ function WhackMoleResultModal({
             {won ? <Trophy className="h-9 w-9" /> : <Target className="h-9 w-9" />}
           </div>
           <div className="mt-5 text-xs font-black uppercase tracking-wider text-emerald-700/80">
-            本局结算
+            {config.label}难度结算
           </div>
           <h2 id="whack-result-title" className="mt-1 text-2xl font-black text-slate-950">
             {won ? '挑战成功' : '挑战失败'}
           </h2>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            本局得分 {result.score}，按得分 10% 结算，获得 {result.pointsEarned} 福利积分。
+            本局得分 {result.score}，按 {config.label} 难度规则结算，获得 {result.pointsEarned} 福利积分。
           </p>
         </div>
 
         <div className="mt-5 rounded-2xl border border-emerald-100 bg-white px-5 py-3 text-center text-sm font-black text-emerald-700 shadow-sm">
-          最终福利积分 = {result.score} × 10% = {expectedReward}
+          最终福利积分 = floor({result.score} / {config.rewardDivisor}) = {expectedReward}
         </div>
 
         <div className="whack-result-stats">

@@ -48,12 +48,21 @@ interface GameEntry {
   equippedAchievement?: PublicAchievement | null;
   totalScore: number;
   totalPoints: number;
+  bestScore: number;
   gamesPlayed: number;
+}
+
+interface GameDifficultyOption {
+  value: string;
+  label: string;
 }
 
 interface GameRankingGroup {
   gameType: SupportedGame;
   leaderboard: GameEntry[];
+  selectedDifficulty?: string | null;
+  difficultyOptions?: GameDifficultyOption[];
+  leaderboardsByDifficulty?: Record<string, GameEntry[]>;
 }
 
 interface GamesRankingData {
@@ -180,12 +189,12 @@ const GAME_THEME: Record<SupportedGame, string> = {
 };
 
 const GAME_METRIC_LABEL: Record<SupportedGame, string> = {
-  linkgame: '总得分',
-  match3: '总得分',
-  memory: '总得分',
-  whack_mole: '总得分',
-  roguelite: '总得分',
-  minesweeper: '总得分',
+  linkgame: '最佳单局',
+  match3: '最佳单局',
+  memory: '最佳单局',
+  whack_mole: '最佳单局',
+  roguelite: '最佳单局',
+  minesweeper: '最佳单局',
 };
 
 const GAME_UNIT: Record<SupportedGame, string> = {
@@ -411,7 +420,7 @@ const RANKING_RULES = [
     tag: '各游戏独立排名',
     tone: 'pink',
     summary:
-      '为每款游戏单独维护一份排行榜，按所选周期内的累计得分排序，展示各游戏的前排玩家与战绩数据。',
+      '为每款游戏单独维护一份排行榜，按所选周期内的最好单局成绩排序；有难度的游戏可在卡片右上角切换难度。',
     sections: [
       {
         label: '收录游戏',
@@ -425,8 +434,9 @@ const RANKING_RULES = [
         label: '周期与计算',
         items: [
           '可在日榜 / 周榜 / 月榜之间切换，周期定义同抽奖榜。',
-          '排序依据为周期内该游戏的累计总得分，并同时展示游戏局数、本周期获得积分。',
-          '同分时按局数较少者优先（效率更高），仍相同时按用户 ID 升序。',
+          '排序依据为周期内该游戏的最高单局得分，榜单数字展示的也是这一次最好成绩。',
+          '连连看、记忆翻牌、打地鼠、扫雷支持「全部难度 / 简单 / 普通 / 困难」切换。',
+          '最好单局同分时，优先比较本周期获得积分，再按局数较少者优先，仍相同时按用户 ID 升序。',
         ],
       },
       {
@@ -1609,7 +1619,7 @@ export default function RankingsPage() {
               transparent 82%
             ),
             /* 主图 */
-            url('/images/rankings/hero.webp') center right / cover no-repeat,
+            url('/images-optimized/ui/rankings/hero.webp') center right / cover no-repeat,
             /* 兜底渐变，图片加载失败时呈现原配色 */
             linear-gradient(135deg, #1e1b4b 0%, #4c1d95 35%, #6d28d9 70%, #a855f7 100%);
           color: #fff;
@@ -3352,6 +3362,37 @@ export default function RankingsPage() {
           text-transform: uppercase;
         }
 
+        .rk-page .gc-actions {
+          margin-left: auto;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 6px;
+          flex-shrink: 0;
+          min-width: 86px;
+        }
+
+        .rk-page .gc-difficulty-select {
+          width: 96px;
+          height: 28px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.82);
+          color: var(--text-main);
+          font-size: 11px;
+          font-weight: 800;
+          line-height: 1;
+          padding: 0 24px 0 10px;
+          outline: none;
+          box-shadow: 0 8px 16px rgba(15, 23, 42, 0.05);
+          cursor: pointer;
+        }
+
+        .rk-page .gc-difficulty-select:focus {
+          border-color: rgba(168, 85, 247, 0.45);
+          box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.12);
+        }
+
         .rk-page .gc-metric-tag {
           font-size: 10px;
           font-weight: 800;
@@ -4013,6 +4054,14 @@ export default function RankingsPage() {
           .rk-page .game-card { padding: 18px; border-radius: 18px; }
           .rk-page .gc-icon { width: 38px; height: 38px; border-radius: 12px; }
           .rk-page .gc-name { font-size: 15px; }
+          .rk-page .gc-actions { min-width: 78px; gap: 5px; }
+          .rk-page .gc-difficulty-select {
+            width: 86px;
+            height: 26px;
+            font-size: 10.5px;
+            padding-left: 9px;
+            padding-right: 20px;
+          }
 
           .rk-page .hist-row { padding: 14px 16px; gap: 12px; border-radius: 16px; }
           .rk-page .hist-week { width: 56px; height: 56px; }
@@ -4120,7 +4169,7 @@ export default function RankingsPage() {
                 rgba(30, 27, 75, 0.72) 54%,
                 rgba(76, 29, 149, 0.62) 100%
               ),
-              url('/images/rankings/hero.webp') center / cover no-repeat,
+              url('/images-optimized/ui/rankings/hero.webp') center / cover no-repeat,
               linear-gradient(135deg, #1e1b4b, #7c3aed);
             box-shadow: 0 18px 34px rgba(76, 29, 149, 0.28);
           }
@@ -4748,6 +4797,19 @@ export default function RankingsPage() {
             font-size: 10.5px;
           }
 
+          .rk-page .gc-actions {
+            min-width: 74px;
+            gap: 4px;
+          }
+
+          .rk-page .gc-difficulty-select {
+            width: 82px;
+            height: 25px;
+            font-size: 10px;
+            padding-left: 8px;
+            padding-right: 18px;
+          }
+
           .rk-page .gc-metric-tag {
             max-width: 70px;
             padding: 4px 7px;
@@ -4988,7 +5050,21 @@ interface GameCardProps {
 
 function GameCard({ group, myUserId }: GameCardProps) {
   const themeClass = GAME_THEME[group.gameType] ?? '';
-  const top5 = group.leaderboard.slice(0, 5);
+  const defaultDifficulty = group.selectedDifficulty
+    ?? group.difficultyOptions?.[0]?.value
+    ?? '';
+  const [selectedDifficulty, setSelectedDifficulty] = useState(defaultDifficulty);
+  const hasDifficultyOptions = Boolean(
+    group.difficultyOptions?.length && group.leaderboardsByDifficulty,
+  );
+  const activeDifficulty = group.difficultyOptions?.some((option) => option.value === selectedDifficulty)
+    ? selectedDifficulty
+    : defaultDifficulty;
+  const activeLeaderboard = hasDifficultyOptions && activeDifficulty
+    ? group.leaderboardsByDifficulty?.[activeDifficulty] ?? group.leaderboard
+    : group.leaderboard;
+  const top5 = activeLeaderboard.slice(0, 5);
+
   return (
     <div className={`game-card ${themeClass}`}>
       <div className="gc-head">
@@ -4999,7 +5075,23 @@ function GameCard({ group, myUserId }: GameCardProps) {
           <div className="gc-name">{GAME_LABEL[group.gameType]}</div>
           <div className="gc-cap">{GAME_CAPTION[group.gameType]}</div>
         </div>
-        <span className="gc-metric-tag">{GAME_METRIC_LABEL[group.gameType]}</span>
+        <div className="gc-actions">
+          {hasDifficultyOptions && (
+            <select
+              className="gc-difficulty-select"
+              value={activeDifficulty}
+              onChange={(event) => setSelectedDifficulty(event.target.value)}
+              aria-label={`切换${GAME_LABEL[group.gameType]}榜单难度`}
+            >
+              {group.difficultyOptions?.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          )}
+          <span className="gc-metric-tag">{GAME_METRIC_LABEL[group.gameType]}</span>
+        </div>
       </div>
       {top5.length > 0 ? (
         <div className="gc-top5">
@@ -5020,7 +5112,7 @@ function GameCard({ group, myUserId }: GameCardProps) {
                   <AchievementPill achievement={entry.equippedAchievement} compact />
                 </div>
                 <div className="gc-row-score">
-                  {formatNumber(entry.totalScore)}
+                  {formatNumber(entry.bestScore ?? entry.totalScore)}
                   <span className="unit">{GAME_UNIT[group.gameType]}</span>
                 </div>
               </div>

@@ -73,7 +73,23 @@ describe('whack mole server authority', () => {
 
     const view = buildWhackMoleSessionView(started.session!);
     expect(view.seed).toBe(started.session!.seed);
+    expect(view.difficulty).toBe('normal');
     expect(view.board).toHaveLength(16);
+  });
+
+  it('stores selected difficulty in the session view and settlement record', async () => {
+    const started = await startWhackMoleGame(1001, { difficulty: 'hard' });
+    const session = started.session!;
+
+    expect(session.difficulty).toBe('hard');
+    expect(buildWhackMoleSessionView(session).difficulty).toBe('hard');
+
+    vi.setSystemTime(new Date(session.startedAt + 60_000));
+    const result = await submitWhackMoleResult(1001, { sessionId: session.id });
+
+    expect(result.success).toBe(true);
+    expect(result.record?.difficulty).toBe('hard');
+    expect(result.record?.duration).toBe(60_000);
   });
 
   it('scores from client-submitted events at settlement using the server seed', async () => {

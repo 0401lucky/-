@@ -4,6 +4,7 @@ import {
   WHACK_MOLE_GAME_DURATION_MS,
   WHACK_MOLE_MAX_BOMBS,
   WHACK_MOLE_START_REFRESH_MS,
+  WHACK_MOLE_DIFFICULTY_CONFIG,
   getWhackMoleBoard,
   getWhackMoleBombCount,
   calculateWhackMolePointReward,
@@ -74,5 +75,18 @@ describe('whack mole engine', () => {
     expect(calculateWhackMolePointReward(0)).toBe(0);
     expect(calculateWhackMolePointReward(99)).toBe(9);
     expect(calculateWhackMolePointReward(860)).toBe(86);
+  });
+
+  it('uses difficulty-specific reward divisors without caps', () => {
+    expect(calculateWhackMolePointReward(840, 'easy')).toBe(70);
+    expect(calculateWhackMolePointReward(1600, 'normal')).toBe(160);
+    expect(calculateWhackMolePointReward(1440, 'hard')).toBe(180);
+  });
+
+  it('applies faster and riskier settings on hard difficulty', () => {
+    expect(getWhackMoleRefreshMs(0, 'hard')).toBe(WHACK_MOLE_DIFFICULTY_CONFIG.hard.startRefreshMs);
+    expect(getWhackMoleRefreshMs(WHACK_MOLE_DIFFICULTY_CONFIG.hard.durationMs, 'hard')).toBe(WHACK_MOLE_DIFFICULTY_CONFIG.hard.endRefreshMs);
+    expect(getWhackMoleBombCount(WHACK_MOLE_DIFFICULTY_CONFIG.hard.durationMs - 1, 'hard')).toBe(WHACK_MOLE_DIFFICULTY_CONFIG.hard.maxBombs);
+    expect(getWhackMoleScoreDelta('mole', 2, 'hard')).toBe(18);
   });
 });

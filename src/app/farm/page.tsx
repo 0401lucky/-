@@ -15,14 +15,14 @@ import PetSprite, { type PetExpression } from './components/PetSprite';
 import {
   AdoptModal, PlantModal, HarvestModal, ShopModal, RulesModal,
   BackpackModal, EventLogModal, ItemDetailModal, SeedDetailModal, LandQuickUseModal, LandDetailModal,
-  PetItemPickerModal, WeatherTvModal,
+  PetItemPickerModal, WeatherTvModal, StealModal, FarmSuccessModal,
 } from './components/Modals';
 import type {
   ComputedLand, WeatherV2, Season, PetTask, HarvestResult, ShopItemKey, CropIdV2, PetType, Inventory,
 } from '@/lib/types/farm-v2';
 import {
-  LAND_UNLOCK_PRICES, SEASON_LABEL, WEATHERS_V2, PET_TASKS,
-  PET_ITEM_EFFECTS, PET_FREE_FALLBACK, SHOP_ITEMS_V2, PET_SKILL_LABEL, type PetActionCategory,
+  LAND_UNLOCK_PRICES, SEASON_LABEL, WEATHERS_V2, PET_TASKS, CROPS_V2,
+  PET_ITEM_EFFECTS, PET_FREE_FALLBACK, SHOP_ITEMS_V2, PET_SKILL_LABEL, WATER_ACTION_LEAD_MS, type PetActionCategory,
 } from '@/lib/farm-v2/config';
 import type { PublicAchievement } from '@/lib/profile-achievements';
 import {
@@ -37,7 +37,8 @@ const DEFAULT_PET_NAMES: Record<PetType, string> = {
   rabbit: '小粉',
   red_panda: '小红',
 };
-const LAND_VISUAL_SIZE = 80;
+const LAND_VISUAL_SIZE = 172;
+const FARM_IMAGE_BASE = '/images-optimized/ui/farm';
 
 interface AuthMeUser { id: number; username: string; displayName?: string; isAdmin?: boolean }
 interface MyProfile {
@@ -49,6 +50,13 @@ interface ProfileUpdatedDetail {
   displayName?: string | null;
   avatarUrl?: string | null;
   equippedAchievement?: PublicAchievement | null;
+}
+
+interface FarmSuccessPopup {
+  icon: string;
+  title: string;
+  message: string;
+  detail?: string;
 }
 
 function formatNumber(v: number): string { return Math.floor(v).toLocaleString('zh-CN'); }
@@ -136,12 +144,14 @@ export default function FarmPage() {
   const [showBackpack, setShowBackpack] = useState(false);
   const [showWeatherTv, setShowWeatherTv] = useState(false);
   const [showEvents, setShowEvents] = useState(false);
+  const [showSteal, setShowSteal] = useState(false);
   const [itemDetail, setItemDetail] = useState<ShopItemKey | null>(null);
   const [seedDetail, setSeedDetail] = useState<CropIdV2 | null>(null);
   const [petPicker, setPetPicker] = useState<PetActionCategory | null>(null);
   const [landUse, setLandUse] = useState<{ mode: 'fertilizer' | 'item'; landIndex: number } | null>(null);
   const [landDetailIndex, setLandDetailIndex] = useState<number | null>(null);
   const [harvestPopup, setHarvestPopup] = useState<{ results: HarvestResult[]; total: number } | null>(null);
+  const [successPopup, setSuccessPopup] = useState<FarmSuccessPopup | null>(null);
   const [now, setNow] = useState(Date.now());
   const { desktopPetVisible, toggleDesktopPetVisible } = useDesktopPetVisiblePreference();
 
@@ -280,6 +290,43 @@ export default function FarmPage() {
     ? computedLands.find((land) => land.index - 1 === landDetailIndex) ?? null
     : null;
 
+  const showShopPurchaseSuccess = async (itemKey: ShopItemKey, qty = 1) => {
+    const ok = await game.buyItem(itemKey, qty);
+    if (!ok) return;
+    const item = SHOP_ITEMS_V2[itemKey];
+    setSuccessPopup({
+      icon: item?.emoji ?? '🛍️',
+      title: '购买成功',
+      message: `已购买 ${item?.name ?? '商品'} ×${qty}`,
+      detail: '物品已放入背包，可以在背包里查看或使用。',
+    });
+  };
+
+  const showSeedPurchaseSuccess = async (cropId: CropIdV2, qty = 1) => {
+    const ok = await game.buySeed(cropId, qty);
+    if (!ok) return;
+    const crop = CROPS_V2[cropId];
+    setSuccessPopup({
+      icon: crop.emoji,
+      title: '购买成功',
+      message: `已购买 ${crop.name}种子 ×${qty}`,
+      detail: '种子已放入背包，点按空地即可选择种植。',
+    });
+  };
+
+  const showPlantSuccess = async (plotIndex: number, cropId: CropIdV2) => {
+    const ok = await game.plant(plotIndex, cropId);
+    if (!ok) return false;
+    const crop = CROPS_V2[cropId];
+    setSuccessPopup({
+      icon: crop.emoji,
+      title: '种植成功',
+      message: `第 ${plotIndex + 1} 块地种下了 ${crop.name}`,
+      detail: '种下时已自动浇过一次水，后续记得在缺水前及时补水。',
+    });
+    return true;
+  };
+
   return (
     <div className="lucky-farm">
       <div className="mesh-bg" />
@@ -333,7 +380,7 @@ export default function FarmPage() {
         {/* Hero */}
         <section className="store-hero pastoral-hero">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/images/farm/butterfly-anim.png" alt="" className="pastoral-butterfly" />
+          <img src={`${FARM_IMAGE_BASE}/butterfly-anim.webp`} alt="" className="pastoral-butterfly" />
           <div className="hero-content">
             <div className="hero-text">
               <div className="hero-badge">
@@ -525,6 +572,7 @@ export default function FarmPage() {
               onPlay={(itemKey) => game.playPet(itemKey)}
               onOpenPicker={(cat) => setPetPicker(cat)}
               onDispatch={(t) => game.dispatchPet(t)}
+              onOpenSteal={() => setShowSteal(true)}
               desktopPetVisible={desktopPetVisible}
               onToggleDesktopPet={toggleDesktopPetVisible}
             />
@@ -547,7 +595,10 @@ export default function FarmPage() {
         balance={state.points}
         seedInventory={state.seedInventory}
         onClose={() => setShowPlant(false)}
-        onPlant={(cid) => { if (plantPlot != null) game.plant(plantPlot, cid); }}
+        onPlant={(cid) => {
+          if (plantPlot == null) return Promise.resolve(false);
+          return showPlantSuccess(plantPlot, cid);
+        }}
         onGoShop={() => { setShowPlant(false); setShowShop(true); }}
       />
       <HarvestModal
@@ -559,7 +610,6 @@ export default function FarmPage() {
       <ShopModal
         open={showShop}
         inventory={state.inventory}
-        purchasedSkillBooks={state.purchasedSkillBooks}
         learnedSkills={state.pet?.learnedSkills}
         shopDailyPurchases={game.status.shopDailyPurchases}
         seedInventory={state.seedInventory}
@@ -568,8 +618,8 @@ export default function FarmPage() {
         scarecrowUntil={state.scarecrowUntil}
         bellUntil={state.bellUntil}
         onClose={() => setShowShop(false)}
-        onBuy={(k, q) => game.buyItem(k, q)}
-        onBuySeed={(c, q) => game.buySeed(c, q)}
+        onBuy={(k, q) => { void showShopPurchaseSuccess(k, q); }}
+        onBuySeed={(c, q) => { void showSeedPurchaseSuccess(c, q); }}
         onUse={(k, p) => game.useItem(k, p)}
       />
       <RulesModal open={showRules} onClose={() => setShowRules(false)} />
@@ -592,6 +642,12 @@ export default function FarmPage() {
         open={showWeatherTv}
         forecast={weatherForecast}
         onClose={() => setShowWeatherTv(false)}
+      />
+      <StealModal
+        open={showSteal}
+        loadList={game.loadStealList}
+        onClose={() => setShowSteal(false)}
+        onSteal={game.doSteal}
       />
       <ItemDetailModal
         itemKey={itemDetail}
@@ -636,6 +692,14 @@ export default function FarmPage() {
         }}
         onGoShop={() => { setPetPicker(null); setShowShop(true); }}
       />
+      <FarmSuccessModal
+        open={!!successPopup}
+        icon={successPopup?.icon ?? '✨'}
+        title={successPopup?.title ?? '操作成功'}
+        message={successPopup?.message ?? ''}
+        detail={successPopup?.detail}
+        onClose={() => setSuccessPopup(null)}
+      />
 
       {game.actionLoading && <div className="loading-bar" />}
 
@@ -651,12 +715,15 @@ const PET_PANEL_SKILLS: Array<{
   icon: string;
   expression: PetExpression;
   detail: string;
+  passive?: boolean;
+  action?: 'dispatch' | 'steal';
 }> = [
   { skill: 'water', icon: '💧', expression: 'excited', detail: `${PET_TASKS.water.durationMinutes / 60}h` },
   { skill: 'guard', icon: '🛡️', expression: 'angry', detail: `${PET_TASKS.guard.durationMinutes / 60}h` },
   { skill: 'chase_crow', icon: '🦅', expression: 'angry', detail: `${PET_TASKS.chase_crow.durationMinutes / 60}h` },
-  { skill: 'harvest', icon: '🌾', expression: 'happy', detail: '立即收菜' },
-  { skill: 'plant', icon: '🌱', expression: 'excited', detail: '自动种菜' },
+  { skill: 'steal', icon: '🧺', expression: 'excited', detail: '选择目标', action: 'steal' },
+  { skill: 'harvest', icon: '🌾', expression: 'happy', detail: '被动已启用', passive: true },
+  { skill: 'plant', icon: '🌱', expression: 'excited', detail: '被动已启用', passive: true },
 ];
 
 type LandQuickIcon = 'fertilizer' | 'items' | 'water' | 'detail' | 'harvest' | 'plant' | 'clean' | 'buy';
@@ -793,7 +860,7 @@ function LandCard({
       >
         <div className="land-soil">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/images/farm/crow-display.png" alt="乌鸦" className="land-crow-img" />
+          <img src={`${FARM_IMAGE_BASE}/crow-display.webp`} alt="乌鸦" className="land-crow-img" />
         </div>
         {quickOpen && renderCommonQuickActions({ label: '清理', icon: 'clean', primary: true, onClick: onRemove })}
       </div>
@@ -820,7 +887,7 @@ function LandCard({
   const isMature = land.status === 'mature';
   const isThirsty = land.status === 'thirsty';
   const waterRemain = Math.max(0, land.nextWaterRemainingMs);
-  const canWater = !isMature && (waterRemain <= 60_000 || isThirsty);
+  const canWater = !isMature && (waterRemain <= WATER_ACTION_LEAD_MS || isThirsty);
 
   return (
     <div
@@ -837,7 +904,7 @@ function LandCard({
           <div className="land-water-cans">
             {Array.from({ length: Math.min(land.crop.waterMissCount, 2) }).map((_, i) => (
               // eslint-disable-next-line @next/next/no-img-element
-              <img key={i} src="/images/farm/watering-can.png" alt="缺水" className="land-water-can" />
+              <img key={i} src={`${FARM_IMAGE_BASE}/watering-can.webp`} alt="缺水" className="land-water-can" />
             ))}
           </div>
         )}
@@ -852,7 +919,7 @@ function LandCard({
 
 function PetPanel({
   pet, inventory, now, onAdopt, onCare, onDrink, onRest, onPlay, onOpenPicker, onDispatch,
-  desktopPetVisible, onToggleDesktopPet,
+  onOpenSteal, desktopPetVisible, onToggleDesktopPet,
 }: {
   pet: import('@/lib/types/farm-v2').PetState | null;
   inventory: Inventory;
@@ -864,6 +931,7 @@ function PetPanel({
   onPlay: (itemKey?: ShopItemKey) => void | Promise<void>;
   onOpenPicker: (cat: PetActionCategory) => void;
   onDispatch: (t: Exclude<PetTask, null>) => void | Promise<void>;
+  onOpenSteal: () => void;
   desktopPetVisible: boolean;
   onToggleDesktopPet: () => void;
 }) {
@@ -1028,17 +1096,31 @@ function PetPanel({
             <div className="pet-skill-list">
               {PET_PANEL_SKILLS.map((item) => {
                 const learned = learnedSkills.has(item.skill);
-                const disabled = !learned || working || cooldown > 0;
-                const disabledReason = !learned ? `需要先学习${PET_SKILL_LABEL[item.skill]}技能书` : working ? '宠物正在工作中' : cooldown > 0 ? `休息中 ${fmtMs(cooldown)}` : '';
+                const disabled = !learned || item.passive || working || cooldown > 0;
+                const disabledReason = !learned
+                  ? `需要先学习${PET_SKILL_LABEL[item.skill]}技能书`
+                  : item.passive
+                    ? `${PET_SKILL_LABEL[item.skill]}会自动触发`
+                    : working
+                      ? '宠物正在工作中'
+                      : cooldown > 0
+                        ? `休息中 ${fmtMs(cooldown)}`
+                        : '';
                 return (
                   <button
                     key={item.skill}
-                    className={`pet-task-btn ${!learned ? 'locked' : ''}`}
+                    className={`pet-task-btn ${!learned ? 'locked' : ''} ${item.passive && learned ? 'passive-enabled' : ''}`}
                     disabled={disabled}
                     title={disabledReason}
                     onClick={() => {
                       setShowSkills(false);
-                      triggerReaction(item.expression, () => onDispatch(item.skill));
+                      triggerReaction(item.expression, () => {
+                        if (item.action === 'steal') {
+                          onOpenSteal();
+                          return;
+                        }
+                        return onDispatch(item.skill);
+                      });
                     }}
                   >
                     <span>{item.icon}</span>
@@ -1366,7 +1448,7 @@ function FarmStyles() {
       .lucky-farm .store-hero {
         position: relative; padding: 36px 40px 60px; border-radius: 36px;
         background:
-          url('/images/farm/hero-bg.webp') center / cover no-repeat;
+          url('${FARM_IMAGE_BASE}/hero-bg.webp') center / cover no-repeat;
         color: #1f2937; overflow: hidden;
         box-shadow: 0 30px 60px rgba(20, 83, 45, 0.25), inset 0 0 0 4px rgba(255,255,255,0.6);
       }
@@ -1661,7 +1743,7 @@ function FarmStyles() {
       .lucky-farm .land-card.t-locked {
         background:
           linear-gradient(180deg, rgba(15, 23, 42, 0.1), rgba(15, 23, 42, 0.22)),
-          url('/images/farm/empty-soil.png') center / 100% 100% no-repeat;
+          url('${FARM_IMAGE_BASE}/empty-soil.webp') center / 100% 100% no-repeat;
         background-color: transparent;
         box-shadow: 0 12px 28px rgba(95, 60, 28, 0.22);
       }
@@ -1671,7 +1753,7 @@ function FarmStyles() {
       .lucky-farm .land-card.t-empty {
         cursor: pointer; border: none;
         background:
-          url('/images/farm/empty-soil.png') center / 100% 100% no-repeat;
+          url('${FARM_IMAGE_BASE}/empty-soil.webp') center / 100% 100% no-repeat;
         background-color: transparent;
         box-shadow: 0 12px 28px rgba(95, 60, 28, 0.22);
       }
@@ -1684,7 +1766,7 @@ function FarmStyles() {
       .lucky-farm .land-card.t-thirsty,
       .lucky-farm .land-card.t-mature {
         background:
-          url('/images/farm/empty-soil.png') center / 100% 100% no-repeat;
+          url('${FARM_IMAGE_BASE}/empty-soil.webp') center / 100% 100% no-repeat;
         background-color: transparent;
         box-shadow: 0 12px 28px rgba(95, 60, 28, 0.22);
       }
@@ -1757,7 +1839,7 @@ function FarmStyles() {
       /* 枯萎：使用独立枯萎作物图，位置与成熟作物保持一致 */
       .lucky-farm .land-card.t-warn {
         background:
-          url('/images/farm/empty-soil.png') center / 100% 100% no-repeat;
+          url('${FARM_IMAGE_BASE}/empty-soil.webp') center / 100% 100% no-repeat;
         background-color: transparent;
         box-shadow: 0 12px 28px rgba(95, 60, 28, 0.22);
       }
@@ -1773,7 +1855,7 @@ function FarmStyles() {
       /* 被乌鸦吃掉：整张卡片用土地 PNG 背景 + 乌鸦图片 */
       .lucky-farm .land-card.t-eaten {
         background:
-          url('/images/farm/empty-soil.png') center / 100% 100% no-repeat;
+          url('${FARM_IMAGE_BASE}/empty-soil.webp') center / 100% 100% no-repeat;
         background-color: transparent;
         box-shadow: 0 12px 28px rgba(95, 60, 28, 0.22);
       }
@@ -1788,7 +1870,7 @@ function FarmStyles() {
         content: none;
       }
       .lucky-farm .land-crow-img {
-        width: 80px; height: 80px;
+        width: 172px; height: 172px;
         object-fit: contain;
         position: relative; z-index: 1;
         filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.5));
@@ -2185,6 +2267,13 @@ function FarmStyles() {
         color: var(--text-light);
         border-color: rgba(15,23,42,0.08);
       }
+      .lucky-farm .pet-task-btn.passive-enabled:disabled {
+        cursor: default;
+        opacity: 1;
+        background: linear-gradient(135deg, rgba(220,252,231,0.95), rgba(187,247,208,0.92));
+        color: #15803d;
+        border-color: rgba(34,197,94,0.28);
+      }
       .lucky-farm .pet-task-btn.locked { border-style: dashed; }
 
       .lucky-farm .event-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
@@ -2484,9 +2573,9 @@ function FarmStyles() {
         .lucky-farm .land-soil {
           height: 76px;
         }
-        .lucky-farm .land-soil svg { width: 64px; height: 64px; }
+        .lucky-farm .land-soil svg { width: 132px; height: 132px; }
         .lucky-farm .land-emoji { font-size: 30px; }
-        .lucky-farm .land-crow-img { width: 60px; height: 60px; }
+        .lucky-farm .land-crow-img { width: 132px; height: 132px; }
 
         /* 宠物面板 */
         .lucky-farm .pet-care {
@@ -2540,9 +2629,9 @@ function FarmStyles() {
         }
         .lucky-farm .land-card { min-height: 138px; padding: 8px 6px 6px; border-radius: 14px; }
         .lucky-farm .land-soil { height: 68px; }
-        .lucky-farm .land-soil svg { width: 56px; height: 56px; }
+        .lucky-farm .land-soil svg { width: 120px; height: 120px; }
         .lucky-farm .land-emoji { font-size: 26px; }
-        .lucky-farm .land-crow-img { width: 52px; height: 52px; }
+        .lucky-farm .land-crow-img { width: 120px; height: 120px; }
         .lucky-farm .land-btn { padding: 6px 8px; font-size: 11px; }
 
         .lucky-farm .land-title-action { font-size: 10.5px; padding: 7px 5px; }

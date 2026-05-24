@@ -3,7 +3,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { getRaffle, getRaffleEntries, getUserRaffleStatus } from "@/lib/raffle";
+import { getRaffle, getRaffleEntries, getRaffleMode, getUserRaffleStatus } from "@/lib/raffle";
 import { verifySessionWithRevocation } from "@/lib/auth";
 import { cookies } from "next/headers";
 
@@ -49,6 +49,7 @@ export async function GET(
       success: true,
       raffle: {
         id: raffle.id,
+        mode: getRaffleMode(raffle),
         title: raffle.title,
         description: raffle.description,
         coverImage: raffle.coverImage,
@@ -59,6 +60,10 @@ export async function GET(
         participantsCount: raffle.participantsCount,
         winnersCount: raffle.winnersCount,
         drawnAt: raffle.drawnAt,
+        redPacketTotalPoints: raffle.redPacketTotalPoints,
+        redPacketTotalSlots: raffle.redPacketTotalSlots,
+        redPacketRemainingPoints: raffle.redPacketRemainingPoints,
+        redPacketRemainingSlots: raffle.redPacketRemainingSlots,
         // 仅在已结束时返回中奖者
         winners: raffle.status === "ended" ? raffle.winners : undefined,
         createdAt: raffle.createdAt,

@@ -11,6 +11,8 @@ interface Props {
   variant?: 'normal' | 'withered';
 }
 
+const FARM_CROP_IMAGE_BASE = '/images-optimized/ui/farm/crops';
+
 /** 作物 SVG，4 阶段动态展示 */
 export default function CropSprite({ cropId, stage, size = 80, className, variant = 'normal' }: Props) {
   const skipBaseSoil = true;
@@ -55,10 +57,10 @@ function renderCrop(id: CropIdV2, stage: CropStageV2, variant: NonNullable<Props
 
 
 function cropImageFile(stage: CropStageV2, variant: NonNullable<Props['variant']>) {
-  if (variant === 'withered') return 'display/withered.png';
-  if (stage === 'seed') return 'display/seed.png';
-  if (stage === 'mature') return 'display/mature.png';
-  return 'display/sprout.png';
+  if (variant === 'withered') return 'display/withered.webp';
+  if (stage === 'seed') return 'display/seed.webp';
+  if (stage === 'mature') return 'display/mature.webp';
+  return 'display/sprout.webp';
 }
 
 function cropAnimationClass(stage: CropStageV2, variant: NonNullable<Props['variant']>) {
@@ -68,7 +70,7 @@ function cropAnimationClass(stage: CropStageV2, variant: NonNullable<Props['vari
 
 // ===== 各种作物 =====
 function Wheat({ stage, variant }: { stage: CropStageV2; variant: NonNullable<Props['variant']> }) {
-  const base = '/images/farm/crops/wheat';
+  const base = `${FARM_CROP_IMAGE_BASE}/wheat`;
   // 四阶段统一铺满 100×100 viewBox，渲染容器尺寸一致
   const src = cropImageFile(stage, variant); // sprout / growing 共用「小麦苗」
   const wrap = cropAnimationClass(stage, variant);
@@ -84,7 +86,7 @@ function Wheat({ stage, variant }: { stage: CropStageV2; variant: NonNullable<Pr
 }
 
 function Carrot({ stage, variant }: { stage: CropStageV2; variant: NonNullable<Props['variant']> }) {
-  const base = '/images/farm/crops/carrot';
+  const base = `${FARM_CROP_IMAGE_BASE}/carrot`;
   const src = cropImageFile(stage, variant);
   const wrap = cropAnimationClass(stage, variant);
   const img = (
@@ -99,27 +101,27 @@ function Carrot({ stage, variant }: { stage: CropStageV2; variant: NonNullable<P
 }
 
 function Lettuce({ stage, variant }: { stage: CropStageV2; variant: NonNullable<Props['variant']> }) {
-  return <CropImage base="/images/farm/crops/lettuce" stage={stage} variant={variant} />;
+  return <CropImage base={`${FARM_CROP_IMAGE_BASE}/lettuce`} stage={stage} variant={variant} />;
 }
 
 function Tomato({ stage, variant }: { stage: CropStageV2; variant: NonNullable<Props['variant']> }) {
-  return <CropImage base="/images/farm/crops/tomato" stage={stage} variant={variant} />;
+  return <CropImage base={`${FARM_CROP_IMAGE_BASE}/tomato`} stage={stage} variant={variant} />;
 }
 
 function Potato({ stage, variant }: { stage: CropStageV2; variant: NonNullable<Props['variant']> }) {
-  return <CropImage base="/images/farm/crops/potato" stage={stage} variant={variant} />;
+  return <CropImage base={`${FARM_CROP_IMAGE_BASE}/potato`} stage={stage} variant={variant} />;
 }
 
 function Strawberry({ stage, variant }: { stage: CropStageV2; variant: NonNullable<Props['variant']> }) {
-  return <CropImage base="/images/farm/crops/strawberry" stage={stage} variant={variant} />;
+  return <CropImage base={`${FARM_CROP_IMAGE_BASE}/strawberry`} stage={stage} variant={variant} />;
 }
 
 function Corn({ stage, variant }: { stage: CropStageV2; variant: NonNullable<Props['variant']> }) {
-  return <CropImage base="/images/farm/crops/corn" stage={stage} variant={variant} />;
+  return <CropImage base={`${FARM_CROP_IMAGE_BASE}/corn`} stage={stage} variant={variant} />;
 }
 
 function Pumpkin({ stage, variant }: { stage: CropStageV2; variant: NonNullable<Props['variant']> }) {
-  return <CropImage base="/images/farm/crops/pumpkin" stage={stage} variant={variant} />;
+  return <CropImage base={`${FARM_CROP_IMAGE_BASE}/pumpkin`} stage={stage} variant={variant} />;
 }
 
 function CropImage({ base, stage, variant }: { base: string; stage: CropStageV2; variant: NonNullable<Props['variant']> }) {

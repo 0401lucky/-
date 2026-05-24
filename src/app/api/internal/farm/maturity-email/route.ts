@@ -1,6 +1,6 @@
 /**
  * GET/POST /api/internal/farm/maturity-email
- * 开心农场作物成熟邮件提醒入口（Cloudflare Cron 或外部调度调用）。
+ * 开心农场作物成熟 / 浇水邮件提醒入口（Cloudflare Cron 或外部调度调用）。
  */
 
 import { timingSafeEqual } from 'crypto';
@@ -85,9 +85,9 @@ async function handle(request: NextRequest): Promise<NextResponse> {
     const result = await processFarmMaturityEmails(maxUsers);
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
-    console.error('农场成熟邮件提醒处理失败:', error);
+    console.error('农场邮件提醒处理失败:', error);
     return NextResponse.json(
-      { success: false, message: '农场成熟邮件提醒处理失败' },
+      { success: false, message: '农场邮件提醒处理失败' },
       { status: 500 },
     );
   }

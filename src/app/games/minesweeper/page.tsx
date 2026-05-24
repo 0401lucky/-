@@ -524,8 +524,8 @@ export default function MinesweeperPage() {
         {phase === 'playing' && state && session && (
           <div className="mine-game-layout">
             <section className="glass-card stage-card mine-board-card">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <div>
+              <div className="mine-board-header">
+                <div className="mine-board-meta">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className={`rounded-full border px-3 py-1 text-xs font-black ${difficultyTone(session.difficulty)}`}>
                       {MINESWEEPER_DIFFICULTY_CONFIG[session.difficulty].label}
@@ -540,14 +540,14 @@ export default function MinesweeperPage() {
                 <div className="mine-tool-switch">
                   <button
                     onClick={() => setMode('reveal')}
-                    className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-black transition ${mode === 'reveal' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                    className={`mine-tool-button inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-black transition ${mode === 'reveal' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
                   >
                     <MousePointer2 className="h-4 w-4" />
                     翻开
                   </button>
                   <button
                     onClick={() => setMode('flag')}
-                    className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-black transition ${mode === 'flag' ? 'bg-white text-rose-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                    className={`mine-tool-button inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-black transition ${mode === 'flag' ? 'bg-white text-rose-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
                   >
                     <Flag className="h-4 w-4" />
                     插旗
@@ -894,14 +894,39 @@ export default function MinesweeperPage() {
         .mine-page .mine-board-card {
           min-width: 0;
         }
+        .mine-page .mine-board-header {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 12px;
+          align-items: start;
+          margin-bottom: 16px;
+        }
+        .mine-page .mine-board-meta {
+          min-width: 0;
+        }
+        .mine-page .mine-board-meta p {
+          overflow-wrap: anywhere;
+        }
         .mine-page .mine-tool-switch {
-          display: flex;
+          display: inline-grid;
+          grid-template-columns: repeat(2, minmax(72px, 1fr));
+          width: auto;
+          min-width: 168px;
+          min-height: 42px;
+          flex: none;
+          align-self: start;
           border-radius: 16px;
           border: 1px solid #e2e8f0;
           background: #f8fafc;
           padding: 4px;
         }
+        .mine-page .mine-tool-button {
+          min-height: 34px;
+          justify-content: center;
+          white-space: nowrap;
+        }
         .mine-page .mine-board-scroll {
+          max-width: 100%;
           overflow-x: auto;
           border-radius: 24px;
           border: 1px solid #d1fae5;
@@ -1018,16 +1043,34 @@ export default function MinesweeperPage() {
             white-space: normal;
           }
           .mine-page .mine-command-actions,
-          .mine-page .mine-command-actions button,
-          .mine-page .mine-tool-switch {
+          .mine-page .mine-command-actions button {
             width: 100%;
           }
-          .mine-page .mine-tool-switch button {
-            flex: 1;
-            justify-content: center;
+          .mine-page .mine-board-header {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 10px;
+            margin-bottom: 12px;
+          }
+          .mine-page .mine-board-meta {
+            width: 100%;
+          }
+          .mine-page .mine-tool-switch {
+            width: 100%;
+            min-width: 0;
+            min-height: 44px;
+            position: static;
+            flex-shrink: 0;
+          }
+          .mine-page .mine-tool-button {
+            min-height: 36px;
+            padding: 8px 12px;
           }
           .mine-page .mine-board-scroll {
             border-radius: 18px;
+            margin-top: 0;
+            overscroll-behavior-inline: contain;
             padding: 6px;
           }
           .mine-page .mine-cute-pill {

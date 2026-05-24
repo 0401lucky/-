@@ -4,12 +4,12 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  Gift, Loader2, Plus, Trash2, DollarSign, Users, Save
+  Gift, Loader2, Plus, Trash2, Coins, Users, Save
 } from 'lucide-react';
 
 interface PrizeInput {
   name: string;
-  dollars: number;
+  points: number;
   quantity: number;
 }
 
@@ -19,19 +19,22 @@ export default function CreateRafflePage() {
   const [error, setError] = useState<string | null>(null);
 
   // 表单状态
+  const [mode, setMode] = useState<'draw' | 'red_packet'>('draw');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [coverImage, setCoverImage] = useState('');
   const [triggerType, setTriggerType] = useState<'threshold' | 'manual'>('threshold');
   const [threshold, setThreshold] = useState(100);
+  const [redPacketTotalPoints, setRedPacketTotalPoints] = useState(1000);
+  const [redPacketTotalSlots, setRedPacketTotalSlots] = useState(20);
   const [prizes, setPrizes] = useState<PrizeInput[]>([
-    { name: '一等奖', dollars: 10, quantity: 1 },
-    { name: '二等奖', dollars: 5, quantity: 3 },
-    { name: '三等奖', dollars: 1, quantity: 10 },
+    { name: '一等奖', points: 1000, quantity: 1 },
+    { name: '二等奖', points: 500, quantity: 3 },
+    { name: '三等奖', points: 100, quantity: 10 },
   ]);
 
   const addPrize = () => {
-    setPrizes([...prizes, { name: '', dollars: 1, quantity: 1 }]);
+    setPrizes([...prizes, { name: '', points: 100, quantity: 1 }]);
   };
 
   const removePrize = (index: number) => {
@@ -43,8 +46,8 @@ export default function CreateRafflePage() {
     const updated = [...prizes];
     if (field === 'name') {
       updated[index].name = value as string;
-    } else if (field === 'dollars') {
-      updated[index].dollars = Number(value) || 0;
+    } else if (field === 'points') {
+      updated[index].points = Number(value) || 0;
     } else if (field === 'quantity') {
       updated[index].quantity = Number(value) || 0;
     }
@@ -52,7 +55,7 @@ export default function CreateRafflePage() {
   };
 
   const getTotalPrizeValue = () => {
-    return prizes.reduce((sum, p) => sum + p.dollars * p.quantity, 0);
+    return prizes.reduce((sum, p) => sum + p.points * p.quantity, 0);
   };
 
   const getTotalPrizeCount = () => {
@@ -72,21 +75,36 @@ export default function CreateRafflePage() {
       setError('请填写活动描述');
       return;
     }
-    if (prizes.some(p => !p.name.trim())) {
-      setError('请填写所有奖品名称');
-      return;
-    }
-    if (prizes.some(p => p.dollars <= 0)) {
-      setError('奖品金额必须大于0');
-      return;
-    }
-    if (prizes.some(p => p.quantity <= 0)) {
-      setError('奖品数量必须大于0');
-      return;
-    }
-    if (triggerType === 'threshold' && threshold <= 0) {
-      setError('人数阈值必须大于0');
-      return;
+    if (mode === 'draw') {
+      if (prizes.some(p => !p.name.trim())) {
+        setError('请填写所有奖品名称');
+        return;
+      }
+      if (prizes.some(p => !Number.isSafeInteger(p.points) || p.points <= 0)) {
+        setError('奖品积分必须为正整数');
+        return;
+      }
+      if (prizes.some(p => !Number.isSafeInteger(p.quantity) || p.quantity <= 0)) {
+        setError('奖品数量必须为正整数');
+        return;
+      }
+      if (triggerType === 'threshold' && (!Number.isSafeInteger(threshold) || threshold <= 0)) {
+        setError('人数阈值必须为正整数');
+        return;
+      }
+    } else {
+      if (!Number.isSafeInteger(redPacketTotalPoints) || redPacketTotalPoints <= 0) {
+        setError('红包总积分必须为正整数');
+        return;
+      }
+      if (!Number.isSafeInteger(redPacketTotalSlots) || redPacketTotalSlots <= 0) {
+        setError('可参与人数必须为正整数');
+        return;
+      }
+      if (redPacketTotalPoints < redPacketTotalSlots) {
+        setError('红包总积分不能小于可参与人数');
+        return;
+      }
     }
 
     setSaving(true);
@@ -99,13 +117,21 @@ export default function CreateRafflePage() {
           title: title.trim(),
           description: description.trim(),
           coverImage: coverImage.trim() || undefined,
-          triggerType,
-          threshold,
-          prizes: prizes.map(p => ({
-            name: p.name.trim(),
-            dollars: p.dollars,
-            quantity: p.quantity,
-          })),
+          mode,
+          ...(mode === 'draw'
+            ? {
+                triggerType,
+                threshold,
+                prizes: prizes.map(p => ({
+                  name: p.name.trim(),
+                  points: p.points,
+                  quantity: p.quantity,
+                })),
+              }
+            : {
+                redPacketTotalPoints,
+                redPacketTotalSlots,
+              }),
         }),
       });
 
@@ -187,7 +213,52 @@ export default function CreateRafflePage() {
           </div>
         </div>
 
+        {/* 活动类型 */}
+        <div className="bg-white rounded-2xl border border-stone-200 p-6 mb-6">
+          <h2 className="text-lg font-bold text-stone-800 mb-4 flex items-center gap-2">
+            <Gift className="w-5 h-5 text-pink-500" />
+            活动类型
+          </h2>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
+              mode === 'draw'
+                ? 'border-pink-500 bg-pink-50'
+                : 'border-stone-200 hover:border-stone-300'
+            }`}>
+              <input
+                type="radio"
+                name="mode"
+                value="draw"
+                checked={mode === 'draw'}
+                onChange={() => setMode('draw')}
+                className="sr-only"
+              />
+              <div className="font-bold text-stone-800 mb-1">普通抽奖</div>
+              <div className="text-sm text-stone-500">按奖品档位开奖，中奖后发放积分</div>
+            </label>
+
+            <label className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
+              mode === 'red_packet'
+                ? 'border-red-500 bg-red-50'
+                : 'border-stone-200 hover:border-stone-300'
+            }`}>
+              <input
+                type="radio"
+                name="mode"
+                value="red_packet"
+                checked={mode === 'red_packet'}
+                onChange={() => setMode('red_packet')}
+                className="sr-only"
+              />
+              <div className="font-bold text-stone-800 mb-1">抢红包</div>
+              <div className="text-sm text-stone-500">用户点击即随机抢到整数积分</div>
+            </label>
+          </div>
+        </div>
+
         {/* 开奖条件 */}
+        {mode === 'draw' && (
         <div className="bg-white rounded-2xl border border-stone-200 p-6 mb-6">
           <h2 className="text-lg font-bold text-stone-800 mb-4 flex items-center gap-2">
             <Users className="w-5 h-5 text-purple-500" />
@@ -248,16 +319,71 @@ export default function CreateRafflePage() {
             )}
           </div>
         </div>
+        )}
+
+        {/* 红包配置 */}
+        {mode === 'red_packet' && (
+          <div className="bg-white rounded-2xl border border-stone-200 p-6 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-stone-800 flex items-center gap-2">
+                <Coins className="w-5 h-5 text-red-500" />
+                红包配置
+              </h2>
+              <div className="text-sm text-stone-500">
+                人均约 <span className="font-bold text-red-600">
+                  {redPacketTotalSlots > 0
+                    ? Math.floor(redPacketTotalPoints / redPacketTotalSlots).toLocaleString('zh-CN')
+                    : 0} 积分
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">
+                  红包总积分 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  value={redPacketTotalPoints}
+                  onChange={(e) => setRedPacketTotalPoints(Number(e.target.value))}
+                  min={1}
+                  step={1}
+                  className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 outline-none transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">
+                  可参与人数 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  value={redPacketTotalSlots}
+                  onChange={(e) => setRedPacketTotalSlots(Number(e.target.value))}
+                  min={1}
+                  step={1}
+                  className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 outline-none transition-all"
+                />
+              </div>
+            </div>
+
+            <p className="text-xs text-stone-400 mt-3">
+              发布时会自动拆成 {redPacketTotalSlots || 0} 个随机整数红包，每个用户最多抢一次。
+            </p>
+          </div>
+        )}
 
         {/* 奖品配置 */}
+        {mode === 'draw' && (
         <div className="bg-white rounded-2xl border border-stone-200 p-6 mb-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-bold text-stone-800 flex items-center gap-2">
-              <DollarSign className="w-5 h-5 text-green-500" />
+              <Coins className="w-5 h-5 text-amber-500" />
               奖品配置
             </h2>
             <div className="text-sm text-stone-500">
-              总价值: <span className="font-bold text-pink-600">${getTotalPrizeValue()}</span>
+              总积分: <span className="font-bold text-pink-600">{getTotalPrizeValue().toLocaleString('zh-CN')} 积分</span>
               {' · '}
               共 <span className="font-bold">{getTotalPrizeCount()}</span> 份
             </div>
@@ -282,13 +408,13 @@ export default function CreateRafflePage() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-stone-500 mb-1">金额（美元）</label>
+                    <label className="block text-xs text-stone-500 mb-1">奖励积分</label>
                     <input
                       type="number"
-                      value={prize.dollars}
-                      onChange={(e) => updatePrize(index, 'dollars', e.target.value)}
-                      min={0.01}
-                      step={0.01}
+                      value={prize.points}
+                      onChange={(e) => updatePrize(index, 'points', e.target.value)}
+                      min={1}
+                      step={1}
                       className="w-full px-3 py-2 rounded-lg border border-stone-200 focus:border-pink-500 outline-none text-sm"
                     />
                   </div>
@@ -325,6 +451,7 @@ export default function CreateRafflePage() {
             添加奖品
           </button>
         </div>
+        )}
 
         {/* 提交按钮 */}
         <div className="flex gap-4">

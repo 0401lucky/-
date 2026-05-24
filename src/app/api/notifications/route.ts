@@ -26,6 +26,8 @@ export const GET = withUserRateLimit(
           | 'feedback_reply'
           | 'lottery_win'
           | 'raffle_win'
+          | 'wallet'
+          | 'reward'
           | undefined,
       });
 

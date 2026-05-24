@@ -86,6 +86,15 @@ function deserialize<T>(raw: string | null | undefined): T | null {
   }
 }
 
+function normalizeStoredDifficulty(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const difficulty = value.trim();
+  return difficulty.length > 0 ? difficulty : null;
+}
+
 function hasD1Binding(): boolean {
   try {
     const context = getCloudflareContext() as { env?: CloudflareEnvLike } | undefined;
@@ -237,6 +246,7 @@ async function ensureHotSchema(): Promise<void> {
           id TEXT PRIMARY KEY,
           user_id INTEGER NOT NULL,
           game_type TEXT NOT NULL,
+          difficulty TEXT,
           score INTEGER NOT NULL,
           points_earned INTEGER NOT NULL,
           created_at INTEGER NOT NULL,
@@ -298,6 +308,17 @@ async function ensureHotSchema(): Promise<void> {
       for (const statement of statements) {
         await db.prepare(statement).run();
       }
+
+      const gameRecordColumns = await db
+        .prepare("PRAGMA table_info(native_game_records)")
+        .all<{ name: string }>();
+      if (!gameRecordColumns.results.some((column) => column.name === "difficulty")) {
+        await db.prepare("ALTER TABLE native_game_records ADD COLUMN difficulty TEXT").run();
+      }
+      await db.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_native_game_records_game_difficulty_created_at
+          ON native_game_records(game_type, difficulty, created_at DESC)`,
+      ).run();
 
       schemaReady = true;
     })();
@@ -1232,6 +1253,7 @@ export async function completeNativeGameSettlement<T extends {
   score: number;
   pointsEarned: number;
   createdAt: number;
+  difficulty?: unknown;
 }>(
   record: T,
   sessionId: string,
@@ -1245,12 +1267,13 @@ export async function completeNativeGameSettlement<T extends {
   const statements: D1PreparedStatement[] = [
     db.prepare(
       `INSERT OR REPLACE INTO native_game_records
-       (id, user_id, game_type, score, points_earned, created_at, payload_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (id, user_id, game_type, difficulty, score, points_earned, created_at, payload_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       record.id,
       record.userId,
       record.gameType,
+      normalizeStoredDifficulty(record.difficulty),
       record.score,
       record.pointsEarned,
       record.createdAt,
@@ -1374,6 +1397,7 @@ export async function getNativeGameLeaderboardRows(
   startAt: number,
   endAt: number,
   limit: number,
+  difficulty?: string | null,
 ): Promise<Array<{
   userId: number;
   username: string;
@@ -1387,23 +1411,28 @@ export async function getNativeGameLeaderboardRows(
     return [];
   }
 
-  const rows = await getHotDb()
-    .prepare(
-      `SELECT
-         r.user_id AS userId,
-         COALESCE(u.username, '#' || r.user_id) AS username,
-         SUM(r.score) AS totalScore,
-         SUM(r.points_earned) AS totalPoints,
-         MAX(r.score) AS bestScore,
-         COUNT(*) AS gamesPlayed
-       FROM native_game_records r
-       LEFT JOIN native_users u ON u.user_id = r.user_id
-       WHERE r.game_type = ? AND r.created_at >= ? AND r.created_at < ?
-       GROUP BY r.user_id
-       ORDER BY totalScore DESC, totalPoints DESC, gamesPlayed DESC, r.user_id ASC
-       LIMIT ?`,
-    )
-    .bind(gameType, startAt, endAt, limit)
+  const difficultyFilter = normalizeStoredDifficulty(difficulty);
+  const difficultyClause = difficultyFilter
+    ? " AND COALESCE(NULLIF(r.difficulty, ''), 'normal') = ?"
+    : "";
+  const statement = getHotDb().prepare(
+    `SELECT
+       r.user_id AS userId,
+       COALESCE(u.username, '#' || r.user_id) AS username,
+       SUM(r.score) AS totalScore,
+       SUM(r.points_earned) AS totalPoints,
+       MAX(r.score) AS bestScore,
+       COUNT(*) AS gamesPlayed
+     FROM native_game_records r
+     LEFT JOIN native_users u ON u.user_id = r.user_id
+     WHERE r.game_type = ? AND r.created_at >= ? AND r.created_at < ?${difficultyClause}
+     GROUP BY r.user_id
+     ORDER BY bestScore DESC, totalPoints DESC, gamesPlayed ASC, r.user_id ASC
+     LIMIT ?`,
+  );
+  const rows = await (difficultyFilter
+    ? statement.bind(gameType, startAt, endAt, difficultyFilter, limit)
+    : statement.bind(gameType, startAt, endAt, limit))
     .all<{
       userId: number;
       username: string;
@@ -1829,6 +1858,7 @@ export async function replaceNativeGameRecords<T extends {
   score?: number;
   pointsEarned?: number;
   createdAt?: number;
+  difficulty?: unknown;
 }>(
   userId: number,
   gameType: GameType,
@@ -1847,12 +1877,13 @@ export async function replaceNativeGameRecords<T extends {
   await db.batch(records.map((record) =>
     db.prepare(
       `INSERT OR REPLACE INTO native_game_records
-       (id, user_id, game_type, score, points_earned, created_at, payload_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (id, user_id, game_type, difficulty, score, points_earned, created_at, payload_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       record.id,
       userId,
       gameType,
+      normalizeStoredDifficulty(record.difficulty),
       Math.floor(Number(record.score ?? 0)),
       Math.floor(Number(record.pointsEarned ?? 0)),
       Math.floor(Number(record.createdAt ?? nowMs())),

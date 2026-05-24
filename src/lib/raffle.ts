@@ -5,15 +5,16 @@
 import { kv } from '@/lib/d1-kv';
 import { randomInt } from "crypto";
 import { nanoid } from "nanoid";
-import { creditQuotaToUser } from "./new-api";
 import { maskUserId } from "./logging";
 import { createUserNotification } from './notifications';
 import { withKvLock } from './economy-lock';
+import { addPoints } from './points';
 import type {
   Raffle,
   RafflePrize,
   RaffleEntry,
   RaffleWinner,
+  RaffleMode,
   RaffleStatus,
   CreateRaffleInput,
   UpdateRaffleInput,
@@ -47,6 +48,90 @@ const DELIVERY_IDEMPOTENCY_PROCESSING_TTL_SECONDS = 15 * 60; // 单笔发奖 pro
 const DELIVERY_IDEMPOTENCY_UNCERTAIN_TTL_SECONDS = 24 * 60 * 60; // uncertain 状态保留 24 小时
 const DELIVERY_IDEMPOTENCY_DELIVERED_TTL_SECONDS = 90 * 24 * 60 * 60; // delivered 幂等状态保留 90 天
 
+export function normalizeRaffleRewardPoints(
+  pointsValue: unknown,
+  legacyDollarsValue?: unknown
+): number | null {
+  const toPositivePoints = (value: unknown): number | null => {
+    const points = Number(value);
+    if (!Number.isFinite(points) || points <= 0) {
+      return null;
+    }
+    const rounded = Math.round(points);
+    return rounded > 0 ? rounded : null;
+  };
+
+  const normalizedPoints = toPositivePoints(pointsValue);
+  if (normalizedPoints !== null) {
+    return normalizedPoints;
+  }
+
+  return toPositivePoints(legacyDollarsValue);
+}
+
+export function getRaffleMode(raffle: Pick<Raffle, "mode"> | null | undefined): RaffleMode {
+  return raffle?.mode === "red_packet" ? "red_packet" : "draw";
+}
+
+function normalizePositiveInteger(value: unknown, fieldName: string): number {
+  const normalized = Number(value);
+  if (!Number.isSafeInteger(normalized) || normalized <= 0) {
+    throw new Error(`${fieldName}必须为正整数`);
+  }
+  return normalized;
+}
+
+export function normalizeRedPacketConfig(input: {
+  redPacketTotalPoints?: unknown;
+  redPacketTotalSlots?: unknown;
+}): { totalPoints: number; totalSlots: number } {
+  const totalPoints = normalizePositiveInteger(input.redPacketTotalPoints, "红包总积分");
+  const totalSlots = normalizePositiveInteger(input.redPacketTotalSlots, "可参与人数");
+
+  if (totalPoints < totalSlots) {
+    throw new Error("红包总积分不能小于可参与人数");
+  }
+
+  return { totalPoints, totalSlots };
+}
+
+export function buildRedPacketPackets(totalPointsValue: unknown, totalSlotsValue: unknown): number[] {
+  const { totalPoints, totalSlots } = normalizeRedPacketConfig({
+    redPacketTotalPoints: totalPointsValue,
+    redPacketTotalSlots: totalSlotsValue,
+  });
+
+  if (totalSlots === 1) {
+    return [totalPoints];
+  }
+
+  const packets: number[] = [];
+  let remainingPoints = totalPoints;
+  let remainingSlots = totalSlots;
+
+  while (remainingSlots > 1) {
+    const maxValue = remainingPoints - remainingSlots + 1;
+    const average = remainingPoints / remainingSlots;
+    const cap = Math.max(1, Math.min(maxValue, Math.floor(average * 2)));
+    const safeCap = Math.min(cap, 2 ** 48 - 1);
+    const value = randomInt(1, safeCap + 1);
+    packets.push(value);
+    remainingPoints -= value;
+    remainingSlots -= 1;
+  }
+
+  packets.push(remainingPoints);
+  return shuffleArray(packets);
+}
+
+function getRafflePrizePoints(prize: Pick<RafflePrize, "points" | "dollars">): number {
+  return normalizeRaffleRewardPoints(prize.points, prize.dollars) ?? 0;
+}
+
+function getRaffleWinnerPoints(winner: Pick<RaffleWinner, "points" | "dollars">): number {
+  return normalizeRaffleRewardPoints(winner.points, winner.dollars) ?? 0;
+}
+
 function getRaffleJoinLockKey(raffleId: string): string {
   return `${RAFFLE_JOIN_LOCK_PREFIX}${raffleId}`;
 }
@@ -57,6 +142,29 @@ async function withRaffleJoinLock<T>(raffleId: string, handler: () => Promise<T>
     maxRetries: 120,
     retryMs: 20,
     timeoutMessage: 'RAFFLE_JOIN_BUSY',
+  });
+}
+
+function buildRafflePrizes(inputPrizes: CreateRaffleInput["prizes"]): RafflePrize[] {
+  const rawPrizes = inputPrizes ?? [];
+  if (rawPrizes.length === 0) {
+    throw new Error("请至少配置一个奖品");
+  }
+
+  return rawPrizes.map((p) => {
+    const points = normalizeRaffleRewardPoints(p.points, p.dollars);
+    if (points === null) {
+      throw new Error("奖品积分必须大于0");
+    }
+
+    const quantity = normalizePositiveInteger(p.quantity, "奖品数量");
+
+    return {
+      id: nanoid(8),
+      name: p.name,
+      points,
+      quantity,
+    };
   });
 }
 
@@ -71,24 +179,28 @@ export async function createRaffle(
 ): Promise<Raffle> {
   const now = Date.now();
   const id = nanoid(12);
+  const mode = input.mode === "red_packet" ? "red_packet" : "draw";
+  const redPacketConfig = mode === "red_packet" ? normalizeRedPacketConfig(input) : null;
 
-  // 为每个奖品生成ID
-  const prizes: RafflePrize[] = input.prizes.map((p) => ({
-    ...p,
-    id: nanoid(8),
-  }));
+  // 为每个奖品生成ID，并把历史额度字段统一归一化为站内积分。
+  const prizes: RafflePrize[] = mode === "draw" ? buildRafflePrizes(input.prizes) : [];
 
   const raffle: Raffle = {
     id,
+    mode,
     title: input.title,
     description: input.description,
     coverImage: input.coverImage,
     prizes,
-    triggerType: input.triggerType,
-    threshold: input.threshold,
+    triggerType: mode === "draw" ? (input.triggerType ?? "threshold") : "manual",
+    threshold: mode === "draw" ? (input.threshold ?? 1) : redPacketConfig?.totalSlots ?? 1,
     status: "draft",
     participantsCount: 0,
     winnersCount: 0,
+    redPacketTotalPoints: redPacketConfig?.totalPoints,
+    redPacketTotalSlots: redPacketConfig?.totalSlots,
+    redPacketRemainingPoints: redPacketConfig?.totalPoints,
+    redPacketRemainingSlots: redPacketConfig?.totalSlots,
     createdBy,
     createdAt: now,
     updatedAt: now,
@@ -123,24 +235,37 @@ export async function updateRaffle(
   }
 
   const now = Date.now();
-  let prizes = raffle.prizes;
+  const currentMode = getRaffleMode(raffle);
+  const nextMode = input.mode === "red_packet" ? "red_packet" : input.mode === "draw" ? "draw" : currentMode;
+  const prizes = nextMode === "draw"
+    ? input.prizes
+      ? buildRafflePrizes(input.prizes)
+      : currentMode === "draw"
+        ? raffle.prizes
+        : buildRafflePrizes([])
+    : [];
 
-  // 如果更新了奖品，需要重新生成ID
-  if (input.prizes) {
-    prizes = input.prizes.map((p) => ({
-      ...p,
-      id: nanoid(8),
-    }));
-  }
+  const nextRedPacketConfig = nextMode === "red_packet"
+    ? normalizeRedPacketConfig({
+        redPacketTotalPoints: input.redPacketTotalPoints ?? raffle.redPacketTotalPoints,
+        redPacketTotalSlots: input.redPacketTotalSlots ?? raffle.redPacketTotalSlots,
+      })
+    : null;
 
   const updated: Raffle = {
     ...raffle,
+    mode: nextMode,
     title: input.title ?? raffle.title,
     description: input.description ?? raffle.description,
     coverImage: input.coverImage ?? raffle.coverImage,
     prizes,
-    triggerType: input.triggerType ?? raffle.triggerType,
-    threshold: input.threshold ?? raffle.threshold,
+    triggerType: nextMode === "draw" ? (input.triggerType ?? raffle.triggerType ?? "threshold") : "manual",
+    threshold: nextMode === "draw" ? (input.threshold ?? raffle.threshold ?? 1) : nextRedPacketConfig?.totalSlots ?? 1,
+    redPacketTotalPoints: nextRedPacketConfig?.totalPoints,
+    redPacketTotalSlots: nextRedPacketConfig?.totalSlots,
+    redPacketRemainingPoints: nextRedPacketConfig?.totalPoints,
+    redPacketRemainingSlots: nextRedPacketConfig?.totalSlots,
+    redPacketPackets: undefined,
     updatedAt: now,
   };
 
@@ -182,21 +307,51 @@ export async function publishRaffle(id: string): Promise<Raffle | null> {
     throw new Error("只能发布草稿状态的活动");
   }
 
-  // 验证奖品配置
-  if (raffle.prizes.length === 0) {
-    throw new Error("请至少配置一个奖品");
-  }
+  const mode = getRaffleMode(raffle);
+  let updated: Raffle;
 
-  const totalQuantity = raffle.prizes.reduce((sum, p) => sum + p.quantity, 0);
-  if (totalQuantity === 0) {
-    throw new Error("奖品总数量必须大于0");
-  }
+  if (mode === "red_packet") {
+    const { totalPoints, totalSlots } = normalizeRedPacketConfig({
+      redPacketTotalPoints: raffle.redPacketTotalPoints,
+      redPacketTotalSlots: raffle.redPacketTotalSlots,
+    });
+    const packets = buildRedPacketPackets(totalPoints, totalSlots);
 
-  const updated: Raffle = {
-    ...raffle,
-    status: "active",
-    updatedAt: Date.now(),
-  };
+    updated = {
+      ...raffle,
+      mode,
+      prizes: [],
+      triggerType: "manual",
+      threshold: totalSlots,
+      status: "active",
+      participantsCount: 0,
+      winnersCount: 0,
+      winners: [],
+      redPacketTotalPoints: totalPoints,
+      redPacketTotalSlots: totalSlots,
+      redPacketRemainingPoints: totalPoints,
+      redPacketRemainingSlots: totalSlots,
+      redPacketPackets: packets,
+      updatedAt: Date.now(),
+    };
+  } else {
+    // 验证奖品配置
+    if (raffle.prizes.length === 0) {
+      throw new Error("请至少配置一个奖品");
+    }
+
+    const totalQuantity = raffle.prizes.reduce((sum, p) => sum + p.quantity, 0);
+    if (totalQuantity === 0) {
+      throw new Error("奖品总数量必须大于0");
+    }
+
+    updated = {
+      ...raffle,
+      mode,
+      status: "active",
+      updatedAt: Date.now(),
+    };
+  }
 
   await Promise.all([
     kv.set(`${RAFFLE_PREFIX}${id}`, updated),
@@ -265,6 +420,7 @@ export async function getRaffleList(options?: {
   // 分页
   return result.slice(offset, offset + limit).map((r) => ({
     id: r.id,
+    mode: getRaffleMode(r),
     title: r.title,
     description: r.description,
     coverImage: r.coverImage,
@@ -275,6 +431,10 @@ export async function getRaffleList(options?: {
     participantsCount: r.participantsCount,
     winnersCount: r.winnersCount,
     drawnAt: r.drawnAt,
+    redPacketTotalPoints: r.redPacketTotalPoints,
+    redPacketTotalSlots: r.redPacketTotalSlots,
+    redPacketRemainingPoints: r.redPacketRemainingPoints,
+    redPacketRemainingSlots: r.redPacketRemainingSlots,
     createdAt: r.createdAt,
   }));
 }
@@ -294,6 +454,7 @@ export async function getActiveRaffles(): Promise<RaffleListItem[]> {
     .sort((a, b) => b.createdAt - a.createdAt)
     .map((r) => ({
       id: r.id,
+      mode: getRaffleMode(r),
       title: r.title,
       description: r.description,
       coverImage: r.coverImage,
@@ -304,6 +465,10 @@ export async function getActiveRaffles(): Promise<RaffleListItem[]> {
       participantsCount: r.participantsCount,
       winnersCount: r.winnersCount,
       drawnAt: r.drawnAt,
+      redPacketTotalPoints: r.redPacketTotalPoints,
+      redPacketTotalSlots: r.redPacketTotalSlots,
+      redPacketRemainingPoints: r.redPacketRemainingPoints,
+      redPacketRemainingSlots: r.redPacketRemainingSlots,
       createdAt: r.createdAt,
     }));
 }
@@ -331,6 +496,10 @@ export async function joinRaffle(
 
     const raffle = await kv.get<Raffle>(raffleKey);
     if (!raffle) return { success: false, message: "活动不存在" };
+
+    if (getRaffleMode(raffle) === "red_packet") {
+      return { success: false, message: "请使用抢红包入口参与活动" };
+    }
 
     const drawLockExists = await kv.exists(drawLockKey);
     if (drawLockExists) return { success: false, message: "活动正在开奖，请稍后再试" };
@@ -395,6 +564,199 @@ export async function joinRaffle(
       if (entryWritten) {
         await kv.lrem(entriesKey, 1, entry).catch((rollbackError) => {
           console.error('Rollback raffle entry list failed:', rollbackError);
+        });
+      }
+      throw error;
+    }
+  });
+}
+
+function sumRedPacketPackets(packets: number[]): number {
+  return packets.reduce((sum, value) => sum + value, 0);
+}
+
+function normalizeRemainingRedPacketPackets(raffle: Raffle): number[] {
+  const packets = Array.isArray(raffle.redPacketPackets)
+    ? raffle.redPacketPackets.filter((value) => Number.isSafeInteger(value) && value > 0)
+    : [];
+  const fallbackSlots = raffle.redPacketRemainingSlots ?? packets.length;
+  const fallbackPoints = raffle.redPacketRemainingPoints ?? sumRedPacketPackets(packets);
+
+  if (
+    packets.length > 0
+    && packets.length === fallbackSlots
+    && sumRedPacketPackets(packets) === fallbackPoints
+  ) {
+    return [...packets];
+  }
+
+  if (fallbackSlots > 0 && fallbackPoints >= fallbackSlots) {
+    return buildRedPacketPackets(fallbackPoints, fallbackSlots);
+  }
+
+  return [];
+}
+
+/**
+ * 抢红包（使用活动级串行锁保证不超发）
+ */
+export async function grabRedPacket(
+  raffleId: string,
+  userId: number,
+  username: string
+): Promise<JoinRaffleResult> {
+  return withRaffleJoinLock(raffleId, async () => {
+    const raffleKey = `${RAFFLE_PREFIX}${raffleId}`;
+    const entriesKey = `${RAFFLE_ENTRIES_PREFIX}${raffleId}`;
+    const participantsKey = `${RAFFLE_PARTICIPANTS_PREFIX}${raffleId}`;
+    const entryCountKey = `${RAFFLE_ENTRY_COUNT_PREFIX}${raffleId}`;
+    const userRafflesKey = `${USER_RAFFLES_PREFIX}${userId}`;
+
+    const now = Date.now();
+    const entryId = `entry_${now}_${nanoid(8)}`;
+
+    const raffle = await kv.get<Raffle>(raffleKey);
+    if (!raffle) return { success: false, message: "活动不存在" };
+
+    if (getRaffleMode(raffle) !== "red_packet") {
+      return { success: false, message: "当前活动不是抢红包" };
+    }
+
+    if (raffle.status !== "active") {
+      if (raffle.status === "draft") return { success: false, message: "活动尚未开始" };
+      if (raffle.status === "ended") return { success: false, message: "红包已抢完" };
+      if (raffle.status === "cancelled") return { success: false, message: "活动已取消" };
+      return { success: false, message: "活动状态异常" };
+    }
+
+    const alreadyJoined = await kv.sismember(participantsKey, userId);
+    if (alreadyJoined === 1) return { success: false, message: "您已经抢过红包了" };
+
+    const packets = normalizeRemainingRedPacketPackets(raffle);
+    const packetAmount = packets.shift();
+
+    if (typeof packetAmount !== "number" || !Number.isSafeInteger(packetAmount) || packetAmount <= 0) {
+      const ended: Raffle = {
+        ...raffle,
+        status: "ended",
+        drawnAt: raffle.drawnAt ?? now,
+        redPacketRemainingPoints: 0,
+        redPacketRemainingSlots: 0,
+        redPacketPackets: [],
+        updatedAt: now,
+      };
+      await Promise.all([
+        kv.set(raffleKey, ended),
+        kv.srem(RAFFLE_ACTIVE_KEY, raffleId),
+      ]);
+      return { success: false, message: "红包已抢完" };
+    }
+
+    const amount = packetAmount;
+    const entryNumber = await kv.incr(entryCountKey);
+    const entry: RaffleEntry = {
+      id: entryId,
+      raffleId,
+      userId,
+      username,
+      entryNumber,
+      createdAt: now,
+    };
+
+    const remainingPoints = sumRedPacketPackets(packets);
+    const isLastPacket = packets.length === 0;
+    const winner: RaffleWinner = {
+      entryId,
+      userId,
+      username,
+      prizeId: "red_packet",
+      prizeName: "抢红包",
+      points: amount,
+      rewardStatus: "pending",
+    };
+
+    const originalRaffle: Raffle = { ...raffle };
+    let entryWritten = false;
+    let participantWritten = false;
+    let userRaffleWritten = false;
+    let raffleUpdated = false;
+
+    try {
+      await kv.lpush(entriesKey, entry);
+      entryWritten = true;
+      await kv.sadd(participantsKey, userId);
+      participantWritten = true;
+      await kv.sadd(userRafflesKey, raffleId);
+      userRaffleWritten = true;
+
+      const updated: Raffle = {
+        ...raffle,
+        mode: "red_packet",
+        participantsCount: (raffle.participantsCount ?? 0) + 1,
+        winnersCount: (raffle.winnersCount ?? 0) + 1,
+        winners: [...(raffle.winners ?? []), winner],
+        status: isLastPacket ? "ended" : "active",
+        drawnAt: isLastPacket ? now : raffle.drawnAt,
+        redPacketRemainingPoints: remainingPoints,
+        redPacketRemainingSlots: packets.length,
+        redPacketPackets: packets,
+        updatedAt: now,
+      };
+
+      const updateTasks: Promise<unknown>[] = [kv.set(raffleKey, updated)];
+      if (isLastPacket) {
+        updateTasks.push(kv.srem(RAFFLE_ACTIVE_KEY, raffleId));
+      }
+      await Promise.all(updateTasks);
+      raffleUpdated = true;
+
+      try {
+        const deliveryResults = await deliverRewards(raffleId, [winner]);
+        const deliveryResult = deliveryResults[0];
+        const latestRaffle = await getRaffle(raffleId);
+        const deliveredWinner = latestRaffle?.winners?.find((item) => item.entryId === entryId) ?? winner;
+
+        return {
+          success: true,
+          message: deliveryResult?.success
+            ? `抢到 ${amount} 积分，已到账`
+            : `抢到 ${amount} 积分，发放确认中`,
+          entry,
+          reward: deliveredWinner,
+        };
+      } catch (deliveryError) {
+        console.error("红包积分发放确认失败", {
+          raffleId,
+          userId: maskUserId(userId),
+          error: deliveryError,
+        });
+
+        return {
+          success: true,
+          message: `抢到 ${amount} 积分，发放确认中`,
+          entry,
+          reward: winner,
+        };
+      }
+    } catch (error) {
+      if (raffleUpdated) {
+        await kv.set(raffleKey, originalRaffle).catch((rollbackError) => {
+          console.error("Rollback red packet raffle failed:", rollbackError);
+        });
+      }
+      if (userRaffleWritten) {
+        await kv.srem(userRafflesKey, raffleId).catch((rollbackError) => {
+          console.error("Rollback user raffle index failed:", rollbackError);
+        });
+      }
+      if (participantWritten) {
+        await kv.srem(participantsKey, userId).catch((rollbackError) => {
+          console.error("Rollback red packet participant membership failed:", rollbackError);
+        });
+      }
+      if (entryWritten) {
+        await kv.lrem(entriesKey, 1, entry).catch((rollbackError) => {
+          console.error("Rollback red packet entry list failed:", rollbackError);
         });
       }
       throw error;
@@ -791,6 +1153,10 @@ export async function executeRaffleDraw(
         return { success: false as const, message: "活动不存在", winners: [] as RaffleWinner[] };
       }
 
+      if (getRaffleMode(raffle) === "red_packet") {
+        return { success: false as const, message: "抢红包活动无需开奖", winners: [] as RaffleWinner[] };
+      }
+
       if (raffle.status !== "active") {
         return { success: false as const, message: "活动状态不是进行中", winners: [] as RaffleWinner[] };
       }
@@ -832,7 +1198,7 @@ export async function executeRaffleDraw(
             username: entry.username,
             prizeId: prize.id,
             prizeName: prize.name,
-            dollars: prize.dollars,
+            points: getRafflePrizePoints(prize),
             rewardStatus: "pending",
           });
           winnerIndex++;
@@ -1048,120 +1414,77 @@ async function deliverRewards(
       }
 
       try {
-        const creditResult = await creditQuotaToUser(winner.userId, winner.dollars) as
-          { success: boolean; message: string; newQuota?: number; uncertain?: boolean };
+        const points = getRaffleWinnerPoints(winner);
+        if (points <= 0) {
+          throw new Error("奖品积分配置异常");
+        }
 
-        if (creditResult.success) {
-          await setDeliveryIdempotencyState(
+        const pointsResult = await addPoints(
+          winner.userId,
+          points,
+          "raffle_win",
+          `多人抽奖：${raffle.title} - ${winner.prizeName}`
+        );
+        const successMessage = `已发放 ${points} 积分，当前余额 ${pointsResult.balance}`;
+
+        await setDeliveryIdempotencyState(
+          raffleId,
+          winner.entryId,
+          {
+            status: "delivered",
+            updatedAt: Date.now(),
+            message: successMessage,
+          },
+          DELIVERY_IDEMPOTENCY_DELIVERED_TTL_SECONDS
+        );
+
+        const deliveredWinner: RaffleWinner = {
+          ...winner,
+          points,
+          rewardStatus: "delivered",
+          rewardMessage: successMessage,
+          rewardAttemptedAt: attemptedAt,
+          rewardAttempts,
+          deliveredAt: Date.now(),
+        };
+
+        try {
+          // 记录到用户中奖列表（非关键链路，失败仅记录日志，避免误判为发放失败）
+          await kv.lpush(`${USER_RAFFLE_WINS_PREFIX}${winner.userId}`, {
             raffleId,
-            winner.entryId,
-            {
-              status: "delivered",
-              updatedAt: Date.now(),
-              message: creditResult.message,
-            },
-            DELIVERY_IDEMPOTENCY_DELIVERED_TTL_SECONDS
-          );
+            raffleTitle: raffle.title,
+            ...deliveredWinner,
+          });
+        } catch (logError) {
+          console.error("记录中奖记录失败", { userId: maskUserId(winner.userId), error: logError });
+        }
 
-          const deliveredWinner: RaffleWinner = {
-            ...winner,
-            rewardStatus: "delivered",
-            rewardMessage: creditResult.message,
-            rewardAttemptedAt: attemptedAt,
-            rewardAttempts,
-            deliveredAt: Date.now(),
-          };
-
-          try {
-            // 记录到用户中奖列表（非关键链路，失败仅记录日志，避免误判为发放失败）
-            await kv.lpush(`${USER_RAFFLE_WINS_PREFIX}${winner.userId}`, {
+        try {
+          await createUserNotification({
+            userId: winner.userId,
+            type: 'raffle_win',
+            title: '多人抽奖中奖：' + raffle.title,
+            content: '恭喜获得 ' + winner.prizeName + '（' + points + ' 积分）',
+            data: {
               raffleId,
-              raffleTitle: raffle.title,
-              ...deliveredWinner,
-            });
-          } catch (logError) {
-            console.error("记录中奖记录失败", { userId: maskUserId(winner.userId), error: logError });
-          }
-
-          try {
-            await createUserNotification({
-              userId: winner.userId,
-              type: 'raffle_win',
-              title: '多人抽奖中奖：' + raffle.title,
-              content: '恭喜获得 ' + winner.prizeName + '（$' + winner.dollars + '）',
-              data: {
-                raffleId,
-                prizeName: winner.prizeName,
-                dollars: winner.dollars,
-                entryId: winner.entryId,
-              },
-            });
-          } catch (notifyError) {
-            console.error("记录中奖通知失败", { userId: maskUserId(winner.userId), error: notifyError });
-          }
-
-          return {
-            winnerIndex,
-            winner: deliveredWinner,
-            result: {
-              userId: winner.userId,
-              username: winner.username,
               prizeName: winner.prizeName,
-              success: true,
-              message: creditResult.message,
+              points,
+              entryId: winner.entryId,
             },
-          };
+          });
+        } catch (notifyError) {
+          console.error("记录中奖通知失败", { userId: maskUserId(winner.userId), error: notifyError });
         }
-
-        if (creditResult.uncertain) {
-          await setDeliveryIdempotencyState(
-            raffleId,
-            winner.entryId,
-            {
-              status: "uncertain",
-              updatedAt: Date.now(),
-              message: creditResult.message,
-            },
-            DELIVERY_IDEMPOTENCY_UNCERTAIN_TTL_SECONDS
-          );
-
-          // 结果不确定：保持 winner pending，避免重复发放
-          return {
-            winnerIndex,
-            winner: {
-              ...winner,
-              rewardStatus: "pending",
-              rewardMessage: creditResult.message,
-              rewardAttemptedAt: attemptedAt,
-              rewardAttempts,
-            },
-            result: {
-              userId: winner.userId,
-              username: winner.username,
-              prizeName: winner.prizeName,
-              success: false,
-              message: creditResult.message,
-            },
-          };
-        }
-
-        await clearDeliveryIdempotencyState(raffleId, winner.entryId);
 
         return {
           winnerIndex,
-          winner: {
-            ...winner,
-            rewardStatus: "failed",
-            rewardMessage: creditResult.message,
-            rewardAttemptedAt: attemptedAt,
-            rewardAttempts,
-          },
+          winner: deliveredWinner,
           result: {
             userId: winner.userId,
             username: winner.username,
             prizeName: winner.prizeName,
-            success: false,
-            message: creditResult.message,
+            success: true,
+            message: successMessage,
           },
         };
       } catch (error) {
@@ -1440,27 +1763,47 @@ export async function retryFailedRewards(
       return { success: false, message: "活动不存在" };
     }
 
-    if (raffle.status !== "ended" || !raffle.winners) {
-      return { success: false, message: "活动未开奖或无中奖者" };
-    }
+    const mode = getRaffleMode(raffle);
 
-    const now = Date.now();
-    const retryCandidates = getRetryableWinners(raffle, now);
+    const retryWithCurrentRaffle = async (currentRaffle: Raffle): Promise<DrawRaffleResult> => {
+      const retryableStatus = mode === "red_packet"
+        ? currentRaffle.status === "active" || currentRaffle.status === "ended"
+        : currentRaffle.status === "ended";
 
-    const failedCount = retryCandidates.filter((winner) => winner.rewardStatus === "failed").length;
-    const pendingCount = retryCandidates.length - failedCount;
+      if (!retryableStatus || !currentRaffle.winners) {
+        return { success: false, message: "活动未产生可重试的奖励记录" };
+      }
 
-    if (retryCandidates.length === 0) {
-      return { success: true, message: "没有需要重试的奖励" };
-    }
+      const now = Date.now();
+      const retryCandidates = getRetryableWinners(currentRaffle, now);
 
-    const deliveryResults = await deliverRewards(raffleId, retryCandidates);
+      const failedCount = retryCandidates.filter((winner) => winner.rewardStatus === "failed").length;
+      const pendingCount = retryCandidates.length - failedCount;
 
-    return {
-      success: true,
-      message: `重试完成（失败 ${failedCount} 笔 + 超时待确认 ${pendingCount} 笔），${deliveryResults.filter((r) => r.success).length}/${retryCandidates.length} 成功`,
-      deliveryResults,
+      if (retryCandidates.length === 0) {
+        return { success: true, message: "没有需要重试的奖励" };
+      }
+
+      const deliveryResults = await deliverRewards(raffleId, retryCandidates);
+
+      return {
+        success: true,
+        message: `重试完成（失败 ${failedCount} 笔 + 超时待确认 ${pendingCount} 笔），${deliveryResults.filter((r) => r.success).length}/${retryCandidates.length} 成功`,
+        deliveryResults,
+      };
     };
+
+    if (mode === "red_packet") {
+      return await withRaffleJoinLock(raffleId, async () => {
+        const latestRaffle = await getRaffle(raffleId);
+        if (!latestRaffle) {
+          return { success: false, message: "活动不存在" };
+        }
+        return retryWithCurrentRaffle(latestRaffle);
+      });
+    }
+
+    return await retryWithCurrentRaffle(raffle);
   } finally {
     await releaseDrawLock(raffleId, lockToken);
   }

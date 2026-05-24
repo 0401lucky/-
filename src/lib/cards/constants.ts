@@ -1,6 +1,7 @@
 import type { Rarity } from "./types";
 
 export const CARD_IMAGE_BASE_PATH = "/images/动物卡";
+export const OPTIMIZED_IMAGE_BASE_PATH = "/images-optimized";
 export const CARD_BACK_BASE_PATH = "/images/通用1";
 
 export const RARITY_PROBABILITIES: Record<Rarity, number> = {
@@ -62,3 +63,12 @@ export const COLLECTION_REWARDS: Record<Rarity | 'full_set', number> = {
 };
 
 export const getCardImagePath = (name: string) => `${CARD_IMAGE_BASE_PATH}/${name}.png`;
+
+export type OptimizedImageVariant = 'thumb' | 'large';
+
+export function getOptimizedImagePath(imagePath: string, variant: OptimizedImageVariant = 'large'): string {
+  if (!imagePath.startsWith('/images/')) return imagePath;
+  return imagePath
+    .replace(/^\/images\//, `${OPTIMIZED_IMAGE_BASE_PATH}/${variant}/`)
+    .replace(/\.(png|jpe?g)$/i, '.webp');
+}

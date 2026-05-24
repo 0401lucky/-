@@ -33,6 +33,7 @@ interface BaseRecord {
   score?: number;
   pointsEarned?: number;
   createdAt?: number;
+  difficulty?: string | null;
 }
 
 export interface GameLeaderboardEntry {
@@ -51,9 +52,17 @@ export interface GameLeaderboardEntry {
   gamesPlayed: number;
 }
 
+export interface GameDifficultyOption {
+  value: string;
+  label: string;
+}
+
 export interface GameRankingResult {
   gameType: SupportedRankingGame;
   leaderboard: GameLeaderboardEntry[];
+  selectedDifficulty?: string | null;
+  difficultyOptions?: GameDifficultyOption[];
+  leaderboardsByDifficulty?: Record<string, GameLeaderboardEntry[]>;
 }
 
 export interface OverallLeaderboardEntry {
@@ -132,6 +141,31 @@ const GAME_RECORD_KEY: Record<SupportedRankingGame, (userId: number) => string> 
   minesweeper: (userId) => `minesweeper:records:${userId}`,
 };
 
+const ALL_DIFFICULTY_OPTION: GameDifficultyOption = { value: 'all', label: '全部难度' };
+
+const GAME_DIFFICULTY_OPTIONS: Partial<Record<SupportedRankingGame, GameDifficultyOption[]>> = {
+  linkgame: [
+    { value: 'easy', label: '简单' },
+    { value: 'normal', label: '普通' },
+    { value: 'hard', label: '困难' },
+  ],
+  memory: [
+    { value: 'easy', label: '简单' },
+    { value: 'normal', label: '普通' },
+    { value: 'hard', label: '困难' },
+  ],
+  whack_mole: [
+    { value: 'easy', label: '简单' },
+    { value: 'normal', label: '普通' },
+    { value: 'hard', label: '困难' },
+  ],
+  minesweeper: [
+    { value: 'easy', label: '简单' },
+    { value: 'normal', label: '普通' },
+    { value: 'hard', label: '困难' },
+  ],
+};
+
 function getChinaDate(date: Date = new Date()): Date {
   return new Date(date.getTime() + CHINA_TZ_OFFSET_MS);
 }
@@ -197,13 +231,49 @@ function sortByScore<T extends { totalScore: number; totalPoints: number; gamesP
   });
 }
 
+function sortByBestScore<T extends { bestScore: number; totalPoints: number; gamesPlayed: number; userId: number }>(
+  list: T[]
+): T[] {
+  return [...list].sort((a, b) => {
+    if (b.bestScore !== a.bestScore) return b.bestScore - a.bestScore;
+    if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+    if (a.gamesPlayed !== b.gamesPlayed) return a.gamesPlayed - b.gamesPlayed;
+    return a.userId - b.userId;
+  });
+}
+
+function getDifficultyOptions(gameType: SupportedRankingGame, includeAll = false): GameDifficultyOption[] {
+  const options = GAME_DIFFICULTY_OPTIONS[gameType] ?? [];
+  return includeAll && options.length > 0 ? [ALL_DIFFICULTY_OPTION, ...options] : options;
+}
+
+function normalizeDifficultyFilter(gameType: SupportedRankingGame, value?: string | null): string | undefined {
+  if (!value || value === ALL_DIFFICULTY_OPTION.value) {
+    return undefined;
+  }
+
+  const options = getDifficultyOptions(gameType);
+  return options.some((option) => option.value === value) ? value : undefined;
+}
+
+function normalizeRecordDifficulty(gameType: SupportedRankingGame, value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  const options = getDifficultyOptions(gameType);
+  if (options.some((option) => option.value === raw)) {
+    return raw;
+  }
+
+  // 旧游戏记录没有 difficulty 字段，统一归入普通难度，避免历史成绩丢失。
+  return 'normal';
+}
+
 function getAllGamesLeaderboardCacheKey(
   period: RankingPeriod,
   options: { limitPerGame?: number; overallLimit?: number },
 ): string {
   const limitPerGame = Math.max(1, Math.min(100, Math.floor(options.limitPerGame ?? 20)));
   const overallLimit = Math.max(1, Math.min(100, Math.floor(options.overallLimit ?? 20)));
-  return `rankings:all-games:${period}:${limitPerGame}:${overallLimit}`;
+  return `rankings:all-games:v2-best:${period}:${limitPerGame}:${overallLimit}`;
 }
 
 function getPointsRankingCacheKey(period: PointsRankingPeriod, limit: number): string {
@@ -276,15 +346,19 @@ async function getRecordsInPeriod(
   gameType: SupportedRankingGame,
   startAt: number,
   endAt: number = Number.POSITIVE_INFINITY,
+  difficulty?: string | null,
 ): Promise<BaseRecord[]> {
   const key = GAME_RECORD_KEY[gameType](userId);
   const records = await kv.lrange<BaseRecord>(key, 0, MAX_RECORD_SCAN - 1);
   if (!Array.isArray(records)) return [];
 
+  const difficultyFilter = normalizeDifficultyFilter(gameType, difficulty);
   return records.filter((record) => {
     if (!record || typeof record !== 'object') return false;
     const createdAt = toFiniteNumber(record.createdAt);
-    return createdAt >= startAt && createdAt < endAt;
+    if (createdAt < startAt || createdAt >= endAt) return false;
+    if (!difficultyFilter) return true;
+    return normalizeRecordDifficulty(gameType, record.difficulty) === difficultyFilter;
   });
 }
 
@@ -293,9 +367,17 @@ async function getGameLeaderboardByRange(
   startAt: number,
   endAt: number,
   limit = 20,
+  difficulty?: string | null,
 ): Promise<GameLeaderboardEntry[]> {
+  const difficultyFilter = normalizeDifficultyFilter(gameType, difficulty);
   if (await isNativeHotStoreReady()) {
-    const rows = await getNativeGameLeaderboardRows(gameType, startAt, normalizeRangeEndAt(endAt), limit);
+    const rows = await getNativeGameLeaderboardRows(
+      gameType,
+      startAt,
+      normalizeRangeEndAt(endAt),
+      limit,
+      difficultyFilter,
+    );
     return rows.map((row, index) => ({
       rank: index + 1,
       userId: row.userId,
@@ -316,7 +398,7 @@ async function getGameLeaderboardByRange(
     .filter((u) => u.id > 0);
 
   const allRecords = await Promise.all(
-    validUsers.map((u) => getRecordsInPeriod(u.id, gameType, startAt, endAt))
+    validUsers.map((u) => getRecordsInPeriod(u.id, gameType, startAt, endAt, difficultyFilter))
   );
 
   const rows: Omit<GameLeaderboardEntry, 'rank'>[] = [];
@@ -336,7 +418,7 @@ async function getGameLeaderboardByRange(
     });
   }
 
-  return sortByScore(rows)
+  return sortByBestScore(rows)
     .slice(0, safeLimit)
     .map((item, index) => ({
       rank: index + 1,
@@ -348,9 +430,16 @@ export async function getGameLeaderboard(
   gameType: SupportedRankingGame,
   period: RankingPeriod,
   limit = 20,
+  difficulty?: string | null,
 ): Promise<GameLeaderboardEntry[]> {
   const startAt = getPeriodStartUtc(period);
-  const base = await getGameLeaderboardByRange(gameType, startAt, Number.POSITIVE_INFINITY, limit);
+  const base = await getGameLeaderboardByRange(
+    gameType,
+    startAt,
+    Number.POSITIVE_INFINITY,
+    limit,
+    difficulty,
+  );
   return enrichEntriesWithProfile(base);
 }
 
@@ -368,10 +457,42 @@ export async function getAllGamesLeaderboardByRange(
     gameTypes.map((gameType) => getGameLeaderboardByRange(gameType, startAt, endAt, limitPerGame))
   );
 
-  const gameResults: GameRankingResult[] = gameTypes.map((gameType, i) => ({
-    gameType,
-    leaderboard: allLeaderboards[i],
-  }));
+  const difficultyLeaderboards = await Promise.all(
+    gameTypes.map(async (gameType, index) => {
+      const options = getDifficultyOptions(gameType);
+      if (options.length === 0) {
+        return null;
+      }
+
+      const entries = await Promise.all(
+        options.map((option) => getGameLeaderboardByRange(
+          gameType,
+          startAt,
+          endAt,
+          limitPerGame,
+          option.value,
+        ))
+      );
+      return options.reduce<Record<string, GameLeaderboardEntry[]>>(
+        (acc, option, optionIndex) => {
+          acc[option.value] = entries[optionIndex];
+          return acc;
+        },
+        { [ALL_DIFFICULTY_OPTION.value]: allLeaderboards[index] },
+      );
+    })
+  );
+
+  const gameResults: GameRankingResult[] = gameTypes.map((gameType, i) => {
+    const options = getDifficultyOptions(gameType, true);
+    return {
+      gameType,
+      leaderboard: allLeaderboards[i],
+      selectedDifficulty: options.length > 0 ? ALL_DIFFICULTY_OPTION.value : null,
+      difficultyOptions: options.length > 0 ? options : undefined,
+      leaderboardsByDifficulty: difficultyLeaderboards[i] ?? undefined,
+    };
+  });
 
   const overallMap = new Map<number, Omit<OverallLeaderboardEntry, 'rank'>>();
 
@@ -504,17 +625,32 @@ export async function getAllGamesLeaderboard(
 }
 
 async function enrichAllGamesResult(result: AllGamesRankingResult): Promise<AllGamesRankingResult> {
-  const [enrichedOverall, ...enrichedGameLeaderboards] = await Promise.all([
+  const [enrichedOverall, ...enrichedGameGroups] = await Promise.all([
     enrichEntriesWithProfile(result.overall),
-    ...result.games.map((group) => enrichEntriesWithProfile(group.leaderboard)),
+    ...result.games.map(async (group) => {
+      const leaderboard = await enrichEntriesWithProfile(group.leaderboard);
+      if (!group.leaderboardsByDifficulty) {
+        return { ...group, leaderboard };
+      }
+
+      const enrichedDifficultyPairs = await Promise.all(
+        Object.entries(group.leaderboardsByDifficulty).map(async ([difficulty, entries]) => [
+          difficulty,
+          await enrichEntriesWithProfile(entries),
+        ] as const)
+      );
+
+      return {
+        ...group,
+        leaderboard,
+        leaderboardsByDifficulty: Object.fromEntries(enrichedDifficultyPairs),
+      };
+    }),
   ]);
   return {
     ...result,
     overall: enrichedOverall,
-    games: result.games.map((group, index) => ({
-      gameType: group.gameType,
-      leaderboard: enrichedGameLeaderboards[index],
-    })),
+    games: enrichedGameGroups,
   };
 }
 

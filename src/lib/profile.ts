@@ -10,7 +10,7 @@ import { MATCH3_WIN_SCORE } from './match3-engine';
 import { getMinesweeperRecords } from './minesweeper';
 import { getMemoryRecords } from './memory';
 import { getWhackMoleRecords } from './whack-mole';
-import { WHACK_MOLE_WIN_SCORE } from './whack-mole-engine';
+import { getWhackMoleDifficultyConfig, normalizeWhackMoleDifficulty } from './whack-mole-engine';
 import { getRogueliteRecords } from './roguelite';
 import { getLinkGameRecords } from './linkgame-server';
 import { getUserLotteryRecords } from './lottery';
@@ -174,7 +174,10 @@ async function getGameWinAchievementStats(userId: number): Promise<Pick<ProfileA
     memoryRecords.filter((record) => record.completed).length +
     minesweeperRecords.filter((record) => record.won).length +
     rogueliteRecords.filter((record) => record.won).length +
-    whackMoleRecords.filter((record) => record.score >= WHACK_MOLE_WIN_SCORE).length;
+    whackMoleRecords.filter((record) => {
+      const difficulty = normalizeWhackMoleDifficulty(record.difficulty);
+      return record.score >= getWhackMoleDifficultyConfig(difficulty).winScore;
+    }).length;
 
   return {
     gameWinRate: plays > 0 ? wins / plays : 0,

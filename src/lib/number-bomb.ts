@@ -316,7 +316,7 @@ async function settleSingleBet(date: string, userId: number, systemNumber: numbe
 
     void createUserNotification({
       userId,
-      type: 'reward',
+      type: won ? 'lottery_win' : 'system',
       title: '数字炸弹开奖通知',
       content: won
         ? `系统数字是 ${systemNumber}，你选择 ${bet.selectedNumber}，获得 ${rewardPoints} 积分，当前余额 ${balance}。`

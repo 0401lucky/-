@@ -79,7 +79,7 @@ describe('rankings', () => {
     mockSetNativeRankingCache.mockResolvedValue(undefined);
   });
 
-  it('builds game leaderboard and sorts by total score', async () => {
+  it('builds game leaderboard and sorts by best single score', async () => {
     const now = Date.now();
 
     mockKvLrange.mockImplementation(async (key: string) => {
@@ -100,15 +100,55 @@ describe('rankings', () => {
     expect(leaderboard).toHaveLength(2);
     expect(leaderboard[0]).toMatchObject({
       rank: 1,
-      userId: 1001,
-      totalScore: 200,
-      totalPoints: 50,
-      gamesPlayed: 2,
+      userId: 1002,
+      totalScore: 150,
+      bestScore: 150,
     });
     expect(leaderboard[1]).toMatchObject({
       rank: 2,
+      userId: 1001,
+      totalScore: 200,
+      totalPoints: 50,
+      bestScore: 120,
+      gamesPlayed: 2,
+    });
+  });
+
+  it('filters multi-difficulty game leaderboards by difficulty', async () => {
+    const now = Date.now();
+
+    mockKvLrange.mockImplementation(async (key: string) => {
+      if (key === 'minesweeper:records:1001') {
+        return [
+          { score: 300, pointsEarned: 30, difficulty: 'easy', createdAt: now - 1000 },
+          { score: 100, pointsEarned: 10, difficulty: 'normal', createdAt: now - 2000 },
+        ];
+      }
+      if (key === 'minesweeper:records:1002') {
+        return [{ score: 220, pointsEarned: 25, difficulty: 'normal', createdAt: now - 1000 }];
+      }
+      return [];
+    });
+
+    const normal = await getGameLeaderboard('minesweeper', 'daily', 10, 'normal');
+    expect(normal).toHaveLength(2);
+    expect(normal[0]).toMatchObject({
+      rank: 1,
       userId: 1002,
-      totalScore: 150,
+      bestScore: 220,
+    });
+    expect(normal[1]).toMatchObject({
+      rank: 2,
+      userId: 1001,
+      bestScore: 100,
+    });
+
+    const easy = await getGameLeaderboard('minesweeper', 'daily', 10, 'easy');
+    expect(easy).toHaveLength(1);
+    expect(easy[0]).toMatchObject({
+      rank: 1,
+      userId: 1001,
+      bestScore: 300,
     });
   });
 
@@ -172,7 +212,7 @@ describe('rankings', () => {
       overallLimit: 10,
     });
 
-    expect(mockGetNativeGameLeaderboardRows).toHaveBeenCalledTimes(6);
+    expect(mockGetNativeGameLeaderboardRows).toHaveBeenCalledTimes(18);
     for (const call of mockGetNativeGameLeaderboardRows.mock.calls) {
       expect(Number.isFinite(call[2])).toBe(true);
       expect(call[2]).toBe(8_640_000_000_000_000);

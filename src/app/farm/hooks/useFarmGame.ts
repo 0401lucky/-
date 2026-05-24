@@ -14,15 +14,15 @@ interface UseFarmGameReturn {
   toast: { type: 'info' | 'success' | 'error'; text: string } | null;
   setToast: (t: UseFarmGameReturn['toast']) => void;
   refresh: () => Promise<void>;
-  plant: (plotIndex: number, cropId: CropIdV2) => Promise<void>;
+  plant: (plotIndex: number, cropId: CropIdV2) => Promise<boolean>;
   water: (plotIndex: number) => Promise<void>;
   waterAll: () => Promise<void>;
   harvest: (plotIndex: number) => Promise<HarvestResult | null>;
   harvestAll: () => Promise<{ results: HarvestResult[]; total: number } | null>;
   removeWithered: (plotIndex: number) => Promise<void>;
   buyLand: (landIndex: number) => Promise<void>;
-  buyItem: (key: ShopItemKey, qty?: number) => Promise<void>;
-  buySeed: (cropId: CropIdV2, qty?: number) => Promise<void>;
+  buyItem: (key: ShopItemKey, qty?: number) => Promise<boolean>;
+  buySeed: (cropId: CropIdV2, qty?: number) => Promise<boolean>;
   useItem: (key: ShopItemKey, plotIndex?: number) => Promise<void>;
   adoptPet: (type: PetType, name?: string) => Promise<void>;
   feedPet: (kind: 'normal' | 'premium') => Promise<void>;
@@ -114,11 +114,12 @@ export function useFarmGame(): UseFarmGameReturn {
   }, []);
 
   const plant = useCallback(async (plotIndex: number, cropId: CropIdV2) => {
-    await wrap(async () => {
+    return (await wrap(async () => {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/plant', { plotIndex, cropId });
       setStatus(r.data);
       setToast({ type: 'success', text: '种植成功' });
-    }, `plant:${plotIndex}:${cropId}`);
+      return true;
+    }, `plant:${plotIndex}:${cropId}`)) === true;
   }, [wrap]);
 
   const water = useCallback(async (plotIndex: number) => {
@@ -169,19 +170,21 @@ export function useFarmGame(): UseFarmGameReturn {
   }, [wrap]);
 
   const buyItem = useCallback(async (key: ShopItemKey, qty = 1) => {
-    await wrap(async () => {
+    return (await wrap(async () => {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/shop/buy', { key, qty });
       setStatus(r.data);
       setToast({ type: 'success', text: `购买成功 x${qty}` });
-    }, `buy-item:${key}:${qty}`);
+      return true;
+    }, `buy-item:${key}:${qty}`)) === true;
   }, [wrap]);
 
   const buySeed = useCallback(async (cropId: CropIdV2, qty = 1) => {
-    await wrap(async () => {
+    return (await wrap(async () => {
       const r = await callApi<{ data: FarmStatusResponse }>('/api/farm/seeds/buy', { cropId, qty });
       setStatus(r.data);
       setToast({ type: 'success', text: `种子购买成功 x${qty}` });
-    }, `buy-seed:${cropId}:${qty}`);
+      return true;
+    }, `buy-seed:${cropId}:${qty}`)) === true;
   }, [wrap]);
 
   const useItem = useCallback(async (key: ShopItemKey, plotIndex?: number) => {

@@ -133,6 +133,7 @@ const SOURCE_META: Record<string, { label: string; theme: LogTheme; icon: React.
   ranking_reward: { label: '排行奖励', theme: 't-card', icon: <Trophy /> },
   reward_claim: { label: '福利领取', theme: 't-lottery', icon: <Gift /> },
   lottery_win: { label: '幸运抽奖', theme: 't-lottery', icon: <Sparkles /> },
+  raffle_win: { label: '多人抽奖', theme: 't-lottery', icon: <Trophy /> },
   number_bomb_bet: { label: '数字炸弹下注', theme: 't-lottery', icon: <Flame /> },
   number_bomb_refund: { label: '数字炸弹退还', theme: 't-checkin', icon: <ArrowDownLeft /> },
   number_bomb_reward: { label: '数字炸弹奖励', theme: 't-lottery', icon: <Flame /> },

@@ -5,6 +5,8 @@
 
 import { applyPointsDelta, deductPoints, getUserPoints } from './points';
 import { creditQuotaToUser, deductQuotaFromUser } from './new-api';
+import { createUserNotification } from './notifications';
+import { maskUserId } from './logging';
 import {
   MIN_TOPUP_DOLLARS,
   MIN_WITHDRAW_POINTS,
@@ -36,6 +38,34 @@ export interface WithdrawResult {
   feePoints?: number;
   /** 是否处于 new-api 调用结果不确定状态 */
   uncertain?: boolean;
+}
+
+async function createWalletNotification(input: {
+  userId: number;
+  operation: 'withdraw' | 'topup';
+  title: string;
+  content: string;
+  data: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    await createUserNotification({
+      userId: input.userId,
+      type: 'wallet',
+      title: input.title,
+      content: input.content,
+      data: {
+        kind: `wallet_${input.operation}`,
+        operation: input.operation,
+        ...input.data,
+      },
+    });
+  } catch (error) {
+    console.error('Create wallet notification failed:', {
+      userId: maskUserId(input.userId),
+      operation: input.operation,
+      error,
+    });
+  }
 }
 
 /**
@@ -76,6 +106,20 @@ export async function executeWithdraw(
   const creditResult = await creditQuotaToUser(userId, preview.dollars);
 
   if (creditResult.success) {
+    await createWalletNotification({
+      userId,
+      operation: 'withdraw',
+      title: '提现成功到账',
+      content: `你提交的 ${preview.deducted} 积分提现已处理成功，扣除手续费 ${preview.feePoints} 积分，实际到账 $${preview.dollars}。`,
+      data: {
+        points: preview.deducted,
+        feePoints: preview.feePoints,
+        netPoints: preview.netPoints,
+        dollars: preview.dollars,
+        balance: deductResult.balance,
+      },
+    });
+
     return {
       success: true,
       message: `已成功提现 ${preview.deducted} 积分至账户额度，到账 $${preview.dollars}`,
@@ -182,6 +226,20 @@ export async function executeTopup(
       uncertain: true,
     };
   }
+
+  await createWalletNotification({
+    userId,
+    operation: 'topup',
+    title: '充值成功到账',
+    content: `你使用 $${preview.spentDollars} 充值的 ${preview.pointsGained} 积分已到账。`,
+    data: {
+      dollars: preview.spentDollars,
+      pointsGained: preview.pointsGained,
+      balance: grantResult.balance,
+      newApiBalanceDollars: deductResult.newBalanceDollars,
+      newApiBalanceWholeDollars: deductResult.newBalanceWholeDollars,
+    },
+  });
 
   return {
     success: true,

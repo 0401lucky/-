@@ -69,7 +69,8 @@ vi.mock('../whack-mole', () => ({
 }));
 
 vi.mock('../whack-mole-engine', () => ({
-  WHACK_MOLE_WIN_SCORE: 300,
+  getWhackMoleDifficultyConfig: vi.fn(() => ({ winScore: 300 })),
+  normalizeWhackMoleDifficulty: vi.fn(() => 'normal'),
 }));
 
 vi.mock('../lottery', () => ({

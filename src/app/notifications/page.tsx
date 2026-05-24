@@ -26,6 +26,8 @@ interface NotificationData {
   rewardType?: 'points' | 'quota';
   rewardAmount?: number;
   claimStatus?: 'pending' | 'claimed' | 'failed';
+  game?: string;
+  rewardPoints?: number;
   link?: string;
   [key: string]: unknown;
 }
@@ -36,6 +38,7 @@ type NotificationType =
   | 'feedback_reply'
   | 'lottery_win'
   | 'raffle_win'
+  | 'wallet'
   | 'reward';
 
 interface NotificationItem {
@@ -74,13 +77,14 @@ const TYPE_LABEL: Record<NotificationType, string> = {
   feedback_reply: '反馈回复',
   lottery_win: '抽奖中奖',
   raffle_win: '多人抽奖',
+  wallet: '提现充值',
   reward: '福利兑换',
 };
 
 function getCategory(type: NotificationType): 'prize' | 'reply' | 'system' | 'redeem' {
   if (type === 'lottery_win' || type === 'raffle_win') return 'prize';
   if (type === 'feedback_reply') return 'reply';
-  if (type === 'reward') return 'redeem';
+  if (type === 'reward' || type === 'wallet') return 'redeem';
   return 'system';
 }
 
@@ -89,6 +93,21 @@ function CategoryIcon({ category }: { category: 'prize' | 'reply' | 'system' | '
   if (category === 'reply') return <MessageSquareText />;
   if (category === 'redeem') return <PackageOpen />;
   return <Megaphone />;
+}
+
+function isClaimableRewardData(data: NotificationData | undefined): data is NotificationData & {
+  rewardBatchId: string;
+  rewardType: 'points' | 'quota';
+  rewardAmount: number;
+} {
+  return (
+    typeof data?.rewardBatchId === 'string' &&
+    data.rewardBatchId.trim().length > 0 &&
+    (data.rewardType === 'points' || data.rewardType === 'quota') &&
+    typeof data.rewardAmount === 'number' &&
+    Number.isFinite(data.rewardAmount) &&
+    data.rewardAmount > 0
+  );
 }
 
 function formatTime(timestamp: number) {
@@ -277,6 +296,20 @@ export default function NotificationsPage() {
 
   const renderClaimButton = (item: NotificationItem) => {
     if (item.type !== 'reward' || !item.data) return null;
+    if (item.data.game === 'number_bomb') {
+      const rewardPoints = Number(item.data.rewardPoints) || 0;
+      if (rewardPoints > 0) {
+        return (
+          <button type="button" className="nc-action-btn done" disabled>
+            <CheckCircle2 />
+            已到账 {rewardPoints} 积分
+          </button>
+        );
+      }
+      return null;
+    }
+    if (!isClaimableRewardData(item.data)) return null;
+
     const status = item.data.claimStatus;
     const isClaiming = claimingId === item.id;
     const rewardDesc =

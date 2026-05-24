@@ -15,6 +15,7 @@ export type PointsSource =
   | 'ranking_reward' // 排行榜周期奖励
   | 'reward_claim'   // 奖励领取
   | 'lottery_win'    // 幸运抽奖结果
+  | 'raffle_win'     // 多人抽奖中奖
   | 'number_bomb_bet' // 数字炸弹下注
   | 'number_bomb_refund' // 数字炸弹退还
   | 'number_bomb_reward' // 数字炸弹奖励

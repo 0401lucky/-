@@ -3,7 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { joinRaffle, executeRaffleDraw, getRaffle } from "@/lib/raffle";
+import { joinRaffle, executeRaffleDraw, getRaffle, getRaffleMode, grabRedPacket } from "@/lib/raffle";
 import { withUserRateLimit } from "@/lib/rate-limit";
 
 export const POST = withUserRateLimit(
@@ -31,7 +31,10 @@ export const POST = withUserRateLimit(
         );
       }
 
-      const result = await joinRaffle(id, user.id, user.username);
+      const isRedPacket = getRaffleMode(raffle) === "red_packet";
+      const result = isRedPacket
+        ? await grabRedPacket(id, user.id, user.username)
+        : await joinRaffle(id, user.id, user.username);
 
       if (!result.success) {
         return NextResponse.json(
@@ -55,6 +58,7 @@ export const POST = withUserRateLimit(
         success: true,
         message: result.message,
         entry: result.entry,
+        reward: result.reward,
         shouldDraw: result.shouldDraw,
       });
     } catch (error) {

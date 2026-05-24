@@ -65,12 +65,14 @@ interface AnnouncementItem {
 interface RafflePrize {
   id: string;
   name: string;
-  dollars: number;
+  points?: number;
+  dollars?: number;
   quantity: number;
 }
 
 interface RaffleItem {
   id: string;
+  mode?: 'draw' | 'red_packet';
   title: string;
   description: string;
   coverImage?: string;
@@ -81,6 +83,10 @@ interface RaffleItem {
   participantsCount: number;
   winnersCount: number;
   drawnAt?: number;
+  redPacketTotalPoints?: number;
+  redPacketTotalSlots?: number;
+  redPacketRemainingPoints?: number;
+  redPacketRemainingSlots?: number;
   createdAt: number;
 }
 
@@ -96,6 +102,19 @@ type ActiveModal =
   | { type: 'reward'; data: HotReward }
   | { type: 'raffle'; data: RaffleItem }
   | null;
+
+function getRafflePrizePoints(prize: { points?: number; dollars?: number }): number {
+  const normalize = (value: unknown) => {
+    const points = Number(value);
+    if (!Number.isFinite(points) || points <= 0) return null;
+    return Math.max(0, Math.round(points));
+  };
+  return normalize(prize.points) ?? normalize(prize.dollars) ?? 0;
+}
+
+function formatRafflePoints(points: number): string {
+  return `${points.toLocaleString('zh-CN')} 积分`;
+}
 
 // 相对时间格式化（公告时间显示）
 function formatRelativeTime(ts: number): string {
@@ -249,13 +268,24 @@ function RaffleCard({
   raffle: RaffleItem;
   onOpen: (r: RaffleItem) => void;
 }) {
-  const totalQuantity = raffle.prizes.reduce((acc, p) => acc + (p.quantity || 0), 0);
+  const isRedPacket = raffle.mode === 'red_packet';
+  const totalQuantity = isRedPacket
+    ? raffle.redPacketTotalSlots ?? 0
+    : raffle.prizes.reduce((acc, p) => acc + (p.quantity || 0), 0);
+  const totalPool = isRedPacket
+    ? raffle.redPacketTotalPoints ?? 0
+    : raffle.prizes.reduce((acc, p) => acc + getRafflePrizePoints(p) * (p.quantity || 0), 0);
+  const remainingSlots = isRedPacket
+    ? raffle.redPacketRemainingSlots ?? Math.max(0, totalQuantity - raffle.participantsCount)
+    : 0;
   const topPrize = raffle.prizes.reduce((best, p) => {
     if (!best) return p;
-    return p.dollars > best.dollars ? p : best;
+    return getRafflePrizePoints(p) > getRafflePrizePoints(best) ? p : best;
   }, raffle.prizes[0]);
   const progress =
-    raffle.triggerType === 'threshold' && raffle.threshold > 0
+    isRedPacket && totalQuantity > 0
+      ? Math.min(100, Math.max(0, (raffle.participantsCount / totalQuantity) * 100))
+      : raffle.triggerType === 'threshold' && raffle.threshold > 0
       ? Math.min(100, Math.max(0, (raffle.participantsCount / raffle.threshold) * 100))
       : Math.min(100, raffle.participantsCount > 0 ? 60 : 8);
 
@@ -268,11 +298,13 @@ function RaffleCard({
     >
       <div className="raffle-card-top">
         <span className="raffle-tag">
-          <Users size={11} strokeWidth={2.4} />
-          抽奖
+          {isRedPacket ? <Gift size={11} strokeWidth={2.4} /> : <Users size={11} strokeWidth={2.4} />}
+          {isRedPacket ? '红包' : '抽奖'}
         </span>
         <span className="raffle-status">
-          {raffle.triggerType === 'threshold'
+          {isRedPacket
+            ? `${remainingSlots} 个剩余`
+            : raffle.triggerType === 'threshold'
             ? `${raffle.participantsCount}/${raffle.threshold}`
             : `${raffle.participantsCount} 人`}
         </span>
@@ -283,9 +315,11 @@ function RaffleCard({
       </div>
       <div className="raffle-footer">
         <span>
-          {topPrize ? `最高 $${topPrize.dollars}` : '丰厚奖品'}
+          {isRedPacket
+            ? `总额 ${formatRafflePoints(totalPool)}`
+            : topPrize ? `最高 ${formatRafflePoints(getRafflePrizePoints(topPrize))}` : '丰厚奖品'}
         </span>
-        <span>{totalQuantity > 0 ? `${totalQuantity} 个名额` : '即将开奖'}</span>
+        <span>{isRedPacket ? `已抢 ${raffle.participantsCount}` : totalQuantity > 0 ? `${totalQuantity} 个名额` : '即将开奖'}</span>
       </div>
     </button>
   );
@@ -716,7 +750,9 @@ export default function HomePage() {
                     <Gift size={20} strokeWidth={2.4} />
                   )}
                   {activeModal.type === 'raffle' && (
-                    <Users size={20} strokeWidth={2.4} />
+                    activeModal.data.mode === 'red_packet'
+                      ? <Gift size={20} strokeWidth={2.4} />
+                      : <Users size={20} strokeWidth={2.4} />
                   )}
                 </span>
                 <div>
@@ -749,8 +785,12 @@ export default function HomePage() {
                     )}
                     {activeModal.type === 'raffle' && (
                       <>
-                        <Users size={11} strokeWidth={2.4} />
-                        {activeModal.data.triggerType === 'threshold'
+                        {activeModal.data.mode === 'red_packet'
+                          ? <Gift size={11} strokeWidth={2.4} />
+                          : <Users size={11} strokeWidth={2.4} />}
+                        {activeModal.data.mode === 'red_packet'
+                          ? `${activeModal.data.participantsCount}/${activeModal.data.redPacketTotalSlots ?? 0} 人已抢`
+                          : activeModal.data.triggerType === 'threshold'
                           ? `${activeModal.data.participantsCount}/${activeModal.data.threshold} 人`
                           : `${activeModal.data.participantsCount} 人参与`}
                         <span className="board-modal-divider">·</span>
@@ -797,15 +837,26 @@ export default function HomePage() {
               {activeModal.type === 'raffle' && (
                 <div className="board-modal-content">
                   <p className="board-modal-desc">
-                    {activeModal.data.description || '邀请好友免费参与，奖池满额即刻开奖。'}
+                    {activeModal.data.description || (
+                      activeModal.data.mode === 'red_packet'
+                        ? '点击即可随机抢到整数积分，红包数量有限。'
+                        : '邀请好友免费参与，奖池满额即刻开奖。'
+                    )}
                   </p>
-                  {activeModal.data.prizes.length > 0 && (
+                  {activeModal.data.mode === 'red_packet' ? (
+                    <div className="board-modal-highlight">
+                      <span className="highlight-label">红包总额</span>
+                      <span className="highlight-value">
+                        {formatRafflePoints(activeModal.data.redPacketTotalPoints ?? 0)}
+                      </span>
+                    </div>
+                  ) : activeModal.data.prizes.length > 0 && (
                     <div className="board-modal-prizes">
                       {activeModal.data.prizes.slice(0, 3).map((p) => (
                         <div key={p.id} className="board-modal-prize-row">
                           <span className="prize-name">{p.name}</span>
                           <span className="prize-meta">
-                            ${p.dollars} × {p.quantity}
+                            {formatRafflePoints(getRafflePrizePoints(p))} x {p.quantity}
                           </span>
                         </div>
                       ))}
@@ -862,7 +913,7 @@ export default function HomePage() {
                     router.push(`/project/${id}?type=raffle`);
                   }}
                 >
-                  前往参与
+                  {activeModal.data.mode === 'red_packet' ? '前往抢红包' : '前往参与'}
                   <ArrowRight size={14} strokeWidth={2.4} />
                 </button>
               )}

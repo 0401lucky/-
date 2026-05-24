@@ -51,7 +51,7 @@ interface LotteryRecord {
 interface PointsLog {
   id: string;
   amount: number;
-  source: 'game_play' | 'game_win' | 'daily_login' | 'checkin_bonus' | 'exchange' | 'exchange_refund' | 'admin_adjust';
+  source: 'game_play' | 'game_win' | 'daily_login' | 'checkin_bonus' | 'exchange' | 'exchange_refund' | 'admin_adjust' | 'raffle_win';
   description: string;
   balance: number;
   createdAt: number;
@@ -338,7 +338,8 @@ export default function UsersPage() {
       checkin_bonus: '签到奖励',
       exchange: '商店兑换',
       exchange_refund: '商店兑换回滚',
-      admin_adjust: '管理员调整'
+      admin_adjust: '管理员调整',
+      raffle_win: '多人抽奖'
     };
     return labels[source] || source;
   };

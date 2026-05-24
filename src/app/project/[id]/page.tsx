@@ -596,7 +596,8 @@ function ProjectDetailView({ id }: { id: string }) {
 interface RafflePrize {
   id: string;
   name: string;
-  dollars: number;
+  points?: number;
+  dollars?: number;
   quantity: number;
 }
 
@@ -606,7 +607,8 @@ interface RaffleWinner {
   username: string;
   prizeId: string;
   prizeName: string;
-  dollars: number;
+  points?: number;
+  dollars?: number;
   rewardStatus: 'pending' | 'delivered' | 'failed';
 }
 
@@ -621,6 +623,7 @@ interface RaffleEntry {
 
 interface Raffle {
   id: string;
+  mode?: 'draw' | 'red_packet';
   title: string;
   description: string;
   coverImage?: string;
@@ -632,6 +635,10 @@ interface Raffle {
   winnersCount: number;
   drawnAt?: number;
   winners?: RaffleWinner[];
+  redPacketTotalPoints?: number;
+  redPacketTotalSlots?: number;
+  redPacketRemainingPoints?: number;
+  redPacketRemainingSlots?: number;
   createdAt: number;
 }
 
@@ -643,11 +650,24 @@ interface RaffleUserStatus {
 }
 
 function getTotalPrizeValue(prizes: RafflePrize[]): number {
-  return prizes.reduce((sum, p) => sum + (p.dollars || 0) * (p.quantity || 0), 0);
+  return prizes.reduce((sum, p) => sum + getRafflePrizePoints(p) * (p.quantity || 0), 0);
 }
 
 function getTotalPrizeQuantity(prizes: RafflePrize[]): number {
   return prizes.reduce((sum, p) => sum + (p.quantity || 0), 0);
+}
+
+function getRafflePrizePoints(prize: { points?: number; dollars?: number }): number {
+  const normalize = (value: unknown) => {
+    const points = Number(value);
+    if (!Number.isFinite(points) || points <= 0) return null;
+    return Math.max(0, Math.round(points));
+  };
+  return normalize(prize.points) ?? normalize(prize.dollars) ?? 0;
+}
+
+function formatRafflePoints(points: number): string {
+  return `${formatNumber(points)} 积分`;
 }
 
 function RaffleDetailView({ id }: { id: string }) {
@@ -793,10 +813,17 @@ function RaffleDetailView({ id }: { id: string }) {
 
   if (!raffle) return null;
 
-  const totalPool = getTotalPrizeValue(raffle.prizes);
-  const totalQuantity = getTotalPrizeQuantity(raffle.prizes);
+  const isRedPacket = raffle.mode === 'red_packet';
+  const totalPool = isRedPacket ? raffle.redPacketTotalPoints ?? 0 : getTotalPrizeValue(raffle.prizes);
+  const totalQuantity = isRedPacket ? raffle.redPacketTotalSlots ?? 0 : getTotalPrizeQuantity(raffle.prizes);
+  const remainingSlots = isRedPacket
+    ? raffle.redPacketRemainingSlots ?? Math.max(0, totalQuantity - raffle.participantsCount)
+    : 0;
+  const remainingPoints = isRedPacket ? raffle.redPacketRemainingPoints ?? 0 : 0;
   const isThreshold = raffle.triggerType === 'threshold' && raffle.threshold > 0;
-  const progressPercent = isThreshold
+  const progressPercent = isRedPacket && totalQuantity > 0
+    ? Math.min(100, Math.round((raffle.participantsCount / totalQuantity) * 100))
+    : isThreshold
     ? Math.min(100, Math.round((raffle.participantsCount / raffle.threshold) * 100))
     : 0;
   const remainingNeeded = isThreshold
@@ -841,12 +868,14 @@ function RaffleDetailView({ id }: { id: string }) {
           <div className="header-left">
             <h2 className="section-title">
               <span className="title-icon">
-                <Users strokeWidth={2.5} />
+                {isRedPacket ? <Gift strokeWidth={2.5} /> : <Users strokeWidth={2.5} />}
               </span>
-              抽奖详情
+              {isRedPacket ? '抢红包详情' : '抽奖详情'}
             </h2>
             <p className="header-subtitle">
-              查看奖品池构成、参与人数与开奖进度，立即免费参与，把握每一次锁定大奖的机会。
+              {isRedPacket
+                ? '查看红包总积分、剩余名额与领取进度，点击即可随机抢到整数积分。'
+                : '查看奖品池构成、参与人数与开奖进度，立即免费参与，把握每一次锁定大奖的机会。'}
             </p>
           </div>
           <div className="header-actions">
@@ -869,11 +898,11 @@ function RaffleDetailView({ id }: { id: string }) {
               <div className="stat-icon">
                 <Trophy strokeWidth={2.4} />
               </div>
-              <div className="stat-label">总奖池</div>
+              <div className="stat-label">{isRedPacket ? '红包总额' : '总奖池'}</div>
             </div>
             <div className="stat-value-row">
               <span className="stat-value">{formatNumber(totalPool)}</span>
-              <span className="stat-unit">美元</span>
+              <span className="stat-unit">积分</span>
             </div>
           </div>
 
@@ -882,7 +911,7 @@ function RaffleDetailView({ id }: { id: string }) {
               <div className="stat-icon">
                 <Users strokeWidth={2.4} />
               </div>
-              <div className="stat-label">参与人数</div>
+              <div className="stat-label">{isRedPacket ? '已抢人数' : '参与人数'}</div>
             </div>
             <div className="stat-value-row">
               <span className="stat-value">{formatNumber(raffle.participantsCount)}</span>
@@ -895,11 +924,11 @@ function RaffleDetailView({ id }: { id: string }) {
               <div className="stat-icon">
                 <Gift strokeWidth={2.4} />
               </div>
-              <div className="stat-label">奖品档数</div>
+              <div className="stat-label">{isRedPacket ? '剩余名额' : '奖品档数'}</div>
             </div>
             <div className="stat-value-row">
-              <span className="stat-value">{formatNumber(raffle.prizes.length)}</span>
-              <span className="stat-unit">档 · {formatNumber(totalQuantity)} 名</span>
+              <span className="stat-value">{formatNumber(isRedPacket ? remainingSlots : raffle.prizes.length)}</span>
+              <span className="stat-unit">{isRedPacket ? `名 · 剩 ${formatRafflePoints(remainingPoints)}` : `档 · ${formatNumber(totalQuantity)} 名`}</span>
             </div>
           </div>
 
@@ -908,13 +937,13 @@ function RaffleDetailView({ id }: { id: string }) {
               <div className="stat-icon">
                 {isThreshold ? <Sparkles strokeWidth={2.4} /> : <Clock strokeWidth={2.4} />}
               </div>
-              <div className="stat-label">开奖触发</div>
+              <div className="stat-label">{isRedPacket ? '红包名额' : '开奖触发'}</div>
             </div>
             <div className="stat-value-row">
               <span className="stat-value">
-                {isThreshold ? formatNumber(raffle.threshold) : '手动'}
+                {isRedPacket ? formatNumber(totalQuantity) : isThreshold ? formatNumber(raffle.threshold) : '手动'}
               </span>
-              <span className="stat-unit">{isThreshold ? '人开奖' : '管理员开奖'}</span>
+              <span className="stat-unit">{isRedPacket ? '人可抢' : isThreshold ? '人开奖' : '管理员开奖'}</span>
             </div>
           </div>
         </section>
@@ -929,7 +958,7 @@ function RaffleDetailView({ id }: { id: string }) {
           ) : isEnded ? (
             <span className="corner-tag soldout">
               <Clock size={11} />
-              已开奖
+              {isRedPacket ? '已抢完' : '已开奖'}
             </span>
           ) : (
             <span className="corner-tag soldout">
@@ -940,14 +969,16 @@ function RaffleDetailView({ id }: { id: string }) {
 
           <div className="ic-head">
             <div className="ic-icon">
-              <Users strokeWidth={2.2} />
+              {isRedPacket ? <Gift strokeWidth={2.2} /> : <Users strokeWidth={2.2} />}
             </div>
             <div className="ic-title-area">
               <div className="ic-title">{raffle.title}</div>
               <div className="ic-tags">
                 <span className="ic-tag cat-welfare">福利</span>
-                <span className="ic-tag cat-makeup">多人抽奖</span>
-                {isThreshold ? (
+                <span className="ic-tag cat-makeup">{isRedPacket ? '抢红包' : '多人抽奖'}</span>
+                {isRedPacket ? (
+                  <span className="ic-tag limit">{formatNumber(totalQuantity)} 个红包</span>
+                ) : isThreshold ? (
                   <span className="ic-tag limit">满 {raffle.threshold} 人开奖</span>
                 ) : (
                   <span className="ic-tag limit">手动开奖</span>
@@ -961,7 +992,7 @@ function RaffleDetailView({ id }: { id: string }) {
                 {isEnded && (
                   <span className="ic-status ended">
                     <span className="dot" />
-                    已开奖
+                    {isRedPacket ? '已抢完' : '已开奖'}
                   </span>
                 )}
               </div>
@@ -970,20 +1001,28 @@ function RaffleDetailView({ id }: { id: string }) {
 
           {raffle.description && <div className="ic-desc">{raffle.description}</div>}
 
-          {isActive && isThreshold && (
+          {isActive && (isRedPacket || isThreshold) && (
             <div className="ic-progress-section">
               <div className="ic-progress-text">
                 <span>
-                  已参与 <span className="num received">{formatNumber(raffle.participantsCount)}</span>
+                  {isRedPacket ? '已抢' : '已参与'} <span className="num received">{formatNumber(raffle.participantsCount)}</span>
                 </span>
                 <span>
-                  目标 <span className="num">{formatNumber(raffle.threshold)}</span> 人 · {progressPercent}%
+                  {isRedPacket ? (
+                    <>剩 <span className="num">{formatNumber(remainingSlots)}</span> 个 · {progressPercent}%</>
+                  ) : (
+                    <>目标 <span className="num">{formatNumber(raffle.threshold)}</span> 人 · {progressPercent}%</>
+                  )}
                 </span>
               </div>
               <div className="ic-progress-track">
                 <div className="ic-progress-bar" style={{ width: `${progressPercent}%` }} />
               </div>
-              {remainingNeeded > 0 && (
+              {isRedPacket ? (
+                <p className="progress-tip">
+                  剩余 <strong>{formatNumber(remainingSlots)}</strong> 个红包，剩余积分 <strong>{formatRafflePoints(remainingPoints)}</strong>。
+                </p>
+              ) : remainingNeeded > 0 && (
                 <p className="progress-tip">
                   还差 <strong>{formatNumber(remainingNeeded)}</strong> 人即可开奖，邀请好友一起参与吧～
                 </p>
@@ -999,12 +1038,28 @@ function RaffleDetailView({ id }: { id: string }) {
                   <div className="claimed-icon success">
                     <Check />
                   </div>
-                  <h3 className="claimed-title">已参与</h3>
-                  <p className="claimed-sub">
-                    您的抽奖号码：
-                    <span className="entry-number">#{userStatus.entry?.entryNumber ?? '-'}</span>
-                  </p>
-                  <p className="claimed-meta">耐心等待开奖结果，祝您好运！</p>
+                  <h3 className="claimed-title">{isRedPacket ? '已抢到红包' : '已参与'}</h3>
+                  {isRedPacket && userStatus.prize ? (
+                    <>
+                      <p className="claimed-sub">
+                        本次获得：
+                        <span className="entry-number">{formatRafflePoints(getRafflePrizePoints(userStatus.prize))}</span>
+                      </p>
+                      <p className="claimed-meta">
+                        {userStatus.prize.rewardStatus === 'delivered'
+                          ? '积分已发放到账。'
+                          : '积分发放确认中，请稍后刷新查看。'}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="claimed-sub">
+                        您的抽奖号码：
+                        <span className="entry-number">#{userStatus.entry?.entryNumber ?? '-'}</span>
+                      </p>
+                      <p className="claimed-meta">耐心等待开奖结果，祝您好运！</p>
+                    </>
+                  )}
                 </div>
               ) : !user ? (
                 <div className="login-block">
@@ -1012,7 +1067,7 @@ function RaffleDetailView({ id }: { id: string }) {
                     <Sparkles />
                   </div>
                   <h3 className="login-title">请先登录</h3>
-                  <p className="login-sub">登录账号后即可免费参与本次抽奖。</p>
+                  <p className="login-sub">登录账号后即可免费{isRedPacket ? '抢红包' : '参与本次抽奖'}。</p>
                   <Link
                     href={`/login?redirect=${encodeURIComponent(`/project/${id}?type=raffle`)}`}
                     className="ic-action-btn primary big"
@@ -1023,7 +1078,11 @@ function RaffleDetailView({ id }: { id: string }) {
                 </div>
               ) : (
                 <div className="claim-block">
-                  <p className="claim-tip">每人限参与一次，免费名额有限，立即报名锁定机会。</p>
+                  <p className="claim-tip">
+                    {isRedPacket
+                      ? '每人限抢一次，积分随机分配且全部为整数。'
+                      : '每人限参与一次，免费名额有限，立即报名锁定机会。'}
+                  </p>
                   <button
                     type="button"
                     onClick={handleJoin}
@@ -1033,12 +1092,12 @@ function RaffleDetailView({ id }: { id: string }) {
                     {joining ? (
                       <>
                         <Loader2 className="ic-action-spin" size={18} />
-                        参与中...
+                        {isRedPacket ? '抢红包中...' : '参与中...'}
                       </>
                     ) : (
                       <>
                         <Gift size={16} />
-                        免费参与抽奖
+                        {isRedPacket ? '立即抢红包' : '免费参与抽奖'}
                       </>
                     )}
                   </button>
@@ -1052,9 +1111,13 @@ function RaffleDetailView({ id }: { id: string }) {
               <div className="disabled-icon">
                 <Clock />
               </div>
-              <h3 className="claimed-title">本次抽奖已开奖</h3>
+              <h3 className="claimed-title">{isRedPacket ? '本次红包已抢完' : '本次抽奖已开奖'}</h3>
               <p className="claimed-sub">
-                {userStatus?.hasJoined
+                {isRedPacket
+                  ? userStatus?.hasJoined
+                    ? '您已抢过本次红包，领取结果已在上方展示。'
+                    : '本次红包已全部抢完，请关注其它进行中的福利项目。'
+                  : userStatus?.hasJoined
                   ? '您参与了本次抽奖，但很遗憾未能中奖，下次再来吧～'
                   : '本次活动已结束，请关注其它进行中的福利项目。'}
               </p>
@@ -1067,22 +1130,22 @@ function RaffleDetailView({ id }: { id: string }) {
           <section className="item-card winner-banner t-pink">
             <span className="corner-tag hot">
               <PartyPopper size={11} />
-              中奖
+              {isRedPacket ? '红包' : '中奖'}
             </span>
             <div className="winner-row">
               <div className="winner-icon">
                 <PartyPopper />
               </div>
               <div className="winner-content">
-                <div className="winner-eyebrow">恭喜中奖</div>
-                <h3 className="winner-title">{userStatus.prize.prizeName}</h3>
-                <div className="winner-amount">${userStatus.prize.dollars}</div>
+                <div className="winner-eyebrow">{isRedPacket ? '恭喜抢到' : '恭喜中奖'}</div>
+                <h3 className="winner-title">{isRedPacket ? '随机红包' : userStatus.prize.prizeName}</h3>
+                <div className="winner-amount">{formatRafflePoints(getRafflePrizePoints(userStatus.prize))}</div>
               </div>
               <div className="winner-status-wrap">
                 {userStatus.prize.rewardStatus === 'delivered' && (
                   <span className="direct-status success">
                     <Check size={12} />
-                    已充值到账
+                    已发放到账
                   </span>
                 )}
                 {userStatus.prize.rewardStatus === 'pending' && (
@@ -1109,14 +1172,37 @@ function RaffleDetailView({ id }: { id: string }) {
               <Trophy />
             </div>
             <div className="sh-text">
-              <div className="sh-title">奖品池</div>
+              <div className="sh-title">{isRedPacket ? '红包池' : '奖品池'}</div>
               <div className="sh-sub">
-                共 {formatNumber(raffle.prizes.length)} 档奖品 · {formatNumber(totalQuantity)} 个名额 · 总价值
-                <strong> ${formatNumber(totalPool)}</strong>
+                {isRedPacket ? (
+                  <>
+                    共 {formatNumber(totalQuantity)} 个红包 · 总积分
+                    <strong> {formatRafflePoints(totalPool)}</strong>
+                  </>
+                ) : (
+                  <>
+                    共 {formatNumber(raffle.prizes.length)} 档奖品 · {formatNumber(totalQuantity)} 个名额 · 总积分
+                    <strong> {formatRafflePoints(totalPool)}</strong>
+                  </>
+                )}
               </div>
             </div>
           </div>
 
+          {isRedPacket ? (
+            <div className="prize-list">
+              <div className="prize-row rank-1">
+                <div className="prize-rank">
+                  <Gift />
+                </div>
+                <div className="prize-meta">
+                  <div className="prize-name">随机整数红包</div>
+                  <div className="prize-quantity">每人最多抢 1 次，每份至少 1 积分</div>
+                </div>
+                <div className="prize-amount">剩 {formatRafflePoints(remainingPoints)}</div>
+              </div>
+            </div>
+          ) : (
           <div className="prize-list">
             {raffle.prizes.map((prize, index) => {
               const rankClass = index === 0 ? 'rank-1' : index === 1 ? 'rank-2' : index === 2 ? 'rank-3' : 'rank-n';
@@ -1129,11 +1215,12 @@ function RaffleDetailView({ id }: { id: string }) {
                     <div className="prize-name">{prize.name}</div>
                     <div className="prize-quantity">{formatNumber(prize.quantity)} 名中奖者</div>
                   </div>
-                  <div className="prize-amount">${formatNumber(prize.dollars)}</div>
+                  <div className="prize-amount">{formatRafflePoints(getRafflePrizePoints(prize))}</div>
                 </div>
               );
             })}
           </div>
+          )}
         </section>
 
         {/* 中奖名单 */}
@@ -1144,8 +1231,8 @@ function RaffleDetailView({ id }: { id: string }) {
                 <Crown />
               </div>
               <div className="sh-text">
-                <div className="sh-title">中奖名单</div>
-                <div className="sh-sub">本次共 {formatNumber(raffle.winners.length)} 人中奖</div>
+                <div className="sh-title">{isRedPacket ? '红包领取名单' : '中奖名单'}</div>
+                <div className="sh-sub">本次共 {formatNumber(raffle.winners.length)} 人{isRedPacket ? '抢到红包' : '中奖'}</div>
               </div>
             </div>
             <div className="winners-list">
@@ -1160,9 +1247,9 @@ function RaffleDetailView({ id }: { id: string }) {
                         {winner.username}
                         {mine && <span className="mine-pill">我</span>}
                       </div>
-                      <div className="winner-prize">{winner.prizeName}</div>
+                      <div className="winner-prize">{isRedPacket ? '随机红包' : winner.prizeName}</div>
                     </div>
-                    <div className="winner-money">${formatNumber(winner.dollars)}</div>
+                    <div className="winner-money">{formatRafflePoints(getRafflePrizePoints(winner))}</div>
                   </div>
                 );
               })}
@@ -1177,15 +1264,15 @@ function RaffleDetailView({ id }: { id: string }) {
               <Users />
             </div>
             <div className="sh-text">
-              <div className="sh-title">参与者</div>
-              <div className="sh-sub">共 {formatNumber(raffle.participantsCount)} 人已参与（最多展示最近 50 位）</div>
+              <div className="sh-title">{isRedPacket ? '已抢用户' : '参与者'}</div>
+              <div className="sh-sub">共 {formatNumber(raffle.participantsCount)} 人已{isRedPacket ? '抢到' : '参与'}（最多展示最近 50 位）</div>
             </div>
           </div>
 
           {entries.length === 0 ? (
             <div className="empty-participants">
               <Users />
-              <p>暂无参与者，成为第一位参与的小伙伴吧～</p>
+              <p>{isRedPacket ? '暂无用户抢到红包，成为第一位吧～' : '暂无参与者，成为第一位参与的小伙伴吧～'}</p>
             </div>
           ) : (
             <div className="participants-grid">

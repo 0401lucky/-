@@ -44,6 +44,7 @@ vi.mock('nanoid', () => ({
 // 在 mock 完成后再导入被测模块
 import { kv } from '@/lib/d1-kv';
 import { applyPointsDeltaInsideUserEconomyLock, getUserPoints } from '../points';
+import { createUserNotification } from '../notifications';
 import {
   cancelNumberBombBet,
   getPreviousDateString,
@@ -61,6 +62,7 @@ const mockKvExpire = vi.mocked(kv.expire);
 
 const mockApplyPoints = vi.mocked(applyPointsDeltaInsideUserEconomyLock);
 const mockGetPoints = vi.mocked(getUserPoints);
+const mockCreateUserNotification = vi.mocked(createUserNotification);
 
 const TODAY = '2026-05-05';
 const YESTERDAY = '2026-05-04';
@@ -352,6 +354,18 @@ describe('settleNumberBombDate', () => {
       'number_bomb_reward',
       expect.stringContaining('猜中'),
     );
+    expect(mockCreateUserNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER.id,
+        type: 'lottery_win',
+        title: '数字炸弹开奖通知',
+        data: expect.objectContaining({
+          game: 'number_bomb',
+          betId: bet.id,
+          rewardPoints: 20,
+        }),
+      }),
+    );
   });
 
   it('does not refund when user number matches system number', async () => {
@@ -379,6 +393,18 @@ describe('settleNumberBombDate', () => {
     expect(result.lost).toBe(1);
     // applyPointsDelta 不应被调用
     expect(mockApplyPoints).not.toHaveBeenCalled();
+    expect(mockCreateUserNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER.id,
+        type: 'system',
+        title: '数字炸弹开奖通知',
+        data: expect.objectContaining({
+          game: 'number_bomb',
+          betId: bet.id,
+          rewardPoints: 0,
+        }),
+      }),
+    );
   });
 
   it('skips bets that are not pending', async () => {

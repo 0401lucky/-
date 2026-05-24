@@ -966,7 +966,7 @@ export default function CardsAlbumsPage() {
               transparent 55%
             ),
             /* 主图 */
-            url('/images/cards/hero.webp') center 45% / cover no-repeat,
+            url('/images-optimized/ui/cards/hero.webp') center 45% / cover no-repeat,
             /* 兜底渐变（图片未加载时呈现原配色） */
             linear-gradient(135deg, #0c1e4d 0%, #1e3a8a 35%, #2563eb 70%, #3b82f6 100%);
           color: #fff;

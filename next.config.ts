@@ -9,6 +9,10 @@ const securityHeaders = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
+const staticImageCacheHeaders = [
+  { key: "Cache-Control", value: "public, max-age=2592000" },
+];
+
 initOpenNextCloudflareForDev();
 
 const nextConfig: NextConfig = {
@@ -33,6 +37,10 @@ const nextConfig: NextConfig = {
   // 统一下发静态安全响应头，避免页面流量经过 middleware
   async headers() {
     return [
+      {
+        source: "/images-optimized/:path*",
+        headers: [...securityHeaders, ...staticImageCacheHeaders],
+      },
       {
         source: "/:path*",
         headers: securityHeaders,

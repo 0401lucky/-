@@ -382,12 +382,12 @@ export const SHOP_ITEMS_V2: Record<ShopItemKey, ShopItemDef> = {
   pet_yarn_ball:    { key: 'pet_yarn_ball',    name: '毛线球',   emoji: '🧶', category: 'pet', cost: 15, description: '情绪 +20、健康 +7，消耗饱食 -8、体力 -8、口渴值 -10' },
   pet_frisbee:      { key: 'pet_frisbee',      name: '飞盘',     emoji: '🥏', category: 'pet', cost: 35, description: '情绪 +30、健康 +12，消耗饱食 -12、体力 -12、口渴值 -14' },
   pet_toy:          { key: 'pet_toy',          name: '玩具球',   emoji: '🎾', category: 'pet', cost: 30, description: '情绪大幅变好，健康 +4，但会降低少量口渴值、消耗体力', dailyLimit: 1 },
-  pet_skill_water:      { key: 'pet_skill_water',      name: '自动浇水技能书', emoji: '📘', category: 'pet', cost: 120, description: '成年宠物学习后，可派遣自动浇水 3 小时；每个账号限购 1 本', dailyLimit: 1 },
-  pet_skill_guard:      { key: 'pet_skill_guard',      name: '守护庄园技能书', emoji: '📗', category: 'pet', cost: 140, description: '成年宠物学习后，可守护庄园降低乌鸦和偷菜风险；每个账号限购 1 本', dailyLimit: 1 },
-  pet_skill_chase_crow: { key: 'pet_skill_chase_crow', name: '赶乌鸦技能书',   emoji: '📙', category: 'pet', cost: 130, description: '成年宠物学习后，可主动赶走乌鸦 4 小时；每个账号限购 1 本', dailyLimit: 1 },
-  pet_skill_steal:      { key: 'pet_skill_steal',      name: '偷菜技能书',     emoji: '📕', category: 'pet', cost: 160, description: '成年宠物学习后，可前往好友庄园偷菜；每个账号限购 1 本', dailyLimit: 1 },
-  pet_skill_harvest:    { key: 'pet_skill_harvest',    name: '收菜技能书',     emoji: '📒', category: 'pet', cost: 180, description: '成年宠物学习后，可一键收获所有成熟作物；每个账号限购 1 本', dailyLimit: 1 },
-  pet_skill_plant:      { key: 'pet_skill_plant',      name: '种菜技能书',     emoji: '📔', category: 'pet', cost: 180, description: '成年宠物学习后，可自动挑选当前季节高收益种子播种空地；每个账号限购 1 本', dailyLimit: 1 },
+  pet_skill_water:      { key: 'pet_skill_water',      name: '自动浇水技能书', emoji: '📘', category: 'pet', cost: 120, description: '成年宠物学习后，可派遣自动浇水 3 小时；同一只宠物同技能只能学习一次' },
+  pet_skill_guard:      { key: 'pet_skill_guard',      name: '守护庄园技能书', emoji: '📗', category: 'pet', cost: 140, description: '成年宠物学习后，可守护庄园降低乌鸦和偷菜风险；同一只宠物同技能只能学习一次' },
+  pet_skill_chase_crow: { key: 'pet_skill_chase_crow', name: '赶乌鸦技能书',   emoji: '📙', category: 'pet', cost: 130, description: '成年宠物学习后，可主动赶走乌鸦 4 小时；同一只宠物同技能只能学习一次' },
+  pet_skill_steal:      { key: 'pet_skill_steal',      name: '偷菜技能书',     emoji: '📕', category: 'pet', cost: 160, description: '成年宠物学习后，可前往好友庄园偷菜；同一只宠物同技能只能学习一次' },
+  pet_skill_harvest:    { key: 'pet_skill_harvest',    name: '收菜技能书',     emoji: '📒', category: 'pet', cost: 180, description: '成年宠物学习后，成熟作物会自动收获；同一只宠物同技能只能学习一次' },
+  pet_skill_plant:      { key: 'pet_skill_plant',      name: '种菜技能书',     emoji: '📔', category: 'pet', cost: 180, description: '成年宠物学习后，会自动挑选当前季节高收益种子播种空地；同一只宠物同技能只能学习一次' },
   last_supper:      { key: 'last_supper',      name: '最后的晚餐', emoji: '🍽️', category: 'pet', cost: 1000, description: '当前宠物离开庄园，之后可重新领养宠物' },
 };
 
@@ -406,3 +406,5 @@ export const ONBOARDING_BONUS = {
 
 /** 操作冷却（秒） */
 export const ACTION_COOLDOWN_SECONDS = 1;
+/** 距离缺水还有多久时允许手动浇水，并触发浇水提醒 */
+export const WATER_ACTION_LEAD_MS = 10 * 60 * 1000;

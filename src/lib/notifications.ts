@@ -9,6 +9,7 @@ export type NotificationType =
   | 'feedback_reply'
   | 'lottery_win'
   | 'raffle_win'
+  | 'wallet'
   | 'reward';
 
 export interface NotificationItem {

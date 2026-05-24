@@ -41,14 +41,16 @@ interface GameMeta {
   href: string;
 }
 
+const GAME_CARD_IMAGE_BASE = '/images-optimized/ui/games';
+
 const GAMES: readonly GameMeta[] = [
   {
     key: 'roguelite',
     name: '星尘迷阵',
     description: '无限肉鸽探险，星门、遗物与无尽星域。',
     Icon: Sparkles,
-    image: '/games/covers/roguelite.png',
-    mascot: '/games/mascots/roguelite.png',
+    image: `${GAME_CARD_IMAGE_BASE}/covers/roguelite.webp`,
+    mascot: `${GAME_CARD_IMAGE_BASE}/mascots/roguelite.webp`,
     href: '/games/roguelite',
   },
   {
@@ -56,8 +58,8 @@ const GAMES: readonly GameMeta[] = [
     name: '扫雷',
     description: '三难度经典扫雷，推理与运气。',
     Icon: Bomb,
-    image: '/games/covers/minesweeper.png',
-    mascot: '/games/mascots/minesweeper.png',
+    image: `${GAME_CARD_IMAGE_BASE}/covers/minesweeper.webp`,
+    mascot: `${GAME_CARD_IMAGE_BASE}/mascots/minesweeper.webp`,
     href: '/games/minesweeper',
   },
   {
@@ -65,8 +67,8 @@ const GAMES: readonly GameMeta[] = [
     name: '打地鼠',
     description: '60 秒反应挑战，连击叠加奖励。',
     Icon: Hammer,
-    image: '/games/covers/whack-mole.png',
-    mascot: '/games/mascots/whack-mole.png',
+    image: `${GAME_CARD_IMAGE_BASE}/covers/whack-mole.webp`,
+    mascot: `${GAME_CARD_IMAGE_BASE}/mascots/whack-mole.webp`,
     href: '/games/whack-mole',
   },
   {
@@ -74,8 +76,8 @@ const GAMES: readonly GameMeta[] = [
     name: '记忆卡片',
     description: '翻牌配对，少步数高分。',
     Icon: Layers,
-    image: '/games/covers/memory.png',
-    mascot: '/games/mascots/memory.png',
+    image: `${GAME_CARD_IMAGE_BASE}/covers/memory.webp`,
+    mascot: `${GAME_CARD_IMAGE_BASE}/mascots/memory.webp`,
     href: '/games/memory',
   },
   {
@@ -83,8 +85,8 @@ const GAMES: readonly GameMeta[] = [
     name: '消消乐',
     description: '交换相邻方块凑三消除。',
     Icon: Grid3x3,
-    image: '/games/covers/match3.png',
-    mascot: '/games/mascots/match3.png',
+    image: `${GAME_CARD_IMAGE_BASE}/covers/match3.webp`,
+    mascot: `${GAME_CARD_IMAGE_BASE}/mascots/match3.webp`,
     href: '/games/match3',
   },
   {
@@ -92,8 +94,8 @@ const GAMES: readonly GameMeta[] = [
     name: '连连看',
     description: '消除相同水果，眼力反应。',
     Icon: Apple,
-    image: '/games/covers/linkgame.png',
-    mascot: '/games/mascots/linkgame.png',
+    image: `${GAME_CARD_IMAGE_BASE}/covers/linkgame.webp`,
+    mascot: `${GAME_CARD_IMAGE_BASE}/mascots/linkgame.webp`,
     href: '/games/linkgame',
   },
 ] as const;
@@ -591,7 +593,7 @@ export default function GamesPage() {
                 transparent 55%
               ),
               /* 主图 */
-              url('/images/games/hero.webp') center 40% / cover no-repeat,
+              url('/images-optimized/ui/games/hero.webp') center 40% / cover no-repeat,
               /* 兜底渐变（图片未加载时呈现原配色） */
               linear-gradient(135deg, #022c22 0%, #064e3b 35%, #065f46 70%, #047857 100%);
             color: #fff;

@@ -286,7 +286,7 @@ interface PlantModalProps {
   balance: number;
   seedInventory: Partial<Record<CropIdV2, number>>;
   onClose: () => void;
-  onPlant: (cropId: CropIdV2) => void;
+  onPlant: (cropId: CropIdV2) => Promise<boolean>;
   onGoShop: () => void;
 }
 
@@ -313,7 +313,10 @@ export function PlantModal({ open, plantableCrops, unlockedLandCount, balance, s
             <button
               className="lwf-btn-primary"
               disabled={!canPlant}
-              onClick={() => { onPlant(selected); onClose(); }}
+              onClick={async () => {
+                const ok = await onPlant(selected);
+                if (ok) onClose();
+              }}
             >
               <Sprout size={14} /> 种下 {CROPS_V2[selected].name}
             </button>
@@ -358,6 +361,36 @@ export function PlantModal({ open, plantableCrops, unlockedLandCount, balance, s
         })}
       </div>
 
+    </ModalShell>
+  );
+}
+
+// ===================== FarmSuccessModal =====================
+interface FarmSuccessModalProps {
+  open: boolean;
+  icon: string;
+  title: string;
+  message: string;
+  detail?: string;
+  onClose: () => void;
+}
+
+export function FarmSuccessModal({ open, icon, title, message, detail, onClose }: FarmSuccessModalProps) {
+  return (
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      size="sm"
+      title={<><Sparkles /> {title}</>}
+      footer={<button className="lwf-btn-primary" onClick={onClose}>知道了</button>}
+    >
+      <div className="farm-success-card">
+        <div className="farm-success-icon" aria-hidden>{icon}</div>
+        <div className="farm-success-copy">
+          <strong>{message}</strong>
+          {detail && <span>{detail}</span>}
+        </div>
+      </div>
     </ModalShell>
   );
 }
@@ -422,7 +455,6 @@ export function HarvestModal({ open, results, total, onClose }: HarvestModalProp
 interface ShopModalProps {
   open: boolean;
   inventory: Inventory;
-  purchasedSkillBooks?: Partial<Record<PetSkillBookKey, boolean>>;
   learnedSkills?: PetSkill[];
   shopDailyPurchases?: Partial<Record<ShopItemKey, number>>;
   seedInventory: Partial<Record<CropIdV2, number>>;
@@ -473,7 +505,7 @@ function clampPurchaseQty(value: number, maxQty: number): number {
 }
 
 export function ShopModal({
-  open, inventory, purchasedSkillBooks, learnedSkills, shopDailyPurchases, seedInventory, balance,
+  open, inventory, learnedSkills, shopDailyPurchases, seedInventory, balance,
   unlockedLandCount, scarecrowUntil, bellUntil, onClose, onBuy, onBuySeed,
 }: ShopModalProps) {
   const [tab, setTab] = useState<typeof SHOP_TABS[number]['id']>('seeds');
@@ -487,13 +519,12 @@ export function ShopModal({
   }, [open]);
   if (!open) return null;
   const items = tab === 'seeds' ? [] : Object.values(SHOP_ITEMS_V2).filter(i => i.category === tab && i.cost > 0);
-  const targetIsSkillBook = purchaseTarget?.kind === 'item' && PET_SKILL_BOOK_KEYS.includes(purchaseTarget.itemKey as PetSkillBookKey);
   const targetIsOneTime = purchaseTarget?.kind === 'item' && ONE_TIME_SHOP_ITEM_KEYS.includes(purchaseTarget.itemKey as (typeof ONE_TIME_SHOP_ITEM_KEYS)[number]);
   const targetDailyRemaining = purchaseTarget?.kind === 'item' && purchaseTarget.dailyLimit
     ? purchaseTarget.dailyRemaining ?? 0
     : 99;
   const maxPurchaseQty = purchaseTarget
-    ? Math.min(targetIsSkillBook || targetIsOneTime ? 1 : 99, Math.floor(balance / purchaseTarget.unitCost), targetDailyRemaining)
+    ? Math.min(targetIsOneTime ? 1 : 99, Math.floor(balance / purchaseTarget.unitCost), targetDailyRemaining)
     : 1;
   const purchaseTotal = purchaseTarget ? purchaseTarget.unitCost * purchaseQty : 0;
   const canConfirmPurchase = !!purchaseTarget && maxPurchaseQty >= 1 && purchaseQty >= 1 && purchaseTotal <= balance;
@@ -559,11 +590,10 @@ export function ShopModal({
               ? it.key as PetSkillBookKey
               : null;
             const learnedSkill = skillBookKey ? PET_SKILL_BOOK_TO_SKILL[skillBookKey] : null;
-            const skillBookPurchased = !!skillBookKey
-              && (!!purchasedSkillBooks?.[skillBookKey] || cnt > 0 || (!!learnedSkill && (learnedSkills ?? []).includes(learnedSkill)));
+            const skillAlreadyLearned = !!learnedSkill && (learnedSkills ?? []).includes(learnedSkill);
             const oneTimePurchased = ONE_TIME_SHOP_ITEM_KEYS.includes(it.key as (typeof ONE_TIME_SHOP_ITEM_KEYS)[number]) && cnt > 0;
             const dailyLimit = Number(it.dailyLimit ?? 0);
-            const hasDailyLimit = Number.isSafeInteger(dailyLimit) && dailyLimit > 0;
+            const hasDailyLimit = !skillBookKey && Number.isSafeInteger(dailyLimit) && dailyLimit > 0;
             const purchasedToday = hasDailyLimit ? shopDailyPurchases?.[it.key] ?? 0 : 0;
             const dailyRemaining = hasDailyLimit ? Math.max(0, dailyLimit - purchasedToday) : 99;
             const dailyLimitedOut = hasDailyLimit && dailyRemaining <= 0;
@@ -574,7 +604,8 @@ export function ShopModal({
                   <div className="shop-name">
                     {it.name}
                     <span className="shop-stock">背包 {cnt}</span>
-                    {skillBookKey && <span className="shop-stock">限购 1 本</span>}
+                    {skillBookKey && <span className="shop-stock">可重复购买</span>}
+                    {skillAlreadyLearned && <span className="shop-stock">已学</span>}
                     {hasDailyLimit && !skillBookKey && (
                       <span className="shop-stock">今日 {Math.min(purchasedToday, dailyLimit)}/{dailyLimit}</span>
                     )}
@@ -584,7 +615,7 @@ export function ShopModal({
                 <div className="shop-actions">
                   <button
                     className="shop-btn buy"
-                    disabled={balance < it.cost || skillBookPurchased || oneTimePurchased || dailyLimitedOut}
+                    disabled={balance < it.cost || oneTimePurchased || dailyLimitedOut}
                     onClick={() => openPurchase({
                       kind: 'item',
                       itemKey: it.key,
@@ -598,7 +629,7 @@ export function ShopModal({
                       dailyRemaining: hasDailyLimit ? dailyRemaining : undefined,
                     })}
                   >
-                    {skillBookPurchased || oneTimePurchased ? '已购' : dailyLimitedOut ? '今日已达上限' : `${it.cost} 积分`}
+                    {oneTimePurchased ? '已购' : dailyLimitedOut ? '今日已达上限' : `${it.cost} 积分`}
                   </button>
                 </div>
               </div>
@@ -893,6 +924,8 @@ const RULES_FULL: Array<{ level: RuleLevel; title: string; items: string[] }> = 
   {
     level: 'critical', title: '浇水与缺水', items: [
       '种植时自动算一次浇水。每错过浇水间隔产生 1 次缺水。',
+      '距离下次缺水还有 10 分钟时，土地操作中的浇水按钮会提前可用。',
+      '设置农场提醒 QQ 邮箱且拥有成年宠物时，系统会在可浇水窗口发送邮件提醒。',
       '作物缺水后仍然可以点按土地补水；补水会恢复生长状态，但已产生的缺水次数会保留。',
       '缺水 1 次 ×0.80 收益、缺水 2 次 ×0.50 收益、缺水 3 次直接枯萎。',
       '小雨每 30 分钟自动浇水一次，暴雨每 15 分钟一次。',
@@ -931,7 +964,7 @@ const RULES_FULL: Array<{ level: RuleLevel; title: string; items: string[] }> = 
     level: 'critical', title: '过熟与收获', items: [
       '成熟后 12 小时内最佳（×1.0），12-24h ×0.8，24-48h ×0.5，超 48h 腐烂枯萎。',
       '收获时每块土地独立计算品质、缺水、季节、过熟和被偷收益扣除。',
-      '宠物学会收菜技能后，可以派遣宠物一次性收获当前所有成熟作物。',
+      '宠物学会收菜技能后，成熟作物会自动收获。',
     ],
   },
   {
@@ -951,8 +984,9 @@ const RULES_FULL: Array<{ level: RuleLevel; title: string; items: string[] }> = 
       '喂水会提高口渴值并改善情绪；洗澡会提升清洁，并改善情绪和健康。',
       '陪玩和玩具最适合改善情绪，但会消耗饱食并降低口渴值。',
       '点按宠物可查看已学习技能；技能书需在农场商店购买，并在背包中由成年宠物学习。',
-      '技能书每种限购 1 本；技能包括自动浇水、守护庄园、赶乌鸦、偷菜、收菜和种菜。',
-      '宠物情绪太低会罢工；派遣技能需要满足情绪要求，并受技能冷却限制。',
+      '技能书可重复购买；同一只宠物同一技能只能学习一次。',
+      '收菜和种菜属于被动技能，学习后会自动触发；自动浇水、守护庄园、赶乌鸦和偷菜属于主动技能。',
+      '宠物情绪太低会罢工；主动派遣技能需要满足情绪要求，并受技能冷却限制。',
     ],
   },
   {
@@ -1543,7 +1577,7 @@ export function ItemDetailModal({ itemKey, inventory, lands, onClose, onUse }: I
           <p className="bp-detail-hint">电视机会安装在土地一览旁边，点击电视机按钮即可查看明日天气预报。</p>
         )}
         {PET_SKILL_BOOK_KEYS.includes(itemKey as (typeof PET_SKILL_BOOK_KEYS)[number]) && (
-          <p className="bp-detail-hint">技能书只能由成年宠物学习，学会后长按宠物即可查看。</p>
+          <p className="bp-detail-hint">技能书只能由成年宠物学习，同一只宠物同技能只能学习一次；收菜和种菜会被动触发。</p>
         )}
         {needsLand && (
           <>
@@ -1687,6 +1721,32 @@ function ModalStyles() {
       .lwf-btn-primary:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 12px 24px rgba(22, 163, 74, 0.4); }
       .lwf-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
       .lwf-btn-primary svg { width: 14px; height: 14px; }
+
+      .farm-success-card {
+        display: flex; align-items: center; gap: 14px;
+        padding: 18px; border-radius: 18px;
+        background: linear-gradient(135deg, rgba(236,252,203,0.95), rgba(220,252,231,0.95));
+        border: 1px solid rgba(132,204,22,0.28);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+      }
+      .farm-success-icon {
+        width: 58px; height: 58px; border-radius: 18px;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(255,255,255,0.84);
+        box-shadow: 0 12px 24px rgba(22,163,74,0.14);
+        font-size: 31px; flex-shrink: 0;
+      }
+      .farm-success-copy {
+        display: flex; flex-direction: column; gap: 5px;
+        min-width: 0;
+      }
+      .farm-success-copy strong {
+        color: #14532d; font-size: 17px; font-weight: 900;
+        line-height: 1.35;
+      }
+      .farm-success-copy span {
+        color: #4b5563; font-size: 13px; line-height: 1.5;
+      }
 
       /* Adopt */
       .adopt-summary {
