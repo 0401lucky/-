@@ -39,9 +39,11 @@ import {
 import { addToInventory, applyItemUse } from './shop';
 import { processMaturityEmailEventsForState } from './maturity-email';
 import {
+  buildEffectivePetItemEffects,
   getEffectiveFarmShopItem,
   getEffectiveFarmShopItems,
   getEffectivePetItemEffects,
+  type EffectiveFarmShopItem,
 } from './admin-config';
 
 const FARM_V2_LOCK_KEY = (userId: number) => `farmv2:lock:${userId}`;
@@ -147,9 +149,10 @@ function normalizeState(s: FarmStateV2): FarmStateV2 {
 async function getShopDailyPurchaseCounts(
   userId: number,
   date = getChinaDateString(Date.now()),
+  items?: Record<ShopItemKey, EffectiveFarmShopItem>,
 ): Promise<Partial<Record<ShopItemKey, number>>> {
-  const items = await getEffectiveFarmShopItems();
-  const limitedItems = Object.values(items).filter((item) => {
+  const effectiveItems = items ?? await getEffectiveFarmShopItems();
+  const limitedItems = Object.values(effectiveItems).filter((item) => {
     if (PET_SKILL_BOOK_TO_SKILL[item.key as PetSkillBookKey]) return false;
     const limit = Number(item.dailyLimit ?? 0);
     return Number.isSafeInteger(limit) && limit > 0;
@@ -524,8 +527,61 @@ export async function processFarmMaturityEmails(maxUsers = 100): Promise<FarmMat
   return result;
 }
 
+type FarmStatusBuildOptions = {
+  shopItems?: Record<ShopItemKey, EffectiveFarmShopItem>;
+};
+
+type FarmActionResult<T> = {
+  result?: T;
+  status?: FarmStatusResponse;
+  error?: string;
+};
+
+type WithLockOptions = FarmStatusBuildOptions & {
+  includeStatus?: boolean;
+};
+
+async function buildFarmStatusResponseFromState(
+  userId: number,
+  state: FarmStateV2,
+  now = Date.now(),
+  options: FarmStatusBuildOptions = {},
+): Promise<FarmStatusResponse> {
+  const season = getCurrentSeason(now);
+  const date = getChinaDateString(now);
+  const weather = getWeatherForDate(date, season);
+  const tomorrowAtMidnight = getChinaMidnight(now) + 24 * 60 * 60 * 1000;
+  const tomorrowSeason = getCurrentSeason(tomorrowAtMidnight);
+  const tomorrowDate = getChinaDateString(tomorrowAtMidnight);
+  const tomorrowWeather = getWeatherForDate(tomorrowDate, tomorrowSeason);
+  const computedLands = buildComputedLands(state, now);
+  const shopDailyPurchases = await getShopDailyPurchaseCounts(userId, date, options.shopItems);
+  return {
+    state,
+    computedLands,
+    world: { date, weather, season, generatedAt: now },
+    weatherForecast: {
+      tomorrow: {
+        date: tomorrowDate,
+        weather: tomorrowWeather,
+        season: tomorrowSeason,
+        generatedAt: now,
+      },
+    },
+    shopDailyPurchases,
+    serverNow: now,
+    plantableCrops: getPlantableCrops(state, season),
+    nextSeasonInMs: getNextSeasonChangeMs(now),
+    nextDailyInMs: getNextDailyResetMs(now),
+  };
+}
+
 /** 用锁包装的 tick + save */
-async function withLock<T>(userId: number, fn: (state: FarmStateV2) => Promise<T>): Promise<{ result?: T; error?: string }> {
+async function withLock<T>(
+  userId: number,
+  fn: (state: FarmStateV2) => Promise<T>,
+  options: WithLockOptions = {},
+): Promise<FarmActionResult<T>> {
   const lock = await acquireLock(userId);
   if (!lock) return { error: '操作处理中，请稍后重试' };
   try {
@@ -538,6 +594,10 @@ async function withLock<T>(userId: number, fn: (state: FarmStateV2) => Promise<T
       await processPassivePetSkills(state, Date.now());
     }
     await saveState(state);
+    if (options.includeStatus) {
+      const status = await buildFarmStatusResponseFromState(userId, state, Date.now(), options);
+      return { result, status };
+    }
     return { result };
   } finally {
     await releaseLock(lock);
@@ -560,34 +620,7 @@ export async function getFarmStatus(userId: number): Promise<FarmStatusResponse>
   } finally {
     if (lock) await releaseLock(lock);
   }
-  const now = Date.now();
-  const season = getCurrentSeason(now);
-  const date = getChinaDateString(now);
-  const weather = getWeatherForDate(date, season);
-  const tomorrowAtMidnight = getChinaMidnight(now) + 24 * 60 * 60 * 1000;
-  const tomorrowSeason = getCurrentSeason(tomorrowAtMidnight);
-  const tomorrowDate = getChinaDateString(tomorrowAtMidnight);
-  const tomorrowWeather = getWeatherForDate(tomorrowDate, tomorrowSeason);
-  const computedLands = buildComputedLands(state, now);
-  const shopDailyPurchases = await getShopDailyPurchaseCounts(userId, date);
-  return {
-    state,
-    computedLands,
-    world: { date, weather, season, generatedAt: now },
-    weatherForecast: {
-      tomorrow: {
-        date: tomorrowDate,
-        weather: tomorrowWeather,
-        season: tomorrowSeason,
-        generatedAt: now,
-      },
-    },
-    shopDailyPurchases,
-    serverNow: now,
-    plantableCrops: getPlantableCrops(state, season),
-    nextSeasonInMs: getNextSeasonChangeMs(now),
-    nextDailyInMs: getNextDailyResetMs(now),
-  };
+  return buildFarmStatusResponseFromState(userId, state);
 }
 
 /** 种植 */
@@ -949,64 +982,119 @@ export async function getShopItems() {
   return Object.values(await getEffectiveFarmShopItems());
 }
 
+function getShopItemDef(
+  items: Record<ShopItemKey, EffectiveFarmShopItem>,
+  key: ShopItemKey,
+): EffectiveFarmShopItem | undefined {
+  return items[key] ?? SHOP_ITEMS_V2[key];
+}
+
+async function applyBuyItemPurchase(
+  userId: number,
+  state: FarmStateV2,
+  key: ShopItemKey,
+  qty: number,
+  def: EffectiveFarmShopItem | undefined,
+): Promise<{ ok: boolean; msg?: string; balance?: number }> {
+  if (!def) return { ok: false, msg: '未知道具' };
+  if (qty <= 0 || qty > 99) return { ok: false, msg: '数量无效' };
+  const skill = PET_SKILL_BOOK_TO_SKILL[key as PetSkillBookKey];
+  const oneTimeItem = ONE_TIME_SHOP_ITEM_KEYS.includes(key as (typeof ONE_TIME_SHOP_ITEM_KEYS)[number]);
+  if (oneTimeItem) {
+    if (qty !== 1) return { ok: false, msg: '该设备每个账号只能购买 1 台' };
+    if ((state.inventory[key]?.count ?? 0) > 0) return { ok: false, msg: '该设备已购买，不能重复购买' };
+  }
+  const dailyLimit = skill ? 0 : Number(def.dailyLimit ?? 0);
+  let dailyKey: string | null = null;
+  if (Number.isSafeInteger(dailyLimit) && dailyLimit > 0) {
+    const today = getChinaDateString(Date.now());
+    dailyKey = `farmv2:shop:daily:${userId}:${today}:${key}`;
+    const purchasedToday = Number(await kv.get<number>(dailyKey)) || 0;
+    if (purchasedToday + qty > dailyLimit) {
+      return { ok: false, msg: `今日限购 ${dailyLimit} 个` };
+    }
+  }
+  const totalCost = def.cost * qty;
+  const ded = await deductPoints(userId, totalCost, 'exchange', `农场购买: ${def.name} x${qty}`);
+  if (!ded.success) return { ok: false, msg: ded.message ?? '积分不足' };
+  state.points = ded.balance;
+  addToInventory(state, key, qty, Date.now());
+  if (dailyKey) {
+    const store = kv as typeof kv & {
+      incrby?: (key: string, amount: number) => Promise<number>;
+      expire?: (key: string, seconds: number) => Promise<unknown>;
+    };
+    const count = typeof store.incrby === 'function'
+      ? await store.incrby(dailyKey, qty)
+      : ((Number(await kv.get<number>(dailyKey)) || 0) + qty);
+    if (typeof store.incrby !== 'function') {
+      await kv.set(dailyKey, count);
+    }
+    if (count === qty) {
+      await store.expire?.(dailyKey, 48 * 60 * 60);
+    }
+  }
+  return { ok: true, balance: state.points };
+}
+
 /** 购买道具 */
 export async function buyItem(userId: number, key: ShopItemKey, qty: number): Promise<{ ok: boolean; msg?: string; balance?: number }> {
-  const effectiveDef = await getEffectiveFarmShopItem(key);
+  const items = await getEffectiveFarmShopItems();
+  const def = getShopItemDef(items, key);
   const r = await withLock(userId, async (state) => {
-    const def = effectiveDef ?? SHOP_ITEMS_V2[key];
-    if (!def) return { ok: false, msg: '未知道具' };
-    if (qty <= 0 || qty > 99) return { ok: false, msg: '数量无效' };
-    const skill = PET_SKILL_BOOK_TO_SKILL[key as PetSkillBookKey];
-    const oneTimeItem = ONE_TIME_SHOP_ITEM_KEYS.includes(key as (typeof ONE_TIME_SHOP_ITEM_KEYS)[number]);
-    if (oneTimeItem) {
-      if (qty !== 1) return { ok: false, msg: '该设备每个账号只能购买 1 台' };
-      if ((state.inventory[key]?.count ?? 0) > 0) return { ok: false, msg: '该设备已购买，不能重复购买' };
-    }
-    const dailyLimit = skill ? 0 : Number(def.dailyLimit ?? 0);
-    let dailyKey: string | null = null;
-    if (Number.isSafeInteger(dailyLimit) && dailyLimit > 0) {
-      const today = getChinaDateString(Date.now());
-      dailyKey = `farmv2:shop:daily:${userId}:${today}:${key}`;
-      const purchasedToday = Number(await kv.get<number>(dailyKey)) || 0;
-      if (purchasedToday + qty > dailyLimit) {
-        return { ok: false, msg: `今日限购 ${dailyLimit} 个` };
-      }
-    }
-    const totalCost = def.cost * qty;
-    const ded = await deductPoints(userId, totalCost, 'exchange', `农场购买: ${def.name} x${qty}`);
-    if (!ded.success) return { ok: false, msg: ded.message ?? '积分不足' };
-    state.points = ded.balance;
-    addToInventory(state, key, qty, Date.now());
-    if (dailyKey) {
-      const store = kv as typeof kv & {
-        incrby?: (key: string, amount: number) => Promise<number>;
-        expire?: (key: string, seconds: number) => Promise<unknown>;
-      };
-      const count = typeof store.incrby === 'function'
-        ? await store.incrby(dailyKey, qty)
-        : ((Number(await kv.get<number>(dailyKey)) || 0) + qty);
-      if (typeof store.incrby !== 'function') {
-        await kv.set(dailyKey, count);
-      }
-      if (count === qty) {
-        await store.expire?.(dailyKey, 48 * 60 * 60);
-      }
-    }
-    return { ok: true, balance: state.points };
+    return applyBuyItemPurchase(userId, state, key, qty, def);
   });
   return r.error ? { ok: false, msg: r.error } : (r.result as any);
 }
 
+/** 购买道具并返回最新状态，避免接口层再次完整刷新农场 */
+export async function buyItemWithStatus(
+  userId: number,
+  key: ShopItemKey,
+  qty: number,
+): Promise<{ ok: boolean; msg?: string; balance?: number; data?: FarmStatusResponse }> {
+  const items = await getEffectiveFarmShopItems();
+  const def = getShopItemDef(items, key);
+  const r = await withLock(userId, async (state) => {
+    return applyBuyItemPurchase(userId, state, key, qty, def);
+  }, { includeStatus: true, shopItems: items });
+  if (r.error) return { ok: false, msg: r.error };
+  const result = r.result as { ok: boolean; msg?: string; balance?: number };
+  if (!result.ok) return result;
+  return { ...result, data: r.status };
+}
+
+async function getItemUseContext() {
+  const items = await getEffectiveFarmShopItems();
+  return {
+    items,
+    petEffects: buildEffectivePetItemEffects(items),
+  };
+}
+
 /** 使用道具 */
 export async function useItem(userId: number, key: ShopItemKey, plotIndex?: number): Promise<{ ok: boolean; msg?: string }> {
-  const [items, petEffects] = await Promise.all([
-    getEffectiveFarmShopItems(),
-    getEffectivePetItemEffects(),
-  ]);
+  const { items, petEffects } = await getItemUseContext();
   const r = await withLock(userId, async (state) => {
     return applyItemUse(state, key, Date.now(), plotIndex, { items, petEffects });
   });
   return r.error ? { ok: false, msg: r.error } : (r.result as any);
+}
+
+/** 使用道具并返回最新状态，避免接口层再次完整刷新农场 */
+export async function useItemWithStatus(
+  userId: number,
+  key: ShopItemKey,
+  plotIndex?: number,
+): Promise<{ ok: boolean; msg?: string; data?: FarmStatusResponse }> {
+  const { items, petEffects } = await getItemUseContext();
+  const r = await withLock(userId, async (state) => {
+    return applyItemUse(state, key, Date.now(), plotIndex, { items, petEffects });
+  }, { includeStatus: true, shopItems: items });
+  if (r.error) return { ok: false, msg: r.error };
+  const result = r.result as { ok: boolean; msg?: string };
+  if (!result.ok) return result;
+  return { ...result, data: r.status };
 }
 
 /** 领养宠物 */

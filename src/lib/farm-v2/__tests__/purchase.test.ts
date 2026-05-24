@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { kv } from '@/lib/d1-kv';
 import { addPoints, deductPoints, getUserPoints } from '@/lib/points';
 import type { FarmStateV2, PetState } from '@/lib/types/farm-v2';
-import { buyItem, getFarmStatus } from '../index';
+import { buyItem, buyItemWithStatus, getFarmStatus, useItemWithStatus } from '../index';
 
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
@@ -80,6 +80,35 @@ describe('farm-v2 shop purchases', () => {
 
     expect(status.state.points).toBe(100297);
     expect(savedState.points).toBe(100297);
+  });
+
+  it('购买道具时直接返回最新农场状态', async () => {
+    const result = await buyItemWithStatus(userId, 'pet_food_normal', 2);
+    const savedState = store.get(stateKey) as FarmStateV2;
+    const stateSaveCount = mockKvSet.mock.calls.filter(([key]) => key === stateKey).length;
+
+    expect(result.ok).toBe(true);
+    expect(result.balance).toBe(970);
+    expect(result.data?.state.inventory.pet_food_normal?.count).toBe(2);
+    expect(result.data?.shopDailyPurchases?.pet_food_normal).toBe(2);
+    expect(savedState.inventory.pet_food_normal?.count).toBe(2);
+    expect(stateSaveCount).toBe(1);
+  });
+
+  it('使用道具时直接返回最新农场状态', async () => {
+    const state = createFarmState();
+    state.inventory.scarecrow = { count: 1, updatedAt: 0 };
+    store.set(stateKey, state);
+
+    const result = await useItemWithStatus(userId, 'scarecrow');
+    const savedState = store.get(stateKey) as FarmStateV2;
+    const stateSaveCount = mockKvSet.mock.calls.filter(([key]) => key === stateKey).length;
+
+    expect(result.ok).toBe(true);
+    expect(result.data?.state.scarecrowUntil).toBe(savedState.scarecrowUntil);
+    expect(result.data?.state.inventory.scarecrow?.count).toBe(0);
+    expect(savedState.inventory.scarecrow?.count).toBe(0);
+    expect(stateSaveCount).toBe(1);
   });
 
   it('读取农场状态时自动触发宠物收菜和种菜被动技能', async () => {

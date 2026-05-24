@@ -68,8 +68,9 @@ export async function getEffectiveFarmShopItem(key: ShopItemKey): Promise<Effect
   return items[key] ?? null;
 }
 
-export async function getEffectivePetItemEffects(): Promise<typeof PET_ITEM_EFFECTS> {
-  const items = await getEffectiveFarmShopItems();
+export function buildEffectivePetItemEffects(
+  items: Record<ShopItemKey, EffectiveFarmShopItem>,
+): typeof PET_ITEM_EFFECTS {
   const result = { ...PET_ITEM_EFFECTS };
 
   for (const [key, item] of Object.entries(items) as Array<[ShopItemKey, EffectiveFarmShopItem]>) {
@@ -85,6 +86,11 @@ export async function getEffectivePetItemEffects(): Promise<typeof PET_ITEM_EFFE
   }
 
   return result;
+}
+
+export async function getEffectivePetItemEffects(): Promise<typeof PET_ITEM_EFFECTS> {
+  const items = await getEffectiveFarmShopItems();
+  return buildEffectivePetItemEffects(items);
 }
 
 export async function updateFarmShopItemOverride(
