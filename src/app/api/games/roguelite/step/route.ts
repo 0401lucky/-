@@ -4,7 +4,7 @@ import { withUserRateLimit } from '@/lib/rate-limit';
 import type { RogueliteGameStepPayload } from '@/lib/roguelite';
 
 export const POST = withUserRateLimit(
-  'game:submit',
+  'game:action',
   async (request: NextRequest, user) => {
     try {
       const body = (await request.json()) as RogueliteGameStepPayload;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import {
@@ -145,6 +145,7 @@ export default function RoguelitePage() {
   const [message, setMessage] = useState('准备进入星尘迷阵');
   const [showRules, setShowRules] = useState(false);
   const [lastOutcome, setLastOutcome] = useState<RogueliteOutcomeView | null>(null);
+  const submittingRef = useRef(false);
 
   const state = session?.state ?? null;
   const player = state?.player ?? null;
@@ -182,6 +183,8 @@ export default function RoguelitePage() {
   }, [fetchStatus, phase, status?.inCooldown]);
 
   const submitResult = useCallback(async (targetSession: RogueliteSessionView) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setLoading(true);
     setError(null);
     try {
@@ -204,6 +207,7 @@ export default function RoguelitePage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : '结算失败，请稍后重试');
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   }, [fetchStatus]);
@@ -352,8 +356,10 @@ export default function RoguelitePage() {
           phase={phase}
           loading={loading}
           status={status}
+          canEscape={Boolean(state?.status === 'playing' && state.starGate.endlessUnlocked && !state.pending)}
           onStart={() => void startGame()}
           onCancel={() => void cancelGame()}
+          onEscape={() => void stepGame({ type: 'escape' })}
         />
 
         {phase === 'ready' && !session && (
@@ -981,15 +987,19 @@ function StatusDock({
   phase,
   loading,
   status,
+  canEscape,
   onStart,
   onCancel,
+  onEscape,
 }: {
   player: RogueliteStateView['player'] | null;
   phase: Phase;
   loading: boolean;
   status: RogueliteStatus | null;
+  canEscape: boolean;
   onStart: () => void;
   onCancel: () => void;
+  onEscape: () => void;
 }) {
   const phaseText = phase === 'playing' ? '进行中' : phase === 'finished' ? '已结算' : '待开始';
 
@@ -1021,15 +1031,28 @@ function StatusDock({
           {status?.inCooldown ? `冷却 ${status.cooldownRemaining}s` : loading ? '处理中' : '开始'}
         </button>
       ) : (
-        <button
-          onClick={onCancel}
-          disabled={loading}
-          className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 text-sm font-bold text-slate-500 transition-colors hover:text-slate-900 disabled:opacity-50"
-          type="button"
-        >
-          <X className="h-4 w-4" />
-          放弃
-        </button>
+        <div className="flex flex-wrap justify-end gap-2">
+          {canEscape && (
+            <button
+              onClick={onEscape}
+              disabled={loading}
+              className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 text-sm font-bold text-white shadow-lg shadow-emerald-200 transition-all hover:-translate-y-0.5 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+            >
+              <DoorOpen className="h-4 w-4" />
+              撤离迷阵
+            </button>
+          )}
+          <button
+            onClick={onCancel}
+            disabled={loading}
+            className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 text-sm font-bold text-slate-500 transition-colors hover:text-slate-900 disabled:opacity-50"
+            type="button"
+          >
+            <X className="h-4 w-4" />
+            放弃
+          </button>
+        </div>
       )}
     </section>
   );
@@ -1214,7 +1237,7 @@ function ScorePreviewPanel({ state }: { state: RogueliteStateView }) {
       </div>
 
       <p className="mt-3 text-xs font-semibold leading-5 text-slate-500">
-        结算时按当前得分的 10% 向下取整计入福利积分，当前版本无每日游戏积分上限。
+        结算时按当前得分的 10% 向下取整计入福利积分，实际到账会受每日游戏积分上限影响。
       </p>
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-sm">

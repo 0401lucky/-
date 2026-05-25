@@ -454,84 +454,86 @@ export async function submitMinesweeperResult(
   }
 
   const releaseLock = async () => {
-    await releaseGameLock(lockKey, lockToken, useNativeHotStore);
+    try {
+      await releaseGameLock(lockKey, lockToken, useNativeHotStore);
+    } catch (error) {
+      console.error('Release minesweeper submit lock error:', error);
+    }
   };
 
-  const session = await loadSessionById(payload.sessionId, useNativeHotStore);
-  if (!session) {
-    await releaseLock();
-    return { success: false, message: '游戏会话不存在或已过期' };
-  }
-  if (session.userId !== userId) {
-    await releaseLock();
-    return { success: false, message: '会话不属于该用户' };
-  }
-  if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
-    await releaseLock();
-    return { success: false, message: '游戏会话已不是当前活跃局' };
-  }
-  if (session.status !== 'playing') {
-    await releaseLock();
-    return { success: false, message: '游戏会话已结束' };
-  }
-  if (Date.now() > session.expiresAt) {
-    await deleteSession(session.id, userId, useNativeHotStore);
-    await releaseLock();
-    return { success: false, message: '游戏会话已过期' };
-  }
-  if (session.state.status === 'playing') {
-    await releaseLock();
-    return { success: false, message: '请先完成本局再结算' };
-  }
+  try {
+    const session = await loadSessionById(payload.sessionId, useNativeHotStore);
+    if (!session) {
+      return { success: false, message: '游戏会话不存在或已过期' };
+    }
+    if (session.userId !== userId) {
+      return { success: false, message: '会话不属于该用户' };
+    }
+    if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
+      return { success: false, message: '游戏会话已不是当前活跃局' };
+    }
+    if (session.status !== 'playing') {
+      return { success: false, message: '游戏会话已结束' };
+    }
+    if (Date.now() > session.expiresAt) {
+      await deleteSession(session.id, userId, useNativeHotStore);
+      return { success: false, message: '游戏会话已过期' };
+    }
+    if (session.state.status === 'playing') {
+      return { success: false, message: '请先完成本局再结算' };
+    }
 
-  const duration = getSessionDuration(session);
-  const scoreBreakdown = calculateMinesweeperScore(session.state, duration);
-  const score = scoreBreakdown.total;
-  const pointReward = calculateMinesweeperPointReward(score);
-  const dailyPointsLimit = await getDailyPointsLimit();
-  const pointsResult = await addGamePointsWithLimit(
-    userId,
-    pointReward,
-    dailyPointsLimit,
-    'game_play',
-    `扫雷${session.state.status === 'won' ? '成功' : '失败'}（${MINESWEEPER_DIFFICULTY_CONFIG[session.difficulty].label}）得分 ${score}，福利积分 ${pointReward}`,
-  );
-
-  const record: MinesweeperGameRecord = {
-    id: nanoid(),
-    userId,
-    sessionId: session.id,
-    gameType: GAME_TYPE,
-    difficulty: session.difficulty,
-    won: session.state.status === 'won',
-    score,
-    pointsEarned: pointsResult.pointsEarned,
-    duration,
-    moves: session.state.moves,
-    flagsUsed: session.state.flagsUsed,
-    revealedSafe: session.state.revealedSafe,
-    mines: session.state.mines,
-    scoreBreakdown,
-    createdAt: Date.now(),
-  };
-
-  if (useNativeHotStore) {
-    await incrementSharedDailyStats(userId, score, pointsResult.dailyEarned);
-    await completeNativeGameSettlement(
-      record,
-      session.id,
-      score,
-      pointsResult.dailyEarned,
-      COOLDOWN_TTL,
+    const duration = getSessionDuration(session);
+    const scoreBreakdown = calculateMinesweeperScore(session.state, duration);
+    const score = scoreBreakdown.total;
+    const pointReward = calculateMinesweeperPointReward(score);
+    const dailyPointsLimit = await getDailyPointsLimit();
+    const pointsResult = await addGamePointsWithLimit(
+      userId,
+      pointReward,
+      dailyPointsLimit,
+      'game_play',
+      `扫雷${session.state.status === 'won' ? '成功' : '失败'}（${MINESWEEPER_DIFFICULTY_CONFIG[session.difficulty].label}）得分 ${score}，福利积分 ${pointReward}`,
     );
-  } else {
-    await Promise.all([
-      deleteSession(session.id, userId, false),
-      kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
-      incrementSharedDailyStats(userId, score, pointsResult.dailyEarned),
-      kv.lpush(RECORDS_KEY(userId), record).then(() => kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)),
-    ]);
-  }
 
-  return { success: true, record, pointsEarned: pointsResult.pointsEarned };
+    const record: MinesweeperGameRecord = {
+      id: nanoid(),
+      userId,
+      sessionId: session.id,
+      gameType: GAME_TYPE,
+      difficulty: session.difficulty,
+      won: session.state.status === 'won',
+      score,
+      pointsEarned: pointsResult.pointsEarned,
+      duration,
+      moves: session.state.moves,
+      flagsUsed: session.state.flagsUsed,
+      revealedSafe: session.state.revealedSafe,
+      mines: session.state.mines,
+      scoreBreakdown,
+      createdAt: Date.now(),
+    };
+
+    if (useNativeHotStore) {
+      await incrementSharedDailyStats(userId, score, pointsResult.dailyEarned);
+      await completeNativeGameSettlement(
+        record,
+        session.id,
+        score,
+        pointsResult.dailyEarned,
+        COOLDOWN_TTL,
+      );
+    } else {
+      await Promise.all([
+        deleteSession(session.id, userId, false),
+        kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
+        incrementSharedDailyStats(userId, score, pointsResult.dailyEarned),
+        kv.lpush(RECORDS_KEY(userId), record).then(() => kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)),
+      ]);
+    }
+
+    return { success: true, record, pointsEarned: pointsResult.pointsEarned };
+  } finally {
+    await releaseLock();
+  }
 }

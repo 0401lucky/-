@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -184,6 +184,7 @@ export default function MinesweeperPage() {
   const [message, setMessage] = useState('选择难度开始扫雷');
   const [result, setResult] = useState<MinesweeperGameRecord | null>(null);
   const [showRules, setShowRules] = useState(false);
+  const submittingRef = useRef(false);
 
   const state = session?.state ?? null;
   const difficulties = status?.difficulties?.length
@@ -291,6 +292,8 @@ export default function MinesweeperPage() {
   }, [fetchStatus]);
 
   const submitResult = useCallback(async (targetSession: MinesweeperSessionView) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setLoading(true);
     setError(null);
     try {
@@ -311,6 +314,7 @@ export default function MinesweeperPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : '结算失败，请稍后重试');
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   }, [fetchStatus]);

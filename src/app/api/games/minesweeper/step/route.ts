@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { stepMinesweeperGame, type MinesweeperGameStepPayload } from '@/lib/minesweeper';
 import { withUserRateLimit } from '@/lib/rate-limit';
 
-export const POST = withUserRateLimit('game:submit', async (request: NextRequest, user) => {
+export const POST = withUserRateLimit('game:action', async (request: NextRequest, user) => {
   try {
     const body = (await request.json()) as MinesweeperGameStepPayload;
     if (!body.sessionId || !body.action) {

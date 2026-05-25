@@ -467,92 +467,93 @@ export async function submitRogueliteResult(
   }
 
   const releaseLock = async () => {
-    await releaseGameLock(lockKey, lockToken, useNativeHotStore);
+    try {
+      await releaseGameLock(lockKey, lockToken, useNativeHotStore);
+    } catch (error) {
+      console.error('Release roguelite submit lock error:', error);
+    }
   };
 
-  const session = await loadSessionById(payload.sessionId, useNativeHotStore);
-  if (!session) {
-    await releaseLock();
-    return { success: false, message: '游戏会话不存在或已过期' };
-  }
-  if (session.userId !== userId) {
-    await releaseLock();
-    return { success: false, message: '会话不属于该用户' };
-  }
-  if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
-    await releaseLock();
-    return { success: false, message: '游戏会话已不是当前活跃局' };
-  }
-  if (session.status !== 'playing') {
-    await releaseLock();
-    return { success: false, message: '游戏会话已结束' };
-  }
-  if (Date.now() > session.expiresAt) {
-    await deleteSession(session.id, userId, useNativeHotStore);
-    await releaseLock();
-    return { success: false, message: '游戏会话已过期' };
-  }
-  if (session.state.status === 'playing') {
-    await releaseLock();
-    return { success: false, message: '请先完成本局再结算' };
-  }
+  try {
+    const session = await loadSessionById(payload.sessionId, useNativeHotStore);
+    if (!session) {
+      return { success: false, message: '游戏会话不存在或已过期' };
+    }
+    if (session.userId !== userId) {
+      return { success: false, message: '会话不属于该用户' };
+    }
+    if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
+      return { success: false, message: '游戏会话已不是当前活跃局' };
+    }
+    if (session.status !== 'playing') {
+      return { success: false, message: '游戏会话已结束' };
+    }
+    if (Date.now() > session.expiresAt) {
+      await deleteSession(session.id, userId, useNativeHotStore);
+      return { success: false, message: '游戏会话已过期' };
+    }
+    if (session.state.status === 'playing') {
+      return { success: false, message: '请先完成本局再结算' };
+    }
 
-  const serverDuration = Date.now() - session.startedAt;
-  if (session.state.status === 'escaped' && serverDuration < MIN_FINISH_DURATION_MS) {
-    await releaseLock();
-    return { success: false, message: '游戏时长过短' };
-  }
+    const serverDuration = Date.now() - session.startedAt;
+    if (session.state.status === 'escaped' && serverDuration < MIN_FINISH_DURATION_MS) {
+      return { success: false, message: '游戏时长过短' };
+    }
 
-  const scoreBreakdown = calculateRogueliteScore(session.state);
-  const score = scoreBreakdown.total;
-  const pointReward = calculateRoguelitePointReward(score);
-  const dailyPointsLimit = await getDailyPointsLimit();
-  const pointsResult = await addGamePointsWithLimit(
-    userId,
-    pointReward,
-    dailyPointsLimit,
-    'game_play',
-    `星尘迷阵 ${session.state.status === 'escaped' ? '成功撤离' : `第${session.state.floor}层失败`} 得分 ${score}，福利积分 ${pointReward}`,
-  );
-
-  const record: RogueliteGameRecord = {
-    id: nanoid(),
-    userId,
-    sessionId: session.id,
-    gameType: GAME_TYPE,
-    won: session.state.status === 'escaped',
-    finalFloor: session.state.floor,
-    floorsCleared: session.state.player.floorsCleared,
-    score,
-    pointsEarned: pointsResult.pointsEarned,
-    stardust: session.state.player.stardust,
-    hpRemaining: Math.max(0, session.state.player.hp),
-    relics: session.state.player.relics.length,
-    monstersDefeated: session.state.player.monstersDefeated,
-    chestsOpened: session.state.player.chestsOpened,
-    stepsUsed: session.actions.filter((action) => action.type === 'move').length,
-    duration: serverDuration,
-    scoreBreakdown,
-    createdAt: Date.now(),
-  };
-
-  if (useNativeHotStore) {
-    await incrementSharedDailyStats(userId, score, pointsResult.dailyEarned);
-    await completeNativeGameSettlement(
-      record,
-      session.id,
-      score,
-      pointsResult.dailyEarned,
-      COOLDOWN_TTL,
+    const scoreBreakdown = calculateRogueliteScore(session.state);
+    const score = scoreBreakdown.total;
+    const pointReward = calculateRoguelitePointReward(score);
+    const dailyPointsLimit = await getDailyPointsLimit();
+    const pointsResult = await addGamePointsWithLimit(
+      userId,
+      pointReward,
+      dailyPointsLimit,
+      'game_play',
+      `星尘迷阵 ${session.state.status === 'escaped' ? '成功撤离' : `第${session.state.floor}层失败`} 得分 ${score}，福利积分 ${pointReward}`,
     );
-  } else {
-    await Promise.all([
-      deleteSession(session.id, userId, false),
-      kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
-      incrementSharedDailyStats(userId, score, pointsResult.dailyEarned),
-      kv.lpush(RECORDS_KEY(userId), record).then(() => kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)),
-    ]);
-  }
 
-  return { success: true, record, pointsEarned: pointsResult.pointsEarned };
+    const record: RogueliteGameRecord = {
+      id: nanoid(),
+      userId,
+      sessionId: session.id,
+      gameType: GAME_TYPE,
+      won: session.state.status === 'escaped',
+      finalFloor: session.state.floor,
+      floorsCleared: session.state.player.floorsCleared,
+      score,
+      pointsEarned: pointsResult.pointsEarned,
+      stardust: session.state.player.stardust,
+      hpRemaining: Math.max(0, session.state.player.hp),
+      relics: session.state.player.relics.length,
+      monstersDefeated: session.state.player.monstersDefeated,
+      chestsOpened: session.state.player.chestsOpened,
+      stepsUsed: session.actions.filter((action) => action.type === 'move').length,
+      duration: serverDuration,
+      scoreBreakdown,
+      createdAt: Date.now(),
+    };
+
+    if (useNativeHotStore) {
+      await incrementSharedDailyStats(userId, score, pointsResult.dailyEarned);
+      await completeNativeGameSettlement(
+        record,
+        session.id,
+        score,
+        pointsResult.dailyEarned,
+        COOLDOWN_TTL,
+      );
+    } else {
+      await Promise.all([
+        deleteSession(session.id, userId, false),
+        kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
+        incrementSharedDailyStats(userId, score, pointsResult.dailyEarned),
+        kv.lpush(RECORDS_KEY(userId), record).then(() => kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)),
+      ]);
+    }
+
+    return { success: true, record, pointsEarned: pointsResult.pointsEarned };
+  } finally {
+    await releaseLock();
+  }
 }
