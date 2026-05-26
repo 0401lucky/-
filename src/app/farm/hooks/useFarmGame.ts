@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   FarmStatusResponse, CropIdV2, ShopItemKey, PetType, PetTask,
-  HarvestResult, StealCandidate,
+  HarvestResult, StealCandidate, FarmEvent,
 } from '@/lib/types/farm-v2';
 
 interface UseFarmGameReturn {
@@ -49,6 +49,26 @@ async function callApi<T = unknown>(url: string, body?: unknown, method: 'POST' 
   return data;
 }
 
+const PASSIVE_EVENT_TOAST_WINDOW_MS = 15_000;
+
+function isPassivePetEvent(event: FarmEvent): boolean {
+  return event.type === 'pet_task'
+    && (event.text.includes('宠物收菜被动触发') || event.text.includes('宠物种菜被动触发'));
+}
+
+function summarizePassivePetEvents(events: FarmEvent[]): string {
+  const eventPriority = (event: FarmEvent) => event.text.includes('宠物收菜被动触发') ? 0 : 1;
+  const summaries = events
+    .slice()
+    .sort((a, b) => eventPriority(a) - eventPriority(b) || a.ts - b.ts)
+    .map((event) => event.text
+      .replace(/^宠物收菜被动触发，?/, '')
+      .replace(/^宠物种菜被动触发，?/, ''))
+    .filter(Boolean);
+
+  return `宠物被动已触发：${summaries.join('；')}`;
+}
+
 export function useFarmGame(): UseFarmGameReturn {
   const [status, setStatus] = useState<FarmStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -59,6 +79,7 @@ export function useFarmGame(): UseFarmGameReturn {
   const actionQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingActionCountRef = useRef(0);
   const pendingActionKeysRef = useRef<Map<string, Promise<unknown>>>(new Map());
+  const seenPassiveEventIdsRef = useRef<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     try {
@@ -82,6 +103,26 @@ export function useFarmGame(): UseFarmGameReturn {
       if (tickerRef.current) clearInterval(tickerRef.current);
     };
   }, [refresh]);
+
+  useEffect(() => {
+    if (!status) return;
+
+    const seen = seenPassiveEventIdsRef.current;
+    const passiveEvents = (status.state.events ?? []).filter(isPassivePetEvent);
+    const freshEvents = passiveEvents.filter((event) => {
+      if (seen.has(event.id)) return false;
+      if (seen.size === 0) {
+        return Math.abs(status.serverNow - event.ts) <= PASSIVE_EVENT_TOAST_WINDOW_MS;
+      }
+      return true;
+    });
+
+    passiveEvents.forEach((event) => seen.add(event.id));
+
+    if (freshEvents.length > 0) {
+      setToast({ type: 'success', text: summarizePassivePetEvents(freshEvents) });
+    }
+  }, [status]);
 
   const wrap = useCallback(<T>(fn: () => Promise<T>, actionKey?: string): Promise<T | null> => {
     if (actionKey) {

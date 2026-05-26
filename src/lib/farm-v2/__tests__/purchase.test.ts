@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kv } from '@/lib/d1-kv';
 import { addPoints, deductPoints, getUserPoints } from '@/lib/points';
 import type { FarmStateV2, PetState } from '@/lib/types/farm-v2';
@@ -47,6 +47,10 @@ describe('farm-v2 shop purchases', () => {
       }
       return deleted;
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('技能书支持一次购买多本', async () => {
@@ -122,7 +126,7 @@ describe('farm-v2 shop purchases', () => {
     state.lands = [
       {
         index: 1,
-        status: 'mature',
+        status: 'growing',
         crop: {
           cropId: 'wheat',
           plantedAt: now - 31 * 60 * 1000,
@@ -151,6 +155,7 @@ describe('farm-v2 shop purchases', () => {
     expect(savedState.lands[0].status).toBe('growing');
     expect(savedState.lands[0].crop?.cropId).toBe('wheat');
     expect(savedState.seedInventory.wheat).toBe(0);
+    expect(savedState.events.some((event) => event.type === 'mature')).toBe(true);
     expect(savedState.events.some((event) => event.text.includes('宠物收菜被动触发'))).toBe(true);
     expect(savedState.events.some((event) => event.text.includes('宠物种菜被动触发'))).toBe(true);
   });

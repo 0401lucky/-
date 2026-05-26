@@ -300,6 +300,22 @@ export async function getMinesweeperRecords(userId: number, limit: number = 20):
   return (await kv.lrange<MinesweeperGameRecord>(RECORDS_KEY(userId), 0, limit - 1)) ?? [];
 }
 
+async function findSettledMinesweeperRecord(
+  userId: number,
+  sessionId: string,
+  useNativeHotStore: boolean,
+): Promise<MinesweeperGameRecord | null> {
+  const records = useNativeHotStore
+    ? await listNativeGameRecords<MinesweeperGameRecord>(userId, GAME_TYPE, MAX_RECORD_ENTRIES)
+    : ((await kv.lrange<MinesweeperGameRecord>(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)) ?? []);
+
+  return records.find((record) => record.sessionId === sessionId) ?? null;
+}
+
+function buildSettledMinesweeperResult(record: MinesweeperGameRecord) {
+  return { success: true as const, record, pointsEarned: record.pointsEarned };
+}
+
 export async function getActiveMinesweeperSession(userId: number): Promise<MinesweeperGameSession | null> {
   const useNativeHotStore = await isNativeHotStoreReady();
   if (useNativeHotStore) {
@@ -464,18 +480,34 @@ export async function submitMinesweeperResult(
   try {
     const session = await loadSessionById(payload.sessionId, useNativeHotStore);
     if (!session) {
+      const settledRecord = await findSettledMinesweeperRecord(userId, payload.sessionId, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledMinesweeperResult(settledRecord);
+      }
       return { success: false, message: '游戏会话不存在或已过期' };
     }
     if (session.userId !== userId) {
       return { success: false, message: '会话不属于该用户' };
     }
     if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
+      const settledRecord = await findSettledMinesweeperRecord(userId, session.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledMinesweeperResult(settledRecord);
+      }
       return { success: false, message: '游戏会话已不是当前活跃局' };
     }
     if (session.status !== 'playing') {
+      const settledRecord = await findSettledMinesweeperRecord(userId, session.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledMinesweeperResult(settledRecord);
+      }
       return { success: false, message: '游戏会话已结束' };
     }
     if (Date.now() > session.expiresAt) {
+      const settledRecord = await findSettledMinesweeperRecord(userId, session.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledMinesweeperResult(settledRecord);
+      }
       await deleteSession(session.id, userId, useNativeHotStore);
       return { success: false, message: '游戏会话已过期' };
     }

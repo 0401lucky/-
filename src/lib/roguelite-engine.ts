@@ -878,6 +878,13 @@ function resolveMove(state: RogueliteGameState, to: RoguelitePosition): Roguelit
   if (state.pending) {
     return { ok: false, message: '当前事件尚未处理完成' };
   }
+  if (samePosition(state.player.position, to)) {
+    return {
+      ok: true,
+      state,
+      outcome: buildOutcome(state, '当前位置已确认'),
+    };
+  }
   if (!isValidWorldPosition(to) || !isAdjacentPosition(state.player.position, to)) {
     return { ok: false, message: '只能移动到相邻格子' };
   }
@@ -1584,10 +1591,7 @@ export function calculateRogueliteScore(state: RogueliteGameState): RogueliteSco
   const relicPoints = state.player.relics.length * 75;
   const chestPoints = state.player.chestsOpened * 55;
   const winBonus = state.status === 'escaped' ? 360 + endlessFloors * 80 : 0;
-  const total = Math.min(
-    3000,
-    Math.max(0, floorPoints + explorationPoints + monsterPoints + stardustPoints + lifePoints + relicPoints + chestPoints + winBonus),
-  );
+  const total = Math.max(0, floorPoints + explorationPoints + monsterPoints + stardustPoints + lifePoints + relicPoints + chestPoints + winBonus);
 
   return {
     floorPoints,

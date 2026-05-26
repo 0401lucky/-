@@ -146,6 +146,7 @@ export default function RoguelitePage() {
   const [showRules, setShowRules] = useState(false);
   const [lastOutcome, setLastOutcome] = useState<RogueliteOutcomeView | null>(null);
   const submittingRef = useRef(false);
+  const steppingRef = useRef(false);
 
   const state = session?.state ?? null;
   const player = state?.player ?? null;
@@ -259,7 +260,8 @@ export default function RoguelitePage() {
   }, [fetchStatus]);
 
   const stepGame = useCallback(async (action: RogueliteAction) => {
-    if (!session) return;
+    if (!session || steppingRef.current) return;
+    steppingRef.current = true;
     setLoading(true);
     setError(null);
     try {
@@ -279,6 +281,7 @@ export default function RoguelitePage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : '行动失败，请稍后重试');
     } finally {
+      steppingRef.current = false;
       setLoading(false);
     }
   }, [session]);
@@ -1220,7 +1223,7 @@ function ScorePreviewPanel({ state }: { state: RogueliteStateView }) {
             <div className="text-3xl font-black text-slate-950">{score.total}</div>
           </div>
           <div className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-black text-white">
-            最高 3000
+            无硬上限
           </div>
         </div>
       </div>

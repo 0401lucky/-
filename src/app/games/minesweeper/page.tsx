@@ -1185,7 +1185,7 @@ function MinesweeperSettlementModal({
             本局结算
           </div>
           <h2 id="minesweeper-settlement-title" className="mt-1 text-2xl font-black text-slate-950">
-            {result.won ? '胜利结算完成' : '失败结算完成'}
+            {result.won ? '胜利结算完成' : '触雷结算完成'}
           </h2>
           <p className="mt-3 text-sm leading-6 text-slate-600">
             本局得分 {result.score}，每 {MINESWEEPER_POINT_REWARD_DIVISOR} 分兑换 1 积分，获得 {result.pointsEarned} 福利积分。

@@ -332,7 +332,43 @@ describe('roguelite-engine', () => {
 
     expect(score.total).toBeGreaterThan(0);
     expect(score.winBonus).toBeGreaterThan(0);
-    expect(score.total).toBeLessThanOrEqual(3000);
+    expect(score.total).toBe(
+      score.floorPoints
+      + score.explorationPoints
+      + score.monsterPoints
+      + score.stardustPoints
+      + score.lifePoints
+      + score.relicPoints
+      + score.chestPoints
+      + score.winBonus,
+    );
+  });
+
+  it('无尽阶段分数不会被 3000 硬封顶', () => {
+    const state = createInitialRogueliteState('score-cap-check');
+    state.status = 'escaped';
+    state.floor = 12;
+    state.player.floorsCleared = 11;
+    state.player.exploredCells = 200;
+    state.player.stardust = 500;
+    state.player.hp = 30;
+    state.player.relics = ['battle_charm', 'star_compass', 'dust_collector', 'meteor_boots'];
+    state.player.monstersDefeated = 30;
+    state.player.chestsOpened = 10;
+
+    const score = calculateRogueliteScore(state);
+
+    expect(score.total).toBeGreaterThan(3000);
+  });
+
+  it('重复提交当前位置移动会按幂等操作处理', () => {
+    const state = buildStateWithCells([]);
+    const result = resolveRogueliteAction(state, { type: 'move', to: ROGUELITE_START_POSITION });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.message);
+    expect(result.state.player.position).toEqual(ROGUELITE_START_POSITION);
+    expect(result.outcome.message).toContain('当前位置');
   });
 
   it('福利积分按得分 10% 向下取整', () => {
