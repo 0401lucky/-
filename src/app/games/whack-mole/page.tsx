@@ -1741,7 +1741,7 @@ function WhackMoleRulesModal({
           <RuleCard icon={<Zap />} title="连击加成" text={`每次连击额外 +${config.comboBonusStep} 分，最高额外 +${config.maxComboBonus} 分。`} />
           <RuleCard icon={<Bomb />} title="炸弹" text={`敲到炸弹扣 ${config.bombPenalty} 分，并清空当前连击，后期最多同时出现 ${config.maxBombs} 个。`} />
           <RuleCard icon={<Timer />} title="速度曲线" text={`刷新从 ${config.startRefreshMs}ms 加快到 ${config.endRefreshMs}ms。`} />
-          <RuleCard icon={<Trophy />} title="奖励结算" text={`积分 = floor(得分 / ${config.rewardDivisor})，本难度不设奖励上限。`} />
+          <RuleCard icon={<Trophy />} title="奖励结算" text={`积分 = floor(得分 / ${config.rewardDivisor})，实际到账会受每日游戏积分上限影响。`} />
         </div>
       </div>
     </div>

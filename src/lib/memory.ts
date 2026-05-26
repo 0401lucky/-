@@ -6,6 +6,7 @@ import { nanoid } from 'nanoid';
 import { addGamePointsWithLimit } from './points';
 import { getDailyPointsLimit } from './config';
 import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
+import { calculateMemoryPointReward } from './memory-points';
 import {
   cancelNativeGameSession,
   completeNativeGameSettlement,
@@ -18,6 +19,7 @@ import {
 } from './hot-d1';
 import { acquireGameLock, releaseGameLock } from './game-locks';
 export { getDailyStats };
+export { MEMORY_POINT_REWARD_DIVISOR, calculateMemoryPointReward } from './memory-points';
 import type {
   MemoryDifficulty,
   MemoryDifficultyConfig,
@@ -44,27 +46,27 @@ export const DIFFICULTY_CONFIG: Record<MemoryDifficulty, MemoryDifficultyConfig>
     rows: 4,
     cols: 4,
     pairs: 8,
-    baseScore: 120,
-    penaltyPerMove: 1,
-    minScore: 30,
+    baseScore: 220,
+    penaltyPerMove: 2,
+    minScore: 60,
     timeLimit: 180,
   },
   normal: {
     rows: 4,
     cols: 6,
     pairs: 12,
-    baseScore: 200,
-    penaltyPerMove: 2,
-    minScore: 50,
+    baseScore: 450,
+    penaltyPerMove: 4,
+    minScore: 120,
     timeLimit: 180,
   },
   hard: {
     rows: 6,
     cols: 6,
     pairs: 18,
-    baseScore: 350,
-    penaltyPerMove: 2,
-    minScore: 80,
+    baseScore: 900,
+    penaltyPerMove: 6,
+    minScore: 220,
     timeLimit: 180,
   },
 };
@@ -234,13 +236,6 @@ export function calculateScore(
   const score = config.baseScore - extraMoves * config.penaltyPerMove;
   
   return Math.max(config.minScore, score);
-}
-
-/**
- * 计算记忆卡片福利积分：按得分 10% 向下取整。
- */
-export function calculateMemoryPointReward(score: number): number {
-  return Math.max(0, Math.floor(score / 10));
 }
 
 // ============ 核心函数 ============

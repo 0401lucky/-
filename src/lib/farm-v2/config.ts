@@ -351,7 +351,7 @@ export const SHOP_ITEMS_V2: Record<ShopItemKey, ShopItemDef> = {
   fert_medium:      { key: 'fert_medium',      name: '中级肥料', emoji: '🌿', category: 'fertilizer', cost: 45,  description: '成长时间 -20%，银星 +10%，金星 +10%' },
   fert_premium:     { key: 'fert_premium',     name: '高级肥料', emoji: '🌳', category: 'fertilizer', cost: 80,  description: '成长时间 -35%，银星 +15%，金星 +20%' },
 
-  scarecrow:        { key: 'scarecrow',        name: '稻草人',   emoji: '👻', category: 'protection', cost: 100, description: '12 小时内全农场乌鸦 ×0.4', durationMinutes: 12 * 60 },
+  scarecrow:        { key: 'scarecrow',        name: '稻草人',   emoji: '👻', category: 'protection', cost: 100, description: '12 小时内，全场乌鸦出现概率降为 40%', durationMinutes: 12 * 60 },
   birdnet:          { key: 'birdnet',          name: '防鸟网',   emoji: '🕸️', category: 'protection', cost: 50,  description: '指定 1 块土地 6 小时免疫乌鸦', durationMinutes: 6 * 60 },
   bell:             { key: 'bell',             name: '看守铃铛', emoji: '🔔', category: 'protection', cost: 80,  description: '6 小时内偷菜成功率 -50%', durationMinutes: 6 * 60 },
   firework:         { key: 'firework',         name: '驱鸟烟花', emoji: '🎆', category: 'protection', cost: 30,  description: '立即驱散当前出现的乌鸦事件' },

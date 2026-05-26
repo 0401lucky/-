@@ -155,10 +155,11 @@ describe('memory anti-cheat flow', () => {
     expect(result.record?.score).toBe(0);
   });
 
-  it('按得分 10% 发放福利积分', async () => {
+  it('每 9 分兑换 1 福利积分', async () => {
     expect(calculateMemoryPointReward(0)).toBe(0);
-    expect(calculateMemoryPointReward(99)).toBe(9);
-    expect(calculateMemoryPointReward(120)).toBe(12);
+    expect(calculateMemoryPointReward(8)).toBe(0);
+    expect(calculateMemoryPointReward(9)).toBe(1);
+    expect(calculateMemoryPointReward(220)).toBe(24);
 
     const started = await startMemoryGame(1001, 'easy');
     expect(started.success).toBe(true);
@@ -196,8 +197,8 @@ describe('memory anti-cheat flow', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.record?.score).toBe(120);
-    expect(result.pointsEarned).toBe(12);
-    expect(result.record?.pointsEarned).toBe(12);
+    expect(result.record?.score).toBe(220);
+    expect(result.pointsEarned).toBe(24);
+    expect(result.record?.pointsEarned).toBe(24);
   });
 });

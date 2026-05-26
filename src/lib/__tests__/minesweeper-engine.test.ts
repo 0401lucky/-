@@ -112,9 +112,10 @@ describe('minesweeper-engine', () => {
     expect(score.total).toBeLessThanOrEqual(5000);
   });
 
-  it('福利积分按得分 1% 向下取整', () => {
-    expect(calculateMinesweeperPointReward(1019)).toBe(10);
-    expect(calculateMinesweeperPointReward(1379)).toBe(13);
-    expect(calculateMinesweeperPointReward(5000)).toBe(50);
+  it('福利积分每 28 分兑换 1 积分', () => {
+    expect(calculateMinesweeperPointReward(27)).toBe(0);
+    expect(calculateMinesweeperPointReward(28)).toBe(1);
+    expect(calculateMinesweeperPointReward(1379)).toBe(49);
+    expect(calculateMinesweeperPointReward(5000)).toBe(178);
   });
 });

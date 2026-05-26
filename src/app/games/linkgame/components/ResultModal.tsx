@@ -2,7 +2,7 @@
 
 import { ArrowLeft, Clock3, Play, Trophy } from 'lucide-react';
 import { DIFFICULTY_META } from '../lib/constants';
-import { calculateLinkGamePointReward } from '@/lib/linkgame';
+import { LINKGAME_POINT_REWARD_DIVISOR, calculateLinkGamePointReward } from '@/lib/linkgame';
 import type { LinkGameDifficulty } from '@/lib/types/game';
 
 interface ResultModalProps {
@@ -50,12 +50,12 @@ export function ResultModal({
             {won ? '胜利结算完成' : '失败结算完成'}
           </h2>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            本局得分 {score}，按得分 1% 结算，获得 {pointsEarned} 福利积分。
+            本局得分 {score}，每 {LINKGAME_POINT_REWARD_DIVISOR} 分兑换 1 积分，获得 {pointsEarned} 福利积分。
           </p>
         </div>
 
         <div className="mt-5 rounded-2xl border border-emerald-100 bg-white px-5 py-3 text-center text-sm font-black text-emerald-700 shadow-sm">
-          最终福利积分 = {score} × 1% = {expectedReward}
+          最终福利积分 = floor({score} / {LINKGAME_POINT_REWARD_DIVISOR}) = {expectedReward}
           {pointsEarned !== expectedReward ? `，实际到账 ${pointsEarned}` : ''}
         </div>
 

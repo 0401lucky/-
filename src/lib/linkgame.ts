@@ -429,11 +429,13 @@ export function calculateScore(params: ScoreParams): number {
   return Math.round(Math.max(0, rawScore));
 }
 
+export const LINKGAME_POINT_REWARD_DIVISOR = 9;
+
 /**
- * 计算连连看福利积分：按得分 1% 向下取整。
+ * 计算连连看福利积分：每 9 分兑换 1 积分，向下取整。
  */
 export function calculateLinkGamePointReward(score: number): number {
-  return Math.max(0, Math.floor(score / 100));
+  return Math.max(0, Math.floor(score / LINKGAME_POINT_REWARD_DIVISOR));
 }
 
 /**

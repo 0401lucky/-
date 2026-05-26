@@ -4,6 +4,7 @@
 
 import { ArrowLeft, Clock3, Play, Trophy } from 'lucide-react';
 import { DIFFICULTY_META } from '../lib/constants';
+import { MEMORY_POINT_REWARD_DIVISOR, calculateMemoryPointReward } from '@/lib/memory-points';
 import type { MemoryDifficulty } from '@/lib/types/game';
 
 interface ResultModalProps {
@@ -33,6 +34,7 @@ export function ResultModal({
 
   const meta = DIFFICULTY_META[difficulty];
   const won = completed;
+  const expectedReward = calculateMemoryPointReward(score);
 
   return (
     <div className="memory-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="memory-settlement-title">
@@ -48,12 +50,13 @@ export function ResultModal({
             {won ? '胜利结算完成' : '失败结算完成'}
           </h2>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            本局得分 {score}，获得 {pointsEarned} 福利积分。
+            本局得分 {score}，每 {MEMORY_POINT_REWARD_DIVISOR} 分兑换 1 积分，获得 {pointsEarned} 福利积分。
           </p>
         </div>
 
         <div className="mt-5 rounded-2xl border border-emerald-100 bg-white px-5 py-3 text-center text-sm font-black text-emerald-700 shadow-sm">
-          最终福利积分 = {pointsEarned}
+          最终福利积分 = floor({score} / {MEMORY_POINT_REWARD_DIVISOR}) = {expectedReward}
+          {pointsEarned !== expectedReward ? `，实际到账 ${pointsEarned}` : ''}
         </div>
 
         <div className="memory-result-stats">

@@ -550,11 +550,12 @@ describe('linkgame', () => {
   });
 
   describe('calculateLinkGamePointReward', () => {
-    it('should calculate point reward as 1 percent rounded down', () => {
+    it('should calculate point reward as 1 point per 9 score rounded down', () => {
       expect(calculateLinkGamePointReward(0)).toBe(0);
-      expect(calculateLinkGamePointReward(99)).toBe(0);
-      expect(calculateLinkGamePointReward(211)).toBe(2);
-      expect(calculateLinkGamePointReward(895)).toBe(8);
+      expect(calculateLinkGamePointReward(8)).toBe(0);
+      expect(calculateLinkGamePointReward(9)).toBe(1);
+      expect(calculateLinkGamePointReward(211)).toBe(23);
+      expect(calculateLinkGamePointReward(895)).toBe(99);
     });
   });
 
