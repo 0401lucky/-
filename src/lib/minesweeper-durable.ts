@@ -1,9 +1,11 @@
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 import type {
   MinesweeperGameSession,
+  MinesweeperGameStepBatchPayload,
   MinesweeperGameStepPayload,
   MinesweeperSessionView,
 } from './minesweeper';
+import type { MinesweeperActionOutcome } from './minesweeper-engine';
 
 type MinesweeperDurableEnv = {
   MINESWEEPER_SESSION_DO?: DurableObjectNamespace;
@@ -12,7 +14,9 @@ type MinesweeperDurableEnv = {
 type DurableStepResult = {
   success: boolean;
   session?: MinesweeperSessionView;
-  outcome?: unknown;
+  outcome?: MinesweeperActionOutcome;
+  outcomes?: MinesweeperActionOutcome[];
+  skipped?: number;
   message?: string;
   code?: string;
 };
@@ -85,6 +89,26 @@ export async function stepMinesweeperDurableSession(
     return result.code === 'not_initialized' ? null : result;
   } catch (error) {
     console.error('扫雷 Durable Object step 异常，回退原路径:', error);
+    return null;
+  }
+}
+
+export async function stepMinesweeperDurableSessionBatch(
+  userId: number,
+  payload: MinesweeperGameStepBatchPayload,
+): Promise<DurableStepResult | null> {
+  const stub = getStub(payload.sessionId);
+  if (!stub) return null;
+
+  try {
+    const result = await postJson<DurableStepResult>(stub, '/step-batch', {
+      userId,
+      sessionId: payload.sessionId,
+      actions: payload.actions,
+    });
+    return result.code === 'not_initialized' ? null : result;
+  } catch (error) {
+    console.error('扫雷 Durable Object batch step 异常，回退原路径:', error);
     return null;
   }
 }

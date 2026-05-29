@@ -1,11 +1,14 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
+  MINESWEEPER_MAX_BATCH_ACTIONS,
   MINESWEEPER_MAX_ACTIONS,
   buildMinesweeperStateView,
   calculateMinesweeperPointReward,
   calculateMinesweeperScore,
   resolveMinesweeperAction,
+  resolveMinesweeperActions,
   type MinesweeperAction,
+  type MinesweeperActionOutcome,
   type MinesweeperDifficulty,
   type MinesweeperGameState,
   type MinesweeperScoreBreakdown,
@@ -43,7 +46,9 @@ interface MinesweeperSessionView {
 type DurableStepResult = {
   success: boolean;
   session?: MinesweeperSessionView;
-  outcome?: unknown;
+  outcome?: MinesweeperActionOutcome;
+  outcomes?: MinesweeperActionOutcome[];
+  skipped?: number;
   message?: string;
   code?: string;
 };
@@ -111,6 +116,17 @@ function normalizeAction(value: unknown): MinesweeperAction | null {
   return position ? { type: raw.type, position } : null;
 }
 
+function normalizeStepActions(value: unknown): MinesweeperAction[] | null {
+  if (!Array.isArray(value)) return null;
+  const actions: MinesweeperAction[] = [];
+  for (const item of value) {
+    const action = normalizeAction(item);
+    if (!action) return null;
+    actions.push(action);
+  }
+  return actions;
+}
+
 function getSessionDuration(session: Pick<MinesweeperGameSession, 'startedAt' | 'state'>): number {
   const endAt = session.state.status === 'playing'
     ? Date.now()
@@ -154,6 +170,9 @@ export class MinesweeperSessionDurableObject extends DurableObject {
     }
     if (url.pathname === '/step') {
       return this.handleStep(request);
+    }
+    if (url.pathname === '/step-batch') {
+      return this.handleStepBatch(request);
     }
     if (url.pathname === '/snapshot') {
       return this.handleSnapshot(request);
@@ -248,6 +267,62 @@ export class MinesweeperSessionDurableObject extends DurableObject {
       success: true,
       session: buildSessionView(nextSession),
       outcome: resolved.outcome,
+    } satisfies DurableStepResult);
+  }
+
+  private async handleStepBatch(request: Request): Promise<Response> {
+    const body = await this.readJson(request);
+    const userId = Number(body.userId);
+    const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';
+    const actions = normalizeStepActions(body.actions);
+
+    if (!Number.isSafeInteger(userId) || !sessionId || !actions) {
+      return json({ success: false, message: '参数错误' }, 400);
+    }
+    if (actions.length === 0) {
+      return json({ success: false, message: '操作不能为空' }, 400);
+    }
+    if (actions.length > MINESWEEPER_MAX_BATCH_ACTIONS) {
+      return json({ success: false, message: '单次操作过多' }, 400);
+    }
+
+    const session = await this.loadSession();
+    const precheck = this.validateSession(session, userId, sessionId);
+    if (!precheck.success) {
+      return json(precheck);
+    }
+    if (!session) {
+      return json({ success: false, message: '游戏会话不存在或已过期', code: 'not_initialized' });
+    }
+    if (session.actions.length + actions.length > MINESWEEPER_MAX_ACTIONS) {
+      return json({ success: false, message: '操作次数过多' });
+    }
+
+    const resolved = resolveMinesweeperActions(session.state, actions);
+    if (!resolved.ok) {
+      return json({ success: false, message: resolved.message });
+    }
+    if (resolved.state.status !== 'playing' && typeof resolved.state.endedAt !== 'number') {
+      resolved.state.endedAt = Date.now();
+    }
+
+    const nextSession: MinesweeperGameSession = resolved.appliedActions.length > 0
+      ? {
+        ...session,
+        state: resolved.state,
+        actions: [...session.actions, ...resolved.appliedActions],
+      }
+      : session;
+    if (resolved.appliedActions.length > 0) {
+      await this.saveSession(nextSession);
+    }
+
+    return json({
+      success: true,
+      session: buildSessionView(nextSession),
+      outcome: resolved.outcomes.length > 0 ? resolved.outcomes[resolved.outcomes.length - 1] : undefined,
+      outcomes: resolved.outcomes,
+      skipped: resolved.skipped,
     } satisfies DurableStepResult);
   }
 

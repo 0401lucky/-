@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { kv } from '@/lib/d1-kv';
 import { isNativeHotStoreReady } from '@/lib/hot-d1';
-import { stepMinesweeperDurableSession } from '@/lib/minesweeper-durable';
-import { stepMinesweeperGame } from '@/lib/minesweeper';
+import { stepMinesweeperDurableSession, stepMinesweeperDurableSessionBatch } from '@/lib/minesweeper-durable';
+import { stepMinesweeperGame, stepMinesweeperGameBatch } from '@/lib/minesweeper';
 
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
@@ -27,12 +27,14 @@ vi.mock('@/lib/minesweeper-durable', () => ({
   getMinesweeperDurableSessionSnapshot: vi.fn(),
   initializeMinesweeperDurableSession: vi.fn(),
   stepMinesweeperDurableSession: vi.fn(),
+  stepMinesweeperDurableSessionBatch: vi.fn(),
 }));
 
 describe('minesweeper durable path', () => {
   const mockKvSet = vi.mocked(kv.set);
   const mockIsNativeHotStoreReady = vi.mocked(isNativeHotStoreReady);
   const mockStepMinesweeperDurableSession = vi.mocked(stepMinesweeperDurableSession);
+  const mockStepMinesweeperDurableSessionBatch = vi.mocked(stepMinesweeperDurableSessionBatch);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -59,7 +61,7 @@ describe('minesweeper durable path', () => {
           moves: 1,
         },
       },
-      outcome: { type: 'reveal', message: 'ok' },
+      outcome: { type: 'reveal' as const, message: 'ok', revealedDelta: 1, flagDelta: 0, status: 'playing' as const },
     };
     mockStepMinesweeperDurableSession.mockResolvedValueOnce(durableResult);
 
@@ -72,6 +74,55 @@ describe('minesweeper durable path', () => {
     expect(mockStepMinesweeperDurableSession).toHaveBeenCalledWith(1001, {
       sessionId: 'session-1',
       action: { type: 'reveal', position: { row: 0, col: 0 } },
+    });
+    expect(mockIsNativeHotStoreReady).not.toHaveBeenCalled();
+    expect(mockKvSet).not.toHaveBeenCalled();
+  });
+
+  it('DO 返回批量结果时跳过原 D1 锁和会话写入路径', async () => {
+    const durableResult = {
+      success: true,
+      session: {
+        sessionId: 'session-1',
+        difficulty: 'easy' as const,
+        startedAt: 1,
+        expiresAt: 2,
+        actionsCount: 2,
+        state: {
+          difficulty: 'easy' as const,
+          rows: 9,
+          cols: 9,
+          mines: 10,
+          status: 'playing' as const,
+          cells: [],
+          revealedSafe: 2,
+          flagsUsed: 0,
+          moves: 2,
+        },
+      },
+      outcome: { type: 'reveal' as const, message: 'ok', revealedDelta: 1, flagDelta: 0, status: 'playing' as const },
+      outcomes: [
+        { type: 'reveal' as const, message: 'ok', revealedDelta: 1, flagDelta: 0, status: 'playing' as const },
+      ],
+      skipped: 1,
+    };
+    mockStepMinesweeperDurableSessionBatch.mockResolvedValueOnce(durableResult);
+
+    const result = await stepMinesweeperGameBatch(1001, {
+      sessionId: 'session-1',
+      actions: [
+        { type: 'reveal', position: { row: 0, col: 0 } },
+        { type: 'reveal', position: { row: 0, col: 1 } },
+      ],
+    });
+
+    expect(result).toEqual(durableResult);
+    expect(mockStepMinesweeperDurableSessionBatch).toHaveBeenCalledWith(1001, {
+      sessionId: 'session-1',
+      actions: [
+        { type: 'reveal', position: { row: 0, col: 0 } },
+        { type: 'reveal', position: { row: 0, col: 1 } },
+      ],
     });
     expect(mockIsNativeHotStoreReady).not.toHaveBeenCalled();
     expect(mockKvSet).not.toHaveBeenCalled();

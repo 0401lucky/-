@@ -7,6 +7,7 @@ import {
   generateMinesweeperMinePositions,
   positionKey,
   resolveMinesweeperAction,
+  resolveMinesweeperActions,
   type MinesweeperGameState,
 } from '../minesweeper-engine';
 
@@ -98,6 +99,19 @@ describe('minesweeper-engine', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.message).toContain('旗帜数量');
+  });
+
+  it('批量操作会跳过已经被前一步展开的重复翻开', () => {
+    const state = createInitialMinesweeperState('batch-skip-check', 'easy');
+    const result = resolveMinesweeperActions(state, [
+      { type: 'reveal', position: { row: 0, col: 0 } },
+      { type: 'reveal', position: { row: 0, col: 1 } },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.outcomes.length).toBeGreaterThanOrEqual(1);
+    expect(result.appliedActions.length + result.skipped).toBe(2);
   });
 
   it('结算分数只来自服务端状态和耗时', () => {

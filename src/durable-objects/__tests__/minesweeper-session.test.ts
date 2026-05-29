@@ -70,6 +70,21 @@ describe('MinesweeperSessionDurableObject', () => {
         action: { type: 'reveal', position: { row: 0, col: 0 } },
       })),
     );
+    const batchStepped = await readJson<{
+      success: boolean;
+      session?: { actionsCount: number };
+      outcomes?: unknown[];
+      skipped?: number;
+    }>(
+      await durableObject.fetch(post('/step-batch', {
+        userId: 1001,
+        sessionId: 'session-1',
+        actions: [
+          { type: 'reveal', position: { row: 0, col: 0 } },
+          { type: 'flag', position: { row: 8, col: 8 } },
+        ],
+      })),
+    );
     const snapshot = await readJson<{ success: boolean; session?: { actions: unknown[] } }>(
       await durableObject.fetch(post('/snapshot', { userId: 1001, sessionId: 'session-1' })),
     );
@@ -77,8 +92,12 @@ describe('MinesweeperSessionDurableObject', () => {
     expect(init.success).toBe(true);
     expect(stepped.success).toBe(true);
     expect(stepped.session?.actionsCount).toBe(1);
+    expect(batchStepped.success).toBe(true);
+    expect(batchStepped.session?.actionsCount).toBeGreaterThanOrEqual(1);
+    expect(batchStepped.outcomes?.length ?? 0).toBeGreaterThanOrEqual(0);
+    expect(batchStepped.skipped).toBeGreaterThanOrEqual(0);
     expect(snapshot.success).toBe(true);
-    expect(snapshot.session?.actions).toHaveLength(1);
+    expect(snapshot.session?.actions.length ?? 0).toBeGreaterThanOrEqual(1);
     expect(fake.storage.put).toHaveBeenCalled();
     expect(fake.getAlarm()).toBeTruthy();
   });

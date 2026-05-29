@@ -21,16 +21,20 @@ import {
   getMinesweeperDurableSessionSnapshot,
   initializeMinesweeperDurableSession,
   stepMinesweeperDurableSession,
+  stepMinesweeperDurableSessionBatch,
 } from './minesweeper-durable';
 import {
   MINESWEEPER_DIFFICULTY_CONFIG,
+  MINESWEEPER_MAX_BATCH_ACTIONS,
   MINESWEEPER_MAX_ACTIONS,
   buildMinesweeperStateView,
   calculateMinesweeperPointReward,
   calculateMinesweeperScore,
   createInitialMinesweeperState,
   resolveMinesweeperAction,
+  resolveMinesweeperActions,
   type MinesweeperAction,
+  type MinesweeperActionOutcome,
   type MinesweeperDifficulty,
   type MinesweeperGameState,
   type MinesweeperScoreBreakdown,
@@ -90,6 +94,11 @@ export interface MinesweeperGameRecord {
 export interface MinesweeperGameStepPayload {
   sessionId: string;
   action: MinesweeperAction;
+}
+
+export interface MinesweeperGameStepBatchPayload {
+  sessionId: string;
+  actions: MinesweeperAction[];
 }
 
 export interface MinesweeperGameResultSubmit {
@@ -230,6 +239,33 @@ function validateStepPayload(
     return { ok: false, message: '无效的扫雷操作' };
   }
   return { ok: true, action };
+}
+
+function validateStepBatchPayload(
+  payload: MinesweeperGameStepBatchPayload,
+): { ok: true; actions: MinesweeperAction[] } | { ok: false; message: string } {
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, message: '无效的请求数据' };
+  }
+  if (typeof payload.sessionId !== 'string' || payload.sessionId.trim() === '') {
+    return { ok: false, message: '无效的会话ID' };
+  }
+  if (!Array.isArray(payload.actions) || payload.actions.length === 0) {
+    return { ok: false, message: '操作不能为空' };
+  }
+  if (payload.actions.length > MINESWEEPER_MAX_BATCH_ACTIONS) {
+    return { ok: false, message: '单次操作过多' };
+  }
+
+  const actions: MinesweeperAction[] = [];
+  for (const item of payload.actions) {
+    const action = normalizeAction(item);
+    if (!action) {
+      return { ok: false, message: '无效的扫雷操作' };
+    }
+    actions.push(action);
+  }
+  return { ok: true, actions };
 }
 
 function validateSubmitPayload(payload: MinesweeperGameResultSubmit): { ok: true } | { ok: false; message: string } {
@@ -521,6 +557,83 @@ export async function stepMinesweeperGame(
       success: true,
       session: buildSessionView(nextSession),
       outcome: resolved.outcome,
+    };
+  } finally {
+    await releaseGameLock(lockKey, lockToken, useNativeHotStore);
+  }
+}
+
+export async function stepMinesweeperGameBatch(
+  userId: number,
+  payload: MinesweeperGameStepBatchPayload,
+): Promise<{
+  success: boolean;
+  session?: MinesweeperSessionView;
+  outcome?: MinesweeperActionOutcome;
+  outcomes?: MinesweeperActionOutcome[];
+  skipped?: number;
+  message?: string;
+}> {
+  const payloadCheck = validateStepBatchPayload(payload);
+  if (!payloadCheck.ok) {
+    return { success: false, message: payloadCheck.message };
+  }
+
+  const durableResult = await stepMinesweeperDurableSessionBatch(userId, {
+    sessionId: payload.sessionId,
+    actions: payloadCheck.actions,
+  });
+  if (durableResult) {
+    return durableResult;
+  }
+
+  const useNativeHotStore = await isNativeHotStoreReady();
+  const lockKey = STEP_LOCK_KEY(payload.sessionId);
+  const lockToken = await acquireGameLock(lockKey, STEP_LOCK_TTL, useNativeHotStore);
+  if (!lockToken) {
+    return { success: false, message: '操作过于频繁，请稍后再试' };
+  }
+
+  try {
+    const current = await loadCurrentMinesweeperSession(userId, payload.sessionId, useNativeHotStore);
+    if (!current.ok) return { success: false, message: current.message };
+    const session = current.session;
+    if (session.userId !== userId) return { success: false, message: '会话不属于该用户' };
+    if (session.status !== 'playing') return { success: false, message: '游戏会话已结束' };
+    if (Date.now() > session.expiresAt) {
+      await deleteSession(session.id, userId, useNativeHotStore);
+      await deleteMinesweeperDurableSession(userId, session.id);
+      return { success: false, message: '游戏会话已过期' };
+    }
+    if (session.actions.length + payloadCheck.actions.length > MINESWEEPER_MAX_ACTIONS) {
+      return { success: false, message: '操作次数过多' };
+    }
+
+    const resolved = resolveMinesweeperActions(session.state, payloadCheck.actions);
+    if (!resolved.ok) {
+      return { success: false, message: resolved.message };
+    }
+    if (resolved.state.status !== 'playing' && typeof resolved.state.endedAt !== 'number') {
+      resolved.state.endedAt = Date.now();
+    }
+
+    const nextSession: MinesweeperGameSession = resolved.appliedActions.length > 0
+      ? {
+        ...session,
+        state: resolved.state,
+        actions: [...session.actions, ...resolved.appliedActions],
+      }
+      : session;
+    if (resolved.appliedActions.length > 0) {
+      await saveSessionProgress(nextSession, useNativeHotStore);
+    }
+
+    return {
+      success: true,
+      session: buildSessionView(nextSession),
+      outcome: resolved.outcomes.length > 0 ? resolved.outcomes[resolved.outcomes.length - 1] : undefined,
+      outcomes: resolved.outcomes,
+      skipped: resolved.skipped,
     };
   } finally {
     await releaseGameLock(lockKey, lockToken, useNativeHotStore);

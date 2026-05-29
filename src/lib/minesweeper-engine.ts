@@ -2,6 +2,7 @@ import seedrandom from 'seedrandom';
 
 export const MINESWEEPER_VERSION = 1;
 export const MINESWEEPER_MAX_ACTIONS = 999;
+export const MINESWEEPER_MAX_BATCH_ACTIONS = 24;
 
 export type MinesweeperDifficulty = 'easy' | 'normal' | 'hard';
 export type MinesweeperStatus = 'playing' | 'won' | 'lost';
@@ -71,6 +72,16 @@ export interface MinesweeperActionOutcome {
 
 export type MinesweeperActionResult =
   | { ok: true; state: MinesweeperGameState; outcome: MinesweeperActionOutcome }
+  | { ok: false; message: string };
+
+export type MinesweeperActionBatchResult =
+  | {
+    ok: true;
+    state: MinesweeperGameState;
+    appliedActions: MinesweeperAction[];
+    outcomes: MinesweeperActionOutcome[];
+    skipped: number;
+  }
   | { ok: false; message: string };
 
 export interface MinesweeperScoreBreakdown {
@@ -467,6 +478,49 @@ export function resolveMinesweeperAction(
     return resolveChord(next, action.position);
   }
   return { ok: false, message: '未知操作' };
+}
+
+function isSkippableBatchActionFailure(message: string): boolean {
+  return [
+    '游戏已经结束',
+    '已插旗的格子不能翻开',
+    '这个格子已经翻开了',
+    '已翻开的格子不能插旗',
+    '只有已翻开的数字格可以快速展开',
+    '周围旗帜数量与数字不一致',
+  ].includes(message);
+}
+
+export function resolveMinesweeperActions(
+  state: MinesweeperGameState,
+  actions: MinesweeperAction[],
+): MinesweeperActionBatchResult {
+  let next = cloneState(state);
+  const appliedActions: MinesweeperAction[] = [];
+  const outcomes: MinesweeperActionOutcome[] = [];
+  let skipped = 0;
+
+  for (const action of actions) {
+    if (next.status !== 'playing') {
+      skipped += 1;
+      continue;
+    }
+
+    const resolved = resolveMinesweeperAction(next, action);
+    if (!resolved.ok) {
+      if (isSkippableBatchActionFailure(resolved.message)) {
+        skipped += 1;
+        continue;
+      }
+      return { ok: false, message: resolved.message };
+    }
+
+    next = resolved.state;
+    appliedActions.push(action);
+    outcomes.push(resolved.outcome);
+  }
+
+  return { ok: true, state: next, appliedActions, outcomes, skipped };
 }
 
 export function buildMinesweeperStateView(state: MinesweeperGameState): MinesweeperStateView {

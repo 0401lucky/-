@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import {
   MINESWEEPER_DIFFICULTY_CONFIG,
+  MINESWEEPER_MAX_BATCH_ACTIONS,
   MINESWEEPER_POINT_REWARD_PERCENT,
   calculateMinesweeperPointReward,
   type MinesweeperAction,
@@ -46,12 +47,16 @@ interface MinesweeperStatus {
   activeSession: MinesweeperSessionView | null;
 }
 
+interface StepOutcome {
+  message: string;
+  status: MinesweeperStateView['status'];
+}
+
 interface StepResponse {
   session: MinesweeperSessionView;
-  outcome: {
-    message: string;
-    status: MinesweeperStateView['status'];
-  };
+  outcome?: StepOutcome;
+  outcomes?: StepOutcome[];
+  skipped?: number;
 }
 
 interface SubmitResponse {
@@ -75,6 +80,7 @@ const NUMBER_COLORS: Record<number, string> = {
   7: 'text-slate-800',
   8: 'text-zinc-950',
 };
+const STEP_BATCH_FLUSH_DELAY_MS = 24;
 
 async function parseJson<T>(res: Response): Promise<ApiResponse<T> | null> {
   try {
@@ -173,9 +179,17 @@ function cellClass(cell: MinesweeperCellView): string {
   return `${base} border-slate-300 bg-white hover:border-cyan-300 hover:bg-cyan-50`;
 }
 
-function pendingCellClass(cell: MinesweeperCellView, pending: boolean): string {
+function optimisticCellView(cell: MinesweeperCellView, pendingAction: MinesweeperAction | undefined): MinesweeperCellView {
+  if (pendingAction?.type !== 'flag') return cell;
+  if (cell.display === 'hidden') return { ...cell, display: 'flagged' };
+  if (cell.display === 'flagged') return { ...cell, display: 'hidden' };
+  return cell;
+}
+
+function pendingCellClass(cell: MinesweeperCellView, pendingAction: MinesweeperAction | undefined): string {
   const base = cellClass(cell);
-  return pending ? `${base} ring-2 ring-cyan-300 ring-offset-1 ring-offset-emerald-50` : base;
+  if (!pendingAction) return base;
+  return `${base} mine-cell-pending-${pendingAction.type}`;
 }
 
 function stepPositionKey(action: MinesweeperAction): string {
@@ -200,7 +214,7 @@ export default function MinesweeperPage() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [loading, setLoading] = useState(false);
   const [pendingStepCount, setPendingStepCount] = useState(0);
-  const [pendingCellKeys, setPendingCellKeys] = useState<Set<string>>(() => new Set());
+  const [pendingCellActions, setPendingCellActions] = useState<Map<string, MinesweeperAction>>(() => new Map());
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState('选择难度开始扫雷');
   const [result, setResult] = useState<MinesweeperGameRecord | null>(null);
@@ -208,8 +222,9 @@ export default function MinesweeperPage() {
   const submittingRef = useRef(false);
   const sessionRef = useRef<MinesweeperSessionView | null>(null);
   const stepQueueRef = useRef<MinesweeperAction[]>([]);
-  const pendingCellKeysRef = useRef<Set<string>>(new Set());
+  const pendingCellActionsRef = useRef<Map<string, MinesweeperAction>>(new Map());
   const processingStepRef = useRef(false);
+  const stepFlushTimerRef = useRef<number | null>(null);
 
   const state = session?.state ?? null;
   const difficulties = status?.difficulties?.length
@@ -223,13 +238,17 @@ export default function MinesweeperPage() {
   }, [state]);
 
   const syncPendingStepState = useCallback(() => {
-    setPendingStepCount(stepQueueRef.current.length + (processingStepRef.current ? 1 : 0));
-    setPendingCellKeys(new Set(pendingCellKeysRef.current));
+    setPendingStepCount(pendingCellActionsRef.current.size);
+    setPendingCellActions(new Map(pendingCellActionsRef.current));
   }, []);
 
   const clearStepQueue = useCallback(() => {
+    if (stepFlushTimerRef.current !== null) {
+      window.clearTimeout(stepFlushTimerRef.current);
+      stepFlushTimerRef.current = null;
+    }
     stepQueueRef.current = [];
-    pendingCellKeysRef.current.clear();
+    pendingCellActionsRef.current.clear();
     syncPendingStepState();
   }, [syncPendingStepState]);
 
@@ -239,6 +258,12 @@ export default function MinesweeperPage() {
       clearStepQueue();
     }
   }, [clearStepQueue, session]);
+
+  useEffect(() => () => {
+    if (stepFlushTimerRef.current !== null) {
+      window.clearTimeout(stepFlushTimerRef.current);
+    }
+  }, []);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -371,49 +396,70 @@ export default function MinesweeperPage() {
 
   const processStepQueue = useCallback(async () => {
     if (processingStepRef.current) return;
+    if (stepFlushTimerRef.current !== null) {
+      window.clearTimeout(stepFlushTimerRef.current);
+      stepFlushTimerRef.current = null;
+    }
     processingStepRef.current = true;
     try {
       while (stepQueueRef.current.length > 0) {
-        const action = stepQueueRef.current.shift();
-        if (!action) break;
-        const actionKey = stepPositionKey(action);
         const currentSession = sessionRef.current;
-        try {
-          if (!currentSession || !isQueuedStepUseful(currentSession.state, action)) {
+        if (!currentSession || currentSession.state.status !== 'playing') {
+          clearStepQueue();
+          break;
+        }
+
+        const actions: MinesweeperAction[] = [];
+        while (actions.length < MINESWEEPER_MAX_BATCH_ACTIONS && stepQueueRef.current.length > 0) {
+          const action = stepQueueRef.current.shift();
+          if (!action) break;
+          const actionKey = stepPositionKey(action);
+          if (!isQueuedStepUseful(currentSession.state, action)) {
+            pendingCellActionsRef.current.delete(actionKey);
             continue;
           }
+          actions.push(action);
+        }
+
+        if (actions.length === 0) {
           syncPendingStepState();
-          setError(null);
-          const res = await fetch('/api/games/minesweeper/step', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: currentSession.sessionId, action }),
-          });
-          const data = await parseJson<StepResponse>(res);
-          if (!res.ok || !data?.success || !data.data) {
-            throw new Error(data?.message ?? '操作失败');
-          }
-          if (sessionRef.current?.sessionId !== currentSession.sessionId) {
-            clearStepQueue();
-            break;
-          }
-          sessionRef.current = data.data.session;
-          setSession(data.data.session);
-          setMessage(data.data.outcome.message);
-          if (data.data.session.state.status !== 'playing') {
-            setMode('reveal');
-            stepQueueRef.current = [];
-            pendingCellKeysRef.current.clear();
-            break;
-          }
-        } finally {
-          pendingCellKeysRef.current.delete(actionKey);
-          syncPendingStepState();
+          continue;
+        }
+
+        syncPendingStepState();
+        setError(null);
+        const res = await fetch('/api/games/minesweeper/step', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: currentSession.sessionId, actions }),
+        });
+        const data = await parseJson<StepResponse>(res);
+        if (!res.ok || !data?.success || !data.data) {
+          throw new Error(data?.message ?? '操作失败');
+        }
+        if (sessionRef.current?.sessionId !== currentSession.sessionId) {
+          clearStepQueue();
+          break;
+        }
+
+        for (const action of actions) {
+          pendingCellActionsRef.current.delete(stepPositionKey(action));
+        }
+        const outcomes = data.data.outcomes ?? (data.data.outcome ? [data.data.outcome] : []);
+        const lastOutcome = outcomes.length > 0 ? outcomes[outcomes.length - 1] : undefined;
+        sessionRef.current = data.data.session;
+        setSession(data.data.session);
+        setMessage(lastOutcome?.message ?? '棋盘已同步');
+        if (data.data.session.state.status !== 'playing') {
+          setMode('reveal');
+          stepQueueRef.current = [];
+          pendingCellActionsRef.current.clear();
+          break;
         }
       }
     } catch (err) {
       stepQueueRef.current = [];
-      pendingCellKeysRef.current.clear();
+      pendingCellActionsRef.current.clear();
       setError(err instanceof Error ? err.message : '操作失败，请稍后重试');
     } finally {
       processingStepRef.current = false;
@@ -425,11 +471,16 @@ export default function MinesweeperPage() {
     const currentSession = sessionRef.current;
     if (!currentSession || !isQueuedStepUseful(currentSession.state, action)) return;
     const actionKey = stepPositionKey(action);
-    if (pendingCellKeysRef.current.has(actionKey)) return;
+    if (pendingCellActionsRef.current.has(actionKey)) return;
     stepQueueRef.current.push(action);
-    pendingCellKeysRef.current.add(actionKey);
+    pendingCellActionsRef.current.set(actionKey, action);
     syncPendingStepState();
-    void processStepQueue();
+    if (!processingStepRef.current && stepFlushTimerRef.current === null) {
+      stepFlushTimerRef.current = window.setTimeout(() => {
+        stepFlushTimerRef.current = null;
+        void processStepQueue();
+      }, STEP_BATCH_FLUSH_DELAY_MS);
+    }
   }, [processStepQueue, syncPendingStepState]);
 
   const handleCellClick = useCallback((cell: MinesweeperCellView) => {
@@ -661,18 +712,23 @@ export default function MinesweeperPage() {
                     minWidth: boardMinWidth,
                   }}
                 >
-                  {state.cells.map((cell) => (
-                    <button
-                      key={`${cell.row}-${cell.col}`}
-                      onClick={() => handleCellClick(cell)}
-                      onContextMenu={(event) => handleCellContextMenu(event, cell)}
-                      disabled={state.status !== 'playing' || cell.display === 'mine' || cell.display === 'exploded'}
-                      className={pendingCellClass(cell, pendingCellKeys.has(`${cell.row}:${cell.col}`))}
-                      aria-label={`第 ${cell.row + 1} 行第 ${cell.col + 1} 列`}
-                    >
-                      {cellText(cell)}
-                    </button>
-                  ))}
+                  {state.cells.map((cell) => {
+                    const cellKey = `${cell.row}:${cell.col}`;
+                    const pendingAction = pendingCellActions.get(cellKey);
+                    const visibleCell = optimisticCellView(cell, pendingAction);
+                    return (
+                      <button
+                        key={`${cell.row}-${cell.col}`}
+                        onClick={() => handleCellClick(cell)}
+                        onContextMenu={(event) => handleCellContextMenu(event, cell)}
+                        disabled={state.status !== 'playing' || cell.display === 'mine' || cell.display === 'exploded'}
+                        className={pendingCellClass(visibleCell, pendingAction)}
+                        aria-label={`第 ${cell.row + 1} 行第 ${cell.col + 1} 列`}
+                      >
+                        {cellText(visibleCell)}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1036,6 +1092,16 @@ export default function MinesweeperPage() {
         .mine-page .mine-board-grid {
           display: grid;
           gap: 4px;
+        }
+        .mine-page .mine-cell-pending-reveal,
+        .mine-page .mine-cell-pending-chord {
+          border-color: #22d3ee;
+          box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.28);
+          transform: scale(0.96);
+        }
+        .mine-page .mine-cell-pending-flag {
+          box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.22);
+          transform: scale(0.96);
         }
         .mine-page .mine-side-panel {
           display: flex;
