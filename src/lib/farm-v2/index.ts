@@ -4,6 +4,7 @@
 import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import seedrandom from 'seedrandom';
+import { acquireNativeLock, hasNativeHotStoreBinding, releaseNativeLock } from '@/lib/hot-d1';
 import { addPoints, deductPoints, getUserPoints } from '@/lib/points';
 import type {
   FarmStateV2, FarmStatusResponse, CropIdV2,
@@ -56,14 +57,17 @@ const FRIDAY_EVENT_CROP_DELAY_MS = 10 * 60 * 1000;
 
 function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
 
-interface Lock { key: string; token: string }
+interface Lock { key: string; token: string; native: boolean }
 
 async function acquireLock(userId: number): Promise<Lock | null> {
   const key = FARM_V2_LOCK_KEY(userId);
   const token = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const useNativeLock = hasNativeHotStoreBinding();
   for (let i = 0; i < LOCK_MAX_RETRIES; i += 1) {
-    const ok = await kv.set(key, token, { nx: true, ex: LOCK_TTL_SECONDS });
-    if (ok === 'OK') return { key, token };
+    const ok = useNativeLock
+      ? await acquireNativeLock(key, token, LOCK_TTL_SECONDS)
+      : await kv.set(key, token, { nx: true, ex: LOCK_TTL_SECONDS });
+    if (ok === true || ok === 'OK') return { key, token, native: useNativeLock };
     await sleep(LOCK_RETRY_MS);
   }
   return null;
@@ -71,6 +75,10 @@ async function acquireLock(userId: number): Promise<Lock | null> {
 
 async function releaseLock(lock: Lock): Promise<void> {
   try {
+    if (lock.native) {
+      await releaseNativeLock(lock.key, lock.token);
+      return;
+    }
     const current = await kv.get<string>(lock.key);
     if (current === lock.token) {
       await kv.del(lock.key);
@@ -157,11 +165,15 @@ async function getShopDailyPurchaseCounts(
     const limit = Number(item.dailyLimit ?? 0);
     return Number.isSafeInteger(limit) && limit > 0;
   });
-  const entries = await Promise.all(limitedItems.map(async (item) => {
-    const key = `farmv2:shop:daily:${userId}:${date}:${item.key}`;
-    const count = Number(await kv.get<number>(key)) || 0;
+  const keys = limitedItems.map((item) => `farmv2:shop:daily:${userId}:${date}:${item.key}`);
+  const store = kv as typeof kv & { mget?: <T = unknown>(...keys: string[]) => Promise<(T | null)[]> };
+  const values = typeof store.mget === 'function'
+    ? await store.mget<number>(...keys)
+    : await Promise.all(keys.map((key) => kv.get<number>(key)));
+  const entries = limitedItems.map((item, index) => {
+    const count = Number(values[index]) || 0;
     return [item.key, Math.max(0, count)] as const;
-  }));
+  });
   return Object.fromEntries(entries) as Partial<Record<ShopItemKey, number>>;
 }
 

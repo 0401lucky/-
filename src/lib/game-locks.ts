@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto';
 import { kv } from '@/lib/d1-kv';
-import { acquireNativeLock, releaseNativeLock } from './hot-d1';
+import { acquireNativeLock, hasNativeHotStoreBinding, releaseNativeLock } from './hot-d1';
 
 export function createGameLockToken(): string {
   return randomBytes(16).toString('hex');
@@ -12,7 +12,8 @@ export async function acquireGameLock(
   useNativeHotStore: boolean,
 ): Promise<string | null> {
   const token = createGameLockToken();
-  const acquired = useNativeHotStore
+  const useNativeLock = useNativeHotStore || hasNativeHotStoreBinding();
+  const acquired = useNativeLock
     ? await acquireNativeLock(lockKey, token, ttlSeconds)
     : await kv.set(lockKey, token, { ex: ttlSeconds, nx: true });
 
@@ -24,7 +25,8 @@ export async function releaseGameLock(
   token: string,
   useNativeHotStore: boolean,
 ): Promise<void> {
-  if (useNativeHotStore) {
+  const useNativeLock = useNativeHotStore || hasNativeHotStoreBinding();
+  if (useNativeLock) {
     await releaseNativeLock(lockKey, token);
     return;
   }

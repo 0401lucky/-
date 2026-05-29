@@ -1249,6 +1249,22 @@ export async function createNativeGameSession<T extends {
   ]);
 }
 
+export async function updateNativeGameSession<T extends {
+  id: string;
+  status: string;
+  expiresAt: number;
+}>(session: T): Promise<void> {
+  await ensureHotSchema();
+  await getHotDb()
+    .prepare(
+      `UPDATE native_game_sessions
+       SET status = ?, expires_at = ?, payload_json = ?
+       WHERE session_id = ?`,
+    )
+    .bind(session.status, session.expiresAt, serialize(session), session.id)
+    .run();
+}
+
 export async function completeNativeGameSettlement<T extends {
   id: string;
   userId: number;

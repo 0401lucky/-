@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kv } from '@/lib/d1-kv';
+import { acquireNativeLock, hasNativeHotStoreBinding, releaseNativeLock } from '@/lib/hot-d1';
 import { addPoints, deductPoints, getUserPoints } from '@/lib/points';
 import type { FarmStateV2, PetState } from '@/lib/types/farm-v2';
 import { buyItem, buyItemWithStatus, getFarmStatus, useItemWithStatus } from '../index';
@@ -7,10 +8,17 @@ import { buyItem, buyItemWithStatus, getFarmStatus, useItemWithStatus } from '..
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
     get: vi.fn(),
+    mget: vi.fn(),
     set: vi.fn(),
     del: vi.fn(),
     scan: vi.fn(),
   },
+}));
+
+vi.mock('@/lib/hot-d1', () => ({
+  acquireNativeLock: vi.fn(async () => true),
+  hasNativeHotStoreBinding: vi.fn(() => false),
+  releaseNativeLock: vi.fn(),
 }));
 
 vi.mock('@/lib/points', () => ({
@@ -24,15 +32,21 @@ describe('farm-v2 shop purchases', () => {
   const stateKey = `farmv2:state:${userId}`;
   const mockKvSet = vi.mocked(kv.set);
   const mockKvGet = vi.mocked(kv.get);
+  const mockKvMget = vi.mocked(kv.mget);
   const mockKvDel = vi.mocked(kv.del);
   const mockAddPoints = vi.mocked(addPoints);
   const mockDeductPoints = vi.mocked(deductPoints);
   const mockGetUserPoints = vi.mocked(getUserPoints);
+  const mockAcquireNativeLock = vi.mocked(acquireNativeLock);
+  const mockHasNativeHotStoreBinding = vi.mocked(hasNativeHotStoreBinding);
+  const mockReleaseNativeLock = vi.mocked(releaseNativeLock);
   let store: Map<string, unknown>;
 
   beforeEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
+    mockAcquireNativeLock.mockResolvedValue(true);
+    mockHasNativeHotStoreBinding.mockReturnValue(false);
     store = new Map<string, unknown>([[stateKey, createFarmState()]]);
     mockKvSet.mockImplementation(async (key: string, value: unknown, options?: { nx?: boolean }) => {
       if (options?.nx && store.has(key)) return null;
@@ -40,6 +54,7 @@ describe('farm-v2 shop purchases', () => {
       return 'OK';
     });
     mockKvGet.mockImplementation(async (key: string) => (store.has(key) ? store.get(key) : null) as any);
+    mockKvMget.mockImplementation(async (...keys: string[]) => keys.map((key) => (store.has(key) ? store.get(key) : null)) as any);
     mockKvDel.mockImplementation(async (...keys: string[]) => {
       let deleted = 0;
       for (const key of keys) {
@@ -73,6 +88,17 @@ describe('farm-v2 shop purchases', () => {
     expect(state.inventory.pet_skill_plant?.count).toBe(3);
     expect(state.purchasedSkillBooks?.pet_skill_plant).toBeUndefined();
     expect(mockDeductPoints).toHaveBeenCalledTimes(2);
+  });
+
+  it('Cloudflare D1 binding 下农场锁走原生锁', async () => {
+    mockHasNativeHotStoreBinding.mockReturnValue(true);
+
+    const result = await buyItem(userId, 'pet_food_normal', 1);
+
+    expect(result.ok).toBe(true);
+    expect(mockAcquireNativeLock).toHaveBeenCalledWith(`farmv2:lock:${userId}`, expect.any(String), 6);
+    expect(mockReleaseNativeLock).toHaveBeenCalledWith(`farmv2:lock:${userId}`, expect.any(String));
+    expect(mockKvSet).not.toHaveBeenCalledWith(`farmv2:lock:${userId}`, expect.anything(), expect.anything());
   });
 
   it('读取农场状态时同步积分总账余额', async () => {

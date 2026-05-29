@@ -30,9 +30,11 @@ vi.mock('@/lib/hot-d1', () => ({
   getNativeGameCooldownRemaining: vi.fn(),
   getNativeGameSession: vi.fn(),
   incrementNativeDailyStats: vi.fn(),
+  hasNativeHotStoreBinding: vi.fn(() => false),
   isNativeHotStoreReady: vi.fn(async () => false),
   listNativeGameRecords: vi.fn(async () => []),
   releaseNativeLock: vi.fn(),
+  updateNativeGameSession: vi.fn(),
 }));
 
 vi.mock('@/lib/points', () => ({

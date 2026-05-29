@@ -13,6 +13,7 @@ import {
   getNativeGameSession,
   isNativeHotStoreReady,
   listNativeGameRecords,
+  updateNativeGameSession,
 } from './hot-d1';
 import { acquireGameLock, releaseGameLock } from './game-locks';
 import {
@@ -246,6 +247,17 @@ async function saveSession(session: MinesweeperGameSession, useNativeHotStore: b
   await kv.set(ACTIVE_SESSION_KEY(session.userId), session.id, { ex: ttl });
 }
 
+async function saveSessionProgress(session: MinesweeperGameSession, useNativeHotStore: boolean): Promise<void> {
+  if (useNativeHotStore) {
+    await updateNativeGameSession(session);
+    return;
+  }
+
+  // 局内每步只更新会话本体；活跃索引在开局时已使用相同过期时间。
+  const ttl = getSessionTtlSeconds(session.expiresAt);
+  await kv.set(SESSION_KEY(session.id), session, { ex: ttl });
+}
+
 async function deleteSession(sessionId: string, userId: number, useNativeHotStore: boolean): Promise<void> {
   if (useNativeHotStore) return;
   await Promise.all([
@@ -337,6 +349,44 @@ export async function getActiveMinesweeperSession(userId: number): Promise<Mines
   return session;
 }
 
+async function loadCurrentMinesweeperSession(
+  userId: number,
+  sessionId: string,
+  useNativeHotStore: boolean,
+): Promise<{ ok: true; session: MinesweeperGameSession } | { ok: false; message: string }> {
+  if (useNativeHotStore) {
+    const session = normalizeSession(
+      await getNativeActiveGameSession<MinesweeperGameSession>(userId, GAME_TYPE),
+    );
+    if (!session) {
+      return { ok: false, message: '游戏会话不存在或已过期' };
+    }
+    if (session.id !== sessionId) {
+      return { ok: false, message: '游戏会话已不是当前活跃局' };
+    }
+    return { ok: true, session };
+  }
+
+  const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
+  if (!activeSessionId) {
+    return { ok: false, message: '游戏会话不存在或已过期' };
+  }
+  if (activeSessionId !== sessionId) {
+    return { ok: false, message: '游戏会话已不是当前活跃局' };
+  }
+
+  const session = normalizeSession(await kv.get<MinesweeperGameSession>(SESSION_KEY(activeSessionId)));
+  if (!session) {
+    await kv.del(ACTIVE_SESSION_KEY(userId));
+    return { ok: false, message: '游戏会话不存在或已过期' };
+  }
+  if (Date.now() > session.expiresAt) {
+    await deleteSession(session.id, userId, false);
+    return { ok: false, message: '游戏会话已过期' };
+  }
+  return { ok: true, session };
+}
+
 export async function startMinesweeperGame(
   userId: number,
   difficulty: MinesweeperDifficulty,
@@ -413,12 +463,10 @@ export async function stepMinesweeperGame(
   }
 
   try {
-    const session = await loadSessionById(payload.sessionId, useNativeHotStore);
-    if (!session) return { success: false, message: '游戏会话不存在或已过期' };
+    const current = await loadCurrentMinesweeperSession(userId, payload.sessionId, useNativeHotStore);
+    if (!current.ok) return { success: false, message: current.message };
+    const session = current.session;
     if (session.userId !== userId) return { success: false, message: '会话不属于该用户' };
-    if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
-      return { success: false, message: '游戏会话已不是当前活跃局' };
-    }
     if (session.status !== 'playing') return { success: false, message: '游戏会话已结束' };
     if (Date.now() > session.expiresAt) {
       await deleteSession(session.id, userId, useNativeHotStore);
@@ -441,7 +489,7 @@ export async function stepMinesweeperGame(
       state: resolved.state,
       actions: [...session.actions, payloadCheck.action],
     };
-    await saveSession(nextSession, useNativeHotStore);
+    await saveSessionProgress(nextSession, useNativeHotStore);
 
     return {
       success: true,
