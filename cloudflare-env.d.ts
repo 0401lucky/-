@@ -6,6 +6,7 @@ interface CloudflareEnv {
   CARD_IMAGES: R2Bucket;
   IMAGES: unknown;
   KV_DB: D1Database;
+  MINESWEEPER_SESSION_DO: DurableObjectNamespace;
   RAFFLE_DELIVERY_CRON_SECRET?: string;
   CRON_SECRET?: string;
   RAFFLE_DELIVERY_CRON_MAX_JOBS?: string;

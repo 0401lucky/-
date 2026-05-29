@@ -4,6 +4,8 @@
  * 2) 处理 Cron 触发，自动调用发奖队列接口
  */
 
+export { MinesweeperSessionDurableObject } from "./src/durable-objects/minesweeper-session.ts";
+
 const DELIVERY_PATH = "/api/internal/raffle/delivery";
 const NUMBER_BOMB_SETTLE_PATH = "/api/internal/number-bomb/settle";
 const FARM_MATURITY_EMAIL_PATH = "/api/internal/farm/maturity-email";

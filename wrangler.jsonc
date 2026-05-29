@@ -45,6 +45,20 @@
 			"database_id": "54580731-9fe2-4044-99b2-f0f356748040"
 		}
 	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "MINESWEEPER_SESSION_DO",
+				"class_name": "MinesweeperSessionDurableObject"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["MinesweeperSessionDurableObject"]
+		}
+	],
 	"images": {
 		// Enable image optimization
 		// see https://opennext.js.org/cloudflare/howtos/image

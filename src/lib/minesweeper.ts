@@ -17,6 +17,12 @@ import {
 } from './hot-d1';
 import { acquireGameLock, releaseGameLock } from './game-locks';
 import {
+  deleteMinesweeperDurableSession,
+  getMinesweeperDurableSessionSnapshot,
+  initializeMinesweeperDurableSession,
+  stepMinesweeperDurableSession,
+} from './minesweeper-durable';
+import {
   MINESWEEPER_DIFFICULTY_CONFIG,
   MINESWEEPER_MAX_ACTIONS,
   buildMinesweeperStateView,
@@ -331,7 +337,9 @@ function buildSettledMinesweeperResult(record: MinesweeperGameRecord) {
 export async function getActiveMinesweeperSession(userId: number): Promise<MinesweeperGameSession | null> {
   const useNativeHotStore = await isNativeHotStoreReady();
   if (useNativeHotStore) {
-    return normalizeSession(await getNativeActiveGameSession<MinesweeperGameSession>(userId, GAME_TYPE));
+    const session = normalizeSession(await getNativeActiveGameSession<MinesweeperGameSession>(userId, GAME_TYPE));
+    if (!session) return null;
+    return await getMinesweeperDurableSessionSnapshot(userId, session.id) ?? session;
   }
 
   const activeSessionId = await kv.get<string>(ACTIVE_SESSION_KEY(userId));
@@ -344,9 +352,10 @@ export async function getActiveMinesweeperSession(userId: number): Promise<Mines
   }
   if (Date.now() > session.expiresAt) {
     await deleteSession(session.id, userId, false);
+    await deleteMinesweeperDurableSession(userId, session.id);
     return null;
   }
-  return session;
+  return await getMinesweeperDurableSessionSnapshot(userId, session.id) ?? session;
 }
 
 async function loadCurrentMinesweeperSession(
@@ -419,12 +428,15 @@ export async function startMinesweeperGame(
     } else {
       await deleteSession(activeSession.id, userId, false);
     }
+    await deleteMinesweeperDurableSession(userId, activeSession.id);
   } else if (activeSession) {
     await deleteSession(activeSession.id, userId, useNativeHotStore);
+    await deleteMinesweeperDurableSession(userId, activeSession.id);
   }
 
   const session = buildSession(userId, difficulty);
   await saveSession(session, useNativeHotStore);
+  await initializeMinesweeperDurableSession(session);
   return { success: true, session };
   } finally {
     await releaseGameLock(startLockKey, startLockToken, useNativeHotStore);
@@ -433,7 +445,11 @@ export async function startMinesweeperGame(
 
 export async function cancelMinesweeperGame(userId: number): Promise<{ success: boolean; message?: string }> {
   if (await isNativeHotStoreReady()) {
+    const activeSession = normalizeSession(await getNativeActiveGameSession<MinesweeperGameSession>(userId, GAME_TYPE));
     const cancelled = await cancelNativeGameSession(userId, GAME_TYPE, COOLDOWN_TTL);
+    if (cancelled && activeSession) {
+      await deleteMinesweeperDurableSession(userId, activeSession.id);
+    }
     return cancelled ? { success: true } : { success: false, message: '没有正在进行的游戏' };
   }
 
@@ -442,6 +458,7 @@ export async function cancelMinesweeperGame(userId: number): Promise<{ success: 
     return { success: false, message: '没有正在进行的游戏' };
   }
   await deleteSession(activeSessionId, userId, false);
+  await deleteMinesweeperDurableSession(userId, activeSessionId);
   await kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL });
   return { success: true };
 }
@@ -453,6 +470,14 @@ export async function stepMinesweeperGame(
   const payloadCheck = validateStepPayload(payload);
   if (!payloadCheck.ok) {
     return { success: false, message: payloadCheck.message };
+  }
+
+  const durableResult = await stepMinesweeperDurableSession(userId, {
+    sessionId: payload.sessionId,
+    action: payloadCheck.action,
+  });
+  if (durableResult) {
+    return durableResult;
   }
 
   const useNativeHotStore = await isNativeHotStoreReady();
@@ -470,6 +495,7 @@ export async function stepMinesweeperGame(
     if (session.status !== 'playing') return { success: false, message: '游戏会话已结束' };
     if (Date.now() > session.expiresAt) {
       await deleteSession(session.id, userId, useNativeHotStore);
+      await deleteMinesweeperDurableSession(userId, session.id);
       return { success: false, message: '游戏会话已过期' };
     }
     if (session.actions.length >= MINESWEEPER_MAX_ACTIONS) {
@@ -526,7 +552,12 @@ export async function submitMinesweeperResult(
   };
 
   try {
-    const session = await loadSessionById(payload.sessionId, useNativeHotStore);
+    const durableSession = await getMinesweeperDurableSessionSnapshot(userId, payload.sessionId);
+    if (durableSession) {
+      await saveSessionProgress(durableSession, useNativeHotStore);
+    }
+
+    const session = durableSession ?? await loadSessionById(payload.sessionId, useNativeHotStore);
     if (!session) {
       const settledRecord = await findSettledMinesweeperRecord(userId, payload.sessionId, useNativeHotStore);
       if (settledRecord) {
@@ -557,6 +588,7 @@ export async function submitMinesweeperResult(
         return buildSettledMinesweeperResult(settledRecord);
       }
       await deleteSession(session.id, userId, useNativeHotStore);
+      await deleteMinesweeperDurableSession(userId, session.id);
       return { success: false, message: '游戏会话已过期' };
     }
     if (session.state.status === 'playing') {
@@ -611,6 +643,7 @@ export async function submitMinesweeperResult(
         kv.lpush(RECORDS_KEY(userId), record).then(() => kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)),
       ]);
     }
+    await deleteMinesweeperDurableSession(userId, session.id);
 
     return { success: true, record, pointsEarned: pointsResult.pointsEarned };
   } finally {
