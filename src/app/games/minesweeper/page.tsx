@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import {
   MINESWEEPER_DIFFICULTY_CONFIG,
-  MINESWEEPER_POINT_REWARD_DIVISOR,
+  MINESWEEPER_POINT_REWARD_PERCENT,
   calculateMinesweeperPointReward,
   type MinesweeperAction,
   type MinesweeperCellView,
@@ -1188,12 +1188,12 @@ function MinesweeperSettlementModal({
             {result.won ? '胜利结算完成' : '触雷结算完成'}
           </h2>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            本局得分 {result.score}，每 {MINESWEEPER_POINT_REWARD_DIVISOR} 分兑换 1 积分，获得 {result.pointsEarned} 福利积分。
+            本局得分 {result.score}，按得分的 {MINESWEEPER_POINT_REWARD_PERCENT}% 结算，获得 {result.pointsEarned} 福利积分。
           </p>
         </div>
 
         <div className="mt-5 rounded-2xl border border-emerald-100 bg-white px-5 py-3 text-center text-sm font-black text-emerald-700 shadow-sm">
-          最终福利积分 = floor({result.score} / {MINESWEEPER_POINT_REWARD_DIVISOR}) = {expectedReward}
+          最终福利积分 = floor({result.score} × {MINESWEEPER_POINT_REWARD_PERCENT}%) = {expectedReward}
           {result.pointsEarned !== expectedReward ? `，实际到账 ${result.pointsEarned}` : ''}
         </div>
 
@@ -1287,7 +1287,7 @@ function RulesModal({ onClose }: { onClose: () => void }) {
           <RuleLine icon={<Grid3X3 />} text="数字表示这个格子周围 8 个方向里有多少颗雷。" />
           <RuleLine icon={<Flag />} text="当某个数字周围旗帜数量等于数字时，可以点击数字格快速展开其余周围格。" />
           <RuleLine icon={<Gem />} text="分数由服务端根据难度、翻开安全格、插旗、耗时和是否胜利计算，客户端不能提交自定义分数。" />
-          <RuleLine icon={<Gem />} text={`福利积分按最终得分结算，每 ${MINESWEEPER_POINT_REWARD_DIVISOR} 分兑换 1 积分。`} />
+          <RuleLine icon={<Gem />} text={`福利积分按最终得分的 ${MINESWEEPER_POINT_REWARD_PERCENT}% 结算，结果向下取整。`} />
         </RuleBlock>
       </div>
     </div>

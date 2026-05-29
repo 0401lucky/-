@@ -187,7 +187,7 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           message:
-            error instanceof Error ? error.message : "图片参数错误，请重试",
+            error instanceof Error ? error.message : "附件参数错误，请重试",
         },
         { status: 400 }
       );
@@ -195,7 +195,7 @@ export async function POST(request: NextRequest) {
 
     if (!content && images.length === 0) {
       return NextResponse.json(
-        { success: false, message: "反馈内容或图片至少填写一项" },
+        { success: false, message: "反馈内容或图片/视频至少填写一项" },
         { status: 400 }
       );
     }
@@ -241,9 +241,13 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error("Create feedback error:", error);
+    const safeMessage =
+      error instanceof Error && /视频上传|附件/.test(error.message)
+        ? error.message
+        : "提交反馈失败";
     return NextResponse.json(
-      { success: false, message: "提交反馈失败" },
-      { status: 500 }
+      { success: false, message: safeMessage },
+      { status: safeMessage === "提交反馈失败" ? 500 : 400 }
     );
   }
 }

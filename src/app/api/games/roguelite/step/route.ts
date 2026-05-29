@@ -10,7 +10,11 @@ export const POST = withUserRateLimit(
       const body = (await request.json()) as RogueliteGameStepPayload;
       const result = await stepRogueliteGame(user.id, body);
       if (!result.success) {
-        return NextResponse.json({ success: false, message: result.message }, { status: 400 });
+        return NextResponse.json({
+          success: false,
+          message: result.message,
+          ...(result.session ? { data: { session: result.session } } : {}),
+        }, { status: 400 });
       }
 
       return NextResponse.json({

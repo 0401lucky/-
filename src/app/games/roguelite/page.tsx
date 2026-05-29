@@ -63,6 +63,11 @@ interface StepResponse {
 
 type RogueliteOutcomeView = StepResponse['outcome'];
 
+interface StepApiData {
+  session?: RogueliteSessionView;
+  outcome?: RogueliteOutcomeView;
+}
+
 interface SubmitResponse {
   record: RogueliteGameRecord;
   pointsEarned: number;
@@ -101,6 +106,17 @@ async function parseJson<T>(res: Response): Promise<ApiResponse<T> | null> {
   } catch {
     return null;
   }
+}
+
+function shouldRefreshRogueliteStatusAfterStepError(message: string): boolean {
+  return (
+    message.includes('HTTP 503')
+    || message.includes('服务器错误')
+    || message.includes('网络错误')
+    || message.includes('当前事件尚未处理完成')
+    || message.includes('操作过于频繁')
+    || message.includes('游戏会话')
+  );
 }
 
 function riskLabel(risk: RogueliteCellView['risk']): string {
@@ -264,14 +280,26 @@ export default function RoguelitePage() {
     steppingRef.current = true;
     setLoading(true);
     setError(null);
+    let syncedSessionFromError = false;
     try {
       const res = await fetch('/api/games/roguelite/step', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: session.sessionId, action }),
       });
-      const data = await parseJson<StepResponse>(res);
-      if (!res.ok || !data?.success || !data.data) {
+      const data = await parseJson<StepApiData>(res);
+      if (!res.ok || !data?.success || !data.data?.session || !data.data.outcome) {
+        if (data?.data?.session) {
+          syncedSessionFromError = true;
+          setSession(data.data.session);
+          setPhase('playing');
+          setLastOutcome(null);
+          setMessage(
+            data.data.session.state.pending
+              ? '已同步迷阵状态，请先处理当前事件'
+              : '已同步迷阵状态，请重试操作',
+          );
+        }
         throw new Error(data?.message ?? `行动失败（HTTP ${res.status}）`);
       }
 
@@ -279,12 +307,16 @@ export default function RoguelitePage() {
       setLastOutcome(data.data.outcome);
       setMessage(data.data.outcome.message);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '行动失败，请稍后重试');
+      const errorMessage = err instanceof Error ? err.message : '行动失败，请稍后重试';
+      setError(errorMessage);
+      if (!syncedSessionFromError && shouldRefreshRogueliteStatusAfterStepError(errorMessage)) {
+        void fetchStatus();
+      }
     } finally {
       steppingRef.current = false;
       setLoading(false);
     }
-  }, [session]);
+  }, [fetchStatus, session]);
 
   const canMove = state?.status === 'playing' && !pending && !loading;
 

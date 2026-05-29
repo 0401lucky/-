@@ -32,6 +32,9 @@ export function DifficultySelect({
           const meta = DIFFICULTY_META[difficulty];
           const config = LINKGAME_DIFFICULTY_CONFIG[difficulty];
           const selected = selectedDifficulty === difficulty;
+          const sizeLabel = config.mode === 'stack3d'
+            ? `${config.rows} × ${config.cols} × ${config.depth ?? 1}`
+            : `${config.rows} × ${config.cols}`;
           
           return (
             <button
@@ -55,7 +58,7 @@ export function DifficultySelect({
                     {meta.icon}
                   </div>
                   <div className={`link-size-pill ${meta.textColor}`}>
-                    {config.rows} × {config.cols}
+                    {sizeLabel}
                   </div>
                 </div>
                 

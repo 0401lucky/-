@@ -6,6 +6,28 @@ export type GameType = 'memory' | 'match3' | 'linkgame' | 'farm' | 'whack_mole' 
 /** 连连看难度 */
 export type LinkGameDifficulty = 'easy' | 'normal' | 'hard';
 
+/** 连连看棋盘模式 */
+export type LinkGameBoardMode = 'classic2d' | 'stack3d';
+
+/** 连连看结算结果 */
+export type LinkGameSettlementOutcome = 'completed' | 'deadlock' | 'timeout';
+
+/** 连连看胜败归类，用于胜率统计 */
+export type LinkGameSettlementResult = 'win' | 'loss';
+
+/** 连连看三维层配置 */
+export interface LinkGameLayerConfig {
+  z: number;
+  rowStart: number;
+  colStart: number;
+  rows: number;
+  cols: number;
+  cells?: Array<{
+    row: number;
+    col: number;
+  }>;
+}
+
 /** 连连看难度配置 */
 export interface LinkGameDifficultyConfig {
   rows: number;
@@ -13,16 +35,16 @@ export interface LinkGameDifficultyConfig {
   pairs: number;
   baseScore: number;
   timeLimit: number;
-  hintLimit: number;
-  shuffleLimit: number;
-  hintPenalty: number;
-  shufflePenalty: number;
+  mode?: LinkGameBoardMode;
+  depth?: number;
+  layers?: LinkGameLayerConfig[];
 }
 
 /** 连连看坐标 */
 export interface LinkGamePosition {
   row: number;
   col: number;
+  z?: number;
 }
 
 /** 连连看匹配操作 */
@@ -36,20 +58,8 @@ export interface LinkGameMatchMove {
   timestamp: number;
 }
 
-/** 连连看洗牌操作 */
-export interface LinkGameShuffleMove {
-  type: 'shuffle';
-  timestamp: number;
-}
-
-/** 连连看提示操作 */
-export interface LinkGameHintMove {
-  type: 'hint';
-  timestamp: number;
-}
-
-/** 连连看操作记录（联合类型） */
-export type LinkGameMove = LinkGameMatchMove | LinkGameShuffleMove | LinkGameHintMove;
+/** 连连看操作记录 */
+export type LinkGameMove = LinkGameMatchMove;
 
 /** 兼容旧格式的操作记录（用于服务端向后兼容） */
 export interface LinkGameLegacyMove {
@@ -66,7 +76,7 @@ export interface LinkGameSession {
   gameType: 'linkgame';
   difficulty: LinkGameDifficulty;
   seed: string;
-  tileLayout: string[];    // 瓦片布局（iconId数组）
+  tileLayout: (string | null)[];    // 瓦片布局，三维无效格和已消除格为 null
   startedAt: number;
   expiresAt: number;
   status: GameSessionStatus;
@@ -77,9 +87,8 @@ export interface LinkGameResultSubmit {
   sessionId: string;
   moves: LinkGameMove[];
   completed: boolean;
+  outcome?: LinkGameSettlementOutcome;
   duration: number;
-  hintsUsed: number;
-  shufflesUsed: number;
 }
 
 /** 连连看游戏记录 */
@@ -91,6 +100,8 @@ export interface LinkGameRecord {
   difficulty: LinkGameDifficulty;
   moves: number;
   completed: boolean;
+  outcome?: LinkGameSettlementOutcome;
+  settlementResult?: LinkGameSettlementResult;
   score: number;
   pointsEarned: number;
   duration: number;

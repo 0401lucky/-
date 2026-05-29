@@ -8,10 +8,8 @@ import {
   ArrowLeft,
   BookOpen,
   Clock3,
-  Lightbulb,
   Loader2,
   MousePointer2,
-  Shuffle,
   Sparkles,
   Trophy,
   X,
@@ -23,23 +21,29 @@ import { GameHeader } from './components/GameHeader';
 import { ResultModal } from './components/ResultModal';
 import { LINKGAME_DIFFICULTY_CONFIG } from './lib/constants';
 import {
-  canMatch,
-  removeMatch,
-  findHint,
+  canMatchByConfig,
+  removeMatchByConfig,
   findMatchPath,
-  shuffleBoard,
+  findHintByConfig,
   checkGameComplete,
   calculateScore,
-  positionOf,
-  indexOf,
+  isStack3DConfig,
+  isStackTileSelectable,
+  positionOfIndex,
 } from '@/lib/linkgame';
-import type { LinkGameDifficulty, LinkGameMove, LinkGamePosition } from '@/lib/types/game';
+import type {
+  LinkGameDifficulty,
+  LinkGameMove,
+  LinkGamePosition,
+  LinkGameSettlementOutcome,
+} from '@/lib/types/game';
 
 type GamePhase = 'select' | 'playing' | 'outcome' | 'result';
 
 interface GameResult {
   moves: number;
   completed: boolean;
+  outcome: LinkGameSettlementOutcome;
   score: number;
   pointsEarned: number;
   duration: number;
@@ -48,10 +52,9 @@ interface GameResult {
 
 interface GameOutcome {
   moves: LinkGameMove[];
-  hintsUsed: number;
-  shufflesUsed: number;
   timeRemaining: number;
   completed: boolean;
+  outcome: LinkGameSettlementOutcome;
   scorePreview: number;
   matchedPairs: number;
   totalPairs: number;
@@ -68,6 +71,24 @@ function formatTime(seconds: number) {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
   return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function getRestoredRemainingSeconds(activeSession: {
+  config: { timeLimit: number };
+  remainingSeconds?: number;
+  playableUntil?: number;
+  startedAt?: number;
+}) {
+  const fallbackPlayableUntil =
+    typeof activeSession.startedAt === 'number'
+      ? activeSession.startedAt + activeSession.config.timeLimit * 1000
+      : 0;
+  const playableUntil = activeSession.playableUntil ?? fallbackPlayableUntil;
+  const rawRemaining =
+    typeof activeSession.remainingSeconds === 'number'
+      ? activeSession.remainingSeconds
+      : Math.ceil((playableUntil - Date.now()) / 1000);
+  return Math.max(0, Math.min(activeSession.config.timeLimit, rawRemaining));
 }
 
 export default function LinkGamePage() {
@@ -95,25 +116,20 @@ export default function LinkGamePage() {
   const [selected, setSelected] = useState<number[]>([]);
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
-  const [hintsUsed, setHintsUsed] = useState(0);
-  const [shufflesUsed, setShufflesUsed] = useState(0);
   const [matchedPairs, setMatchedPairs] = useState(0);
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [shakingIndices, setShakingIndices] = useState<number[]>([]);
   const [matchingIndices, setMatchingIndices] = useState<number[]>([]);
-  const [hintIndices, setHintIndices] = useState<number[]>([]);
   const [matchPaths, setMatchPaths] = useState<LinkGamePosition[][] | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const matchTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const hintTimerRef = useRef<NodeJS.Timeout | null>(null);
   const sessionRef = useRef(session);
   const movesRef = useRef<LinkGameMove[]>([]);
-  const hintsUsedRef = useRef(0);
-  const shufflesUsedRef = useRef(0);
   const matchedPairsRef = useRef(0);
   const timeRemainingRef = useRef(0);
+  const autoSubmittedOutcomeRef = useRef(false);
 
   useEffect(() => {
     sessionRef.current = session;
@@ -123,16 +139,10 @@ export default function LinkGamePage() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (matchTimerRef.current) clearTimeout(matchTimerRef.current);
-      if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
     };
   }, []);
 
-  const clearHintFeedback = useCallback((clearPath = false) => {
-    if (hintTimerRef.current) {
-      clearTimeout(hintTimerRef.current);
-      hintTimerRef.current = null;
-    }
-    setHintIndices([]);
+  const clearBoardFeedback = useCallback((clearPath = false) => {
     if (clearPath) {
       setMatchPaths(null);
     }
@@ -155,11 +165,9 @@ export default function LinkGamePage() {
   const applyRestoredSession = useCallback((activeSession: NonNullable<typeof session>) => {
     setBoard(activeSession.tileLayout);
     setSelectedDifficulty(activeSession.difficulty);
-    setTimeRemaining((prev) => {
-      const next = prev > 0 ? prev : activeSession.config.timeLimit;
-      timeRemainingRef.current = next;
-      return next;
-    });
+    const next = getRestoredRemainingSeconds(activeSession);
+    setTimeRemaining(next);
+    timeRemainingRef.current = next;
     setPhase('playing');
   }, []);
 
@@ -180,7 +188,11 @@ export default function LinkGamePage() {
     }
   }, [session, isRestored, phase, applyRestoredSession]);
 
-  const handleGameOver = useCallback((completed: boolean) => {
+  const handleGameOver = useCallback((
+    completed: boolean,
+    outcome: LinkGameSettlementOutcome = completed ? 'completed' : 'timeout',
+    scoreOverride?: number
+  ) => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -192,41 +204,43 @@ export default function LinkGamePage() {
 
     if (!sessionRef.current) return;
 
-    clearHintFeedback(true);
+    clearBoardFeedback(true);
     setSelected([]);
     setShakingIndices([]);
     setMatchingIndices([]);
     setIsProcessing(false);
+    const activeSession = sessionRef.current;
+    const finalScore = outcome === 'timeout' && activeSession.difficulty !== 'hard'
+      ? 0
+      : (scoreOverride ?? score);
     setPendingOutcome({
       moves: movesRef.current,
-      hintsUsed: hintsUsedRef.current,
-      shufflesUsed: shufflesUsedRef.current,
       timeRemaining: timeRemainingRef.current,
       completed,
-      scorePreview: completed ? score : 0,
+      outcome,
+      scorePreview: finalScore,
       matchedPairs: matchedPairsRef.current,
       totalPairs: sessionRef.current.config.pairs,
       difficulty: sessionRef.current.difficulty,
     });
     setSelectedDifficulty(sessionRef.current.difficulty);
     setPhase('outcome');
-  }, [clearHintFeedback, score]);
+  }, [clearBoardFeedback, score]);
 
   const handleSettleOutcome = useCallback(async () => {
     if (!pendingOutcome) return;
 
     const result = await submitResult(
       pendingOutcome.moves,
-      pendingOutcome.hintsUsed,
-      pendingOutcome.shufflesUsed,
-      pendingOutcome.timeRemaining,
       pendingOutcome.completed,
+      pendingOutcome.outcome
     );
 
     if (result) {
       setGameResult({
         moves: result.record.moves,
         completed: result.record.completed,
+        outcome: result.record.outcome ?? pendingOutcome.outcome,
         score: result.record.score,
         pointsEarned: result.pointsEarned,
         duration: result.record.duration,
@@ -237,6 +251,17 @@ export default function LinkGamePage() {
       setPhase('result');
     }
   }, [pendingOutcome, submitResult]);
+
+  useEffect(() => {
+    if (phase !== 'outcome' || !pendingOutcome) return;
+    if (autoSubmittedOutcomeRef.current) return;
+    autoSubmittedOutcomeRef.current = true;
+
+    const timer = window.setTimeout(() => {
+      void handleSettleOutcome();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [phase, pendingOutcome, handleSettleOutcome]);
 
   useEffect(() => {
     if (phase !== 'playing') return;
@@ -250,7 +275,7 @@ export default function LinkGamePage() {
             timerRef.current = null;
           }
           timeRemainingRef.current = 0;
-          void handleGameOver(false);
+          void handleGameOver(false, 'timeout');
           return 0;
         }
 
@@ -268,6 +293,17 @@ export default function LinkGamePage() {
     };
   }, [phase, handleGameOver]);
 
+  useEffect(() => {
+    if (phase !== 'playing' || !session || isProcessing || board.length === 0) return;
+    if (!isStack3DConfig(session.config) || checkGameComplete(board)) return;
+    if (findHintByConfig(board, session.config) !== null) return;
+
+    const frame = requestAnimationFrame(() => {
+      void handleGameOver(false, 'deadlock');
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [board, handleGameOver, isProcessing, phase, session]);
+
   const startNewGame = async (difficulty: LinkGameDifficulty) => {
     const success = await startGame(difficulty);
     if (success) {
@@ -275,19 +311,16 @@ export default function LinkGamePage() {
       setPendingOutcome(null);
       setScore(0);
       setCombo(0);
-      setHintsUsed(0);
-      hintsUsedRef.current = 0;
-      setShufflesUsed(0);
-      shufflesUsedRef.current = 0;
       setMatchedPairs(0);
       matchedPairsRef.current = 0;
       movesRef.current = [];
       setSelected([]);
       setShakingIndices([]);
       setMatchingIndices([]);
-      clearHintFeedback(true);
+      clearBoardFeedback(true);
       setMatchPaths(null);
       setIsProcessing(false);
+      autoSubmittedOutcomeRef.current = false;
     }
   };
 
@@ -315,14 +348,21 @@ export default function LinkGamePage() {
     const tile = board[index];
     if (tile === null) return;
 
-    clearHintFeedback(true);
+    const config = session.config;
+    const isStackMode = isStack3DConfig(config);
+    const isHardStackMode = isStackMode && session.difficulty === 'hard';
+    const pos = positionOfIndex(index, config);
+
+    if (isStackMode && !isStackTileSelectable(board, pos, config)) {
+      return;
+    }
+
+    clearBoardFeedback(true);
 
     if (selected.includes(index)) {
       setSelected(selected.filter((i) => i !== index));
       return;
     }
-
-    const cols = session.config.cols;
 
     if (selected.length === 0) {
       setSelected([index]);
@@ -336,9 +376,9 @@ export default function LinkGamePage() {
       return;
     }
 
-    const pos1 = positionOf(firstIndex, cols);
-    const pos2 = positionOf(index, cols);
-    const matched = canMatch(board, pos1, pos2, cols);
+    const pos1 = positionOfIndex(firstIndex, config);
+    const pos2 = pos;
+    const matched = canMatchByConfig(board, pos1, pos2, config);
 
     const move: LinkGameMove = {
       type: 'match',
@@ -352,15 +392,15 @@ export default function LinkGamePage() {
     setIsProcessing(true);
     if (matched) {
       setMatchingIndices([firstIndex, index]);
-      const path = findMatchPath(board, pos1, pos2, cols);
+      const path = isStackMode ? null : findMatchPath(board, pos1, pos2, config.cols);
       setMatchPaths(path ? [path] : null);
 
       const newMatchedPairs = matchedPairsRef.current + 1;
-      const newCombo = combo + 1;
+      const newCombo = isHardStackMode ? 0 : combo + 1;
 
       matchTimerRef.current = setTimeout(() => {
         matchTimerRef.current = null;
-        const newBoard = removeMatch(board, pos1, pos2, cols);
+        const newBoard = removeMatchByConfig(board, pos1, pos2, config);
         setBoard(newBoard);
         setSelected([]);
         setMatchingIndices([]);
@@ -371,20 +411,34 @@ export default function LinkGamePage() {
         matchedPairsRef.current = newMatchedPairs;
         setCombo(newCombo);
 
-        const currentScore = calculateScore({
+        const scoreParams = {
           matchedPairs: newMatchedPairs,
           baseScore: session.config.baseScore,
-          combo: Math.max(0, newCombo - 1),
+          combo: isHardStackMode ? 0 : Math.max(0, newCombo - 1),
           timeRemainingSeconds: timeRemainingRef.current,
-          hintsUsed: hintsUsedRef.current,
-          shufflesUsed: shufflesUsedRef.current,
-          hintPenalty: session.config.hintPenalty,
-          shufflePenalty: session.config.shufflePenalty,
+          difficulty: session.difficulty,
+          totalPairs: session.config.pairs,
+        };
+        const currentScore = calculateScore({
+          ...scoreParams,
+          outcome: 'timeout',
         });
         setScore(currentScore);
 
         if (checkGameComplete(newBoard)) {
-          void handleGameOver(true);
+          const finalScore = calculateScore({
+            ...scoreParams,
+            outcome: 'completed',
+          });
+          setScore(finalScore);
+          void handleGameOver(true, 'completed', finalScore);
+        } else if (isStackMode && findHintByConfig(newBoard, config) === null) {
+          const finalScore = calculateScore({
+            ...scoreParams,
+            outcome: 'deadlock',
+          });
+          setScore(finalScore);
+          void handleGameOver(false, 'deadlock', finalScore);
         }
       }, 500);
     } else {
@@ -400,88 +454,6 @@ export default function LinkGamePage() {
     }
   };
 
-  const handleHint = () => {
-    if (!session || isProcessing) return;
-    const limit = session.config.hintLimit;
-    if (hintsUsed >= limit) return;
-
-    const hint = findHint(board, session.config.rows, session.config.cols);
-    if (!hint) return;
-
-    const hintMove: LinkGameMove = {
-      type: 'hint',
-      timestamp: Date.now(),
-    };
-    movesRef.current = [...movesRef.current, hintMove];
-
-    const index1 = indexOf(hint.pos1, session.config.cols);
-    const index2 = indexOf(hint.pos2, session.config.cols);
-    const hintPath = findMatchPath(board, hint.pos1, hint.pos2, session.config.cols);
-    setSelected([index1]);
-    setHintIndices([index1, index2]);
-    setMatchPaths(hintPath ? [hintPath] : null);
-
-    if (hintTimerRef.current) {
-      clearTimeout(hintTimerRef.current);
-    }
-    hintTimerRef.current = setTimeout(() => {
-      hintTimerRef.current = null;
-      setHintIndices([]);
-      setMatchPaths(null);
-    }, 1600);
-
-    const newHintsUsed = hintsUsed + 1;
-    hintsUsedRef.current = newHintsUsed;
-    setHintsUsed(newHintsUsed);
-
-    const currentScore = calculateScore({
-      matchedPairs: matchedPairsRef.current,
-      baseScore: session.config.baseScore,
-      combo: Math.max(0, combo - 1),
-      timeRemainingSeconds: timeRemainingRef.current,
-      hintsUsed: newHintsUsed,
-      shufflesUsed: shufflesUsedRef.current,
-      hintPenalty: session.config.hintPenalty,
-      shufflePenalty: session.config.shufflePenalty,
-    });
-    setScore(currentScore);
-  };
-
-  const handleShuffle = () => {
-    if (!session || isProcessing) return;
-    const limit = session.config.shuffleLimit;
-    if (shufflesUsed >= limit) return;
-
-    const newShufflesUsed = shufflesUsed + 1;
-    const shuffleMove: LinkGameMove = {
-      type: 'shuffle',
-      timestamp: Date.now(),
-    };
-    movesRef.current = [...movesRef.current, shuffleMove];
-
-    const shuffleSeed = `${session.sessionId}-shuffle-${newShufflesUsed}`;
-    const newBoard = shuffleBoard(board, shuffleSeed);
-    setBoard(newBoard);
-    setSelected([]);
-    clearHintFeedback(true);
-    setMatchPaths(null);
-
-    shufflesUsedRef.current = newShufflesUsed;
-    setShufflesUsed(newShufflesUsed);
-
-    const currentScore = calculateScore({
-      matchedPairs: matchedPairsRef.current,
-      baseScore: session.config.baseScore,
-      combo: Math.max(0, combo - 1),
-      timeRemainingSeconds: timeRemainingRef.current,
-      hintsUsed: hintsUsedRef.current,
-      shufflesUsed: newShufflesUsed,
-      hintPenalty: session.config.hintPenalty,
-      shufflePenalty: session.config.shufflePenalty,
-    });
-    setScore(currentScore);
-  };
-
   const handleCancel = async () => {
     if (matchTimerRef.current) {
       clearTimeout(matchTimerRef.current);
@@ -490,7 +462,7 @@ export default function LinkGamePage() {
     const cancelled = await cancelGame();
     if (cancelled) {
       setSelected([]);
-      clearHintFeedback(true);
+      clearBoardFeedback(true);
       setMatchPaths(null);
       setPhase('select');
     }
@@ -501,6 +473,7 @@ export default function LinkGamePage() {
     setPendingOutcome(null);
     setPhase('select');
     resetSubmitFlag();
+    autoSubmittedOutcomeRef.current = false;
     await fetchStatus();
   };
 
@@ -510,9 +483,10 @@ export default function LinkGamePage() {
 
   const selectedConfig = LINKGAME_DIFFICULTY_CONFIG[selectedDifficulty];
   const currentConfig = session?.config ?? selectedConfig;
+  const currentIsStackMode = isStack3DConfig(currentConfig);
   const phaseLabel = phase === 'playing' ? '连线指令' : phase === 'outcome' ? '胜负结果' : phase === 'result' ? '本局结算' : '出发准备';
   const tacticalLine = phase === 'playing'
-    ? '选择两个相同图案，连线不超过两次转弯即可消除。'
+    ? (currentIsStackMode ? '选择图案相同且完全露出的卡片。' : '选择两个相同图案，连线不超过两次转弯即可消除。')
     : phase === 'outcome'
       ? '本局已结束，确认后提交服务端结算。'
     : phase === 'result'
@@ -523,9 +497,9 @@ export default function LinkGamePage() {
     : phase === 'playing'
       ? `剩余 ${formatTime(timeRemaining)}，已消除 ${matchedPairs}/${currentConfig.pairs} 对`
       : phase === 'outcome'
-        ? (pendingOutcome?.completed ? '连线清空，准备结算' : '时间耗尽，准备结算')
+        ? (pendingOutcome?.outcome === 'deadlock' ? '牌面无可消除，自动结算中' : pendingOutcome?.completed ? '连线清空，准备结算' : '时间耗尽，准备结算')
       : phase === 'result'
-        ? (gameResult?.completed ? '恭喜通关' : '本局结束')
+        ? (gameResult?.outcome === 'deadlock' ? '死局结算完成' : gameResult?.completed ? '恭喜通关' : '本局结束')
         : `${DIFFICULTY_LABEL[selectedDifficulty]}难度已选中`;
 
   return (
@@ -644,7 +618,6 @@ export default function LinkGamePage() {
                 onSelect={handleTileClick}
                 shakingIndices={shakingIndices}
                 matchingIndices={matchingIndices}
-                hintIndices={hintIndices}
                 matchPaths={matchPaths ?? undefined}
               />
             </section>
@@ -661,12 +634,14 @@ export default function LinkGamePage() {
                   timeRemaining={timeRemaining}
                   score={score}
                   combo={combo}
-                  hintsRemaining={session.config.hintLimit - hintsUsed}
-                  shufflesRemaining={session.config.shuffleLimit - shufflesUsed}
+                  bonusLabel={isStack3DConfig(session.config) ? '层压' : '连击'}
+                  bonusValue={
+                    isStack3DConfig(session.config)
+                      ? `${Math.round((matchedPairs / session.config.pairs) * 100)}%`
+                      : `${combo}x`
+                  }
                   matchedPairs={matchedPairs}
                   totalPairs={session.config.pairs}
-                  onHint={handleHint}
-                  onShuffle={handleShuffle}
                 />
               </section>
             </aside>
@@ -686,6 +661,7 @@ export default function LinkGamePage() {
             isOpen={true}
             difficulty={selectedDifficulty}
             completed={gameResult.completed}
+            outcome={gameResult.outcome}
             score={gameResult.score}
             pointsEarned={gameResult.pointsEarned}
             matchedPairs={gameResult.matchedPairs}
@@ -721,9 +697,11 @@ export default function LinkGamePage() {
 
             <div className="mt-5 grid gap-3">
               <RuleRow icon={<MousePointer2 className="h-5 w-5" />} title="配对" text="选择两个相同图案。" />
-              <RuleRow icon={<Shuffle className="h-5 w-5" />} title="连线" text="直线、一折、两折，且路径中没有阻挡即可消除。" />
-              <RuleRow icon={<Lightbulb className="h-5 w-5" />} title="道具" text="提示会扣分，重排会扣分，次数有限。" />
-              <RuleRow icon={<Trophy className="h-5 w-5" />} title="结算" text="清空棋盘后按服务端重放结果结算。" />
+              <RuleRow icon={<Sparkles className="h-5 w-5" />} title="连线" text="简单和普通为二维连线，直线、一折、两折且路径无阻挡即可消除。" />
+              <RuleRow icon={<MousePointer2 className="h-5 w-5" />} title="困难" text="困难为 8×8×5 五层栈式牌桌，任意两张图案相同且都未被上层遮挡的卡片即可消除。" />
+              <RuleRow icon={<Sparkles className="h-5 w-5" />} title="随机" text="困难卡牌种类减少，前期更容易开局；越到底层可消除选择越少，死局概率由 0% 逐层升高，最高约 10%。" />
+              <RuleRow icon={<Trophy className="h-5 w-5" />} title="胜败" text="困难只有清空 66 对卡牌算胜利；死局和时间截止都算失败，用通关局数除以困难结算局数即可计算胜率。" />
+              <RuleRow icon={<Trophy className="h-5 w-5" />} title="结算" text="简单和普通仍按得分 1% 结算；困难通关按 20%，死局按 10%，时间截止按 1%，均向下取整。" />
             </div>
           </div>
         </div>
@@ -1024,12 +1002,98 @@ export default function LinkGamePage() {
           background: #d1fae5;
           box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
         }
+        .link-page .link-board-surface.is-stack {
+          overflow: visible;
+          padding: 54px 34px 24px 14px;
+          background:
+            linear-gradient(135deg, rgba(255, 255, 255, 0.38), transparent 42%),
+            repeating-linear-gradient(135deg, rgba(15, 118, 110, 0.13) 0 1px, transparent 1px 14px),
+            linear-gradient(145deg, #a7f3d0 0%, #bfdbfe 54%, #fde68a 100%);
+        }
         .link-page .link-board-grid {
           display: grid;
           gap: 6px;
           position: relative;
           z-index: 1;
           margin: 0 auto;
+        }
+        .link-page .link-stack-board {
+          position: relative;
+          z-index: 1;
+          width: min(100%, 720px);
+          margin: 0 auto;
+          isolation: isolate;
+        }
+        .link-page .link-stack-layer {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          gap: 6px;
+          pointer-events: none;
+          filter: drop-shadow(0 16px 18px rgba(15, 23, 42, 0.08));
+        }
+        .link-page .link-stack-layer.layer-0 {
+          filter: drop-shadow(0 18px 18px rgba(20, 83, 45, 0.1));
+        }
+        .link-page .link-stack-layer.layer-1 {
+          filter: drop-shadow(0 20px 20px rgba(14, 116, 144, 0.12));
+        }
+        .link-page .link-stack-layer.layer-2 {
+          filter: drop-shadow(0 22px 22px rgba(194, 65, 12, 0.12));
+        }
+        .link-page .link-stack-layer.layer-3 {
+          filter: drop-shadow(0 24px 22px rgba(190, 24, 93, 0.13));
+        }
+        .link-page .link-stack-layer.layer-4 {
+          filter: drop-shadow(0 26px 24px rgba(88, 28, 135, 0.16));
+        }
+        .link-page .link-stack-cell {
+          min-width: 0;
+          min-height: 0;
+          pointer-events: auto;
+        }
+        .link-page .link-stack-cell.is-empty {
+          pointer-events: none;
+        }
+        .link-page .link-stack-tile {
+          transform-origin: center;
+          overflow: hidden;
+          box-shadow: 0 4px 0 rgba(15, 23, 42, 0.08), 0 12px 18px rgba(15, 23, 42, 0.08);
+        }
+        .link-page .link-stack-tile::after {
+          content: "";
+          position: absolute;
+          inset: 2px 4px auto 4px;
+          height: 34%;
+          border-radius: 999px;
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0));
+          pointer-events: none;
+        }
+        .link-page .link-stack-layer.layer-0 .link-stack-tile {
+          background: linear-gradient(160deg, #bbf7d0 0%, #34d399 56%, #047857 100%);
+          border-color: rgba(5, 150, 105, 0.96);
+        }
+        .link-page .link-stack-layer.layer-1 .link-stack-tile {
+          background: linear-gradient(160deg, #bae6fd 0%, #38bdf8 56%, #1d4ed8 100%);
+          border-color: rgba(14, 116, 144, 0.98);
+        }
+        .link-page .link-stack-layer.layer-2 .link-stack-tile {
+          background: linear-gradient(160deg, #fed7aa 0%, #fb923c 56%, #c2410c 100%);
+          border-color: rgba(194, 65, 12, 0.98);
+        }
+        .link-page .link-stack-layer.layer-3 .link-stack-tile {
+          background: linear-gradient(160deg, #fbcfe8 0%, #f472b6 56%, #be185d 100%);
+          border-color: rgba(190, 24, 93, 0.98);
+        }
+        .link-page .link-stack-layer.layer-4 .link-stack-tile {
+          background: linear-gradient(160deg, #ddd6fe 0%, #a78bfa 56%, #6d28d9 100%);
+          border-color: rgba(109, 40, 217, 0.98);
+        }
+        .link-page .link-stack-tile.is-covered {
+          cursor: not-allowed;
+          opacity: 0.42;
+          filter: grayscale(0.2) saturate(0.58);
+          transform: scale(0.9);
         }
         .link-page .link-status-grid {
           margin-top: 16px;
@@ -1223,8 +1287,18 @@ export default function LinkGamePage() {
             padding: 6px;
             border-radius: 18px;
           }
+          .link-page .link-board-surface.is-stack {
+            padding: 34px 18px 14px 4px;
+          }
           .link-page .link-board-grid {
             gap: 4px;
+          }
+          .link-page .link-stack-layer {
+            gap: 4px;
+          }
+          .link-page .link-stack-tile {
+            border-radius: 12px;
+            font-size: 18px;
           }
           .link-page .link-status-grid,
           .link-page .link-action-grid {
@@ -1257,6 +1331,7 @@ function LinkGameOutcomeModal({
   onSubmit: () => void;
 }) {
   const won = outcome.completed;
+  const isDeadlock = outcome.outcome === 'deadlock';
 
   return (
     <div className="link-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="linkgame-outcome-title">
@@ -1269,10 +1344,14 @@ function LinkGameOutcomeModal({
             胜负结果
           </div>
           <h2 id="linkgame-outcome-title" className="mt-1 text-2xl font-black text-slate-950">
-            {won ? '连线清空' : '挑战失败'}
+            {won ? '连线清空' : isDeadlock ? '牌面死局' : '挑战失败'}
           </h2>
           <p className="mt-3 max-w-md text-sm leading-6 text-slate-600">
-            {won ? '整张棋盘已经清空，可以结算本局成绩。' : '时间已经耗尽，可以结算本局成绩。'}
+            {won
+              ? '整张棋盘已经清空，可以结算本局成绩。'
+              : isDeadlock
+                ? '当前牌面已经没有可消除的卡牌，系统会自动结算本局成绩。'
+                : '时间已经耗尽，可以结算本局成绩。'}
           </p>
         </div>
 
@@ -1290,7 +1369,7 @@ function LinkGameOutcomeModal({
           type="button"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-          {loading ? '结算中' : '结算成绩'}
+          {loading ? '结算中' : isDeadlock ? '立即结算' : '结算成绩'}
         </button>
       </div>
     </div>

@@ -126,7 +126,7 @@ export const MINESWEEPER_DIFFICULTY_CONFIG: Record<MinesweeperDifficulty, Minesw
   },
 };
 
-export const MINESWEEPER_POINT_REWARD_DIVISOR = 28;
+export const MINESWEEPER_POINT_REWARD_PERCENT = 10;
 
 export function positionKey(position: MinesweeperPosition): string {
   return `${position.row}:${position.col}`;
@@ -534,5 +534,5 @@ export function calculateMinesweeperScore(
 }
 
 export function calculateMinesweeperPointReward(score: number): number {
-  return Math.max(0, Math.floor(score / MINESWEEPER_POINT_REWARD_DIVISOR));
+  return Math.max(0, Math.floor(score * MINESWEEPER_POINT_REWARD_PERCENT / 100));
 }

@@ -4,10 +4,12 @@ import { useCallback, useEffect, useState } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import {
-  FEEDBACK_IMAGE_ACCEPT,
-  FEEDBACK_IMAGE_MIME_TYPES,
+  FEEDBACK_MEDIA_ACCEPT,
+  FEEDBACK_MEDIA_MIME_TYPES,
   MAX_FEEDBACK_IMAGE_BYTES,
   MAX_FEEDBACK_IMAGES,
+  MAX_FEEDBACK_VIDEO_BYTES,
+  isFeedbackVideo,
   type FeedbackImage,
 } from '@/lib/feedback-image';
 import {
@@ -43,6 +45,44 @@ interface DraftImage extends FeedbackImage {
   id: string;
 }
 
+function getMediaAlt(media: FeedbackImage, fallback: string): string {
+  return media.name || (isFeedbackVideo(media) ? fallback.replace('图片', '视频') : fallback);
+}
+
+function AdminFeedbackMedia({
+  media,
+  alt,
+  className,
+}: {
+  media: FeedbackImage;
+  alt: string;
+  className: string;
+}) {
+  if (isFeedbackVideo(media)) {
+    return (
+      <video
+        src={media.dataUrl}
+        controls
+        preload="metadata"
+        playsInline
+        className={className}
+        aria-label={alt}
+      />
+    );
+  }
+
+  return (
+    <Image
+      src={media.dataUrl}
+      alt={alt}
+      width={400}
+      height={280}
+      unoptimized
+      className={className}
+    />
+  );
+}
+
 interface FeedbackDetailResponse {
   feedback: FeedbackItem;
   messages: FeedbackMessage[];
@@ -66,7 +106,7 @@ function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(new Error('读取图片失败'));
+    reader.onerror = () => reject(new Error('读取附件失败'));
     reader.readAsDataURL(file);
   });
 }
@@ -104,7 +144,7 @@ export default function AdminFeedbackPage() {
       }
 
       if (replyImages.length >= MAX_FEEDBACK_IMAGES) {
-        setError(`最多上传 ${MAX_FEEDBACK_IMAGES} 张图片`);
+        setError(`最多上传 ${MAX_FEEDBACK_IMAGES} 个附件`);
         return;
       }
 
@@ -114,12 +154,19 @@ export default function AdminFeedbackPage() {
       const newImages: DraftImage[] = [];
       for (const file of nextFiles) {
         const mimeType = file.type.toLowerCase();
-        if (!FEEDBACK_IMAGE_MIME_TYPES.includes(mimeType as (typeof FEEDBACK_IMAGE_MIME_TYPES)[number])) {
-          setError('仅支持 PNG/JPG/WEBP/GIF 格式图片');
+        if (!FEEDBACK_MEDIA_MIME_TYPES.includes(mimeType as (typeof FEEDBACK_MEDIA_MIME_TYPES)[number])) {
+          setError('仅支持 PNG/JPG/WEBP/GIF 图片和 MP4/WEBM/MOV 视频');
           continue;
         }
 
-        if (file.size > MAX_FEEDBACK_IMAGE_BYTES) {
+        const maxBytes = mimeType.startsWith('video/')
+          ? MAX_FEEDBACK_VIDEO_BYTES
+          : MAX_FEEDBACK_IMAGE_BYTES;
+        if (file.size > maxBytes) {
+          if (mimeType.startsWith('video/')) {
+            setError(`单个视频不能超过 ${MAX_FEEDBACK_VIDEO_BYTES / 1024 / 1024}MB`);
+            continue;
+          }
           setError(`单张图片不能超过 ${MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB`);
           continue;
         }
@@ -132,10 +179,11 @@ export default function AdminFeedbackPage() {
             mimeType,
             size: file.size,
             name: file.name,
+            kind: mimeType.startsWith('video/') ? 'video' : 'image',
           });
         } catch (error) {
-          console.error('Read image failed:', error);
-          setError('读取图片失败，请重试');
+          console.error('Read feedback media failed:', error);
+          setError('读取附件失败，请重试');
         }
       }
 
@@ -366,7 +414,7 @@ export default function AdminFeedbackPage() {
 
     const trimmed = replyContent.trim();
     if (!trimmed && replyImages.length === 0) {
-      setError('请输入回复内容或上传图片');
+      setError('请输入回复内容或上传图片/视频');
       return;
     }
 
@@ -656,22 +704,28 @@ export default function AdminFeedbackPage() {
                         {message.images && message.images.length > 0 && (
                           <div className="mt-2 grid grid-cols-2 gap-2">
                             {message.images.map((image, index) => (
-                              <a
-                                key={`${message.id}-${index}`}
-                                href={image.dataUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="block"
-                              >
-                                <Image
-                                  src={image.dataUrl}
-                                  alt={image.name || `反馈图片${index + 1}`}
-                                  width={400}
-                                  height={280}
-                                  unoptimized
-                                  className="w-full h-28 object-cover rounded-lg border border-stone-200"
-                                />
-                              </a>
+                              <div key={`${message.id}-${index}`} className="block">
+                                {isFeedbackVideo(image) ? (
+                                  <AdminFeedbackMedia
+                                    media={image}
+                                    alt={getMediaAlt(image, `反馈图片${index + 1}`)}
+                                    className="w-full h-28 object-cover rounded-lg border border-stone-200 bg-black"
+                                  />
+                                ) : (
+                                  <a
+                                    href={image.dataUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="block"
+                                  >
+                                    <AdminFeedbackMedia
+                                      media={image}
+                                      alt={getMediaAlt(image, `反馈图片${index + 1}`)}
+                                      className="w-full h-28 object-cover rounded-lg border border-stone-200"
+                                    />
+                                  </a>
+                                )}
+                              </div>
                             ))}
                           </div>
                         )}
@@ -708,43 +762,40 @@ export default function AdminFeedbackPage() {
                         : 'border-stone-200 bg-white text-stone-600 cursor-pointer hover:border-orange-300 hover:text-orange-600'
                     }`}
                   >
-                    上传图片
+                    上传图片/视频
                   </label>
                   <input
                     id="admin-feedback-reply-images"
                     type="file"
-                    accept={FEEDBACK_IMAGE_ACCEPT}
+                    accept={FEEDBACK_MEDIA_ACCEPT}
                     multiple
                     className="hidden"
                     onChange={handleReplyFileChange}
                     disabled={isSelectedLocked}
                   />
                   <div className="text-xs text-stone-400">
-                    {replyContent.length}/1000 · {replyImages.length}/{MAX_FEEDBACK_IMAGES} 张
+                    {replyContent.length}/1000 · {replyImages.length}/{MAX_FEEDBACK_IMAGES} 个附件
                   </div>
                 </div>
 
                 <div className="text-xs text-stone-400">
-                  支持粘贴截图，格式：PNG/JPG/WEBP/GIF，单张 ≤ {MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB
+                  支持粘贴截图，也支持 MP4/WEBM/MOV 视频；图片单张 ≤ {MAX_FEEDBACK_IMAGE_BYTES / 1024 / 1024}MB，视频单个 ≤ {MAX_FEEDBACK_VIDEO_BYTES / 1024 / 1024}MB
                 </div>
 
                 {replyImages.length > 0 && (
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {replyImages.map((image) => (
                       <div key={image.id} className="relative border border-stone-200 rounded-lg overflow-hidden bg-white">
-                        <Image
-                          src={image.dataUrl}
-                          alt={image.name || '回复图片'}
-                          width={160}
-                          height={80}
-                          unoptimized
+                        <AdminFeedbackMedia
+                          media={image}
+                          alt={getMediaAlt(image, '回复图片')}
                           className="w-full h-20 object-cover"
                         />
                         <button
                           type="button"
                           onClick={() => removeReplyImage(image.id)}
                           className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white text-xs leading-5"
-                          aria-label="移除图片"
+                          aria-label="移除附件"
                         >
                           ×
                         </button>
@@ -754,7 +805,7 @@ export default function AdminFeedbackPage() {
                 )}
 
                 <div className="flex items-center justify-between gap-3">
-                  <div className="text-xs text-stone-400">支持文字 + 图片混合发送</div>
+                  <div className="text-xs text-stone-400">支持文字 + 图片/视频混合发送</div>
                   <button
                     type="submit"
                     disabled={replying || isSelectedLocked}

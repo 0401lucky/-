@@ -39,7 +39,7 @@ const SESSION_TTL = 30 * 60;
 const COOLDOWN_TTL = 5;
 const MAX_RECORD_ENTRIES = 50;
 const MAX_ACTIONS = 360;
-const STEP_LOCK_TTL = 3;
+const STEP_LOCK_TTL = 10;
 const MIN_FINISH_DURATION_MS = 2_000;
 const START_LOCK_TTL = 3;
 const SUBMIT_LOCK_TTL = 20;
@@ -429,7 +429,11 @@ export async function stepRogueliteGame(
 
     const resolved = resolveRogueliteAction(session.state, payloadCheck.action);
     if (!resolved.ok) {
-      return { success: false, message: resolved.message };
+      return {
+        success: false,
+        session: buildSessionView(session),
+        message: resolved.message,
+      };
     }
 
     const nextSession: RogueliteGameSession = {

@@ -1,13 +1,21 @@
 'use client';
 
 import { useState, useCallback, useRef } from 'react';
-import type { LinkGameDifficulty, LinkGameDifficultyConfig, LinkGameMove } from '@/lib/types/game';
+import type {
+  LinkGameDifficulty,
+  LinkGameDifficultyConfig,
+  LinkGameMove,
+  LinkGameSettlementOutcome,
+} from '@/lib/types/game';
 
 interface GameSession {
   sessionId: string;
   difficulty: LinkGameDifficulty;
   tileLayout: (string | null)[];
+  startedAt: number;
   expiresAt: number;
+  playableUntil: number;
+  remainingSeconds: number;
   config: LinkGameDifficultyConfig;
 }
 
@@ -29,11 +37,10 @@ interface GameResult {
     id: string;
     moves: number;
     completed: boolean;
+    outcome?: LinkGameSettlementOutcome;
     score: number;
     pointsEarned: number;
     duration: number;
-    hintsUsed: number;
-    shufflesUsed: number;
   };
   pointsEarned: number;
 }
@@ -126,10 +133,8 @@ export function useGameSession() {
 
   const submitResult = useCallback(async (
     moves: LinkGameMove[],
-    hintsUsed: number,
-    shufflesUsed: number,
-    timeRemaining: number,
-    completed: boolean
+    completed: boolean,
+    outcome?: LinkGameSettlementOutcome
   ): Promise<GameResult | null> => {
     if (!session || hasSubmittedRef.current) return null;
     
@@ -143,10 +148,9 @@ export function useGameSession() {
         body: JSON.stringify({
           sessionId: session.sessionId,
           moves,
-          hintsUsed,
-          shufflesUsed,
-          timeRemaining,
           completed,
+          outcome,
+          duration: 0,
         }),
       });
       

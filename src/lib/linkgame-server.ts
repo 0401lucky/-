@@ -21,13 +21,16 @@ export { getDailyStats };
 import {
   generateTileLayout,
   LINKGAME_DIFFICULTY_CONFIG,
-  canMatch,
-  removeMatch,
+  canMatchByConfig,
+  removeMatchByConfig,
   checkGameComplete,
   calculateScore,
   calculateLinkGamePointReward,
-  indexOf,
-  shuffleBoard,
+  findHintByConfig,
+  getLinkGameSettlementResult,
+  getTileAt,
+  indexOfPosition,
+  isActivePosition,
 } from './linkgame';
 import type {
   LinkGameDifficulty,
@@ -35,11 +38,17 @@ import type {
   LinkGameResultSubmit,
   LinkGameRecord,
   LinkGamePosition,
+  LinkGameDifficultyConfig,
+  LinkGameSettlementOutcome,
 } from './types/game';
 
 // ============ 常量配置 ============
 
-const SESSION_TTL = 5 * 60; // 5分钟
+export const LINKGAME_SESSION_SETTLEMENT_GRACE_SECONDS = 60;
+export const LINKGAME_SESSION_TTL_SECONDS =
+  Math.max(...Object.values(LINKGAME_DIFFICULTY_CONFIG).map((config) => config.timeLimit)) +
+  LINKGAME_SESSION_SETTLEMENT_GRACE_SECONDS;
+const SESSION_TTL = LINKGAME_SESSION_TTL_SECONDS; // 游戏时限 + 结算缓冲
 const COOLDOWN_TTL = 5; // 5秒
 const MIN_GAME_DURATION = 5000; // 5秒
 const MAX_RECORD_ENTRIES = 50;
@@ -55,6 +64,37 @@ const SUBMIT_LOCK_KEY = (sessionId: string) => `linkgame:submit:${sessionId}`;
 const START_LOCK_KEY = (userId: number) => `linkgame:start:${userId}`;
 
 // ============ 工具函数 ============
+
+export function getLinkGamePlayableUntil(session: LinkGameSession): number {
+  const config = LINKGAME_DIFFICULTY_CONFIG[session.difficulty];
+  return session.startedAt + config.timeLimit * 1000;
+}
+
+export function getLinkGameRemainingSeconds(session: LinkGameSession, now: number = Date.now()): number {
+  const config = LINKGAME_DIFFICULTY_CONFIG[session.difficulty];
+  const remaining = Math.ceil((getLinkGamePlayableUntil(session) - now) / 1000);
+  return Math.max(0, Math.min(config.timeLimit, remaining));
+}
+
+export function validateLinkGameSettlementTiming(
+  serverDurationMs: number,
+  config: LinkGameDifficultyConfig,
+  outcome: LinkGameSettlementOutcome
+): { ok: true } | { ok: false; message: string } {
+  if (serverDurationMs < MIN_GAME_DURATION) {
+    return { ok: false, message: '游戏时长过短' };
+  }
+
+  const timeLimitMs = config.timeLimit * 1000;
+  if (outcome === 'timeout' && serverDurationMs < timeLimitMs) {
+    return { ok: false, message: '游戏尚未超时' };
+  }
+  if (outcome === 'completed' && serverDurationMs > timeLimitMs) {
+    return { ok: false, message: '游戏已超时' };
+  }
+
+  return { ok: true };
+}
 
 /**
  * 生成随机种子
@@ -106,9 +146,15 @@ export interface ValidationResult {
   matchedPairs?: number;
   maxStreak?: number;
   completed?: boolean;
-  hintsUsed?: number;
-  shufflesUsed?: number;
+  deadlocked?: boolean;
+  outcome?: LinkGameSettlementOutcome;
 }
+
+const LINKGAME_SETTLEMENT_OUTCOMES = new Set<LinkGameSettlementOutcome>([
+  'completed',
+  'deadlock',
+  'timeout',
+]);
 
 /**
  * 验证连连看游戏结果（纯函数，无KV依赖）
@@ -119,7 +165,6 @@ export function validateLinkGameResult(
   payload: LinkGameResultSubmit
 ): ValidationResult {
   const config = LINKGAME_DIFFICULTY_CONFIG[session.difficulty];
-  const { rows, cols, hintLimit, shuffleLimit } = config;
 
   // 基础类型检查
   if (!Array.isArray(payload.moves)) {
@@ -130,18 +175,9 @@ export function validateLinkGameResult(
     return { ok: false, message: '无效的完成状态' };
   }
 
-  // 检查 hintsUsed 和 shufflesUsed
-  if (!Number.isInteger(payload.hintsUsed) || payload.hintsUsed < 0) {
-    return { ok: false, message: '无效的提示使用次数' };
-  }
-  if (!Number.isInteger(payload.shufflesUsed) || payload.shufflesUsed < 0) {
-    return { ok: false, message: '无效的洗牌使用次数' };
-  }
-  if (payload.hintsUsed > hintLimit) {
-    return { ok: false, message: '提示使用次数超过限制' };
-  }
-  if (payload.shufflesUsed > shuffleLimit) {
-    return { ok: false, message: '洗牌使用次数超过限制' };
+  const requestedOutcome = payload.outcome ?? (payload.completed ? 'completed' : 'timeout');
+  if (!LINKGAME_SETTLEMENT_OUTCOMES.has(requestedOutcome)) {
+    return { ok: false, message: '无效的结算类型' };
   }
 
   // 重放验证
@@ -149,8 +185,6 @@ export function validateLinkGameResult(
   let matchedPairs = 0;
   let currentStreak = 0;
   let maxStreak = 0;
-  let serverHintsUsed = 0;
-  let serverShufflesUsed = 0;
 
   for (const move of payload.moves) {
     // 类型检查
@@ -158,26 +192,12 @@ export function validateLinkGameResult(
       return { ok: false, message: '无效的操作格式' };
     }
 
-    // Handle shuffle moves
     const moveType = (move as { type?: string }).type;
-    if (moveType === 'hint') {
-      serverHintsUsed++;
-      if (serverHintsUsed > hintLimit) {
-        return { ok: false, message: '提示次数超过限制' };
-      }
-      continue;
+    if (moveType === 'hint' || moveType === 'shuffle') {
+      return { ok: false, message: '道具已移除' };
     }
-
-    if (moveType === 'shuffle') {
-      serverShufflesUsed++;
-      if (serverShufflesUsed > shuffleLimit) {
-        return { ok: false, message: '洗牌次数超过限制' };
-      }
-      // Apply shuffle with deterministic seed matching client
-      const shuffleSeed = `${session.id}-shuffle-${serverShufflesUsed}`;
-      board = shuffleBoard(board, shuffleSeed);
-      currentStreak = 0;
-      continue;
+    if (moveType && moveType !== 'match') {
+      return { ok: false, message: '无效的操作类型' };
     }
 
     // Handle match moves (including legacy format without type field)
@@ -190,7 +210,9 @@ export function validateLinkGameResult(
     }
 
     if (!Number.isInteger(pos1.row) || !Number.isInteger(pos1.col) ||
-        !Number.isInteger(pos2.row) || !Number.isInteger(pos2.col)) {
+        !Number.isInteger(pos2.row) || !Number.isInteger(pos2.col) ||
+        (pos1.z !== undefined && !Number.isInteger(pos1.z)) ||
+        (pos2.z !== undefined && !Number.isInteger(pos2.z))) {
       return { ok: false, message: '位置坐标必须为整数' };
     }
 
@@ -199,38 +221,38 @@ export function validateLinkGameResult(
     }
 
     // 边界检查
-    if (pos1.row < 0 || pos1.row >= rows || pos1.col < 0 || pos1.col >= cols) {
+    if (!isActivePosition(config, pos1)) {
       return { ok: false, message: '位置1超出边界' };
     }
-    if (pos2.row < 0 || pos2.row >= rows || pos2.col < 0 || pos2.col >= cols) {
+    if (!isActivePosition(config, pos2)) {
       return { ok: false, message: '位置2超出边界' };
     }
 
     // 不能选同一个位置
-    const idx1 = indexOf(pos1, cols);
-    const idx2 = indexOf(pos2, cols);
+    const idx1 = indexOfPosition(pos1, config);
+    const idx2 = indexOfPosition(pos2, config);
     if (idx1 === idx2) {
       return { ok: false, message: '不能选择同一个位置' };
     }
 
     // 检查两个位置是否有瓦片
-    if (board[idx1] === null) {
+    if (getTileAt(board, pos1, config) === null) {
       return { ok: false, message: '位置1没有瓦片' };
     }
-    if (board[idx2] === null) {
+    if (getTileAt(board, pos2, config) === null) {
       return { ok: false, message: '位置2没有瓦片' };
     }
 
     if (pos3 && typeof pos3 === 'object') {
       return { ok: false, message: '三连模式已停用' };
     } else {
-      const serverCanMatch = canMatch(board, pos1, pos2, cols);
+      const serverCanMatch = canMatchByConfig(board, pos1, pos2, config);
       if (matched !== serverCanMatch) {
         return { ok: false, message: '匹配结果不一致' };
       }
 
       if (matched) {
-        board = removeMatch(board, pos1, pos2, cols);
+        board = removeMatchByConfig(board, pos1, pos2, config);
         matchedPairs++;
         currentStreak++;
         maxStreak = Math.max(maxStreak, currentStreak);
@@ -240,9 +262,25 @@ export function validateLinkGameResult(
     }
   }
 
-  // 验证完成状态
+  // 验证完成状态与死局状态
   const actuallyCompleted = checkGameComplete(board);
-  if (payload.completed !== actuallyCompleted) {
+  const actuallyDeadlocked = !actuallyCompleted && findHintByConfig(board, config) === null;
+
+  if (requestedOutcome === 'completed') {
+    if (!payload.completed || !actuallyCompleted) {
+      return { ok: false, message: '完成状态不一致' };
+    }
+  } else if (requestedOutcome === 'deadlock') {
+    if (session.difficulty !== 'hard') {
+      return { ok: false, message: '只有困难模式支持死局结算' };
+    }
+    if (payload.completed || actuallyCompleted) {
+      return { ok: false, message: '死局状态不一致' };
+    }
+    if (!actuallyDeadlocked) {
+      return { ok: false, message: '当前牌面仍有可消除的牌' };
+    }
+  } else if (payload.completed || actuallyCompleted) {
     return { ok: false, message: '完成状态不一致' };
   }
 
@@ -251,8 +289,8 @@ export function validateLinkGameResult(
     matchedPairs,
     maxStreak,
     completed: actuallyCompleted,
-    hintsUsed: serverHintsUsed,
-    shufflesUsed: serverShufflesUsed,
+    deadlocked: actuallyDeadlocked,
+    outcome: requestedOutcome,
   };
 }
 
@@ -445,35 +483,40 @@ export async function submitLinkGameResult(
 
   // 服务端时长校验
   const serverDuration = Date.now() - session.startedAt;
-  if (serverDuration < MIN_GAME_DURATION) {
+  const settlementOutcome = validation.outcome ?? (validation.completed ? 'completed' : 'timeout');
+  const config = LINKGAME_DIFFICULTY_CONFIG[session.difficulty];
+  const timingValidation = validateLinkGameSettlementTiming(serverDuration, config, settlementOutcome);
+  if (!timingValidation.ok) {
     await releaseLock();
-    return { success: false, message: '游戏时长过短' };
+    return { success: false, message: timingValidation.message };
   }
 
   // 计算得分（服务端计算，不信任客户端）
-  const config = LINKGAME_DIFFICULTY_CONFIG[session.difficulty];
   let score = 0;
 
-  if (validation.completed) {
-    // combo = max(0, maxStreak - 1)
-    const combo = Math.max(0, (validation.maxStreak ?? 0) - 1);
+  const shouldCalculateScore =
+    validation.completed ||
+    settlementOutcome === 'deadlock' ||
+    (session.difficulty === 'hard' && settlementOutcome === 'timeout');
+
+  if (shouldCalculateScore) {
+    // 困难模式采用层数压力计分，不再吃连击加成。
+    const combo = session.difficulty === 'hard'
+      ? 0
+      : Math.max(0, (validation.maxStreak ?? 0) - 1);
     const timeRemainingSeconds = Math.max(0, config.timeLimit - Math.floor(serverDuration / 1000));
 
-    // 使用服务端统计的提示/洗牌次数计分（不信任客户端）
-    const validatedHintsUsed = validation.hintsUsed ?? 0;
-    const validatedShufflesUsed = validation.shufflesUsed ?? 0;
     score = calculateScore({
       matchedPairs: validation.matchedPairs ?? 0,
       baseScore: config.baseScore,
       combo,
       timeRemainingSeconds,
-      hintsUsed: validatedHintsUsed,
-      shufflesUsed: validatedShufflesUsed,
-      hintPenalty: config.hintPenalty,
-      shufflePenalty: config.shufflePenalty,
+      difficulty: session.difficulty,
+      totalPairs: config.pairs,
+      outcome: settlementOutcome,
     });
   }
-  const pointReward = calculateLinkGamePointReward(score);
+  const pointReward = calculateLinkGamePointReward(score, session.difficulty, settlementOutcome);
   // 获取动态配置的每日积分上限
   const dailyPointsLimit = await getDailyPointsLimit();
 
@@ -483,7 +526,7 @@ export async function submitLinkGameResult(
     pointReward,
     dailyPointsLimit,
     'game_play',
-    `连连看得分 ${score}，福利积分 ${pointReward}`
+    `连连看${settlementOutcome === 'deadlock' ? '死局' : settlementOutcome === 'completed' ? '通关' : '超时'}得分 ${score}，福利积分 ${pointReward}`
   );
   const pointsEarned = pointsResult.pointsEarned;
 
@@ -496,6 +539,8 @@ export async function submitLinkGameResult(
     difficulty: session.difficulty,
     moves: payload.moves.length,
     completed: validation.completed ?? false,
+    outcome: settlementOutcome,
+    settlementResult: getLinkGameSettlementResult(validation.completed ?? false, settlementOutcome),
     score,
     pointsEarned,
     duration: serverDuration,

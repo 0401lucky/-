@@ -1,12 +1,14 @@
 import { describe, it, expectTypeOf } from 'vitest';
 import type {
   LinkGameDifficulty,
+  LinkGameBoardMode,
   LinkGameDifficultyConfig,
+  LinkGameLayerConfig,
   LinkGamePosition,
+  LinkGameSettlementOutcome,
+  LinkGameSettlementResult,
   LinkGameMove,
   LinkGameMatchMove,
-  LinkGameShuffleMove,
-  LinkGameHintMove,
   LinkGameSession,
   LinkGameResultSubmit,
   LinkGameRecord,
@@ -25,10 +27,9 @@ describe('LinkGame Types', () => {
       pairs: number;
       baseScore: number;
       timeLimit: number;
-      hintLimit: number;
-      shuffleLimit: number;
-      hintPenalty: number;
-      shufflePenalty: number;
+      mode?: LinkGameBoardMode;
+      depth?: number;
+      layers?: LinkGameLayerConfig[];
     }>();
   });
 
@@ -36,7 +37,16 @@ describe('LinkGame Types', () => {
     expectTypeOf<LinkGamePosition>().toMatchTypeOf<{
       row: number;
       col: number;
+      z?: number;
     }>();
+  });
+
+  it('should have correct LinkGameSettlementOutcome type', () => {
+    expectTypeOf<LinkGameSettlementOutcome>().toEqualTypeOf<'completed' | 'deadlock' | 'timeout'>();
+  });
+
+  it('should have correct LinkGameSettlementResult type', () => {
+    expectTypeOf<LinkGameSettlementResult>().toEqualTypeOf<'win' | 'loss'>();
   });
 
   it('should have correct LinkGameMatchMove interface', () => {
@@ -49,15 +59,8 @@ describe('LinkGame Types', () => {
     }>();
   });
 
-  it('should have correct LinkGameShuffleMove interface', () => {
-    expectTypeOf<LinkGameShuffleMove>().toMatchTypeOf<{
-      type: 'shuffle';
-      timestamp: number;
-    }>();
-  });
-
-  it('should have LinkGameMove as union of match and shuffle', () => {
-    expectTypeOf<LinkGameMove>().toEqualTypeOf<LinkGameMatchMove | LinkGameShuffleMove | LinkGameHintMove>();
+  it('should use match moves only after tools are removed', () => {
+    expectTypeOf<LinkGameMove>().toEqualTypeOf<LinkGameMatchMove>();
   });
 
   it('should have correct LinkGameSession interface', () => {
@@ -67,7 +70,7 @@ describe('LinkGame Types', () => {
       gameType: 'linkgame';
       difficulty: LinkGameDifficulty;
       seed: string;
-      tileLayout: string[];
+      tileLayout: (string | null)[];
       startedAt: number;
       expiresAt: number;
       status: 'playing' | 'completed' | 'expired';
@@ -79,9 +82,8 @@ describe('LinkGame Types', () => {
       sessionId: string;
       moves: LinkGameMove[];
       completed: boolean;
+      outcome?: LinkGameSettlementOutcome;
       duration: number;
-      hintsUsed: number;
-      shufflesUsed: number;
     }>();
   });
 
@@ -94,6 +96,8 @@ describe('LinkGame Types', () => {
       difficulty: LinkGameDifficulty;
       moves: number;
       completed: boolean;
+      outcome?: LinkGameSettlementOutcome;
+      settlementResult?: LinkGameSettlementResult;
       score: number;
       pointsEarned: number;
       duration: number;

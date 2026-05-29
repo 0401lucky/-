@@ -47,8 +47,10 @@ import { applyPointsDeltaInsideUserEconomyLock, getUserPoints } from '../points'
 import { createUserNotification } from '../notifications';
 import {
   cancelNumberBombBet,
+  getNumberBombState,
   getPreviousDateString,
   placeNumberBombBet,
+  previewNumberBombSystemNumber,
   settleNumberBombDate,
   type NumberBombBet,
 } from '../number-bomb';
@@ -91,6 +93,88 @@ describe('getPreviousDateString', () => {
     expect(getPreviousDateString('2026-05-05')).toBe('2026-05-04');
     expect(getPreviousDateString('2026-01-01')).toBe('2025-12-31');
     expect(getPreviousDateString('2026-03-01')).toBe('2026-02-28');
+  });
+});
+
+describe('previewNumberBombSystemNumber', () => {
+  it('defaults to today number, which will be announced tomorrow at midnight', async () => {
+    mockKvGet.mockResolvedValueOnce(8);
+
+    const preview = await previewNumberBombSystemNumber();
+
+    expect(preview).toEqual({
+      date: TODAY,
+      systemNumber: 8,
+    });
+  });
+});
+
+describe('getNumberBombState', () => {
+  it('returns yesterday system number even when the user did not participate yesterday', async () => {
+    mockGetPoints.mockResolvedValueOnce(1234);
+    mockKvGet
+      .mockResolvedValueOnce(null) // 今日投注
+      .mockResolvedValueOnce(null) // 昨日投注
+      .mockResolvedValueOnce(6);   // 昨日数字已公布
+
+    const state = await getNumberBombState(USER.id);
+
+    expect(state.date).toBe(TODAY);
+    expect(state.yesterday).toBe(YESTERDAY);
+    expect(state.yesterdayBet).toBeNull();
+    expect(state.todaySystemNumber).toBeNull();
+    expect(state.yesterdaySystemNumber).toBe(6);
+  });
+
+  it('does not expose today system number or today bet result fields', async () => {
+    const todayBet: NumberBombBet = {
+      id: 'today-bet',
+      userId: USER.id,
+      username: USER.username,
+      date: TODAY,
+      selectedNumber: 3,
+      multiplier: 1,
+      ticketCost: 10,
+      status: 'pending',
+      systemNumber: 8,
+      rewardPoints: 20,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    mockGetPoints.mockResolvedValueOnce(1234);
+    mockKvGet
+      .mockResolvedValueOnce(todayBet)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(6);
+
+    const state = await getNumberBombState(USER.id);
+
+    expect(state.todaySystemNumber).toBeNull();
+    expect(state.todayBet).toMatchObject({
+      id: 'today-bet',
+      selectedNumber: 3,
+      status: 'pending',
+    });
+    expect(state.todayBet?.systemNumber).toBeUndefined();
+    expect(state.todayBet?.rewardPoints).toBeUndefined();
+  });
+
+  it('generates yesterday system number for display when it has not been stored yet', async () => {
+    mockGetPoints.mockResolvedValueOnce(1234);
+    mockKvGet
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    vi.spyOn(Math, 'random').mockReturnValue(0.2);
+
+    const state = await getNumberBombState(USER.id);
+
+    expect(state.yesterdaySystemNumber).toBe(2);
+    expect(mockKvSet).toHaveBeenCalledWith(
+      `number-bomb:draw:${YESTERDAY}`,
+      2,
+      expect.any(Object),
+    );
   });
 });
 
@@ -359,10 +443,12 @@ describe('settleNumberBombDate', () => {
         userId: USER.id,
         type: 'lottery_win',
         title: '数字炸弹开奖通知',
+        content: expect.stringContaining('中奖'),
         data: expect.objectContaining({
           game: 'number_bomb',
           betId: bet.id,
           rewardPoints: 20,
+          outcome: 'won',
         }),
       }),
     );
@@ -398,10 +484,12 @@ describe('settleNumberBombDate', () => {
         userId: USER.id,
         type: 'system',
         title: '数字炸弹开奖通知',
+        content: expect.stringContaining('未中奖'),
         data: expect.objectContaining({
           game: 'number_bomb',
           betId: bet.id,
           rewardPoints: 0,
+          outcome: 'lost',
         }),
       }),
     );

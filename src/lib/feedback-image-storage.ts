@@ -1,26 +1,29 @@
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { nanoid } from 'nanoid';
-import type { FeedbackImage } from '@/lib/feedback-image';
+import { isFeedbackVideo, type FeedbackImage } from '@/lib/feedback-image';
 
 type FeedbackImageRole = 'user' | 'admin';
 
-const FEEDBACK_IMAGE_EXTENSION_MAP: Record<string, string> = {
+const FEEDBACK_MEDIA_EXTENSION_MAP: Record<string, string> = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
   'image/webp': 'webp',
   'image/gif': 'gif',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
 };
 
 function decodeDataUrl(dataUrl: string): { mimeType: string; bytes: Buffer } {
   const matched = dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/i);
   if (!matched) {
-    throw new Error('图片数据格式无效，请重新上传');
+    throw new Error('附件数据格式无效，请重新上传');
   }
 
   const mimeType = matched[1].toLowerCase();
   const bytes = Buffer.from(matched[2], 'base64');
   if (!bytes.length) {
-    throw new Error('图片数据无效，请重新上传');
+    throw new Error('附件数据无效，请重新上传');
   }
 
   return { mimeType, bytes };
@@ -40,7 +43,7 @@ function sanitizeFileName(name: string | undefined): string | undefined {
 }
 
 function buildBlobPath(role: FeedbackImageRole, mimeType: string): string {
-  const ext = FEEDBACK_IMAGE_EXTENSION_MAP[mimeType] ?? 'bin';
+  const ext = FEEDBACK_MEDIA_EXTENSION_MAP[mimeType] ?? 'bin';
   const dateBucket = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
   // R2 使用高熵随机路径减少可枚举性与敏感信息暴露
@@ -101,7 +104,10 @@ export async function externalizeFeedbackImages(
 
   const r2 = getFeedbackImagesBucket();
   if (!r2) {
-    console.warn('R2 binding FEEDBACK_IMAGES not available, keeping feedback images inline.');
+    if (images.some((image) => isFeedbackVideo(image))) {
+      throw new Error('视频上传服务暂时不可用，请稍后重试');
+    }
+    console.warn('R2 binding FEEDBACK_IMAGES not available, keeping feedback media inline.');
     return images.map(sanitizeStoredImage);
   }
 
@@ -128,7 +134,10 @@ export async function externalizeFeedbackImages(
           name: sanitizeFileName(image.name),
         };
       } catch (error) {
-        console.error('Upload feedback image failed, keeping image inline:', error);
+        if (isFeedbackVideo(image)) {
+          throw new Error('视频上传失败，请稍后重试');
+        }
+        console.error('Upload feedback media failed, keeping media inline:', error);
         return sanitizeStoredImage(image);
       }
     })

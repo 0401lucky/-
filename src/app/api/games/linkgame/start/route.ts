@@ -1,4 +1,8 @@
-import { startLinkGame } from '@/lib/linkgame-server';
+import {
+  getLinkGamePlayableUntil,
+  getLinkGameRemainingSeconds,
+  startLinkGame,
+} from '@/lib/linkgame-server';
 import { LINKGAME_DIFFICULTY_CONFIG } from '@/lib/linkgame';
 import { createStartRoute, fail } from '@/lib/game-route-factory';
 import type { LinkGameDifficulty } from '@/lib/types/game';
@@ -21,7 +25,10 @@ export const { POST } = createStartRoute(
       sessionId: result.session!.id,
       difficulty: result.session!.difficulty,
       tileLayout: result.session!.tileLayout,
+      startedAt: result.session!.startedAt,
       expiresAt: result.session!.expiresAt,
+      playableUntil: getLinkGamePlayableUntil(result.session!),
+      remainingSeconds: getLinkGameRemainingSeconds(result.session!),
       config: LINKGAME_DIFFICULTY_CONFIG[difficulty],
     };
   },
