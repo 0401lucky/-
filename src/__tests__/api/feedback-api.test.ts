@@ -235,6 +235,90 @@ describe('Feedback API Permission & Flow', () => {
     );
   });
 
+  it('管理员可以回复带视频的反馈评论', async () => {
+    mockGetAuthUser.mockResolvedValue({
+      id: 1,
+      username: 'admin',
+      displayName: 'Admin',
+      isAdmin: true,
+    });
+    mockIsAdmin.mockReturnValue(true);
+    mockGetFeedbackById.mockResolvedValue({
+      id: 'fb-admin-video',
+      userId: 10,
+      username: 'feedback-user',
+      status: 'open',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    mockAddFeedbackMessage.mockResolvedValue({
+      feedback: {
+        id: 'fb-admin-video',
+        userId: 10,
+        username: 'feedback-user',
+        status: 'processing',
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      message: {
+        id: 'msg-admin-video',
+        feedbackId: 'fb-admin-video',
+        role: 'admin',
+        content: '看一下这个录屏',
+        images: [
+          {
+            dataUrl: '/api/feedback/images/feedback/20260520/admin/admin.mp4',
+            mimeType: 'video/mp4',
+            size: 5,
+            name: 'admin.mp4',
+            kind: 'video',
+          },
+        ],
+        createdAt: 2,
+        createdBy: 'admin',
+      },
+    });
+
+    const response = await adminReplyPOST(
+      new NextRequest('http://localhost/api/admin/feedback/fb-admin-video/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'sec-fetch-site': 'same-origin',
+        },
+        body: JSON.stringify({
+          content: '看一下这个录屏',
+          images: [
+            {
+              dataUrl: 'data:video/mp4;base64,aGVsbG8=',
+              name: 'admin.mp4',
+            },
+          ],
+        }),
+      }),
+      { params: Promise.resolve({ id: 'fb-admin-video' }) }
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(data.success).toBe(true);
+    expect(mockAddFeedbackMessage).toHaveBeenCalledWith(
+      'fb-admin-video',
+      'admin',
+      '看一下这个录屏',
+      'admin',
+      [
+        {
+          dataUrl: 'data:video/mp4;base64,aGVsbG8=',
+          mimeType: 'video/mp4',
+          size: 5,
+          name: 'admin.mp4',
+          kind: 'video',
+        },
+      ]
+    );
+  });
+
   it('用户可以提交带图片的新反馈', async () => {
     mockGetAuthUser.mockResolvedValue({
       id: 10,
@@ -299,6 +383,7 @@ describe('Feedback API Permission & Flow', () => {
           mimeType: 'image/png',
           size: 5,
           name: 'bug.png',
+          kind: 'image',
         },
       ],
       false
@@ -378,6 +463,159 @@ describe('Feedback API Permission & Flow', () => {
           mimeType: 'image/png',
           size: 5,
           name: 'reply.png',
+          kind: 'image',
+        },
+      ]
+    );
+  });
+
+  it('用户可以提交带视频的新反馈', async () => {
+    mockGetAuthUser.mockResolvedValue({
+      id: 10,
+      username: 'normal-user',
+      displayName: 'Normal User',
+      isAdmin: false,
+    });
+    mockCreateFeedback.mockResolvedValue({
+      feedback: {
+        id: 'fb-video',
+        userId: 10,
+        username: 'normal-user',
+        status: 'open',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      message: {
+        id: 'msg-video',
+        feedbackId: 'fb-video',
+        role: 'user',
+        content: '视频反馈',
+        images: [
+          {
+            dataUrl: '/api/feedback/images/feedback/20260520/user/clip.mp4',
+            mimeType: 'video/mp4',
+            size: 5,
+            name: 'clip.mp4',
+            kind: 'video',
+          },
+        ],
+        createdAt: 1,
+        createdBy: 'normal-user',
+      },
+    });
+
+    const response = await userCreatePOST(
+      new NextRequest('http://localhost/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+        body: JSON.stringify({
+          content: '视频反馈',
+          images: [
+            {
+              dataUrl: 'data:video/mp4;base64,aGVsbG8=',
+              name: 'clip.mp4',
+            },
+          ],
+        }),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(data.success).toBe(true);
+    expect(mockCreateFeedback).toHaveBeenCalledWith(
+      10,
+      'normal-user',
+      '视频反馈',
+      undefined,
+      [
+        {
+          dataUrl: 'data:video/mp4;base64,aGVsbG8=',
+          mimeType: 'video/mp4',
+          size: 5,
+          name: 'clip.mp4',
+          kind: 'video',
+        },
+      ],
+      false
+    );
+  });
+
+  it('用户可以发布带视频的反馈评论', async () => {
+    mockGetAuthUser.mockResolvedValue({
+      id: 10,
+      username: 'normal-user',
+      displayName: 'Normal User',
+      isAdmin: false,
+    });
+    mockGetFeedbackById.mockResolvedValue({
+      id: 'fb-video-reply',
+      userId: 10,
+      username: 'normal-user',
+      status: 'open',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    mockAddFeedbackMessage.mockResolvedValue({
+      feedback: {
+        id: 'fb-video-reply',
+        userId: 10,
+        username: 'normal-user',
+        status: 'open',
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      message: {
+        id: 'msg-video-reply',
+        feedbackId: 'fb-video-reply',
+        role: 'user',
+        content: '补充视频',
+        images: [
+          {
+            dataUrl: '/api/feedback/images/feedback/20260520/user/reply.webm',
+            mimeType: 'video/webm',
+            size: 5,
+            name: 'reply.webm',
+            kind: 'video',
+          },
+        ],
+        createdAt: 2,
+        createdBy: 'normal-user',
+      },
+    });
+
+    const response = await userMessagePOST(
+      new NextRequest('http://localhost/api/feedback/fb-video-reply/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+        body: JSON.stringify({
+          content: '补充视频',
+          images: [
+            {
+              dataUrl: 'data:video/webm;base64,aGVsbG8=',
+              name: 'reply.webm',
+            },
+          ],
+        }),
+      }),
+      { params: Promise.resolve({ id: 'fb-video-reply' }) }
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(data.success).toBe(true);
+    expect(mockAddFeedbackMessage).toHaveBeenCalledWith(
+      'fb-video-reply',
+      'user',
+      '补充视频',
+      'normal-user',
+      [
+        {
+          dataUrl: 'data:video/webm;base64,aGVsbG8=',
+          mimeType: 'video/webm',
+          size: 5,
+          name: 'reply.webm',
+          kind: 'video',
         },
       ]
     );

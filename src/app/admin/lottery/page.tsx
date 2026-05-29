@@ -314,7 +314,7 @@ export default function AdminLotteryPage() {
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-sm font-bold text-stone-500">
               <Bomb className="h-4 w-4 text-fuchsia-500" />
-              明日数字炸弹
+              今天的数字
             </div>
             <button
               type="button"

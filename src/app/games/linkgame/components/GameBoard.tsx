@@ -2,6 +2,13 @@
 
 import { useCallback, useState, useEffect, useRef } from 'react';
 import type { LinkGameDifficultyConfig, LinkGamePosition } from '@/lib/types/game';
+import {
+  indexOfPosition,
+  isActivePosition,
+  isStack3DConfig,
+  isStackTileBlocked,
+  isStackTileSelectable,
+} from '@/lib/linkgame';
 import { cn } from '@/lib/utils';
 
 interface GameBoardProps {
@@ -10,7 +17,6 @@ interface GameBoardProps {
   selected: number[];
   shakingIndices?: number[];
   matchingIndices?: number[];
-  hintIndices?: number[];
   matchPaths?: LinkGamePosition[][];
   onSelect: (index: number) => void;
   onMatch?: (index1: number, index2: number) => void;
@@ -23,7 +29,6 @@ export function GameBoard({
   selected,
   shakingIndices = [],
   matchingIndices = [],
-  hintIndices = [],
   matchPaths,
   onSelect,
 }: GameBoardProps) {
@@ -51,7 +56,7 @@ export function GameBoard({
 
   // 根据棋盘尺寸重新计算连线路径，保证移动端缩放后线条仍然对齐。
   useEffect(() => {
-    if (!matchPaths || matchPaths.length === 0 || !gridRef.current) {
+    if (isStack3DConfig(config) || !matchPaths || matchPaths.length === 0 || !gridRef.current) {
       const frame = requestAnimationFrame(() => {
         resetPathPoints();
       });
@@ -151,6 +156,100 @@ export function GameBoard({
     }
   };
 
+  if (isStack3DConfig(config)) {
+    const layers = [...(config.layers ?? [])].sort((a, b) => a.z - b.z);
+    const layerOffsets = [
+      { x: 0, y: 0 },
+      { x: 22, y: -14 },
+      { x: -12, y: -32 },
+      { x: 14, y: -50 },
+      { x: -22, y: -66 },
+    ];
+
+    return (
+      <div className="link-board-surface is-stack">
+        <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-transparent pointer-events-none" />
+        <div
+          className="link-stack-board"
+          style={{
+            aspectRatio: `${config.cols} / ${config.rows}`,
+          }}
+        >
+          {layers.map((layer) => (
+            <div
+              key={layer.z}
+              className={`link-stack-layer layer-${layer.z}`}
+              style={{
+                gridTemplateColumns: `repeat(${config.cols}, minmax(0, 1fr))`,
+                gridTemplateRows: `repeat(${config.rows}, minmax(0, 1fr))`,
+                transform: `translate(${layerOffsets[layer.z]?.x ?? layer.z * 18}px, ${layerOffsets[layer.z]?.y ?? layer.z * -18}px)`,
+                zIndex: layer.z + 1,
+              }}
+            >
+              {Array.from({ length: config.rows * config.cols }).map((_, cellIndex) => {
+                const row = Math.floor(cellIndex / config.cols);
+                const col = cellIndex % config.cols;
+                const pos: LinkGamePosition = { row, col, z: layer.z };
+                const active = isActivePosition(config, pos);
+
+                if (!active) {
+                  return <div key={cellIndex} className="link-stack-cell is-empty" aria-hidden />;
+                }
+
+                const index = indexOfPosition(pos, config);
+                const tile = tileLayout[index];
+                const isVisible = tile !== null;
+                const isSelected = selected.includes(index);
+                const isShaking = shakingTiles.includes(index) || shakingIndices.includes(index);
+                const isMatching = matchingTiles.includes(index) || matchingIndices.includes(index);
+                const isBlocked = isVisible && isStackTileBlocked(tileLayout, pos, config);
+                const isSelectable = isVisible && isStackTileSelectable(tileLayout, pos, config);
+                const delay = (layer.z * 4 + row + col) * 40;
+
+                return (
+                  <div key={cellIndex} className={cn("link-stack-cell", !isVisible && "is-empty")}>
+                    <button
+                      onClick={() => isSelectable && onSelect(index)}
+                      disabled={!isSelectable || isMatching}
+                      onAnimationEnd={(e) => handleAnimationEnd(e.animationName)}
+                      className={cn(
+                        "link-stack-tile relative flex h-full w-full select-none items-center justify-center rounded-2xl border-2 text-xl transition-all duration-300 sm:text-3xl",
+                        isVisible
+                          ? "bg-white border-white shadow-[0_4px_0_0_rgba(15,23,42,0.08)]"
+                          : "invisible opacity-0",
+                        isVisible && !entranceComplete && "animate-tile-entrance",
+                        isVisible && isBlocked && "is-covered",
+                        isSelectable && !isMatching && "cursor-pointer hover:-translate-y-1 hover:shadow-[0_7px_0_0_rgba(15,23,42,0.08)]",
+                        isSelected && "animate-tile-pulse ring-4 ring-pink-400 border-pink-500 z-10 bg-pink-50 rotate-3 scale-[1.06]",
+                        isShaking && "animate-tile-shake bg-red-50 border-red-400 text-red-500 ring-4 ring-red-200 z-10 rotate-12",
+                        isMatching && "animate-tile-match z-20 border-emerald-400 bg-emerald-50 ring-4 ring-emerald-200 rotate-[-12deg] scale-110"
+                      )}
+                      style={{
+                        animationDelay: isVisible && !entranceComplete && !isShaking && !isMatching ? `${delay}ms` : '0ms',
+                      }}
+                      title={isBlocked ? '未完全露出' : undefined}
+                      type="button"
+                    >
+                      <span className="drop-shadow-sm filter transition-transform sm:hover:scale-110">{getTileContent(tile)}</span>
+
+                      {isMatching && (
+                        <>
+                          <span className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 text-2xl animate-sparkle" style={{ animationDelay: '0.1s' }}>✨</span>
+                          <span className="absolute bottom-0 left-0 -translate-x-1/4 translate-y-1/4 text-xl animate-sparkle" style={{ animationDelay: '0.2s' }}>💖</span>
+                          <span className="absolute top-1/2 right-0 translate-x-1/2 -translate-y-1/2 text-xl animate-sparkle" style={{ animationDelay: '0.3s' }}>⭐</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="link-board-surface">
       <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-transparent pointer-events-none" />
@@ -222,8 +321,6 @@ export function GameBoard({
 
           const isShaking = shakingTiles.includes(index) || shakingIndices.includes(index);
           const isMatching = matchingTiles.includes(index) || matchingIndices.includes(index);
-          const isHinted = hintIndices.includes(index);
-
           const row = Math.floor(index / config.cols);
           const col = index % config.cols;
           const delay = (row + col) * 50;
@@ -244,9 +341,6 @@ export function GameBoard({
                   isVisible && !entranceComplete && "animate-tile-entrance",
 
                   isVisible && !isSelected && !isMatching && !isShaking && "bg-gradient-to-br from-white to-slate-50",
-
-                  isHinted && isVisible && !isSelected && !isMatching && "ring-4 ring-amber-300 border-amber-400 bg-amber-50 z-10 scale-[1.04]",
-
                   isSelected && isVisible && "animate-tile-pulse ring-4 ring-pink-400 border-pink-500 z-10 shadow-xl bg-pink-50 rotate-3 text-2xl sm:text-4xl md:text-5xl scale-[1.06] sm:scale-110",
 
                   isShaking && "animate-tile-shake bg-red-50 border-red-400 text-red-500 ring-4 ring-red-200 z-10 rotate-12",

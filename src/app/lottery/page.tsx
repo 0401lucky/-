@@ -940,10 +940,16 @@ export default function LotteryPage() {
                   </div>
                 ) : (
                   <div className="status-body idle">
-                    <div className="bomb-system-bubble idle">?</div>
+                    <div className="bomb-system-bubble idle">
+                      {bombState?.yesterdaySystemNumber ?? '?'}
+                    </div>
                     <div>
                       <div className="status-title">昨日未参与</div>
-                      <div className="status-meta">今日下注后明日开奖</div>
+                      <div className="status-meta">
+                        {bombState?.yesterdaySystemNumber !== null && bombState?.yesterdaySystemNumber !== undefined
+                          ? `系统数字 ${bombState.yesterdaySystemNumber}`
+                          : '等待开奖数字公布'}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1188,7 +1194,7 @@ export default function LotteryPage() {
                     <span className="rule-num">02</span>
                     <div>
                       <h4>胜负判定</h4>
-                      <p>系统每天生成一个炸弹数字；你选择的数字 <strong>不等于</strong> 系统数字即获胜，等于系统数字则本次未中奖。</p>
+                      <p>系统每天生成一个炸弹数字；今天下注对应的数字会在明日 <strong>00:00</strong> 公布。你选择的数字 <strong>不等于</strong> 系统数字即获胜，等于系统数字则本次未中奖。</p>
                     </div>
                   </li>
                   <li>

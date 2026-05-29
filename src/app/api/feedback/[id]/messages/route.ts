@@ -64,7 +64,7 @@ export async function POST(
 
     if (!content && images.length === 0) {
       return NextResponse.json(
-        { success: false, message: "留言内容或图片至少填写一项" },
+        { success: false, message: "留言内容或图片/视频至少填写一项" },
         { status: 400 }
       );
     }

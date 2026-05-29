@@ -12,4 +12,18 @@ describe('roguelite page wiring', () => {
     expect(source).toContain('撤离迷阵');
     expect(source).toContain("onEscape={() => void stepGame({ type: 'escape' })}");
   });
+
+  it('行动失败后会同步服务端迷阵状态，避免 pending 状态卡死', () => {
+    const source = readFileSync(
+      resolve(process.cwd(), 'src/app/games/roguelite/page.tsx'),
+      'utf8',
+    );
+
+    expect(source).toContain('shouldRefreshRogueliteStatusAfterStepError');
+    expect(source).toContain("message.includes('HTTP 503')");
+    expect(source).toContain("message.includes('当前事件尚未处理完成')");
+    expect(source).toContain('data?.data?.session');
+    expect(source).toContain('void fetchStatus();');
+    expect(source).toContain('已同步迷阵状态，请先处理当前事件');
+  });
 });

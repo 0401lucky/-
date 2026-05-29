@@ -4,10 +4,12 @@ import { useCallback, useEffect, useState } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import {
-  FEEDBACK_IMAGE_ACCEPT,
-  FEEDBACK_IMAGE_MIME_TYPES,
+  FEEDBACK_MEDIA_ACCEPT,
+  FEEDBACK_MEDIA_MIME_TYPES,
   MAX_FEEDBACK_IMAGE_BYTES,
   MAX_FEEDBACK_IMAGES,
+  MAX_FEEDBACK_VIDEO_BYTES,
+  isFeedbackVideo,
   type FeedbackImage,
 } from '@/lib/feedback-image';
 import {
@@ -64,6 +66,81 @@ interface FeedbackMessage {
 
 interface DraftImage extends FeedbackImage {
   id: string;
+}
+
+function getMediaAlt(media: FeedbackImage, fallback: string): string {
+  return media.name || (isFeedbackVideo(media) ? fallback.replace('图片', '视频') : fallback);
+}
+
+function FeedbackMediaPreview({
+  media,
+  alt,
+  imageClassName,
+}: {
+  media: FeedbackImage;
+  alt: string;
+  imageClassName: string;
+}) {
+  if (isFeedbackVideo(media)) {
+    return (
+      <video
+        src={media.dataUrl}
+        controls
+        preload="metadata"
+        playsInline
+        className={imageClassName}
+        aria-label={alt}
+      />
+    );
+  }
+
+  return (
+    <Image
+      src={media.dataUrl}
+      alt={alt}
+      width={320}
+      height={180}
+      unoptimized
+      className={imageClassName}
+    />
+  );
+}
+
+function FeedbackMediaLink({
+  media,
+  alt,
+  imageClassName,
+  onClick,
+}: {
+  media: FeedbackImage;
+  alt: string;
+  imageClassName: string;
+  onClick?: (event: React.MouseEvent<HTMLElement>) => void;
+}) {
+  if (isFeedbackVideo(media)) {
+    return (
+      <video
+        src={media.dataUrl}
+        controls
+        preload="metadata"
+        playsInline
+        className={imageClassName}
+        aria-label={alt}
+        onClick={onClick}
+      />
+    );
+  }
+
+  return (
+    <a
+      href={media.dataUrl}
+      target="_blank"
+      rel="noreferrer"
+      onClick={onClick}
+    >
+      <FeedbackMediaPreview media={media} alt={alt} imageClassName={imageClassName} />
+    </a>
+  );
 }
 
 const STATUS_LABEL: Record<FeedbackStatus, string> = {
@@ -139,7 +216,7 @@ function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(new Error('读取图片失败'));
+    reader.onerror = () => reject(new Error('读取附件失败'));
     reader.readAsDataURL(file);
   });
 }
@@ -148,7 +225,7 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(new Error('读取图片失败'));
+    reader.onerror = () => reject(new Error('读取附件失败'));
     reader.readAsDataURL(blob);
   });
 }
@@ -280,7 +357,7 @@ export default function FeedbackPage() {
       const setImages = mode === 'draft' ? setDraftImages : setReplyImages;
 
       if (currentImages.length >= MAX_FEEDBACK_IMAGES) {
-        setError(`最多上传 ${MAX_FEEDBACK_IMAGES} 张图片`);
+        setError(`最多上传 ${MAX_FEEDBACK_IMAGES} 个附件`);
         return;
       }
 
@@ -290,8 +367,30 @@ export default function FeedbackPage() {
       const newImages: DraftImage[] = [];
       for (const file of nextFiles) {
         const mimeType = file.type.toLowerCase();
-        if (!FEEDBACK_IMAGE_MIME_TYPES.includes(mimeType as (typeof FEEDBACK_IMAGE_MIME_TYPES)[number])) {
-          setError('仅支持 PNG/JPG/WEBP/GIF 格式图片');
+        if (!FEEDBACK_MEDIA_MIME_TYPES.includes(mimeType as (typeof FEEDBACK_MEDIA_MIME_TYPES)[number])) {
+          setError('仅支持 PNG/JPG/WEBP/GIF 图片和 MP4/WEBM/MOV 视频');
+          continue;
+        }
+
+        if (mimeType.startsWith('video/')) {
+          if (file.size > MAX_FEEDBACK_VIDEO_BYTES) {
+            setError(`单个视频不能超过 ${MAX_FEEDBACK_VIDEO_BYTES / 1024 / 1024}MB`);
+            continue;
+          }
+
+          try {
+            newImages.push({
+              id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+              dataUrl: await fileToDataUrl(file),
+              mimeType,
+              size: file.size,
+              name: file.name,
+              kind: 'video',
+            });
+          } catch (error) {
+            console.error('Read video failed:', error);
+            setError('读取视频失败，请换一个视频重试');
+          }
           continue;
         }
 
@@ -313,6 +412,7 @@ export default function FeedbackPage() {
             mimeType: prepared.mimeType,
             size: prepared.size,
             name: file.name,
+            kind: 'image',
           });
         } catch (error) {
           console.error('Prepare image failed:', error);
@@ -494,7 +594,7 @@ export default function FeedbackPage() {
 
     const trimmedContent = content.trim();
     if (!trimmedContent && draftImages.length === 0) {
-      setError('请填写反馈内容或上传图片');
+      setError('请填写反馈内容或上传图片/视频');
       return;
     }
 
@@ -659,7 +759,7 @@ export default function FeedbackPage() {
 
     const trimmedContent = replyContent.trim();
     if (!trimmedContent && replyImages.length === 0) {
-      setError('请填写评论内容或上传图片');
+      setError('请填写评论内容或上传图片/视频');
       return;
     }
 
@@ -808,42 +908,39 @@ export default function FeedbackPage() {
 
                 <div className="composer-meta-row">
                   <label htmlFor="feedback-create-images" className="feedback-upload-btn">
-                    上传图片
+                    上传图片/视频
                   </label>
                   <input
                     id="feedback-create-images"
                     type="file"
-                    accept={FEEDBACK_IMAGE_ACCEPT}
+                    accept={FEEDBACK_MEDIA_ACCEPT}
                     multiple
                     className="hidden"
                     onChange={handleDraftFileChange}
                   />
                   <div className="feedback-counter">
-                    {content.length}/1000 · {draftImages.length}/{MAX_FEEDBACK_IMAGES} 张
+                    {content.length}/1000 · {draftImages.length}/{MAX_FEEDBACK_IMAGES} 个附件
                   </div>
                 </div>
 
                 <div className="feedback-help">
-                  支持粘贴截图，格式：PNG/JPG/WEBP/GIF，原图单张 ≤ {MAX_FEEDBACK_SOURCE_IMAGE_BYTES / 1024 / 1024}MB，提交前会自动压缩
+                  支持粘贴截图，也支持 MP4/WEBM/MOV 视频；图片原图单张 ≤ {MAX_FEEDBACK_SOURCE_IMAGE_BYTES / 1024 / 1024}MB，视频单个 ≤ {MAX_FEEDBACK_VIDEO_BYTES / 1024 / 1024}MB
                 </div>
 
                 {draftImages.length > 0 && (
                   <div className="feedback-image-grid">
                     {draftImages.map((image) => (
                       <div key={image.id} className="feedback-image-preview">
-                        <Image
-                          src={image.dataUrl}
-                          alt={image.name || '反馈图片'}
-                          width={160}
-                          height={90}
-                          unoptimized
-                          className="feedback-preview-image"
+                        <FeedbackMediaPreview
+                          media={image}
+                          alt={getMediaAlt(image, '反馈图片')}
+                          imageClassName="feedback-preview-image"
                         />
                         <button
                           type="button"
                           onClick={() => removeDraftImage(image.id)}
                           className="feedback-image-remove"
-                          aria-label="移除图片"
+                          aria-label="移除附件"
                         >
                           ×
                         </button>
@@ -897,21 +994,12 @@ export default function FeedbackPage() {
                       {selectedMessages[0]?.images && selectedMessages[0].images.length > 0 && (
                         <div className="wall-image-grid">
                           {selectedMessages[0].images.map((image, index) => (
-                            <a
+                            <FeedbackMediaLink
                               key={`${selectedMessages[0].id}-${index}`}
-                              href={image.dataUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <Image
-                                src={image.dataUrl}
-                                alt={image.name || `反馈图片${index + 1}`}
-                                width={320}
-                                height={180}
-                                unoptimized
-                                className="wall-feedback-image"
-                              />
-                            </a>
+                              media={image}
+                              alt={getMediaAlt(image, `反馈图片${index + 1}`)}
+                              imageClassName="wall-feedback-image"
+                            />
                           ))}
                         </div>
                       )}
@@ -954,21 +1042,12 @@ export default function FeedbackPage() {
                             {message.images && message.images.length > 0 && (
                               <div className="wall-image-grid compact">
                                 {message.images.map((image, index) => (
-                                  <a
+                                  <FeedbackMediaLink
                                     key={`${message.id}-${index}`}
-                                    href={image.dataUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    <Image
-                                      src={image.dataUrl}
-                                      alt={image.name || `评论图片${index + 1}`}
-                                      width={180}
-                                      height={100}
-                                      unoptimized
-                                      className="wall-feedback-image"
-                                    />
-                                  </a>
+                                    media={image}
+                                    alt={getMediaAlt(image, `评论图片${index + 1}`)}
+                                    imageClassName="wall-feedback-image"
+                                  />
                                 ))}
                               </div>
                             )}
@@ -1021,19 +1100,16 @@ export default function FeedbackPage() {
                         <div className="feedback-image-grid">
                           {replyImages.map((image) => (
                             <div key={image.id} className="feedback-image-preview">
-                              <Image
-                                src={image.dataUrl}
-                                alt={image.name || '评论图片'}
-                                width={160}
-                                height={90}
-                                unoptimized
-                                className="feedback-preview-image"
+                              <FeedbackMediaPreview
+                                media={image}
+                                alt={getMediaAlt(image, '评论图片')}
+                                imageClassName="feedback-preview-image"
                               />
                               <button
                                 type="button"
                                 onClick={() => removeReplyImage(image.id)}
                                 className="feedback-image-remove"
-                                aria-label="移除图片"
+                                aria-label="移除附件"
                               >
                                 ×
                               </button>
@@ -1043,18 +1119,18 @@ export default function FeedbackPage() {
                       )}
                       <div className="composer-meta-row">
                         <label htmlFor="feedback-reply-images" className="feedback-upload-btn">
-                          上传图片
+                          上传图片/视频
                         </label>
                         <input
                           id="feedback-reply-images"
                           type="file"
-                          accept={FEEDBACK_IMAGE_ACCEPT}
+                          accept={FEEDBACK_MEDIA_ACCEPT}
                           multiple
                           className="hidden"
                           onChange={handleReplyFileChange}
                         />
                         <div className="feedback-counter">
-                          {replyContent.length}/1000 · {replyImages.length}/{MAX_FEEDBACK_IMAGES} 张
+                          {replyContent.length}/1000 · {replyImages.length}/{MAX_FEEDBACK_IMAGES} 个附件
                         </div>
                       </div>
                       <button type="submit" disabled={replySubmitting} className="feedback-submit-btn">
@@ -1128,27 +1204,18 @@ export default function FeedbackPage() {
                         </div>
 
                         <div className="fb-content">
-                          <h3>{message?.content?.split('\n')[0] || '图片反馈'}</h3>
+                          <h3>{message?.content?.split('\n')[0] || '附件反馈'}</h3>
                           {message?.content && <p>{message.content}</p>}
                           {message?.images && message.images.length > 0 && (
                             <div className="wall-image-grid">
                               {message.images.map((image, index) => (
-                                <a
+                                <FeedbackMediaLink
                                   key={`${message.id}-${index}`}
-                                  href={image.dataUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
+                                  media={image}
+                                  alt={getMediaAlt(image, `反馈图片${index + 1}`)}
+                                  imageClassName="wall-feedback-image"
                                   onClick={(event) => event.stopPropagation()}
-                                >
-                                  <Image
-                                    src={image.dataUrl}
-                                    alt={image.name || `反馈图片${index + 1}`}
-                                    width={320}
-                                    height={180}
-                                    unoptimized
-                                    className="wall-feedback-image"
-                                  />
-                                </a>
+                                />
                               ))}
                             </div>
                           )}
@@ -1578,7 +1645,33 @@ export default function FeedbackPage() {
         }
 
         .composer-only {
-          min-height: calc(100dvh - 12rem);
+          max-height: calc(100dvh - 12rem);
+          overflow-x: hidden;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          scrollbar-gutter: stable;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(249, 115, 22, 0.42) rgba(255, 255, 255, 0.5);
+        }
+
+        .composer-only::-webkit-scrollbar {
+          width: 8px;
+        }
+
+        .composer-only::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.48);
+          border-radius: 999px;
+        }
+
+        .composer-only::-webkit-scrollbar-thumb {
+          background: linear-gradient(180deg, rgba(255, 122, 0, 0.58), rgba(255, 0, 76, 0.48));
+          border-radius: 999px;
+        }
+
+        .composer-only .feedback-submit-btn {
+          position: sticky;
+          bottom: 0;
+          z-index: 2;
         }
 
         .composer-actions {
@@ -2250,6 +2343,10 @@ export default function FeedbackPage() {
             -webkit-overflow-scrolling: touch;
           }
 
+          .composer-only {
+            max-height: calc(100dvh - 10rem);
+          }
+
           .feedback-header,
           .composer-title-row {
             flex-direction: column;
@@ -2297,6 +2394,9 @@ export default function FeedbackPage() {
           .feedback-card {
             padding: 16px;
             border-radius: 20px;
+          }
+          .composer-only {
+            max-height: calc(100dvh - 8.5rem);
           }
           .wall-card { gap: 14px; }
           .fb-header {
@@ -2372,6 +2472,9 @@ export default function FeedbackPage() {
         @media (max-width: 480px) {
           .feedback-panel-right { padding: 0.75rem 0.875rem 2.5rem; }
           .feedback-card { padding: 14px; border-radius: 18px; }
+          .composer-only {
+            max-height: calc(100dvh - 7.5rem);
+          }
           .feedback-btn-primary { width: 100%; }
           .fb-status { font-size: 10.5px; padding: 5px 9px; }
           .comment-bubble { padding: 12px; border-radius: 16px; }

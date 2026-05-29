@@ -3,26 +3,52 @@ import {
   LINKGAME_TILE_IDS,
   LINKGAME_DIFFICULTY_CONFIG,
   LINKGAME_TILE_TYPE_COUNT,
+  LINKGAME_POINT_REWARD_PERCENT,
+  LINKGAME_HARD_DEADLOCK_REWARD_PERCENT,
+  LINKGAME_HARD_COMPLETION_REWARD_PERCENT,
+  LINKGAME_HARD_TIMEOUT_REWARD_PERCENT,
+  LINKGAME_HARD_DEADLOCK_RATE_BY_STAGE,
+  LINKGAME_HARD_MAX_DEADLOCK_RATE,
+  LINKGAME_HARD_WIN_OUTCOME,
+  LINKGAME_HARD_LOSS_OUTCOMES,
   generateTileLayout,
+  shouldGenerateHardStageDeadlock,
+  getHardDeadlockRateForStage,
+  getPlannedHardDeadlockStage,
+  getStackExposureStages,
   indexOf,
   positionOf,
+  indexOfPosition,
+  positionOfIndex,
   getTile,
   canMatch,
+  canMatchByConfig,
+  canStackMatch,
   removeMatch,
+  removeMatchByConfig,
   canTripleMatch,
   removeTripleMatch,
   findHint,
-  shuffleBoard,
+  findHintByConfig,
+  getLinkGamePointRewardPercent,
+  getActiveTileCount,
+  isActivePosition,
+  isStack3DConfig,
+  isStackTileBlocked,
+  isStackTileSelectable,
   checkGameComplete,
   calculateScore,
   calculateLinkGamePointReward,
+  getLinkGameSettlementResult,
+  isHardModeWin,
+  calculateHardModeWinRate,
   findMatchPath,
 } from '@/lib/linkgame';
 
 describe('linkgame', () => {
   describe('LINKGAME_TILE_IDS', () => {
-    it('should have at least 16 tile IDs', () => {
-      expect(LINKGAME_TILE_IDS.length).toBeGreaterThanOrEqual(16);
+    it('should have enough tile IDs for sparse hard boards', () => {
+      expect(LINKGAME_TILE_IDS.length).toBeGreaterThanOrEqual(24);
     });
   });
 
@@ -33,53 +59,84 @@ describe('linkgame', () => {
       expect(LINKGAME_DIFFICULTY_CONFIG.hard).toBeDefined();
     });
 
-    it('easy should have 4x4 grid with 8 pairs', () => {
+    it('easy should use the previous hard 2D scale', () => {
       const cfg = LINKGAME_DIFFICULTY_CONFIG.easy;
-      expect(cfg.rows).toBe(4);
-      expect(cfg.cols).toBe(4);
-      expect(cfg.pairs).toBe(8);
-      expect(cfg.rows * cfg.cols).toBe(cfg.pairs * 2);
-    });
-
-    it('normal should have 6x6 grid with 18 pairs', () => {
-      const cfg = LINKGAME_DIFFICULTY_CONFIG.normal;
-      expect(cfg.rows).toBe(6);
-      expect(cfg.cols).toBe(6);
-      expect(cfg.pairs).toBe(18);
-    });
-
-    it('hard should have 8x8 grid with 32 pairs', () => {
-      const cfg = LINKGAME_DIFFICULTY_CONFIG.hard;
       expect(cfg.rows).toBe(8);
       expect(cfg.cols).toBe(8);
       expect(cfg.pairs).toBe(32);
+      expect(cfg.baseScore).toBe(15);
+      expect(cfg.timeLimit).toBe(180);
+      expect(cfg.mode).toBe('classic2d');
+      expect(cfg.rows * cfg.cols).toBe(cfg.pairs * 2);
+    });
+
+    it('normal should be the 2D middle difficulty', () => {
+      const cfg = LINKGAME_DIFFICULTY_CONFIG.normal;
+      expect(cfg.rows).toBe(8);
+      expect(cfg.cols).toBe(10);
+      expect(cfg.pairs).toBe(40);
+      expect(cfg.baseScore).toBe(18);
+      expect(cfg.timeLimit).toBe(210);
+      expect(cfg.mode).toBe('classic2d');
+    });
+
+    it('hard should use a five-layer stack3d layout with 66 pairs', () => {
+      const cfg = LINKGAME_DIFFICULTY_CONFIG.hard;
+      expect(cfg.rows).toBe(8);
+      expect(cfg.cols).toBe(8);
+      expect(cfg.pairs).toBe(66);
+      expect(cfg.baseScore).toBe(24);
+      expect(cfg.timeLimit).toBe(300);
+      expect(cfg.mode).toBe('stack3d');
+      expect(cfg.depth).toBe(5);
+      expect(getActiveTileCount(cfg)).toBe(132);
     });
   });
 
   describe('generateTileLayout', () => {
     it('should produce correct length for easy difficulty', () => {
       const layout = generateTileLayout('easy', 'test-seed');
-      expect(layout.length).toBe(16);
+      expect(layout.length).toBe(64);
     });
 
     it('should produce correct length for normal difficulty', () => {
       const layout = generateTileLayout('normal', 'test-seed');
-      expect(layout.length).toBe(36);
+      expect(layout.length).toBe(80);
     });
 
     it('should produce correct length for hard difficulty', () => {
       const layout = generateTileLayout('hard', 'test-seed');
-      expect(layout.length).toBe(64);
+      const cfg = LINKGAME_DIFFICULTY_CONFIG.hard;
+      expect(layout.length).toBe(cfg.rows * cfg.cols * (cfg.depth ?? 1));
+      expect(layout.filter((tile) => tile !== null)).toHaveLength(132);
     });
 
     it('should have each tile count as even (pairs)', () => {
       const layout = generateTileLayout('easy', 'test-seed');
       const counts = new Map<string, number>();
       for (const tile of layout) {
+        if (tile === null) continue;
         counts.set(tile, (counts.get(tile) || 0) + 1);
       }
       for (const count of counts.values()) {
         expect(count % 2).toBe(0);
+      }
+    });
+
+    it('hard should never create orphan cards, including planned deadlock boards', () => {
+      for (let seedIndex = 0; seedIndex < 80; seedIndex++) {
+        const layout = generateTileLayout('hard', `strict-pair-${seedIndex}`);
+        const counts = new Map<string, number>();
+
+        for (const tile of layout) {
+          if (tile === null) continue;
+          counts.set(tile, (counts.get(tile) ?? 0) + 1);
+        }
+
+        for (const count of counts.values()) {
+          expect(count).toBeGreaterThanOrEqual(2);
+          expect(count % 2).toBe(0);
+        }
       }
     });
 
@@ -95,31 +152,89 @@ describe('linkgame', () => {
       expect(layout1).not.toEqual(layout2);
     });
 
-    it('easy should use only 4 tile types', () => {
+    it('easy should use only 8 tile types', () => {
       const layout = generateTileLayout('easy', 'type-count-test');
       const uniqueTiles = new Set(layout);
       expect(uniqueTiles.size).toBe(LINKGAME_TILE_TYPE_COUNT.easy);
-      expect(uniqueTiles.size).toBe(4);
+      expect(uniqueTiles.size).toBe(8);
     });
 
-    it('normal should use only 6 tile types', () => {
+    it('normal should use only 12 tile types', () => {
       const layout = generateTileLayout('normal', 'type-count-test');
       const uniqueTiles = new Set(layout);
       expect(uniqueTiles.size).toBe(LINKGAME_TILE_TYPE_COUNT.normal);
-      expect(uniqueTiles.size).toBe(6);
+      expect(uniqueTiles.size).toBe(12);
     });
 
-    it('hard should use only 8 tile types', () => {
+    it('hard should use configured tile types on active cells', () => {
       const layout = generateTileLayout('hard', 'type-count-test');
-      const uniqueTiles = new Set(layout);
+      const uniqueTiles = new Set(layout.filter((tile): tile is string => tile !== null));
       expect(uniqueTiles.size).toBe(LINKGAME_TILE_TYPE_COUNT.hard);
-      expect(uniqueTiles.size).toBe(8);
+      expect(uniqueTiles.size).toBe(24);
     });
 
     it('should ensure at least one valid move exists', () => {
       const layout = generateTileLayout('easy', 'ensure-valid-move');
-      const hint = findHint(layout, 4, 4);
+      const hint = findHint(layout, 8, 8);
       expect(hint).not.toBeNull();
+    });
+
+    it('hard should generate at least one stack3d match', () => {
+      const config = LINKGAME_DIFFICULTY_CONFIG.hard;
+      const layout = generateTileLayout('hard', 'ensure-stack-move');
+      const hint = findHintByConfig(layout, config);
+      expect(hint).not.toBeNull();
+      expect(canStackMatch(layout, hint!.pos1, hint!.pos2, config)).toBe(true);
+    });
+
+    it('hard should increase planned deadlock rates as exposed stages get deeper', () => {
+      expect(LINKGAME_HARD_DEADLOCK_RATE_BY_STAGE).toEqual([0, 0.025, 0.05, 0.1, 0]);
+      expect(LINKGAME_HARD_MAX_DEADLOCK_RATE).toBe(0.1);
+      expect(getHardDeadlockRateForStage(0)).toBe(0);
+      expect(getHardDeadlockRateForStage(1)).toBe(0.025);
+      expect(getHardDeadlockRateForStage(3)).toBe(0.1);
+      expect(getHardDeadlockRateForStage(4)).toBe(0);
+
+      let selected = 0;
+      for (let i = 0; i < 1000; i++) {
+        if (shouldGenerateHardStageDeadlock(`rate-${i}`, 3)) selected++;
+      }
+
+      expect(selected).toBeGreaterThanOrEqual(70);
+      expect(selected).toBeLessThanOrEqual(130);
+    });
+
+    it('hard should not plan final-layer deadlocks because final cards must stay paired', () => {
+      const config = LINKGAME_DIFFICULTY_CONFIG.hard;
+      for (let i = 0; i < 300; i++) {
+        const plannedStage = getPlannedHardDeadlockStage(`final-stage-guard-${i}`, config);
+        expect(plannedStage).not.toBe((config.depth ?? 1) - 1);
+      }
+    });
+
+    it('planned hard layouts should eventually run out of visible matches', () => {
+      const config = LINKGAME_DIFFICULTY_CONFIG.hard;
+      const seed = Array.from({ length: 200 }, (_, index) => `deadlock-prone-${index}`)
+        .find((value) => getPlannedHardDeadlockStage(value, config) !== null);
+      expect(seed).toBeDefined();
+
+      let board = generateTileLayout('hard', seed!);
+      let clearedPairs = 0;
+      let hint = findHintByConfig(board, config);
+
+      while (hint && clearedPairs < config.pairs) {
+        board = removeMatchByConfig(board, hint.pos1, hint.pos2, config);
+        clearedPairs++;
+        hint = findHintByConfig(board, config);
+      }
+
+      expect(hint).toBeNull();
+      expect(checkGameComplete(board)).toBe(false);
+    });
+
+    it('hard exposure stages should match the 8x8x5 stack pressure curve', () => {
+      const stages = getStackExposureStages(LINKGAME_DIFFICULTY_CONFIG.hard);
+      expect(stages.map((stage) => stage.length)).toEqual([64, 24, 20, 12, 12]);
     });
   });
 
@@ -136,6 +251,14 @@ describe('linkgame', () => {
       expect(positionOf(3, 4)).toEqual({ row: 0, col: 3 });
       expect(positionOf(4, 4)).toEqual({ row: 1, col: 0 });
       expect(positionOf(9, 4)).toEqual({ row: 2, col: 1 });
+    });
+
+    it('should convert stack3d positions with z axis', () => {
+      const config = LINKGAME_DIFFICULTY_CONFIG.hard;
+      const pos = { row: 2, col: 3, z: 1 };
+      const index = indexOfPosition(pos, config);
+      expect(index).toBe(1 * 8 * 8 + 2 * 8 + 3);
+      expect(positionOfIndex(index, config)).toEqual(pos);
     });
   });
 
@@ -348,6 +471,91 @@ describe('linkgame', () => {
     });
   });
 
+  describe('stack3d rules', () => {
+    const config = LINKGAME_DIFFICULTY_CONFIG.hard;
+    const createBoard = () => new Array<string | null>(config.rows * config.cols * (config.depth ?? 1)).fill(null);
+    const put = (board: (string | null)[], pos: { row: number; col: number; z: number }, tile: string) => {
+      board[indexOfPosition(pos, config)] = tile;
+    };
+
+    it('should identify active and inactive tower cells', () => {
+      expect(isStack3DConfig(config)).toBe(true);
+      expect(isActivePosition(config, { row: 0, col: 1, z: 0 })).toBe(true);
+      expect(isActivePosition(config, { row: 0, col: 0, z: 0 })).toBe(true);
+      expect(isActivePosition(config, { row: 0, col: 0, z: 1 })).toBe(false);
+      expect(isActivePosition(config, { row: 2, col: 2, z: 2 })).toBe(true);
+      expect(isActivePosition(config, { row: 2, col: 3, z: 4 })).toBe(true);
+    });
+
+    it('should match adjacent same tiles on an unblocked layer', () => {
+      const board = createBoard();
+      const pos1 = { row: 2, col: 2, z: 2 };
+      const pos2 = { row: 2, col: 3, z: 2 };
+      put(board, pos1, 'A');
+      put(board, pos2, 'A');
+
+      expect(canStackMatch(board, pos1, pos2, config)).toBe(true);
+      expect(canMatchByConfig(board, pos1, pos2, config)).toBe(true);
+
+      const next = removeMatchByConfig(board, pos1, pos2, config);
+      expect(next[indexOfPosition(pos1, config)]).toBe(null);
+      expect(next[indexOfPosition(pos2, config)]).toBe(null);
+    });
+
+    it('should reject exact vertical stack matches because lower tile is not fully exposed', () => {
+      const board = createBoard();
+      const pos1 = { row: 2, col: 2, z: 1 };
+      const pos2 = { row: 2, col: 2, z: 2 };
+      put(board, pos1, 'A');
+      put(board, pos2, 'A');
+
+      expect(canStackMatch(board, pos1, pos2, config)).toBe(false);
+    });
+
+    it('should allow adjacent-layer matches when both tiles are fully exposed', () => {
+      const board = createBoard();
+      const pos1 = { row: 2, col: 2, z: 1 };
+      const pos2 = { row: 2, col: 3, z: 2 };
+      put(board, pos1, 'A');
+      put(board, pos2, 'A');
+
+      expect(canStackMatch(board, pos1, pos2, config)).toBe(true);
+    });
+
+    it('should match non-adjacent exposed same stack tiles', () => {
+      const board = createBoard();
+      const pos1 = { row: 2, col: 3, z: 4 };
+      const pos2 = { row: 5, col: 4, z: 4 };
+      put(board, pos1, 'A');
+      put(board, pos2, 'A');
+
+      expect(canStackMatch(board, pos1, pos2, config)).toBe(true);
+    });
+
+    it('should reject adjacent stack tiles with different icons', () => {
+      const board = createBoard();
+      const pos1 = { row: 2, col: 2, z: 2 };
+      const pos2 = { row: 2, col: 3, z: 2 };
+      put(board, pos1, 'A');
+      put(board, pos2, 'B');
+
+      expect(canStackMatch(board, pos1, pos2, config)).toBe(false);
+    });
+
+    it('should reject tiles blocked by upper layers', () => {
+      const board = createBoard();
+      const pos1 = { row: 2, col: 2, z: 0 };
+      const pos2 = { row: 2, col: 3, z: 0 };
+      put(board, pos1, 'A');
+      put(board, pos2, 'A');
+      put(board, { row: 2, col: 2, z: 1 }, 'B');
+
+      expect(isStackTileBlocked(board, pos1, config)).toBe(true);
+      expect(isStackTileSelectable(board, pos1, config)).toBe(false);
+      expect(canStackMatch(board, pos1, pos2, config)).toBe(false);
+    });
+  });
+
   describe('findHint', () => {
     it('should return valid pair for board with matches', () => {
       const board = ['A', 'A', 'B', 'B'];
@@ -385,44 +593,6 @@ describe('linkgame', () => {
     });
   });
 
-  describe('shuffleBoard', () => {
-    it('should preserve multiset of remaining tiles', () => {
-      const board: (string | null)[] = ['A', 'A', 'B', 'B', null, null];
-      const shuffled = shuffleBoard(board, 'shuffle-seed');
-      
-      const originalTiles = board.filter(t => t !== null).sort();
-      const shuffledTiles = shuffled.filter(t => t !== null).sort();
-      expect(shuffledTiles).toEqual(originalTiles);
-    });
-
-    it('should keep null positions null', () => {
-      const board: (string | null)[] = ['A', null, 'B', null, 'A', 'B'];
-      const shuffled = shuffleBoard(board, 'shuffle-seed');
-      
-      expect(shuffled[1]).toBe(null);
-      expect(shuffled[3]).toBe(null);
-    });
-
-    it('should be deterministic with same seed', () => {
-      const board: (string | null)[] = ['A', 'B', 'C', 'D', 'A', 'B', 'C', 'D'];
-      const shuffled1 = shuffleBoard(board, 'same-seed');
-      const shuffled2 = shuffleBoard(board, 'same-seed');
-      expect(shuffled1).toEqual(shuffled2);
-    });
-
-    it('should ensure at least one valid move after shuffle', () => {
-      const board: (string | null)[] = [
-        'A', 'B', 'C', 'D',
-        'A', 'B', 'C', 'D',
-        'E', 'F', 'G', 'H',
-        'E', 'F', 'G', 'H',
-      ];
-      const shuffled = shuffleBoard(board, 'ensure-move-seed');
-      const hint = findHint(shuffled, 4, 4);
-      expect(hint).not.toBeNull();
-    });
-  });
-
   describe('checkGameComplete', () => {
     it('should return true for all null board', () => {
       const board: (string | null)[] = [null, null, null, null];
@@ -436,16 +606,12 @@ describe('linkgame', () => {
   });
 
   describe('calculateScore', () => {
-    it('should calculate basic score without penalties', () => {
+    it('should calculate basic score', () => {
       const score = calculateScore({
         matchedPairs: 8,
         baseScore: 10,
         combo: 0,
         timeRemainingSeconds: 0,
-        hintsUsed: 0,
-        shufflesUsed: 0,
-        hintPenalty: 10,
-        shufflePenalty: 20,
       });
       expect(score).toBe(80);
     });
@@ -456,10 +622,6 @@ describe('linkgame', () => {
         baseScore: 10,
         combo: 5,
         timeRemainingSeconds: 0,
-        hintsUsed: 0,
-        shufflesUsed: 0,
-        hintPenalty: 10,
-        shufflePenalty: 20,
       });
       expect(score).toBe(150);
     });
@@ -470,10 +632,6 @@ describe('linkgame', () => {
         baseScore: 10,
         combo: 20,
         timeRemainingSeconds: 0,
-        hintsUsed: 0,
-        shufflesUsed: 0,
-        hintPenalty: 10,
-        shufflePenalty: 20,
       });
       expect(score).toBe(150);
     });
@@ -484,52 +642,35 @@ describe('linkgame', () => {
         baseScore: 10,
         combo: 0,
         timeRemainingSeconds: 30,
-        hintsUsed: 0,
-        shufflesUsed: 0,
-        hintPenalty: 10,
-        shufflePenalty: 20,
       });
       expect(score).toBe(110);
     });
 
-    it('should apply hint penalty', () => {
+    it('should ignore removed tool fields when old callers pass them', () => {
       const score = calculateScore({
         matchedPairs: 8,
         baseScore: 10,
         combo: 0,
         timeRemainingSeconds: 0,
-        hintsUsed: 3,
-        shufflesUsed: 0,
+        hintsUsed: 99,
+        shufflesUsed: 99,
         hintPenalty: 10,
         shufflePenalty: 20,
+      } as Parameters<typeof calculateScore>[0] & {
+        hintsUsed: number;
+        shufflesUsed: number;
+        hintPenalty: number;
+        shufflePenalty: number;
       });
-      expect(score).toBe(50);
-    });
-
-    it('should apply shuffle penalty', () => {
-      const score = calculateScore({
-        matchedPairs: 8,
-        baseScore: 10,
-        combo: 0,
-        timeRemainingSeconds: 0,
-        hintsUsed: 0,
-        shufflesUsed: 2,
-        hintPenalty: 10,
-        shufflePenalty: 20,
-      });
-      expect(score).toBe(40);
+      expect(score).toBe(80);
     });
 
     it('should clamp score to minimum 0', () => {
       const score = calculateScore({
         matchedPairs: 1,
-        baseScore: 10,
+        baseScore: -10,
         combo: 0,
         timeRemainingSeconds: 0,
-        hintsUsed: 3,
-        shufflesUsed: 2,
-        hintPenalty: 10,
-        shufflePenalty: 20,
       });
       expect(score).toBe(0);
     });
@@ -540,22 +681,110 @@ describe('linkgame', () => {
         baseScore: 10,
         combo: 1,
         timeRemainingSeconds: 0,
-        hintsUsed: 0,
-        shufflesUsed: 0,
-        hintPenalty: 10,
-        shufflePenalty: 20,
       });
       expect(score).toBe(33);
+    });
+
+    it('hard mode should ignore combo and use pressure scoring', () => {
+      const baseParams = {
+        matchedPairs: 10,
+        baseScore: 24,
+        timeRemainingSeconds: 100,
+        difficulty: 'hard' as const,
+        totalPairs: 66,
+        outcome: 'timeout' as const,
+      };
+
+      const noComboScore = calculateScore({
+        ...baseParams,
+        combo: 0,
+      });
+      const highComboScore = calculateScore({
+        ...baseParams,
+        combo: 20,
+      });
+
+      expect(highComboScore).toBe(noComboScore);
+      expect(noComboScore).toBeGreaterThan(10 * 24);
+    });
+
+    it('hard mode should add outcome bonuses without combo scoring', () => {
+      const shared = {
+        matchedPairs: 20,
+        baseScore: 24,
+        combo: 0,
+        timeRemainingSeconds: 120,
+        difficulty: 'hard' as const,
+        totalPairs: 66,
+      };
+
+      const timeoutScore = calculateScore({
+        ...shared,
+        outcome: 'timeout',
+      });
+      const deadlockScore = calculateScore({
+        ...shared,
+        outcome: 'deadlock',
+      });
+      const completedScore = calculateScore({
+        ...shared,
+        outcome: 'completed',
+      });
+
+      expect(deadlockScore).toBeGreaterThan(timeoutScore);
+      expect(completedScore).toBeGreaterThan(deadlockScore);
     });
   });
 
   describe('calculateLinkGamePointReward', () => {
-    it('should calculate point reward as 1 point per 9 score rounded down', () => {
-      expect(calculateLinkGamePointReward(0)).toBe(0);
-      expect(calculateLinkGamePointReward(8)).toBe(0);
-      expect(calculateLinkGamePointReward(9)).toBe(1);
-      expect(calculateLinkGamePointReward(211)).toBe(23);
-      expect(calculateLinkGamePointReward(895)).toBe(99);
+    it('should calculate default point reward as 1 percent rounded down', () => {
+      expect(LINKGAME_POINT_REWARD_PERCENT).toBe(1);
+      expect(calculateLinkGamePointReward(99)).toBe(0);
+      expect(calculateLinkGamePointReward(100)).toBe(1);
+      expect(calculateLinkGamePointReward(999)).toBe(9);
+      expect(calculateLinkGamePointReward(1000)).toBe(10);
+    });
+
+    it('should use special hard-mode reward rates for deadlock and completion', () => {
+      expect(LINKGAME_HARD_DEADLOCK_REWARD_PERCENT).toBe(10);
+      expect(LINKGAME_HARD_COMPLETION_REWARD_PERCENT).toBe(20);
+      expect(LINKGAME_HARD_TIMEOUT_REWARD_PERCENT).toBe(1);
+      expect(getLinkGamePointRewardPercent('hard', 'deadlock')).toBe(10);
+      expect(getLinkGamePointRewardPercent('hard', 'completed')).toBe(20);
+      expect(getLinkGamePointRewardPercent('hard', 'timeout')).toBe(1);
+      expect(getLinkGamePointRewardPercent('normal', 'completed')).toBe(1);
+      expect(calculateLinkGamePointReward(999, 'hard', 'deadlock')).toBe(99);
+      expect(calculateLinkGamePointReward(1000, 'hard', 'completed')).toBe(200);
+      expect(calculateLinkGamePointReward(1000, 'hard', 'timeout')).toBe(10);
+      expect(calculateLinkGamePointReward(1000, 'easy', 'completed')).toBe(10);
+    });
+  });
+
+  describe('hard settlement result helpers', () => {
+    it('should define hard win and loss outcomes for win-rate calculation', () => {
+      expect(LINKGAME_HARD_WIN_OUTCOME).toBe('completed');
+      expect(LINKGAME_HARD_LOSS_OUTCOMES).toEqual(['deadlock', 'timeout']);
+      expect(getLinkGameSettlementResult(true, 'completed')).toBe('win');
+      expect(getLinkGameSettlementResult(false, 'deadlock')).toBe('loss');
+      expect(getLinkGameSettlementResult(false, 'timeout')).toBe('loss');
+    });
+
+    it('should calculate hard win rate from settled records', () => {
+      const stats = calculateHardModeWinRate([
+        { difficulty: 'hard', completed: true, outcome: 'completed' },
+        { difficulty: 'hard', completed: false, outcome: 'deadlock' },
+        { difficulty: 'hard', completed: false, outcome: 'timeout' },
+        { difficulty: 'normal', completed: true, outcome: 'completed' },
+      ]);
+
+      expect(isHardModeWin({ difficulty: 'hard', completed: true, outcome: 'completed' })).toBe(true);
+      expect(isHardModeWin({ difficulty: 'hard', completed: false, outcome: 'deadlock' })).toBe(false);
+      expect(stats).toEqual({
+        total: 3,
+        wins: 1,
+        losses: 2,
+        winRate: 1 / 3,
+      });
     });
   });
 

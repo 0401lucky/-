@@ -57,6 +57,45 @@ describe('externalizeFeedbackImages', () => {
     expect(result[0].size).toBe(5);
   });
 
+  it('会把 base64 视频上传并保留视频 MIME 类型', async () => {
+    mockR2Put.mockResolvedValue(undefined);
+
+    const result = await externalizeFeedbackImages(
+      [
+        {
+          dataUrl: 'data:video/mp4;base64,aGVsbG8=',
+          mimeType: 'video/mp4',
+          size: 5,
+          name: 'clip.mp4',
+          kind: 'video',
+        },
+      ],
+      {
+        feedbackId: 'fb-video',
+        messageId: 'msg-video',
+        role: 'user',
+      }
+    );
+
+    expect(mockR2Put).toHaveBeenCalledTimes(1);
+    const [pathname, body, opts] = mockR2Put.mock.calls[0];
+    expect(pathname).toMatch(/^feedback\/\d{8}\/user\/.*\.mp4$/);
+    expect(Buffer.isBuffer(body)).toBe(true);
+    expect(opts).toEqual(
+      expect.objectContaining({
+        httpMetadata: { contentType: 'video/mp4' },
+      })
+    );
+    expect(result[0]).toEqual(
+      expect.objectContaining({
+        dataUrl: expect.stringMatching(/^https:\/\/r2\.example\.com\/feedback\//),
+        mimeType: 'video/mp4',
+        size: 5,
+        kind: 'video',
+      })
+    );
+  });
+
   it('未配置 R2_PUBLIC_URL 时会返回站内图片读取路径', async () => {
     vi.stubEnv('R2_PUBLIC_URL', '');
     mockR2Put.mockResolvedValue(undefined);
@@ -179,5 +218,29 @@ describe('externalizeFeedbackImages', () => {
 
     expect(mockR2Put).not.toHaveBeenCalled();
     expect(result[0]).toEqual(image);
+  });
+
+  it('缺少 R2 binding 时会拒绝视频，避免大体积内容写入 KV', async () => {
+    mockGetCloudflareContext.mockReturnValueOnce({ env: {} } as ReturnType<typeof mockGetCloudflareContext>);
+
+    await expect(
+      externalizeFeedbackImages(
+        [
+          {
+            dataUrl: 'data:video/mp4;base64,aGVsbG8=',
+            mimeType: 'video/mp4',
+            size: 5,
+            name: 'clip.mp4',
+            kind: 'video',
+          },
+        ],
+        {
+          feedbackId: 'fb-7',
+          messageId: 'msg-7',
+          role: 'user',
+        }
+      )
+    ).rejects.toThrow('视频上传服务暂时不可用');
+    expect(mockR2Put).not.toHaveBeenCalled();
   });
 });

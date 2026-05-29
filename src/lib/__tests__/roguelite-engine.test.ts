@@ -371,6 +371,21 @@ describe('roguelite-engine', () => {
     expect(result.outcome.message).toContain('当前位置');
   });
 
+  it('存在待处理事件时会拒绝继续移动，等待客户端同步处理', () => {
+    const state = buildStateWithCells([]);
+    state.pending = {
+      type: 'event',
+      position: ROGUELITE_START_POSITION,
+      options: [{ id: 'test_option', label: '测试选项', description: '测试事件' }],
+    };
+
+    const result = resolveRogueliteAction(state, { type: 'move', to: { row: 0, col: 1 } });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('移动不应该成功');
+    expect(result.message).toContain('当前事件尚未处理完成');
+  });
+
   it('福利积分按得分 10% 向下取整', () => {
     expect(calculateRoguelitePointReward(0)).toBe(0);
     expect(calculateRoguelitePointReward(9)).toBe(0);

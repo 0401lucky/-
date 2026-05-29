@@ -2,8 +2,11 @@
 
 import { ArrowLeft, Clock3, Play, Trophy } from 'lucide-react';
 import { DIFFICULTY_META } from '../lib/constants';
-import { LINKGAME_POINT_REWARD_DIVISOR, calculateLinkGamePointReward } from '@/lib/linkgame';
-import type { LinkGameDifficulty } from '@/lib/types/game';
+import {
+  calculateLinkGamePointReward,
+  getLinkGamePointRewardPercent,
+} from '@/lib/linkgame';
+import type { LinkGameDifficulty, LinkGameSettlementOutcome } from '@/lib/types/game';
 
 interface ResultModalProps {
   isOpen: boolean;
@@ -11,6 +14,7 @@ interface ResultModalProps {
   score: number;
   pointsEarned: number;
   completed: boolean;
+  outcome: LinkGameSettlementOutcome;
   matchedPairs: number;
   moves: number;
   duration: number;
@@ -24,6 +28,7 @@ export function ResultModal({
   score,
   pointsEarned,
   completed,
+  outcome,
   matchedPairs,
   moves,
   duration,
@@ -34,7 +39,9 @@ export function ResultModal({
 
   const meta = DIFFICULTY_META[difficulty];
   const won = completed;
-  const expectedReward = calculateLinkGamePointReward(score);
+  const deadlocked = outcome === 'deadlock';
+  const rewardPercent = getLinkGamePointRewardPercent(difficulty, outcome);
+  const expectedReward = calculateLinkGamePointReward(score, difficulty, outcome);
 
   return (
     <div className="link-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="linkgame-settlement-title">
@@ -47,20 +54,21 @@ export function ResultModal({
             本局结算
           </div>
           <h2 id="linkgame-settlement-title" className="mt-1 text-2xl font-black text-slate-950">
-            {won ? '胜利结算完成' : '失败结算完成'}
+            {won ? '胜利结算完成' : deadlocked ? '死局结算完成' : '失败结算完成'}
           </h2>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            本局得分 {score}，每 {LINKGAME_POINT_REWARD_DIVISOR} 分兑换 1 积分，获得 {pointsEarned} 福利积分。
+            本局得分 {score}，按得分 {rewardPercent}% 结算并向下取整，获得 {pointsEarned} 福利积分。
           </p>
         </div>
 
         <div className="mt-5 rounded-2xl border border-emerald-100 bg-white px-5 py-3 text-center text-sm font-black text-emerald-700 shadow-sm">
-          最终福利积分 = floor({score} / {LINKGAME_POINT_REWARD_DIVISOR}) = {expectedReward}
+          最终福利积分 = floor({score} × {rewardPercent}%) = {expectedReward}
           {pointsEarned !== expectedReward ? `，实际到账 ${pointsEarned}` : ''}
         </div>
 
         <div className="link-result-stats">
           <LinkResultStat label="难度" value={meta.name} />
+          <LinkResultStat label="结算" value={won ? '通关' : deadlocked ? '死局' : '超时'} />
           <LinkResultStat label="用时" value={formatDuration(duration)} />
           <LinkResultStat label="完成对数" value={`${matchedPairs} 对`} />
           <LinkResultStat label="操作" value={`${moves} 次`} />

@@ -14,7 +14,7 @@ export const GET = withAdmin(async () => {
   } catch (error) {
     console.error("Preview number bomb system number error:", error);
     return NextResponse.json(
-      { success: false, message: "获取数字炸弹明日数字失败" },
+      { success: false, message: "获取数字炸弹今天数字失败" },
       { status: 500 },
     );
   }

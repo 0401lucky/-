@@ -6,7 +6,9 @@ import {
   getDailyStats, 
   getActiveLinkGameSession, 
   isInCooldown, 
-  getCooldownRemaining 
+  getCooldownRemaining,
+  getLinkGamePlayableUntil,
+  getLinkGameRemainingSeconds,
 } from '@/lib/linkgame-server';
 import { LINKGAME_DIFFICULTY_CONFIG } from '@/lib/linkgame';
 import type { LinkGameDifficulty } from '@/lib/types/game';
@@ -47,7 +49,10 @@ export async function GET() {
           sessionId: activeSession.id,
           difficulty: activeSession.difficulty,
           tileLayout: activeSession.tileLayout,
+          startedAt: activeSession.startedAt,
           expiresAt: activeSession.expiresAt,
+          playableUntil: getLinkGamePlayableUntil(activeSession),
+          remainingSeconds: getLinkGameRemainingSeconds(activeSession),
           config: LINKGAME_DIFFICULTY_CONFIG[activeSession.difficulty as LinkGameDifficulty],
         } : null,
       },

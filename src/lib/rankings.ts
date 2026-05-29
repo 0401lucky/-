@@ -23,6 +23,7 @@ const MAX_STREAK_DAYS = 400;
 const ALL_GAMES_RANKING_CACHE_TTL_SECONDS = 30;
 const OTHER_RANKING_CACHE_TTL_SECONDS = 30;
 const OPEN_ENDED_RANGE_END = 8_640_000_000_000_000; // Date 的最大安全时间戳，避免 D1 绑定 Infinity 后查询为空
+const EXCLUDED_POSITIVE_POINT_SOURCES = new Set(['admin_adjust']);
 
 export type RankingPeriod = 'daily' | 'weekly' | 'monthly';
 export type PointsRankingPeriod = 'all' | 'monthly';
@@ -277,7 +278,7 @@ function getAllGamesLeaderboardCacheKey(
 }
 
 function getPointsRankingCacheKey(period: PointsRankingPeriod, limit: number): string {
-  return `rankings:points:${period}:${Math.max(1, Math.min(100, Math.floor(limit)))}`;
+  return `rankings:points:v2:${period}:${Math.max(1, Math.min(100, Math.floor(limit)))}`;
 }
 
 function getCheckinRankingCacheKey(period: CheckinRankingPeriod, limit: number): string {
@@ -339,6 +340,18 @@ function computeStreakFromDateSet(dateSet: Set<string>, chinaNow: Date, dayCount
   }
 
   return streak;
+}
+
+function isEligiblePositivePointIncome(
+  item: { amount?: number; createdAt?: number; source?: string | null } | null | undefined,
+  startAt: number,
+  endAt: number = Number.POSITIVE_INFINITY,
+): boolean {
+  const createdAt = toFiniteNumber(item?.createdAt);
+  if (createdAt < startAt || createdAt >= endAt) return false;
+  const amount = toFiniteNumber(item?.amount);
+  if (amount <= 0) return false;
+  return !EXCLUDED_POSITIVE_POINT_SOURCES.has(String(item?.source ?? ''));
 }
 
 async function getRecordsInPeriod(
@@ -726,17 +739,16 @@ async function getPositivePointsLeaderboardByRange(
 
   const allPoints = await Promise.all(
     validUsers.map(async (user) => {
-      const logs = await kv.lrange<{ amount?: number; createdAt?: number }>(
+      const logs = await kv.lrange<{ amount?: number; createdAt?: number; source?: string | null }>(
         `points_log:${user.id}`,
         0,
         MAX_POINT_HISTORY_SCAN - 1,
       );
 
       return (logs ?? []).reduce((sum, item) => {
-        const createdAt = toFiniteNumber(item?.createdAt);
-        if (createdAt < startAt || createdAt >= endAt) return sum;
-        const amount = toFiniteNumber(item?.amount);
-        return amount > 0 ? sum + amount : sum;
+        return isEligiblePositivePointIncome(item, startAt, endAt)
+          ? sum + toFiniteNumber(item?.amount)
+          : sum;
       }, 0);
     }),
   );
@@ -830,16 +842,15 @@ export async function getPointsLeaderboard(
       if (period === 'all') {
         return toFiniteNumber(await kv.get<number>(`points:${user.id}`));
       }
-      const logs = await kv.lrange<{ amount?: number; createdAt?: number }>(
+      const logs = await kv.lrange<{ amount?: number; createdAt?: number; source?: string | null }>(
         `points_log:${user.id}`,
         0,
         MAX_RECORD_SCAN - 1,
       );
       return (logs ?? []).reduce((sum, item) => {
-        const createdAt = toFiniteNumber(item?.createdAt);
-        if (createdAt < startAt) return sum;
-        const amount = toFiniteNumber(item?.amount);
-        return amount > 0 ? sum + amount : sum;
+        return isEligiblePositivePointIncome(item, startAt)
+          ? sum + toFiniteNumber(item?.amount)
+          : sum;
       }, 0);
     })
   );
@@ -851,6 +862,7 @@ export async function getPointsLeaderboard(
   }));
 
   const leaderboard = [...rows]
+    .filter((row) => period === 'all' || row.points > 0)
     .sort((a, b) => {
       if (b.points !== a.points) return b.points - a.points;
       return a.userId - b.userId;

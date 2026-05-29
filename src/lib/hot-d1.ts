@@ -1509,10 +1509,10 @@ export async function getNativePointsLeaderboardRows(
       `SELECT
          l.user_id AS userId,
          COALESCE(u.username, '#' || l.user_id) AS username,
-         SUM(CASE WHEN l.amount > 0 THEN l.amount ELSE 0 END) AS points
+         SUM(l.amount) AS points
        FROM native_user_point_logs l
        LEFT JOIN native_users u ON u.user_id = l.user_id
-       WHERE l.created_at >= ?
+       WHERE l.created_at >= ? AND l.amount > 0 AND l.source != 'admin_adjust'
        GROUP BY l.user_id
        ORDER BY points DESC, l.user_id ASC
        LIMIT ?`,
@@ -1536,7 +1536,7 @@ export async function getNativePositivePointsLeaderboardRowsByRange(
          SUM(l.amount) AS points
        FROM native_user_point_logs l
        LEFT JOIN native_users u ON u.user_id = l.user_id
-       WHERE l.created_at >= ? AND l.created_at < ? AND l.amount > 0
+       WHERE l.created_at >= ? AND l.created_at < ? AND l.amount > 0 AND l.source != 'admin_adjust'
        GROUP BY l.user_id
        ORDER BY points DESC, l.user_id ASC
        LIMIT ?`,

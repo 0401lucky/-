@@ -234,12 +234,16 @@ describe('rankings', () => {
     mockKvLrange.mockImplementation(async (key: string) => {
       if (key === 'points_log:1001') {
         return [
-          { amount: 200, createdAt: Date.now() },
-          { amount: -50, createdAt: Date.now() },
+          { amount: 200, source: 'game_win', createdAt: Date.now() },
+          { amount: 999, source: 'admin_adjust', createdAt: Date.now() },
+          { amount: -50, source: 'exchange', createdAt: Date.now() },
         ];
       }
       if (key === 'points_log:1002') {
-        return [{ amount: 80, createdAt: Date.now() }];
+        return [
+          { amount: 80, source: 'checkin_bonus', createdAt: Date.now() },
+          { amount: 500, source: 'admin_adjust', createdAt: Date.now() },
+        ];
       }
       return [];
     });
@@ -247,6 +251,28 @@ describe('rankings', () => {
     const monthly = await getPointsLeaderboard('monthly', 10);
     expect(monthly.leaderboard[0]).toMatchObject({ userId: 1001, points: 200 });
     expect(monthly.leaderboard[1]).toMatchObject({ userId: 1002, points: 80 });
+  });
+
+  it('excludes users with only admin-added points from monthly points leaderboard', async () => {
+    mockGetAllUsers.mockResolvedValue([
+      { id: 1001, username: 'alice', firstSeen: 1 },
+      { id: 1002, username: 'bob', firstSeen: 1 },
+    ]);
+
+    mockKvLrange.mockImplementation(async (key: string) => {
+      if (key === 'points_log:1001') {
+        return [{ amount: 1000, source: 'admin_adjust', createdAt: Date.now() }];
+      }
+      if (key === 'points_log:1002') {
+        return [{ amount: 80, source: 'checkin_bonus', createdAt: Date.now() }];
+      }
+      return [];
+    });
+
+    const monthly = await getPointsLeaderboard('monthly', 10);
+
+    expect(monthly.leaderboard).toHaveLength(1);
+    expect(monthly.leaderboard[0]).toMatchObject({ userId: 1002, points: 80 });
   });
 
   it('builds monthly peak history from positive point income only', async () => {
@@ -257,13 +283,17 @@ describe('rankings', () => {
     mockKvLrange.mockImplementation(async (key: string) => {
       if (key === 'points_log:1001') {
         return [
-          { amount: 300, createdAt: aprilTs },
-          { amount: -70, createdAt: aprilTs },
-          { amount: 50, createdAt: marchTs },
+          { amount: 300, source: 'reward_claim', createdAt: aprilTs },
+          { amount: 999, source: 'admin_adjust', createdAt: aprilTs },
+          { amount: -70, source: 'exchange', createdAt: aprilTs },
+          { amount: 50, source: 'reward_claim', createdAt: marchTs },
         ];
       }
       if (key === 'points_log:1002') {
-        return [{ amount: 120, createdAt: aprilTs }];
+        return [
+          { amount: 120, source: 'checkin_bonus', createdAt: aprilTs },
+          { amount: 500, source: 'admin_adjust', createdAt: aprilTs },
+        ];
       }
       return [];
     });

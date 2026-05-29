@@ -1,18 +1,16 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { Clock3, Gauge, Lightbulb, Shuffle, Trophy, Zap } from 'lucide-react';
+import { Clock3, Gauge, Trophy, Zap } from 'lucide-react';
 
 interface GameHeaderProps {
   timeRemaining: number;
   score: number;
   combo: number;
-  hintsRemaining: number;
-  shufflesRemaining: number;
+  bonusLabel?: string;
+  bonusValue?: string;
   matchedPairs: number;
   totalPairs: number;
-  onHint: () => void;
-  onShuffle: () => void;
 }
 
 function formatTime(seconds: number) {
@@ -25,45 +23,18 @@ export function GameHeader({
   timeRemaining,
   score,
   combo,
-  hintsRemaining,
-  shufflesRemaining,
+  bonusLabel,
+  bonusValue,
   matchedPairs,
   totalPairs,
-  onHint,
-  onShuffle,
 }: GameHeaderProps) {
   return (
-    <>
-      <div className="link-status-grid">
-        <LinkStat icon={<Clock3 className="h-4 w-4" />} label="剩余" value={formatTime(timeRemaining)} urgent={timeRemaining < 30} />
-        <LinkStat icon={<Trophy className="h-4 w-4" />} label="得分" value={String(score)} />
-        <LinkStat icon={<Zap className="h-4 w-4" />} label="连击" value={`${combo}x`} />
-        <LinkStat icon={<Gauge className="h-4 w-4" />} label="进度" value={`${matchedPairs}/${totalPairs}`} />
-      </div>
-
-      <div className="link-action-grid">
-        <button
-          onClick={onHint}
-          disabled={hintsRemaining <= 0}
-          className="link-action-btn border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
-          type="button"
-          title="提示"
-        >
-          <Lightbulb className="h-4 w-4" />
-          {hintsRemaining}
-        </button>
-        <button
-          onClick={onShuffle}
-          disabled={shufflesRemaining <= 0}
-          className="link-action-btn border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-          type="button"
-          title="重排"
-        >
-          <Shuffle className="h-4 w-4" />
-          {shufflesRemaining}
-        </button>
-      </div>
-    </>
+    <div className="link-status-grid">
+      <LinkStat icon={<Clock3 className="h-4 w-4" />} label="剩余" value={formatTime(timeRemaining)} urgent={timeRemaining < 30} />
+      <LinkStat icon={<Trophy className="h-4 w-4" />} label="得分" value={String(score)} />
+      <LinkStat icon={<Zap className="h-4 w-4" />} label={bonusLabel ?? '连击'} value={bonusValue ?? `${combo}x`} />
+      <LinkStat icon={<Gauge className="h-4 w-4" />} label="进度" value={`${matchedPairs}/${totalPairs}`} />
+    </div>
   );
 }
 

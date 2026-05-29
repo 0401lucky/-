@@ -32,6 +32,7 @@ export interface NumberBombState {
   multipliers: NumberBombMultiplier[];
   todayBet: NumberBombBet | null;
   yesterdayBet: NumberBombBet | null;
+  /** 当日系统数字在开奖前不可暴露给普通用户。 */
   todaySystemNumber: number | null;
   yesterdaySystemNumber: number | null;
 }
@@ -145,7 +146,7 @@ async function ensureSystemNumber(date: string): Promise<number> {
   return next;
 }
 
-export async function previewNumberBombSystemNumber(date: string = getNextDateString()): Promise<{
+export async function previewNumberBombSystemNumber(date: string = getTodayDateString()): Promise<{
   date: string;
   systemNumber: number;
 }> {
@@ -158,13 +159,20 @@ export async function previewNumberBombSystemNumber(date: string = getNextDateSt
 export async function getNumberBombState(userId: number): Promise<NumberBombState> {
   const date = getTodayDateString();
   const yesterday = getPreviousDateString(date);
-  const [balance, todayBet, yesterdayBet, todaySystemNumber, yesterdaySystemNumber] = await Promise.all([
+  const [balance, todayBet, yesterdayBet, yesterdaySystemNumber] = await Promise.all([
     getUserPoints(userId),
     getBet(date, userId),
     getBet(yesterday, userId),
-    getSystemNumber(date),
-    getSystemNumber(yesterday),
+    ensureSystemNumber(yesterday),
   ]);
+
+  const publicTodayBet = todayBet
+    ? {
+        ...todayBet,
+        systemNumber: undefined,
+        rewardPoints: todayBet.status === 'pending' ? undefined : todayBet.rewardPoints,
+      }
+    : null;
 
   return {
     date,
@@ -172,9 +180,9 @@ export async function getNumberBombState(userId: number): Promise<NumberBombStat
     balance,
     baseTicketCost: NUMBER_BOMB_BASE_TICKET_COST,
     multipliers: NUMBER_BOMB_MULTIPLIERS,
-    todayBet,
+    todayBet: publicTodayBet,
     yesterdayBet,
-    todaySystemNumber,
+    todaySystemNumber: null,
     yesterdaySystemNumber,
   };
 }
@@ -314,24 +322,27 @@ async function settleSingleBet(date: string, userId: number, systemNumber: numbe
     };
     await persistBet(settled);
 
-    void createUserNotification({
-      userId,
-      type: won ? 'lottery_win' : 'system',
-      title: '数字炸弹开奖通知',
-      content: won
-        ? `系统数字是 ${systemNumber}，你选择 ${bet.selectedNumber}，获得 ${rewardPoints} 积分，当前余额 ${balance}。`
-        : `系统数字是 ${systemNumber}，你选择 ${bet.selectedNumber}，本次未获得奖励。`,
-      data: {
-        game: 'number_bomb',
-        date,
-        betId: bet.id,
-        selectedNumber: bet.selectedNumber,
-        systemNumber,
-        rewardPoints,
-      },
-    }).catch((error) => {
+    try {
+      await createUserNotification({
+        userId,
+        type: won ? 'lottery_win' : 'system',
+        title: '数字炸弹开奖通知',
+        content: won
+          ? `中奖！系统数字是 ${systemNumber}，你选择 ${bet.selectedNumber}，获得 ${rewardPoints} 积分，当前余额 ${balance}。`
+          : `未中奖：系统数字是 ${systemNumber}，你选择 ${bet.selectedNumber}，本次未获得奖励。`,
+        data: {
+          game: 'number_bomb',
+          date,
+          betId: bet.id,
+          selectedNumber: bet.selectedNumber,
+          systemNumber,
+          rewardPoints,
+          outcome: won ? 'won' : 'lost',
+        },
+      });
+    } catch (error) {
       console.error('Create number bomb notification failed:', error);
-    });
+    }
 
     return won ? 'won' : 'lost';
   });

@@ -23,7 +23,7 @@ export const DIFFICULTY_META: Record<LinkGameDifficulty, {
 }> = {
   easy: {
     name: '简单',
-    description: '4x4 轻松休闲，适合新手宝宝',
+    description: '8x8 经典二维，沿用原困难规模',
     icon: '🌱',
     color: 'from-emerald-300 to-teal-400',
     textColor: 'text-emerald-600',
@@ -31,7 +31,7 @@ export const DIFFICULTY_META: Record<LinkGameDifficulty, {
   },
   normal: {
     name: '普通',
-    description: '6x6 适中难度，挑战手速',
+    description: '8x10 二维进阶，节奏更紧凑',
     icon: '🍬',
     color: 'from-pink-400 to-rose-400',
     textColor: 'text-pink-600',
@@ -39,7 +39,7 @@ export const DIFFICULTY_META: Record<LinkGameDifficulty, {
   },
   hard: {
     name: '困难',
-    description: '8x8 争分夺秒，极限挑战',
+    description: '五层栈式牌桌，越到底层越难',
     icon: '⚡',
     color: 'from-violet-400 to-fuchsia-500',
     textColor: 'text-violet-600',
