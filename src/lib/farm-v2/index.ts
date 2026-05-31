@@ -470,7 +470,8 @@ function parseStateUserId(key: string): number | null {
  * 定时扫描农场状态：
  * 1. 先 tick，使到点的作物产生 mature 事件；
  * 2. 再按 mature 事件发送邮件；
- * 3. 通过事件级去重键保证同一成熟事件不会重复发送。
+ * 3. 执行宠物被动技能，避免只在用户打开农场时才自动收菜/种菜；
+ * 4. 通过事件级去重键保证同一成熟事件不会重复发送。
  */
 export async function processFarmMaturityEmails(maxUsers = 100): Promise<FarmMaturityEmailScanResult> {
   const limit = normalizeScanLimit(maxUsers);
@@ -520,6 +521,9 @@ export async function processFarmMaturityEmails(maxUsers = 100): Promise<FarmMat
         await saveState(state);
 
         const emailResult = await processMaturityEmailEventsForState(state, now);
+        await processPassivePetSkills(state, now);
+        await saveState(state);
+
         result.processedUsers += 1;
         result.checkedEvents += emailResult.checked;
         result.sent += emailResult.sent;

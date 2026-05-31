@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   BadgePercent,
+  BarChart3,
   Bomb,
   Check,
+  Clock3,
   Loader2,
   Palette,
   RefreshCw,
@@ -15,6 +17,7 @@ import {
   ToggleLeft,
   ToggleRight,
   Trophy,
+  Users,
   X,
 } from 'lucide-react';
 
@@ -52,6 +55,33 @@ interface LotteryConfigState {
 interface NumberBombPreview {
   date: string;
   systemNumber: number;
+  recentStats?: NumberBombDailyStats[];
+}
+
+interface NumberBombDailyStats {
+  date: string;
+  systemNumber: number | null;
+  participantCount: number;
+  totalBetCount: number;
+  wonCount: number;
+  lostCount: number;
+  pendingCount: number;
+  cancelledCount: number;
+  selectedCounts: Record<string, number>;
+  participants?: NumberBombParticipant[];
+  winners?: NumberBombParticipant[];
+}
+
+interface NumberBombParticipant {
+  userId: number;
+  username: string;
+  selectedNumber: number;
+  status: 'pending' | 'won' | 'lost' | 'cancelled';
+  multiplier: number;
+  ticketCost: number;
+  rewardPoints?: number;
+  createdAt: number;
+  settledAt?: number;
 }
 
 function formatTime(timestamp: number): string {
@@ -70,6 +100,20 @@ function normalizeTier(tier: TierStats): TierStats {
     probability: Number(tier.probability) || 0,
     value: Number(tier.value) || 0,
   };
+}
+
+const numberBombStatusText: Record<NumberBombParticipant['status'], string> = {
+  pending: '待开奖',
+  won: '中奖',
+  lost: '未中',
+  cancelled: '已取消',
+};
+
+function getNumberBombStatusClass(status: NumberBombParticipant['status']): string {
+  if (status === 'won') return 'bg-emerald-50 text-emerald-700 ring-emerald-100';
+  if (status === 'pending') return 'bg-orange-50 text-orange-700 ring-orange-100';
+  if (status === 'lost') return 'bg-stone-100 text-stone-600 ring-stone-200';
+  return 'bg-zinc-100 text-zinc-500 ring-zinc-200';
 }
 
 export default function AdminLotteryPage() {
@@ -96,6 +140,9 @@ export default function AdminLotteryPage() {
   );
   const enabledTierCount = tiers.filter((tier) => tier.enabled !== false).length;
   const maxPrize = tiers.reduce((max, tier) => Math.max(max, tier.enabled === false ? 0 : tier.value), 0);
+  const numberBombStats = numberBomb?.recentStats ?? [];
+  const recentBombParticipants = numberBombStats.reduce((sum, day) => sum + day.participantCount, 0);
+  const recentBombWinners = numberBombStats.reduce((sum, day) => sum + day.wonCount, 0);
 
   const fetchNumberBomb = useCallback(async () => {
     setLoadingBomb(true);
@@ -331,6 +378,204 @@ export default function AdminLotteryPage() {
           </div>
         </div>
       </div>
+
+      <section className="rounded-[28px] border border-white bg-white p-4 shadow-sm md:p-6">
+        <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-fuchsia-50 px-3 py-1 text-xs font-black text-fuchsia-700 ring-1 ring-fuchsia-100">
+              <Bomb className="h-3.5 w-3.5" />
+              数字炸弹近七天
+            </div>
+            <h2 className="flex items-center gap-2 text-lg font-black text-stone-900">
+              <BarChart3 className="h-5 w-5 text-fuchsia-500" />
+              参与与中奖概览
+            </h2>
+            <p className="text-sm text-stone-500">按自然日统计有效参与名单、中奖名单和 0-9 选择分布。</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:flex">
+            <div className="rounded-2xl bg-stone-50 px-4 py-3">
+              <div className="flex items-center gap-2 text-xs font-black text-stone-500">
+                <Users className="h-4 w-4 text-fuchsia-500" />
+                近七天参与
+              </div>
+              <div className="mt-1 text-2xl font-black text-stone-900">{recentBombParticipants}</div>
+            </div>
+            <div className="rounded-2xl bg-stone-50 px-4 py-3">
+              <div className="flex items-center gap-2 text-xs font-black text-stone-500">
+                <Trophy className="h-4 w-4 text-amber-500" />
+                中奖人数
+              </div>
+              <div className="mt-1 text-2xl font-black text-stone-900">{recentBombWinners}</div>
+            </div>
+          </div>
+        </div>
+
+        {numberBombStats.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-stone-200 px-4 py-10 text-center text-sm font-semibold text-stone-400">
+            暂无数字炸弹统计
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {numberBombStats.map((day) => {
+              const digitCounts = Array.from({ length: 10 }, (_, digit) => ({
+                digit,
+                count: Number(day.selectedCounts?.[String(digit)] ?? 0),
+              }));
+              const participants = day.participants ?? [];
+              const winners = day.winners ?? [];
+              const maxCount = Math.max(1, ...digitCounts.map((item) => item.count));
+              const settledCount = day.wonCount + day.lostCount;
+
+              return (
+                <div key={day.date} className="rounded-2xl border border-stone-100 bg-stone-50/70 p-4">
+                  <div className="grid gap-3 xl:grid-cols-[160px_1fr] xl:items-start">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-base font-black text-stone-900">{day.date}</div>
+                        {day.systemNumber !== null && (
+                          <span className="rounded-full bg-stone-900 px-2 py-0.5 text-xs font-black text-white">
+                            开 {day.systemNumber}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-xl bg-white px-3 py-2">
+                          <div className="font-bold text-stone-400">参与</div>
+                          <div className="text-lg font-black text-stone-900">{day.participantCount}</div>
+                        </div>
+                        <div className="rounded-xl bg-white px-3 py-2">
+                          <div className="font-bold text-stone-400">中奖</div>
+                          <div className="text-lg font-black text-emerald-600">{day.wonCount}</div>
+                        </div>
+                        <div className="rounded-xl bg-white px-3 py-2">
+                          <div className="font-bold text-stone-400">已开奖</div>
+                          <div className="text-lg font-black text-stone-900">{settledCount}</div>
+                        </div>
+                        <div className="rounded-xl bg-white px-3 py-2">
+                          <div className="font-bold text-stone-400">待开奖</div>
+                          <div className="text-lg font-black text-orange-600">{day.pendingCount}</div>
+                        </div>
+                      </div>
+                      {day.cancelledCount > 0 && (
+                        <div className="mt-2 inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-stone-500">
+                          <Clock3 className="h-3.5 w-3.5" />
+                          取消 {day.cancelledCount}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                      {digitCounts.map(({ digit, count }) => (
+                        <div key={digit} className="rounded-xl bg-white px-3 py-2">
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <span className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-fuchsia-50 text-xs font-black text-fuchsia-700">
+                              {digit}
+                            </span>
+                            <span className="text-xs font-black text-stone-600">{count} 人</span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-stone-100">
+                            <div
+                              className="h-full rounded-full bg-fuchsia-500"
+                              style={{ width: count === 0 ? '0%' : `${Math.max(6, (count / maxCount) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                    <div className="rounded-2xl bg-white p-3 ring-1 ring-stone-100">
+                      <div className="mb-3 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 text-sm font-black text-stone-800">
+                          <Users className="h-4 w-4 text-fuchsia-500" />
+                          参与名单
+                        </div>
+                        <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs font-black text-stone-600">
+                          {participants.length} 人
+                        </span>
+                      </div>
+                      {participants.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-stone-200 px-3 py-6 text-center text-xs font-semibold text-stone-400">
+                          暂无参与人员
+                        </div>
+                      ) : (
+                        <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                          {participants.map((participant) => (
+                            <div
+                              key={`${day.date}-participant-${participant.userId}`}
+                              className="flex flex-wrap items-center gap-2 rounded-xl bg-stone-50 px-3 py-2"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-black text-stone-900">
+                                  {participant.username || `用户 ${participant.userId}`}
+                                </div>
+                                <div className="mt-0.5 text-xs font-semibold text-stone-400">
+                                  ID {participant.userId} · {formatTime(participant.createdAt)}
+                                </div>
+                              </div>
+                              <span className="rounded-lg bg-fuchsia-50 px-2 py-1 text-xs font-black text-fuchsia-700">
+                                选 {participant.selectedNumber}
+                              </span>
+                              <span className="rounded-lg bg-white px-2 py-1 text-xs font-black text-stone-500 ring-1 ring-stone-100">
+                                x{participant.multiplier}
+                              </span>
+                              <span className={`rounded-lg px-2 py-1 text-xs font-black ring-1 ${getNumberBombStatusClass(participant.status)}`}>
+                                {numberBombStatusText[participant.status]}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-2xl bg-white p-3 ring-1 ring-amber-100">
+                      <div className="mb-3 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 text-sm font-black text-stone-800">
+                          <Trophy className="h-4 w-4 text-amber-500" />
+                          中奖名单
+                        </div>
+                        <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-black text-amber-700">
+                          {winners.length} 人
+                        </span>
+                      </div>
+                      {winners.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-amber-100 px-3 py-6 text-center text-xs font-semibold text-stone-400">
+                          暂无中奖人员
+                        </div>
+                      ) : (
+                        <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                          {winners.map((winner) => (
+                            <div
+                              key={`${day.date}-winner-${winner.userId}`}
+                              className="flex flex-wrap items-center gap-2 rounded-xl bg-amber-50/70 px-3 py-2"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-black text-stone-900">
+                                  {winner.username || `用户 ${winner.userId}`}
+                                </div>
+                                <div className="mt-0.5 text-xs font-semibold text-amber-700/70">
+                                  ID {winner.userId} · {formatTime(winner.settledAt ?? winner.createdAt)}
+                                </div>
+                              </div>
+                              <span className="rounded-lg bg-white px-2 py-1 text-xs font-black text-amber-700 ring-1 ring-amber-100">
+                                选 {winner.selectedNumber}
+                              </span>
+                              <span className="rounded-lg bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700 ring-1 ring-emerald-100">
+                                +{winner.rewardPoints ?? 0} 分
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <section className="rounded-[28px] border border-white bg-white p-4 shadow-sm md:p-6">
         <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

@@ -1,15 +1,24 @@
 import { NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
-import { previewNumberBombSystemNumber } from "@/lib/number-bomb";
+import {
+  getNumberBombRecentAdminStats,
+  previewNumberBombSystemNumber,
+} from "@/lib/number-bomb";
 
 export const dynamic = "force-dynamic";
 
 export const GET = withAdmin(async () => {
   try {
-    const preview = await previewNumberBombSystemNumber();
+    const [preview, recentStats] = await Promise.all([
+      previewNumberBombSystemNumber(),
+      getNumberBombRecentAdminStats(7),
+    ]);
     return NextResponse.json({
       success: true,
-      data: preview,
+      data: {
+        ...preview,
+        recentStats,
+      },
     });
   } catch (error) {
     console.error("Preview number bomb system number error:", error);

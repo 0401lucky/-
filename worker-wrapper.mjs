@@ -13,6 +13,7 @@ const DAILY_CRON = "0 16 * * *";
 const FARM_MATURITY_EMAIL_CRON = "*/10 * * * *";
 const DEFAULT_MAX_JOBS = 20;
 const DEFAULT_FARM_MATURITY_EMAIL_MAX_USERS = 100;
+const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 const IMAGE_PREFIX = "/images/";
 const IMAGE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const IMAGE_MIME_TYPES = {
@@ -44,6 +45,19 @@ function parseFarmMaturityEmailMaxUsers(env) {
     return DEFAULT_FARM_MATURITY_EMAIL_MAX_USERS;
   }
   return Math.max(1, Math.min(500, value));
+}
+
+function formatDateKeyFromUtcDate(date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getPreviousChinaDateString(timestamp) {
+  const chinaDate = new Date(timestamp + CHINA_TZ_OFFSET_MS);
+  chinaDate.setUTCDate(chinaDate.getUTCDate() - 1);
+  return formatDateKeyFromUtcDate(chinaDate);
 }
 
 let openNextWorkerPromise;
@@ -87,7 +101,7 @@ async function triggerDelivery(env) {
   }
 }
 
-async function triggerNumberBombSettle(env) {
+async function triggerNumberBombSettle(env, date) {
   const secret = readSecret(env);
   if (!secret) {
     console.warn("[cron] 缺少 RAFFLE_DELIVERY_CRON_SECRET/CRON_SECRET，跳过数字炸弹结算");
@@ -107,7 +121,7 @@ async function triggerNumberBombSettle(env) {
         "content-type": "application/json",
         authorization: `Bearer ${secret}`,
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ date }),
     },
   );
 
@@ -276,9 +290,16 @@ const workerWrapper = {
 
   async scheduled(event, env, ctx) {
     const cron = event?.cron;
+    const scheduledTime = Number.isFinite(event?.scheduledTime)
+      ? event.scheduledTime
+      : Date.now();
+    const numberBombSettleDate = getPreviousChinaDateString(scheduledTime);
+
     if (!cron || cron === DAILY_CRON) {
       ctx.waitUntil(triggerDelivery(env));
-      ctx.waitUntil(triggerNumberBombSettle(env));
+    }
+    if (!cron || cron === DAILY_CRON || cron === FARM_MATURITY_EMAIL_CRON) {
+      ctx.waitUntil(triggerNumberBombSettle(env, numberBombSettleDate));
     }
     if (!cron || cron === FARM_MATURITY_EMAIL_CRON) {
       ctx.waitUntil(triggerFarmMaturityEmail(env));

@@ -8,6 +8,7 @@ vi.mock('@/lib/d1-kv', () => ({
     del: vi.fn(),
     sadd: vi.fn(),
     smembers: vi.fn(),
+    scan: vi.fn(),
     lpush: vi.fn(),
     ltrim: vi.fn(),
     expire: vi.fn(),
@@ -48,6 +49,7 @@ import { createUserNotification } from '../notifications';
 import {
   cancelNumberBombBet,
   getNumberBombState,
+  getNumberBombRecentAdminStats,
   getPreviousDateString,
   placeNumberBombBet,
   previewNumberBombSystemNumber,
@@ -59,6 +61,7 @@ const mockKvGet = vi.mocked(kv.get);
 const mockKvSet = vi.mocked(kv.set);
 const mockKvSadd = vi.mocked(kv.sadd);
 const mockKvSmembers = vi.mocked(kv.smembers);
+const mockKvScan = vi.mocked(kv.scan);
 const mockKvLpush = vi.mocked(kv.lpush);
 const mockKvExpire = vi.mocked(kv.expire);
 
@@ -75,6 +78,8 @@ beforeEach(() => {
   vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-05-05T08:00:00+08:00').getTime());
   mockKvSet.mockResolvedValue('OK' as never);
   mockKvSadd.mockResolvedValue(1 as never);
+  mockKvSmembers.mockResolvedValue([] as never);
+  mockKvScan.mockResolvedValue([0, []] as never);
   mockKvLpush.mockResolvedValue(1 as never);
   mockKvExpire.mockResolvedValue(1 as never);
   // 默认所有 kv.get 都返回 null（无投注、无系统数字、无结算缓存）
@@ -109,12 +114,149 @@ describe('previewNumberBombSystemNumber', () => {
   });
 });
 
+describe('getNumberBombRecentAdminStats', () => {
+  it('returns recent participation, selected number distribution and winner counts', async () => {
+    const todayPending: NumberBombBet = {
+      id: 'today-pending',
+      userId: 101,
+      username: 'today',
+      date: TODAY,
+      selectedNumber: 4,
+      multiplier: 1,
+      ticketCost: 10,
+      status: 'pending',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const todayCancelled: NumberBombBet = {
+      ...todayPending,
+      id: 'today-cancelled',
+      userId: 102,
+      status: 'cancelled',
+    };
+    const yesterdayWon: NumberBombBet = {
+      id: 'yesterday-won',
+      userId: 201,
+      username: 'winner',
+      date: YESTERDAY,
+      selectedNumber: 5,
+      multiplier: 1,
+      ticketCost: 10,
+      status: 'won',
+      systemNumber: 7,
+      rewardPoints: 20,
+      createdAt: 1,
+      updatedAt: 1,
+      settledAt: 2,
+    };
+    const yesterdayLost: NumberBombBet = {
+      ...yesterdayWon,
+      id: 'yesterday-lost',
+      userId: 202,
+      username: 'lost',
+      selectedNumber: 7,
+      status: 'lost',
+      rewardPoints: 0,
+    };
+    const values = new Map<string, unknown>([
+      [`number-bomb:draw:${TODAY}`, 8],
+      [`number-bomb:settlement:${YESTERDAY}`, {
+        date: YESTERDAY,
+        systemNumber: 7,
+        processed: 2,
+        won: 1,
+        lost: 1,
+        skipped: 0,
+      }],
+      [`number-bomb:bet:${TODAY}:user:101`, todayPending],
+      [`number-bomb:bet:${TODAY}:user:102`, todayCancelled],
+      [`number-bomb:bet:${YESTERDAY}:user:201`, yesterdayWon],
+      [`number-bomb:bet:${YESTERDAY}:user:202`, yesterdayLost],
+    ]);
+
+    mockKvGet.mockImplementation(async (key: string) => (
+      values.has(key) ? values.get(key) : null
+    ) as never);
+    mockKvSmembers.mockImplementation(async (key: string) => {
+      if (key === `number-bomb:bets:${TODAY}`) return ['101', '102'] as never;
+      return [] as never;
+    });
+    mockKvScan.mockImplementation(async (_cursor: number, options?: { match?: string }) => {
+      if (options?.match === `number-bomb:bet:${YESTERDAY}:user:*`) {
+        return [0, [
+          `number-bomb:bet:${YESTERDAY}:user:201`,
+          `number-bomb:bet:${YESTERDAY}:user:202`,
+        ]] as never;
+      }
+      return [0, []] as never;
+    });
+
+    const stats = await getNumberBombRecentAdminStats(2);
+
+    expect(stats).toHaveLength(2);
+    expect(stats[0]).toMatchObject({
+      date: TODAY,
+      systemNumber: 8,
+      participantCount: 1,
+      totalBetCount: 2,
+      wonCount: 0,
+      pendingCount: 1,
+      cancelledCount: 1,
+    });
+    expect(stats[0].selectedCounts['4']).toBe(1);
+    expect(stats[0].participants).toEqual([
+      expect.objectContaining({
+        userId: 101,
+        username: 'today',
+        selectedNumber: 4,
+        status: 'pending',
+      }),
+    ]);
+    expect(stats[0].winners).toEqual([]);
+    expect(stats[1]).toMatchObject({
+      date: YESTERDAY,
+      systemNumber: 7,
+      participantCount: 2,
+      wonCount: 1,
+      lostCount: 1,
+      pendingCount: 0,
+      cancelledCount: 0,
+    });
+    expect(stats[1].selectedCounts['5']).toBe(1);
+    expect(stats[1].selectedCounts['7']).toBe(1);
+    expect(stats[1].participants).toEqual([
+      expect.objectContaining({
+        userId: 201,
+        username: 'winner',
+        selectedNumber: 5,
+        status: 'won',
+        rewardPoints: 20,
+      }),
+      expect.objectContaining({
+        userId: 202,
+        username: 'lost',
+        selectedNumber: 7,
+        status: 'lost',
+      }),
+    ]);
+    expect(stats[1].winners).toEqual([
+      expect.objectContaining({
+        userId: 201,
+        username: 'winner',
+        selectedNumber: 5,
+        status: 'won',
+      }),
+    ]);
+  });
+});
+
 describe('getNumberBombState', () => {
   it('returns yesterday system number even when the user did not participate yesterday', async () => {
     mockGetPoints.mockResolvedValueOnce(1234);
     mockKvGet
       .mockResolvedValueOnce(null) // 今日投注
       .mockResolvedValueOnce(null) // 昨日投注
+      .mockResolvedValueOnce(null) // 昨日结算记录
       .mockResolvedValueOnce(6);   // 昨日数字已公布
 
     const state = await getNumberBombState(USER.id);
@@ -145,6 +287,7 @@ describe('getNumberBombState', () => {
     mockKvGet
       .mockResolvedValueOnce(todayBet)
       .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(6);
 
     const state = await getNumberBombState(USER.id);
@@ -173,6 +316,74 @@ describe('getNumberBombState', () => {
     expect(mockKvSet).toHaveBeenCalledWith(
       `number-bomb:draw:${YESTERDAY}`,
       2,
+      expect.any(Object),
+    );
+  });
+
+  it('settles a pending yesterday bet when the user reads state after midnight', async () => {
+    const pendingBet: NumberBombBet = {
+      id: 'pending-yesterday',
+      userId: USER.id,
+      username: USER.username,
+      date: YESTERDAY,
+      selectedNumber: 0,
+      multiplier: 1,
+      ticketCost: 10,
+      status: 'pending',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const settledBet: NumberBombBet = {
+      ...pendingBet,
+      status: 'lost',
+      systemNumber: 0,
+      rewardPoints: 0,
+      settledAt: Date.now(),
+    };
+
+    mockGetPoints
+      .mockResolvedValueOnce(1234)
+      .mockResolvedValueOnce(1234);
+    mockKvGet
+      .mockResolvedValueOnce(null) // 今日投注
+      .mockResolvedValueOnce(pendingBet) // 昨日投注仍未结算
+      .mockResolvedValueOnce({
+        date: YESTERDAY,
+        systemNumber: 0,
+        processed: 0,
+        won: 0,
+        lost: 0,
+        skipped: 0,
+      }) // 历史空结算，需强制补处理 pending 投注
+      .mockResolvedValueOnce(pendingBet) // settleSingleBet 读取投注
+      .mockResolvedValueOnce(settledBet); // 页面状态重新读取昨日投注
+    mockKvScan.mockResolvedValueOnce([
+      0,
+      [`number-bomb:bet:${YESTERDAY}:user:${USER.id}`],
+    ] as never);
+
+    const state = await getNumberBombState(USER.id);
+
+    expect(state.yesterdaySystemNumber).toBe(0);
+    expect(state.yesterdayBet).toMatchObject({
+      id: 'pending-yesterday',
+      status: 'lost',
+      systemNumber: 0,
+      rewardPoints: 0,
+    });
+    expect(mockCreateUserNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER.id,
+        title: '数字炸弹开奖通知',
+        content: expect.stringContaining('未中奖'),
+      }),
+    );
+    expect(mockKvSet).toHaveBeenCalledWith(
+      `number-bomb:settlement:${YESTERDAY}`,
+      expect.objectContaining({
+        processed: 1,
+        lost: 1,
+      }),
       expect.any(Object),
     );
   });
@@ -452,6 +663,41 @@ describe('settleNumberBombDate', () => {
         }),
       }),
     );
+  });
+
+  it('settles bets discovered by scanning bet keys when the day index is missing', async () => {
+    const bet: NumberBombBet = {
+      id: 'scan-bet',
+      userId: USER.id,
+      username: USER.username,
+      date: YESTERDAY,
+      selectedNumber: 1,
+      multiplier: 1,
+      ticketCost: 10,
+      status: 'pending',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    mockKvGet
+      .mockResolvedValueOnce(null) // SETTLEMENT_KEY
+      .mockResolvedValueOnce(7) // DRAW_KEY
+      .mockResolvedValueOnce(bet); // USER_BET_KEY
+    mockKvSmembers.mockResolvedValueOnce([] as never);
+    mockKvScan.mockResolvedValueOnce([
+      0,
+      [`number-bomb:bet:${YESTERDAY}:user:${USER.id}`],
+    ] as never);
+    mockApplyPoints.mockResolvedValueOnce({ success: true, balance: 1020 });
+    mockGetPoints.mockResolvedValueOnce(1000);
+
+    const result = await settleNumberBombDate(YESTERDAY);
+
+    expect(result.won).toBe(1);
+    expect(result.processed).toBe(1);
+    expect(mockKvScan).toHaveBeenCalledWith(0, {
+      match: `number-bomb:bet:${YESTERDAY}:user:*`,
+      count: 500,
+    });
   });
 
   it('does not refund when user number matches system number', async () => {

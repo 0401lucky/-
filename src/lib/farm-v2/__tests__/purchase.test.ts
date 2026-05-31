@@ -3,7 +3,7 @@ import { kv } from '@/lib/d1-kv';
 import { acquireNativeLock, hasNativeHotStoreBinding, releaseNativeLock } from '@/lib/hot-d1';
 import { addPoints, deductPoints, getUserPoints } from '@/lib/points';
 import type { FarmStateV2, PetState } from '@/lib/types/farm-v2';
-import { buyItem, buyItemWithStatus, getFarmStatus, useItemWithStatus } from '../index';
+import { buyItem, buyItemWithStatus, getFarmStatus, processFarmMaturityEmails, useItemWithStatus } from '../index';
 
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
@@ -34,6 +34,7 @@ describe('farm-v2 shop purchases', () => {
   const mockKvGet = vi.mocked(kv.get);
   const mockKvMget = vi.mocked(kv.mget);
   const mockKvDel = vi.mocked(kv.del);
+  const mockKvScan = vi.mocked(kv.scan);
   const mockAddPoints = vi.mocked(addPoints);
   const mockDeductPoints = vi.mocked(deductPoints);
   const mockGetUserPoints = vi.mocked(getUserPoints);
@@ -62,6 +63,7 @@ describe('farm-v2 shop purchases', () => {
       }
       return deleted;
     });
+    mockKvScan.mockResolvedValue([0, []]);
   });
 
   afterEach(() => {
@@ -182,6 +184,52 @@ describe('farm-v2 shop purchases', () => {
     expect(savedState.lands[0].crop?.cropId).toBe('wheat');
     expect(savedState.seedInventory.wheat).toBe(0);
     expect(savedState.events.some((event) => event.type === 'mature')).toBe(true);
+    expect(savedState.events.some((event) => event.text.includes('宠物收菜被动触发'))).toBe(true);
+    expect(savedState.events.some((event) => event.text.includes('宠物种菜被动触发'))).toBe(true);
+  });
+
+  it('后台农场扫描会自动触发宠物被动技能', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-06T00:00:00.000Z'));
+    const now = Date.now();
+    const state = createFarmState();
+    state.bonuses.firstHarvest = true;
+    state.pet = createAdultPet(['harvest', 'plant']);
+    state.seedInventory = { wheat: 1 };
+    state.lands = [
+      {
+        index: 1,
+        status: 'growing',
+        crop: {
+          cropId: 'wheat',
+          plantedAt: now - 31 * 60 * 1000,
+          matureAt: now - 1000,
+          lastWaterAt: now - 31 * 60 * 1000,
+          nextWaterDueAt: now - 1000,
+          waterMissCount: 0,
+          fertilizer: null,
+          plantedSeason: 'spring',
+          weatherAtPlant: 'sunny',
+          birdNetUntil: null,
+          stolenAmount: 0,
+          stolenCount: 0,
+          speedUsed: 0,
+          speedReducedMinutes: 0,
+        },
+      },
+      { index: 2, status: 'empty', crop: null },
+    ];
+    store.set(stateKey, state);
+    mockKvScan.mockResolvedValueOnce([0, [stateKey]]);
+
+    const result = await processFarmMaturityEmails(10);
+    const savedState = store.get(stateKey) as FarmStateV2;
+
+    expect(result.processedUsers).toBe(1);
+    expect(mockAddPoints).toHaveBeenCalledWith(userId, expect.any(Number), 'game_play', '宠物被动收菜: 1 块');
+    expect(savedState.lands[0].status).toBe('growing');
+    expect(savedState.lands[0].crop?.cropId).toBe('wheat');
+    expect(savedState.seedInventory.wheat).toBe(0);
     expect(savedState.events.some((event) => event.text.includes('宠物收菜被动触发'))).toBe(true);
     expect(savedState.events.some((event) => event.text.includes('宠物种菜被动触发'))).toBe(true);
   });

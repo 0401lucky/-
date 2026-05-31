@@ -46,6 +46,40 @@ export interface NumberBombSettleResult {
   skipped: number;
 }
 
+export interface NumberBombAdminParticipant {
+  userId: number;
+  username: string;
+  selectedNumber: number;
+  status: NumberBombBetStatus;
+  multiplier: NumberBombMultiplier;
+  ticketCost: number;
+  rewardPoints?: number;
+  createdAt: number;
+  settledAt?: number;
+}
+
+export interface NumberBombDailyAdminStats {
+  date: string;
+  systemNumber: number | null;
+  participantCount: number;
+  totalBetCount: number;
+  wonCount: number;
+  lostCount: number;
+  pendingCount: number;
+  cancelledCount: number;
+  selectedCounts: Record<string, number>;
+  participants: NumberBombAdminParticipant[];
+  winners: NumberBombAdminParticipant[];
+}
+
+interface SettleNumberBombOptions {
+  /**
+   * 已有结算记录时仍检查是否存在遗漏的 pending 投注。
+   * 用于修复历史上投注索引缺失或定时任务先写入空结算的情况。
+   */
+  force?: boolean;
+}
+
 export const NUMBER_BOMB_BASE_TICKET_COST = 10;
 export const NUMBER_BOMB_MULTIPLIERS: NumberBombMultiplier[] = [1, 2, 5, 10];
 
@@ -54,6 +88,7 @@ const NUMBER_BOMB_DAY_TTL_SECONDS = 90 * 24 * 60 * 60;
 
 const DRAW_KEY = (date: string) => `number-bomb:draw:${date}`;
 const USER_BET_KEY = (date: string, userId: number) => `number-bomb:bet:${date}:user:${userId}`;
+const USER_BET_KEY_PREFIX = (date: string) => `number-bomb:bet:${date}:user:`;
 const DAY_BETS_KEY = (date: string) => `number-bomb:bets:${date}`;
 const USER_RECORDS_KEY = (userId: number) => `number-bomb:user:records:${userId}`;
 const SETTLEMENT_KEY = (date: string) => `number-bomb:settlement:${date}`;
@@ -146,6 +181,196 @@ async function ensureSystemNumber(date: string): Promise<number> {
   return next;
 }
 
+async function getPublishedSystemNumber(date: string): Promise<number> {
+  const settlement = await kv.get<NumberBombSettleResult>(SETTLEMENT_KEY(date));
+  if (
+    settlement &&
+    Number.isInteger(settlement.systemNumber) &&
+    settlement.systemNumber >= 0 &&
+    settlement.systemNumber <= 9
+  ) {
+    return settlement.systemNumber;
+  }
+
+  return ensureSystemNumber(date);
+}
+
+async function getAdminVisibleSystemNumber(date: string): Promise<number | null> {
+  const settlement = await kv.get<NumberBombSettleResult>(SETTLEMENT_KEY(date));
+  if (
+    settlement &&
+    Number.isInteger(settlement.systemNumber) &&
+    settlement.systemNumber >= 0 &&
+    settlement.systemNumber <= 9
+  ) {
+    return settlement.systemNumber;
+  }
+
+  return getSystemNumber(date);
+}
+
+function normalizeUserIdString(value: unknown): string | null {
+  const userId = Number(value);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return null;
+  }
+  return String(userId);
+}
+
+function extractUserIdFromBetKey(date: string, key: string): string | null {
+  const prefix = USER_BET_KEY_PREFIX(date);
+  if (!key.startsWith(prefix)) {
+    return null;
+  }
+  return normalizeUserIdString(key.slice(prefix.length));
+}
+
+async function scanBetUserIdsForDate(date: string): Promise<string[]> {
+  const scanner = (kv as unknown as {
+    scan?: (
+      cursor: number,
+      options?: { match?: string; count?: number },
+    ) => Promise<[number, string[]]>;
+  }).scan;
+
+  if (typeof scanner !== 'function') {
+    return [];
+  }
+
+  const result = new Set<string>();
+  let cursor = 0;
+  const match = `${USER_BET_KEY_PREFIX(date)}*`;
+
+  do {
+    const [nextCursor, keys] = await scanner(cursor, { match, count: 500 });
+    for (const key of keys ?? []) {
+      const userId = extractUserIdFromBetKey(date, key);
+      if (userId) {
+        result.add(userId);
+      }
+    }
+    cursor = Number(nextCursor) || 0;
+  } while (cursor !== 0);
+
+  return Array.from(result);
+}
+
+async function getBetUserIdsForDate(date: string): Promise<string[]> {
+  const [indexedUserIds, scannedUserIds] = await Promise.all([
+    kv.smembers<string>(DAY_BETS_KEY(date)).catch((error) => {
+      console.error('Read number bomb day bet index failed:', { date, error });
+      return [] as string[];
+    }),
+    scanBetUserIdsForDate(date).catch((error) => {
+      console.error('Scan number bomb bet keys failed:', { date, error });
+      return [] as string[];
+    }),
+  ]);
+
+  const result = new Set<string>();
+  for (const rawUserId of [...indexedUserIds, ...scannedUserIds]) {
+    const userId = normalizeUserIdString(rawUserId);
+    if (userId) {
+      result.add(userId);
+    }
+  }
+  return Array.from(result);
+}
+
+function buildEmptySelectedCounts(): Record<string, number> {
+  return Object.fromEntries(
+    Array.from({ length: 10 }, (_, index) => [String(index), 0]),
+  ) as Record<string, number>;
+}
+
+function toAdminParticipant(bet: NumberBombBet): NumberBombAdminParticipant {
+  return {
+    userId: bet.userId,
+    username: bet.username,
+    selectedNumber: bet.selectedNumber,
+    status: bet.status,
+    multiplier: bet.multiplier,
+    ticketCost: bet.ticketCost,
+    rewardPoints: bet.rewardPoints,
+    createdAt: bet.createdAt,
+    settledAt: bet.settledAt,
+  };
+}
+
+async function getBetsForDate(date: string, userIds: string[]): Promise<NumberBombBet[]> {
+  if (userIds.length === 0) {
+    return [];
+  }
+
+  const keys = userIds.map((userId) => USER_BET_KEY(date, Number(userId)));
+  const store = kv as typeof kv & {
+    mget?: <T = unknown>(...keys: string[]) => Promise<(T | null)[]>;
+  };
+  const values = typeof store.mget === 'function'
+    ? await store.mget<NumberBombBet>(...keys)
+    : await Promise.all(keys.map((key) => kv.get<NumberBombBet>(key)));
+
+  return (values ?? []).filter((bet): bet is NumberBombBet => (
+    !!bet && bet.date === date && Number.isInteger(Number(bet.userId))
+  ));
+}
+
+export async function getNumberBombRecentAdminStats(days = 7): Promise<NumberBombDailyAdminStats[]> {
+  const safeDays = Math.max(1, Math.min(Math.floor(Number(days) || 7), 30));
+  const dates: string[] = [];
+  let cursor = getTodayDateString();
+  for (let index = 0; index < safeDays; index += 1) {
+    dates.push(cursor);
+    cursor = getPreviousDateString(cursor);
+  }
+
+  return Promise.all(dates.map(async (date) => {
+    const userIds = await getBetUserIdsForDate(date);
+    const bets = await getBetsForDate(date, userIds);
+    const selectedCounts = buildEmptySelectedCounts();
+    const participants: NumberBombAdminParticipant[] = [];
+    const winners: NumberBombAdminParticipant[] = [];
+    let wonCount = 0;
+    let lostCount = 0;
+    let pendingCount = 0;
+    let cancelledCount = 0;
+
+    for (const bet of bets) {
+      if (bet.status === 'cancelled') {
+        cancelledCount += 1;
+        continue;
+      }
+
+      const participant = toAdminParticipant(bet);
+      participants.push(participant);
+      selectedCounts[String(bet.selectedNumber)] = (selectedCounts[String(bet.selectedNumber)] ?? 0) + 1;
+      if (bet.status === 'won') {
+        wonCount += 1;
+        winners.push(participant);
+      }
+      else if (bet.status === 'lost') lostCount += 1;
+      else pendingCount += 1;
+    }
+
+    participants.sort((a, b) => a.createdAt - b.createdAt || a.userId - b.userId);
+    winners.sort((a, b) => a.createdAt - b.createdAt || a.userId - b.userId);
+
+    return {
+      date,
+      systemNumber: await getAdminVisibleSystemNumber(date),
+      participantCount: participants.length,
+      totalBetCount: bets.length,
+      wonCount,
+      lostCount,
+      pendingCount,
+      cancelledCount,
+      selectedCounts,
+      participants,
+      winners,
+    };
+  }));
+}
+
 export async function previewNumberBombSystemNumber(date: string = getTodayDateString()): Promise<{
   date: string;
   systemNumber: number;
@@ -159,12 +384,30 @@ export async function previewNumberBombSystemNumber(date: string = getTodayDateS
 export async function getNumberBombState(userId: number): Promise<NumberBombState> {
   const date = getTodayDateString();
   const yesterday = getPreviousDateString(date);
-  const [balance, todayBet, yesterdayBet, yesterdaySystemNumber] = await Promise.all([
+  const [balance, todayBet, initialYesterdayBet] = await Promise.all([
     getUserPoints(userId),
     getBet(date, userId),
     getBet(yesterday, userId),
-    ensureSystemNumber(yesterday),
   ]);
+
+  let yesterdayBet = initialYesterdayBet;
+  let settledSystemNumber: number | null = null;
+  if (yesterdayBet?.status === 'pending') {
+    try {
+      const settlement = await settleNumberBombDate(yesterday, { force: true });
+      settledSystemNumber = settlement.systemNumber;
+      yesterdayBet = await getBet(yesterday, userId);
+    } catch (error) {
+      console.error('Settle pending number bomb bet on state read failed:', {
+        date: yesterday,
+        userId,
+        error,
+      });
+    }
+  }
+
+  const yesterdaySystemNumber =
+    settledSystemNumber ?? yesterdayBet?.systemNumber ?? await getPublishedSystemNumber(yesterday);
 
   const publicTodayBet = todayBet
     ? {
@@ -348,15 +591,18 @@ async function settleSingleBet(date: string, userId: number, systemNumber: numbe
   });
 }
 
-export async function settleNumberBombDate(date: string = getPreviousDateString()): Promise<NumberBombSettleResult> {
+export async function settleNumberBombDate(
+  date: string = getPreviousDateString(),
+  options: SettleNumberBombOptions = {},
+): Promise<NumberBombSettleResult> {
   return withKvLock(SETTLE_LOCK_KEY(date), async () => {
     const existing = await kv.get<NumberBombSettleResult>(SETTLEMENT_KEY(date));
-    if (existing) {
+    if (existing && !options.force) {
       return existing;
     }
 
-    const systemNumber = await ensureSystemNumber(date);
-    const userIds = await kv.smembers<string>(DAY_BETS_KEY(date));
+    const systemNumber = existing?.systemNumber ?? await ensureSystemNumber(date);
+    const userIds = await getBetUserIdsForDate(date);
     let won = 0;
     let lost = 0;
     let skipped = 0;
@@ -376,14 +622,19 @@ export async function settleNumberBombDate(date: string = getPreviousDateString(
     const settlement: NumberBombSettleResult = {
       date,
       systemNumber,
-      processed: won + lost,
-      won,
-      lost,
-      skipped,
+      processed: (existing?.processed ?? 0) + won + lost,
+      won: (existing?.won ?? 0) + won,
+      lost: (existing?.lost ?? 0) + lost,
+      skipped: (existing?.skipped ?? 0) + (existing ? 0 : skipped),
     };
     await kv.set(SETTLEMENT_KEY(date), settlement, { ex: NUMBER_BOMB_DAY_TTL_SECONDS });
     return settlement;
-  }, { timeoutMessage: '数字炸弹结算任务正在执行中' });
+  }, {
+    ttlSeconds: 60,
+    maxRetries: 50,
+    retryMs: 100,
+    timeoutMessage: '数字炸弹结算任务正在执行中',
+  });
 }
 
 export function normalizeNumberBombBetDate(timestamp: number): string {
