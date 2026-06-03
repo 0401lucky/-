@@ -2019,6 +2019,8 @@ function FarmStyles() {
           radial-gradient(circle at 90% 0%, rgba(251,191,36,0.18), transparent 55%),
           radial-gradient(circle at 0% 100%, rgba(132,204,22,0.14), transparent 50%),
           linear-gradient(180deg, rgba(255,255,255,0.92), rgba(247,254,231,0.85));
+        overflow: visible;
+        z-index: 3;
       }
       .lucky-farm .pet-card .side-card-head {
         padding: 4px 4px 12px;
@@ -2578,6 +2580,21 @@ function FarmStyles() {
         .lucky-farm .land-crow-img { width: 132px; height: 132px; }
 
         /* 宠物面板 */
+        .lucky-farm .pet-card {
+          overflow: hidden;
+        }
+        .lucky-farm .pet-skill-popover {
+          position: relative;
+          left: auto;
+          right: auto;
+          top: auto;
+          z-index: 1;
+          margin-top: 12px;
+          max-height: none;
+          padding: 12px;
+          border-radius: 16px;
+          box-shadow: 0 12px 28px rgba(15,23,42,0.10), inset 0 1px 0 rgba(255,255,255,1);
+        }
         .lucky-farm .pet-care {
           grid-template-columns: repeat(5, 1fr);
           gap: 5px;

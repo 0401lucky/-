@@ -157,13 +157,8 @@ export const PROTECTION_FACTORS = {
 
 /** 偷菜限制 */
 export const STEAL_LIMITS = {
-  perCropMaxTimes: 2,
-  perCropMaxRatio: 0.30,
   perPlayerDailyMaxBeingStolen: 5,
   perThiefDailyPerTarget: 1,
-  catRate: 0.15,
-  catLuckyExtra: 0.05,
-  catLuckyChance: 0.20,
 } as const;
 
 /** 宠物任务表 */
@@ -176,7 +171,7 @@ export const PET_TYPE_LABEL: Record<PetType, string> = {
   red_panda: '红熊猫',
 };
 
-export const PET_WATER_INTERVAL_MINUTES: Record<PetType, number> = {
+export const PET_WATER_REST_MINUTES: Record<PetType, number> = {
   cat: 45,
   dog: 30,
   rabbit: 35,
@@ -212,7 +207,8 @@ export interface PetTaskDef {
 }
 
 export const PET_TASKS = {
-  water:      { durationMinutes: 180, cooldownMinutes: 60 },
+  // 自动浇水休息时间由宠物类型决定，见 PET_WATER_REST_MINUTES。
+  water:      { durationMinutes: 180, cooldownMinutes: 0 },
   guard:      { durationMinutes: 240, cooldownMinutes: 120, catGuardCrowFactor: 0.70, dogGuardCrowFactor: 0.50 },
   chase_crow: { durationMinutes: 240, cooldownMinutes: 120 },
   steal:      { durationMinutes: 10, cooldownMinutes: 240 },

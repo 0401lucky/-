@@ -4,9 +4,9 @@ import type { FarmStateV2, PetState, PetType, PetTask, ShopItemKey, PetSkill } f
 import {
   PET_DAILY_DECAY, PET_DAILY_LIMITS,
   PET_STAGE_THRESHOLD, PET_TASKS,
-  PET_TYPE_LABEL, PET_WATER_INTERVAL_MINUTES,
+  PET_TYPE_LABEL, PET_WATER_REST_MINUTES,
   PET_HOURLY_DECAY, PET_MOOD_STOP_WORK, PET_MOOD_DISPATCH_MIN,
-  PET_ITEM_EFFECTS, PET_SKILL_LABEL, type PetActionCategory,
+  PET_ITEM_EFFECTS, PET_SKILL_LABEL, WATER_ACTION_LEAD_MS, type PetActionCategory,
 } from './config';
 import { computeActualWaterIntervalMs, getCurrentSeason, getChinaDateString, getWeatherForDate } from './engine';
 import { isNewChinaDay } from './season';
@@ -202,10 +202,11 @@ export function dispatchPetTask(
   if (!ready.ok) return ready;
   const p = normalizePetState(state.pet!);
   const def = PET_TASKS[task];
+  const cooldownMinutes = task === 'water' ? PET_WATER_REST_MINUTES[p.type] : def.cooldownMinutes;
   p.currentTask = task;
   p.taskStartAt = now;
   p.taskEndAt = now + def.durationMinutes * 60 * 1000;
-  p.cooldownEndAt = p.taskEndAt + def.cooldownMinutes * 60 * 1000;
+  p.cooldownEndAt = p.taskEndAt + cooldownMinutes * 60 * 1000;
   if (task === 'steal' && extra) {
     p.stealTarget = {
       userId: extra.targetUserId!,
@@ -310,33 +311,27 @@ export function processPetWaterTask(state: FarmStateV2, lastTickAt: number, now:
   const startTick = Math.max(lastTickAt, p.taskStartAt);
   const stop = Math.min(now, p.taskEndAt);
   if (stop <= startTick) return state;
-  const intervalMin = PET_WATER_INTERVAL_MINUTES[p.type];
-  const stepMs = intervalMin * 60 * 1000;
-  let cursor = Math.ceil(startTick / stepMs) * stepMs;
-  while (cursor <= stop) {
-    // 找到最缺水的一块未成熟作物
-    let target: { land: typeof state.lands[number]; due: number } | null = null;
-    for (const land of state.lands) {
-      if (!land.crop) continue;
-      if (land.status !== 'growing' && land.status !== 'thirsty') continue;
-      if (cursor >= land.crop.matureAt) continue;
-      if (cursor < land.crop.plantedAt) continue;
-      if (!target || land.crop.nextWaterDueAt < target.due) {
-        target = { land, due: land.crop.nextWaterDueAt };
-      }
+
+  for (const land of state.lands) {
+    if (!land.crop) continue;
+    if (land.status === 'locked' || land.status === 'empty' || land.status === 'mature' || land.status === 'withered' || land.status === 'eaten') {
+      continue;
     }
-    if (target?.land.crop) {
-      const c = target.land.crop;
-      const season = getCurrentSeason(cursor);
-      const date = getChinaDateString(cursor);
+    const crop = land.crop;
+    if (crop.waterMissCount >= 3) continue;
+    let waterAt = Math.max(crop.nextWaterDueAt - WATER_ACTION_LEAD_MS, startTick, crop.plantedAt);
+    while (waterAt <= stop && waterAt < crop.matureAt) {
+      const season = getCurrentSeason(waterAt);
+      const date = getChinaDateString(waterAt);
       const weather = getWeatherForDate(date, season);
-      const intervalMs = computeActualWaterIntervalMs(c.cropId, season, weather);
-      c.lastWaterAt = cursor;
-      c.nextWaterDueAt = cursor + intervalMs;
-      target.land.status = 'growing';
+      const intervalMs = computeActualWaterIntervalMs(crop.cropId, season, weather);
+      crop.lastWaterAt = waterAt;
+      crop.nextWaterDueAt = waterAt + intervalMs;
+      land.status = 'growing';
+      waterAt = crop.nextWaterDueAt;
     }
-    cursor += stepMs;
   }
+
   // 任务结束清空
   if (p.taskEndAt <= now) {
     p.currentTask = null;

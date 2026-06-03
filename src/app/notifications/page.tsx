@@ -36,6 +36,7 @@ type NotificationType =
   | 'system'
   | 'announcement'
   | 'feedback_reply'
+  | 'feedback_status'
   | 'lottery_win'
   | 'raffle_win'
   | 'wallet'
@@ -75,6 +76,7 @@ const TYPE_LABEL: Record<NotificationType, string> = {
   system: '系统公告',
   announcement: '系统公告',
   feedback_reply: '反馈回复',
+  feedback_status: '反馈状态',
   lottery_win: '抽奖中奖',
   raffle_win: '多人抽奖',
   wallet: '提现充值',
@@ -83,7 +85,7 @@ const TYPE_LABEL: Record<NotificationType, string> = {
 
 function getCategory(type: NotificationType): 'prize' | 'reply' | 'system' | 'redeem' {
   if (type === 'lottery_win' || type === 'raffle_win') return 'prize';
-  if (type === 'feedback_reply') return 'reply';
+  if (type === 'feedback_reply' || type === 'feedback_status') return 'reply';
   if (type === 'reward' || type === 'wallet') return 'redeem';
   return 'system';
 }

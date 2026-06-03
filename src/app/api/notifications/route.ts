@@ -24,6 +24,7 @@ export const GET = withUserRateLimit(
           | 'system'
           | 'announcement'
           | 'feedback_reply'
+          | 'feedback_status'
           | 'lottery_win'
           | 'raffle_win'
           | 'wallet'

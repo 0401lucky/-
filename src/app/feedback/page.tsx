@@ -13,6 +13,7 @@ import {
   type FeedbackImage,
 } from '@/lib/feedback-image';
 import {
+  ArrowLeft,
   ChevronRight,
   Loader2,
   MessageSquareText,
@@ -538,6 +539,18 @@ export default function FeedbackPage() {
     await loadFeedbackList({ page: safePage });
   }, [listLoading, listTotalPages, loadFeedbackList]);
 
+  const handleChangeFilterStatus = (nextStatus: 'all' | FeedbackStatus) => {
+    if (nextStatus === filterStatus) {
+      return;
+    }
+    setListPage(1);
+    setListHasMore(false);
+    setListTotal(0);
+    setListTotalPages(1);
+    setFeedbackList([]);
+    setFilterStatus(nextStatus);
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -828,6 +841,43 @@ export default function FeedbackPage() {
     safeCommentPage * COMMENT_PAGE_SIZE
   );
 
+  const renderFeedbackPagination = (className = '') => {
+    if (listTotalPages <= 1) {
+      return null;
+    }
+
+    return (
+      <div className={`feedback-pagination ${className}`.trim()}>
+        <button
+          type="button"
+          className="feedback-page-btn"
+          onClick={() => void goToFeedbackPage(listPage - 1)}
+          disabled={listLoading || listPage <= 1}
+          aria-label="上一页反馈"
+        >
+          <ChevronRight />
+          上一页
+        </button>
+        <span className="feedback-page-indicator">
+          <strong>{listPage}</strong>
+          <span>/</span>
+          {listTotalPages}
+          <em>共 {listTotal} 条</em>
+        </span>
+        <button
+          type="button"
+          className="feedback-page-btn"
+          onClick={() => void goToFeedbackPage(listPage + 1)}
+          disabled={listLoading || !listHasMore}
+          aria-label="下一页反馈"
+        >
+          下一页
+          <ChevronRight />
+        </button>
+      </div>
+    );
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -853,9 +903,13 @@ export default function FeedbackPage() {
               </h2>
               <p className="feedback-header-subtitle">您的每一个声音，都在帮助我们变得更好。</p>
             </div>
-            <button type="button" onClick={handleOpenCompose} className="feedback-btn-primary">
-              <Plus />
-              我要反馈
+            <button
+              type="button"
+              onClick={viewMode === 'compose' ? handleBackToWall : handleOpenCompose}
+              className={`feedback-btn-primary ${viewMode === 'compose' ? 'feedback-btn-back' : ''}`}
+            >
+              {viewMode === 'compose' ? <ArrowLeft /> : <Plus />}
+              {viewMode === 'compose' ? '返回' : '我要反馈'}
             </button>
           </div>
 
@@ -883,7 +937,7 @@ export default function FeedbackPage() {
                     匿名提交
                   </label>
                   <button type="button" onClick={handleBackToWall} className="feedback-btn-ghost">
-                    返回反馈墙
+                    返回
                   </button>
                 </div>
               </div>
@@ -1147,24 +1201,27 @@ export default function FeedbackPage() {
           )}
 
           {viewMode === 'wall' && (
-            <>
-              <div className="feedback-filters">
-                {[
-                  ['all', '全部反馈'],
-                  ['open', '待处理'],
-                  ['processing', '处理中'],
-                  ['resolved', '已解决'],
-                  ['closed', '已关闭'],
-                ].map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setFilterStatus(value as 'all' | FeedbackStatus)}
-                    className={`filter-tab ${filterStatus === value ? 'active' : ''}`}
-                  >
-                    {label}
-                  </button>
-                ))}
+            <section className="feedback-wall-view">
+              <div className="feedback-wall-toolbar">
+                <div className="feedback-filters">
+                  {[
+                    ['all', '全部反馈'],
+                    ['open', '待处理'],
+                    ['processing', '处理中'],
+                    ['resolved', '已解决'],
+                    ['closed', '已关闭'],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => handleChangeFilterStatus(value as 'all' | FeedbackStatus)}
+                      className={`filter-tab ${filterStatus === value ? 'active' : ''}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {renderFeedbackPagination('feedback-pagination-toolbar')}
               </div>
 
               <div className="feedback-list">
@@ -1258,38 +1315,9 @@ export default function FeedbackPage() {
                   })
                 )}
 
-                {listTotalPages > 1 && (
-                  <div className="feedback-pagination">
-                    <button
-                      type="button"
-                      className="feedback-page-btn"
-                      onClick={() => void goToFeedbackPage(listPage - 1)}
-                      disabled={listLoading || listPage <= 1}
-                      aria-label="上一页反馈"
-                    >
-                      <ChevronRight />
-                      上一页
-                    </button>
-                    <span className="feedback-page-indicator">
-                      <strong>{listPage}</strong>
-                      <span>/</span>
-                      {listTotalPages}
-                      <em>共 {listTotal} 条</em>
-                    </span>
-                    <button
-                      type="button"
-                      className="feedback-page-btn"
-                      onClick={() => void goToFeedbackPage(listPage + 1)}
-                      disabled={listLoading || !listHasMore}
-                      aria-label="下一页反馈"
-                    >
-                      下一页
-                      <ChevronRight />
-                    </button>
-                  </div>
-                )}
+                {renderFeedbackPagination()}
               </div>
-            </>
+            </section>
           )}
         </main>
       </div>
@@ -1565,6 +1593,11 @@ export default function FeedbackPage() {
           font-size: 15px;
           border-radius: 999px;
           white-space: nowrap;
+        }
+
+        .feedback-btn-back {
+          background: var(--text-main);
+          box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
         }
 
         .feedback-btn-ghost,
@@ -1862,7 +1895,28 @@ export default function FeedbackPage() {
           transform: none;
         }
 
+        .feedback-wall-view {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          min-height: 0;
+        }
+
+        .feedback-wall-toolbar {
+          position: sticky;
+          top: 0;
+          z-index: 6;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 10px 0 12px;
+          background: transparent;
+        }
+
         .feedback-filters {
+          min-width: 0;
+          flex: 1;
           display: flex;
           gap: 12px;
           overflow-x: auto;
@@ -2181,6 +2235,27 @@ export default function FeedbackPage() {
           box-shadow: none;
         }
 
+        .feedback-pagination-toolbar {
+          flex-shrink: 0;
+          padding: 8px;
+          gap: 8px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.7);
+        }
+
+        .feedback-pagination-toolbar .feedback-page-btn {
+          min-height: 34px;
+          padding: 7px 12px;
+        }
+
+        .feedback-pagination-toolbar .feedback-page-indicator {
+          min-width: 82px;
+        }
+
+        .feedback-pagination-toolbar .feedback-page-indicator em {
+          display: none;
+        }
+
         .feedback-page-btn {
           display: inline-flex;
           align-items: center;
@@ -2357,6 +2432,20 @@ export default function FeedbackPage() {
             width: 100%;
             justify-content: center;
           }
+
+          .feedback-wall-toolbar {
+            top: 0;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 10px;
+            padding-top: 8px;
+          }
+
+          .feedback-pagination-toolbar {
+            width: 100%;
+            justify-content: space-between;
+            border-radius: 18px;
+          }
         }
 
         @media (max-width: 640px) {
@@ -2466,6 +2555,14 @@ export default function FeedbackPage() {
             margin-left: 0;
             margin-top: 3px;
             font-size: 10.5px;
+          }
+
+          .feedback-pagination-toolbar {
+            padding: 8px;
+          }
+
+          .feedback-pagination-toolbar .feedback-page-indicator {
+            min-width: 64px;
           }
         }
 

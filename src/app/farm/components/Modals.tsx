@@ -164,7 +164,7 @@ const ADOPT_OPTIONS: Array<{
   tag: string;
   tone: string;
 }> = [
-  { type: 'cat', desc: '偷菜成功率 75%，有机会灵巧偷菜', tag: '敏捷型', tone: 't-orange' },
+  { type: 'cat', desc: '偷菜成功率 75%，适合主动偷菜', tag: '敏捷型', tone: 't-orange' },
   { type: 'dog', desc: '守护最稳，赶乌鸦成功率更高', tag: '守护型', tone: 't-amber' },
   { type: 'rabbit', desc: '浇水勤快，状态稳定又省心', tag: '勤快型', tone: 't-pink' },
   { type: 'red_panda', desc: '偷菜与守护都很均衡', tag: '均衡型', tone: 't-russet' },
@@ -818,7 +818,19 @@ interface StealModalProps {
   open: boolean;
   loadList: () => Promise<StealCandidate[]>;
   onClose: () => void;
-  onSteal: (targetUserId: number, landIndex: number) => Promise<{ success: boolean; amount?: number; lucky?: boolean } | null>;
+  onSteal: (targetUserId: number) => Promise<{ success: boolean; amount?: number; cropName?: string } | null>;
+}
+
+function StealTargetAvatar({ candidate }: { candidate: StealCandidate }) {
+  if (candidate.avatarUrl) {
+    return (
+      <div className="steal-avatar">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={candidate.avatarUrl} alt={candidate.nickname} />
+      </div>
+    );
+  }
+  return <div className="steal-avatar fallback">{candidate.nickname.slice(0, 1).toUpperCase()}</div>;
 }
 
 export function StealModal({ open, loadList, onClose, onSteal }: StealModalProps) {
@@ -842,32 +854,32 @@ export function StealModal({ open, loadList, onClose, onSteal }: StealModalProps
       title={<><Swords /> 派宠偷菜</>}
     >
       <p className="lwf-modal-sub">
-        仅成年宠物可执行 · 每个目标每天只能偷 1 次 · 每次取目标作物 15% 收益
+        仅成年宠物可执行 · 每个目标每天只能偷 1 次 · 成功后随机偷走一整棵成熟作物
       </p>
       {loading ? (
-        <div className="steal-empty">正在搜索附近的成熟作物…</div>
+        <div className="steal-empty">正在搜索附近可偷的玩家…</div>
       ) : list.length === 0 ? (
-        <div className="steal-empty">附近没有可偷的成熟作物，过会儿再来吧。</div>
+        <div className="steal-empty">附近没有可偷的玩家，过会儿再来吧。</div>
       ) : (
         <div className="steal-list">
           {list.map((c) => (
             <div key={c.userId} className="steal-row">
-              <div className="steal-name">🌾 {c.nickname}</div>
-              <div className="steal-crops">
-                {c.matureLands.map((m) => (
-                  <button
-                    key={m.landIndex}
-                    className="steal-crop"
-                    onClick={async () => {
-                      const r = await onSteal(c.userId, m.landIndex);
-                      if (r) setResult(r.success ? `偷到 ${r.amount} 积分${r.lucky ? '（小白猫的灵巧偷菜！）' : ''}` : '偷菜失败被守住了');
-                    }}
-                  >
-                    <CropSprite cropId={m.cropId} stage="mature" size={36} />
-                    <span>{m.cropName}</span>
-                  </button>
-                ))}
+              <div className="steal-person">
+                <StealTargetAvatar candidate={c} />
+                <div className="steal-copy">
+                  <div className="steal-name">{c.nickname}</div>
+                  <div className="steal-hint">作物保密，成功后随机偷取</div>
+                </div>
               </div>
+              <button
+                className="steal-crop"
+                onClick={async () => {
+                  const r = await onSteal(c.userId);
+                  if (r) setResult(r.success ? `偷菜成功，获得 ${r.amount} 积分${r.cropName ? `（随机偷到 ${r.cropName}）` : ''}` : '偷菜失败被守住了');
+                }}
+              >
+                随机偷菜
+              </button>
             </div>
           ))}
         </div>
@@ -930,6 +942,7 @@ const RULES_FULL: Array<{ level: RuleLevel; title: string; items: string[] }> = 
       '缺水 1 次 ×0.80 收益、缺水 2 次 ×0.50 收益、缺水 3 次直接枯萎。',
       '小雨每 30 分钟自动浇水一次，暴雨每 15 分钟一次。',
       '云朵瓶、宠物自动浇水和雨天自动浇水都能让未成熟作物恢复为生长中。',
+      '宠物自动浇水工作期间，只要有未成熟土地缺水或进入可浇水提前窗口，就会自动补水；工作结束后按宠物类型进入不同休息时间。',
     ],
   },
   {
@@ -955,7 +968,7 @@ const RULES_FULL: Array<{ level: RuleLevel; title: string; items: string[] }> = 
       '春季：成长 ×0.95；夏季：成长 ×0.90、浇水间隔 ×0.85、乌鸦 ×1.2',
       '秋季：收益 ×1.10；冬季：成长 ×1.15、浇水间隔 ×1.20、乌鸦 ×0.7',
       '换季时上一季未收获的作物全部枯萎，不返还种子与肥料。',
-      '晴天、多云、小雨、暴雨、炎热、大风、小雪、雾天会影响浇水间隔、自动浇水节奏和乌鸦概率。',
+      '晴天、多云、小雨、暴雨、炎热、大风、小雪、雾天会影响浇水间隔、雨天自动浇水节奏和乌鸦概率。',
       '购买天气电视机后，可以提前查看明日天气，方便决定是否种植、收获或准备防护。',
       '每周五会自动触发 1 次随机事件，可能获得补给，也可能遇到作物或仓库损失。',
     ],
@@ -992,12 +1005,12 @@ const RULES_FULL: Array<{ level: RuleLevel; title: string; items: string[] }> = 
   },
   {
     level: 'advanced', title: '偷菜规则', items: [
-      '偷菜需要宠物学会偷菜技能；只能偷其他玩家的成熟作物。',
-      '每块作物最多被偷 2 次或基础积分的 30%。',
-      '单玩家每日被偷上限 5 次，单玩家每日只能偷同一目标 1 次。',
+      '偷菜需要宠物学会偷菜技能；只能选择有成熟作物的其他玩家，不能指定偷哪块菜。',
+      '偷菜成功后，系统会随机偷走目标的一整棵成熟作物，被偷者不会获得这棵作物收益。',
+      '单玩家每日被偷上限 5 次，单玩家每日只能偷同一目标 1 次；失败也会计入今日已偷过该目标。',
       '小白猫基础成功率 75%、红熊猫 70%、兔子 65%、边牧 55%；情绪越好越容易成功，低落时会明显变差。',
       '目标若有宠物守护会降低偷菜成功率，边牧最擅长守护；铃铛额外 ×0.5。',
-      '每次偷取 = 目标作物基础收益 × 15%；小白猫 20% 概率灵巧偷菜额外 +5%。',
+      '偷菜成功获得这棵作物当前完整收获值，品质、缺水、季节、过熟等正常生效。',
     ],
   },
 ];
@@ -2009,14 +2022,28 @@ function ModalStyles() {
       .steal-empty { text-align: center; padding: 30px; color: #94a3b8; font-size: 14px; }
       .steal-list { display: flex; flex-direction: column; gap: 10px; }
       .steal-row {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
         padding: 12px 14px; background: #fff; border-radius: 16px;
         box-shadow: 0 4px 12px rgba(15,23,42,0.04);
       }
-      .steal-name { font-weight: 800; color: #15803d; margin-bottom: 8px; }
-      .steal-crops { display: flex; gap: 6px; flex-wrap: wrap; }
+      .steal-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      .steal-avatar {
+        width: 42px; height: 42px; border-radius: 14px; flex: 0 0 auto;
+        overflow: hidden; display: flex; align-items: center; justify-content: center;
+        background: linear-gradient(135deg, #dcfce7, #bbf7d0);
+        color: #15803d; font-size: 16px; font-weight: 900;
+        box-shadow: inset 0 0 0 1px rgba(22,163,74,0.14);
+      }
+      .steal-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .steal-copy { min-width: 0; }
+      .steal-name {
+        font-weight: 800; color: #15803d; overflow: hidden;
+        text-overflow: ellipsis; white-space: nowrap;
+      }
+      .steal-hint { margin-top: 3px; font-size: 11px; color: #94a3b8; font-weight: 700; }
       .steal-crop {
-        display: flex; align-items: center; gap: 6px;
-        padding: 6px 12px 6px 6px; border: none; border-radius: 999px;
+        flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 6px;
+        min-height: 34px; padding: 7px 14px; border: none; border-radius: 999px;
         background: rgba(132,204,22,0.1); color: #15803d;
         font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s;
       }
@@ -2439,6 +2466,8 @@ function ModalStyles() {
         .bp-grid { grid-template-columns: repeat(3, 1fr); }
         .bp-land-grid { grid-template-columns: repeat(3, 1fr); }
         .bp-detail-stats { grid-template-columns: repeat(2, 1fr); }
+        .steal-row { align-items: stretch; flex-direction: column; }
+        .steal-crop { width: 100%; }
       }
 
       /* === 手机端重排 v2：参考排行榜/游戏中心 === */

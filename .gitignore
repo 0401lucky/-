@@ -27,6 +27,7 @@ yarn-error.log*
 /.claude/
 /.playwright-mcp/
 /.tools/
+/.tmp/
 /.sisyphus/
 /.sisyphusevidence/
 /devserver.log

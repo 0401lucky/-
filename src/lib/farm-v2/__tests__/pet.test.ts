@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import type { FarmStateV2, PetState } from '@/lib/types/farm-v2';
-import { createPet, drinkPet, feedPet, normalizePetName, normalizePetState } from '../pet';
+import type { FarmStateV2, LandPlot, PetState, PetType } from '@/lib/types/farm-v2';
+import {
+  createPet,
+  dispatchPetTask,
+  drinkPet,
+  feedPet,
+  normalizePetName,
+  normalizePetState,
+  processPetWaterTask,
+} from '../pet';
+import { PET_TASKS, PET_WATER_REST_MINUTES } from '../config';
 
 describe('farm-v2 pet creation', () => {
   it('支持新增宠物并保存用户命名', () => {
@@ -62,6 +71,58 @@ describe('farm-v2 pet creation', () => {
     expect(result.ok).toBe(true);
     expect(state.pet!.stage).toBe('adult');
   });
+
+  it('自动浇水工作期内会立即浇所有缺水土地', () => {
+    const now = 1_700_000_000_000;
+    const state = createFarmState();
+    state.pet = createWorkingPet('dog', now - 30 * 60 * 1000);
+    state.lands = [
+      createLand(1, now - 20 * 60 * 1000, now + 60 * 60 * 1000, 'thirsty'),
+      createLand(2, now - 10 * 60 * 1000, now + 60 * 60 * 1000, 'thirsty'),
+      createLand(3, now + 20 * 60 * 1000, now + 60 * 60 * 1000, 'growing'),
+    ];
+
+    processPetWaterTask(state, now - 5 * 60 * 1000, now);
+
+    expect(state.lands[0].status).toBe('growing');
+    expect(state.lands[1].status).toBe('growing');
+    expect(state.lands[0].crop?.lastWaterAt).toBe(now - 5 * 60 * 1000);
+    expect(state.lands[1].crop?.lastWaterAt).toBe(now - 5 * 60 * 1000);
+    expect(state.lands[2].crop?.lastWaterAt).toBe(now - 10 * 60 * 1000);
+  });
+
+  it('自动浇水工作期内会浇所有即将缺水土地', () => {
+    const now = 1_700_000_000_000;
+    const lastTickAt = now - 60 * 1000;
+    const state = createFarmState();
+    state.pet = createWorkingPet('dog', now - 30 * 60 * 1000);
+    state.lands = [
+      createLand(1, now + 5 * 60 * 1000, now + 60 * 60 * 1000, 'growing'),
+      createLand(2, now + 8 * 60 * 1000, now + 60 * 60 * 1000, 'growing'),
+      createLand(3, now + 20 * 60 * 1000, now + 60 * 60 * 1000, 'growing'),
+    ];
+
+    processPetWaterTask(state, lastTickAt, now);
+
+    expect(state.lands[0].crop?.lastWaterAt).toBe(lastTickAt);
+    expect(state.lands[1].crop?.lastWaterAt).toBe(lastTickAt);
+    expect(state.lands[2].crop?.lastWaterAt).toBe(now - 10 * 60 * 1000);
+  });
+
+  it('自动浇水结束后的休息时间按宠物类型计算', () => {
+    const now = 1_700_000_000_000;
+    const catState = createFarmState();
+    const dogState = createFarmState();
+    catState.pet = createReadyPet('cat');
+    dogState.pet = createReadyPet('dog');
+
+    expect(dispatchPetTask(catState, 'water', now).ok).toBe(true);
+    expect(dispatchPetTask(dogState, 'water', now).ok).toBe(true);
+
+    const waterDurationMs = PET_TASKS.water.durationMinutes * 60 * 1000;
+    expect(catState.pet?.cooldownEndAt).toBe(now + waterDurationMs + PET_WATER_REST_MINUTES.cat * 60 * 1000);
+    expect(dogState.pet?.cooldownEndAt).toBe(now + waterDurationMs + PET_WATER_REST_MINUTES.dog * 60 * 1000);
+  });
 });
 
 function createFarmState(): FarmStateV2 {
@@ -88,5 +149,55 @@ function createFarmState(): FarmStateV2 {
     },
     createdAt: 1000,
     updatedAt: 1000,
+  };
+}
+
+function createReadyPet(type: PetType): PetState {
+  const pet = createPet(type, 1000);
+  pet.stage = 'adult';
+  pet.growth = 180;
+  pet.hunger = 80;
+  pet.cleanliness = 80;
+  pet.thirst = 80;
+  pet.health = 85;
+  pet.mood = 70;
+  pet.learnedSkills = ['water'];
+  return pet;
+}
+
+function createWorkingPet(type: PetType, taskStartAt: number): PetState {
+  const pet = createReadyPet(type);
+  pet.currentTask = 'water';
+  pet.taskStartAt = taskStartAt;
+  pet.taskEndAt = taskStartAt + PET_TASKS.water.durationMinutes * 60 * 1000;
+  pet.cooldownEndAt = pet.taskEndAt + PET_WATER_REST_MINUTES[type] * 60 * 1000;
+  return pet;
+}
+
+function createLand(
+  index: number,
+  nextWaterDueAt: number,
+  matureAt: number,
+  status: LandPlot['status'],
+): LandPlot {
+  return {
+    index,
+    status,
+    crop: {
+      cropId: 'wheat',
+      plantedAt: nextWaterDueAt - 30 * 60 * 1000,
+      matureAt,
+      lastWaterAt: nextWaterDueAt - 30 * 60 * 1000,
+      nextWaterDueAt,
+      waterMissCount: status === 'thirsty' ? 1 : 0,
+      fertilizer: null,
+      plantedSeason: 'spring',
+      weatherAtPlant: 'sunny',
+      birdNetUntil: null,
+      stolenAmount: 0,
+      stolenCount: 0,
+      speedUsed: 0,
+      speedReducedMinutes: 0,
+    },
   };
 }

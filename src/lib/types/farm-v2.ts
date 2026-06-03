@@ -234,10 +234,5 @@ export interface FarmStatusResponse {
 export interface StealCandidate {
   userId: number;
   nickname: string;
-  matureLands: Array<{
-    landIndex: number;
-    cropId: CropIdV2;
-    cropName: string;
-    baseYield: number;
-  }>;
+  avatarUrl: string | null;
 }

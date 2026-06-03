@@ -80,10 +80,10 @@ export async function GET(request: NextRequest) {
         page,
         limit,
         status: status ?? undefined,
+        publicOnly: true,
       });
 
-      const publicItems = items.filter((item) => !item.anonymous);
-      const publicItemsWithAuthor = await attachFeedbackAuthorProfiles(publicItems);
+      const publicItemsWithAuthor = await attachFeedbackAuthorProfiles(items);
       const wallItems = await Promise.all(
         publicItemsWithAuthor.map(async (item) => {
           const messages = [...(await getFeedbackMessages(item.id, 20))].reverse();

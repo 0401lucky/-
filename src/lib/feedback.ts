@@ -7,6 +7,13 @@ import { createUserNotification } from './notifications';
 export type FeedbackStatus = 'open' | 'processing' | 'resolved' | 'closed';
 export type FeedbackRole = 'user' | 'admin';
 
+const FEEDBACK_STATUS_LABEL: Record<FeedbackStatus, string> = {
+  open: '待处理',
+  processing: '处理中',
+  resolved: '已解决',
+  closed: '已关闭',
+};
+
 export interface FeedbackItem {
   id: string;
   userId: number;
@@ -34,6 +41,7 @@ interface ListOptions {
   limit?: number;
   status?: FeedbackStatus;
   includeArchived?: boolean;
+  publicOnly?: boolean;
 }
 
 interface Pagination {
@@ -101,6 +109,65 @@ async function getFeedbackByIds(ids: string[]): Promise<FeedbackItem[]> {
 
 function isArchivedFeedback(item: FeedbackItem): boolean {
   return Number.isFinite(item.archivedAt) && (item.archivedAt as number) > 0;
+}
+
+function getFeedbackMessagePreview(content: string): string {
+  return content.trim().replace(/\s+/g, ' ').slice(0, 80);
+}
+
+async function notifyFeedbackOwnerOfMessage(
+  feedback: FeedbackItem,
+  message: FeedbackMessage
+): Promise<void> {
+  const isOwnerMessage = message.role === 'user' && message.createdBy === feedback.username;
+  if (isOwnerMessage) {
+    return;
+  }
+
+  try {
+    const preview = getFeedbackMessagePreview(message.content);
+    const isAdminReply = message.role === 'admin';
+    await createUserNotification({
+      userId: feedback.userId,
+      type: 'feedback_reply',
+      title: isAdminReply ? '反馈收到管理员回复' : '反馈收到新评论',
+      content: preview
+        ? `${isAdminReply ? '管理员回复' : `${message.createdBy} 评论`}：${preview}`
+        : `${isAdminReply ? '管理员回复了' : `${message.createdBy} 评论了`}你的反馈，点击查看详情`,
+      data: {
+        feedbackId: feedback.id,
+        messageId: message.id,
+        kind: isAdminReply ? 'admin_reply' : 'user_comment',
+      },
+    });
+  } catch (notifyError) {
+    console.error('Create feedback message notification failed:', notifyError);
+  }
+}
+
+async function notifyFeedbackOwnerOfStatusChange(
+  feedback: FeedbackItem,
+  previousStatus: FeedbackStatus
+): Promise<void> {
+  if (previousStatus === feedback.status) {
+    return;
+  }
+
+  try {
+    await createUserNotification({
+      userId: feedback.userId,
+      type: 'feedback_status',
+      title: '反馈状态已更新',
+      content: `你的反馈状态已从「${FEEDBACK_STATUS_LABEL[previousStatus]}」更新为「${FEEDBACK_STATUS_LABEL[feedback.status]}」。`,
+      data: {
+        feedbackId: feedback.id,
+        previousStatus,
+        status: feedback.status,
+      },
+    });
+  } catch (notifyError) {
+    console.error('Create feedback status notification failed:', notifyError);
+  }
 }
 
 function getIndexKey(userId: number | null, status?: FeedbackStatus, includeArchived: boolean = false): string {
@@ -203,6 +270,28 @@ async function listFeedbackByIndex(
   return {
     ids: ids ?? [],
     total,
+  };
+}
+
+async function listPublicFeedbackByIndex(
+  key: string,
+  page: number,
+  limit: number
+): Promise<{ items: FeedbackItem[]; total: number }> {
+  const totalIndexed = await kv.zcard(key);
+  if (totalIndexed <= 0) {
+    return { items: [], total: 0 };
+  }
+
+  const ids = await kv.zrange<string>(key, 0, totalIndexed - 1, { rev: true });
+  const items = await getFeedbackByIds(ids ?? []);
+  const publicItems = items.filter((item) => !item.anonymous);
+  const start = (page - 1) * limit;
+  const end = start + limit;
+
+  return {
+    items: publicItems.slice(start, end),
+    total: publicItems.length,
   };
 }
 
@@ -371,23 +460,10 @@ export async function addFeedbackMessage(
     addIndexesForItem(updatedFeedback),
   ]);
 
-  if (role === 'admin') {
-    try {
-      const preview = content.trim().slice(0, 80);
-      await createUserNotification({
-        userId: feedback.userId,
-        type: 'feedback_reply',
-        title: '反馈收到新回复',
-        content: preview ? ('管理员回复：' + preview) : '管理员回复了你的反馈，点击查看详情',
-        data: {
-          feedbackId,
-          messageId: message.id,
-        },
-      });
-    } catch (notifyError) {
-      console.error('Create feedback reply notification failed:', notifyError);
-    }
-  }
+  await Promise.all([
+    notifyFeedbackOwnerOfMessage(feedback, message),
+    notifyFeedbackOwnerOfStatusChange(updatedFeedback, feedback.status),
+  ]);
 
   return {
     feedback: updatedFeedback,
@@ -417,6 +493,7 @@ export async function updateFeedbackStatus(
     removeIndexesForItem(feedback),
     addIndexesForItem(updatedFeedback),
   ]);
+  await notifyFeedbackOwnerOfStatusChange(updatedFeedback, feedback.status);
   return updatedFeedback;
 }
 
@@ -524,6 +601,14 @@ export async function listAllFeedback(
   const status = options.status;
 
   const indexKey = getIndexKey(null, status, options.includeArchived ?? false);
+  if (options.publicOnly) {
+    const { items, total } = await listPublicFeedbackByIndex(indexKey, page, limit);
+    return {
+      items,
+      pagination: buildPagination(page, limit, total),
+    };
+  }
+
   const { ids, total } = await listFeedbackByIndex(indexKey, page, limit);
   const items = await getFeedbackByIds(ids);
 

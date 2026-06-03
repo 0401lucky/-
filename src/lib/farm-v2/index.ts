@@ -35,7 +35,7 @@ import {
 } from './pet';
 import {
   FARM_V2_STATE_KEY, listStealCandidates, computeStealSuccessRate,
-  computeStealAmount, applyStolenOnTarget,
+  pickRandomStealableMatureIndex, applyWholeStealOnTarget,
 } from './steal';
 import { addToInventory, applyItemUse } from './shop';
 import { processMaturityEmailEventsForState } from './maturity-email';
@@ -820,7 +820,7 @@ export async function harvestPlot(userId: number, plotIndex: number): Promise<{ 
   return r.error ? { ok: false, msg: r.error } : (r.result as any);
 }
 
-function doHarvestSingle(state: FarmStateV2, plotIndex: number, now: number): HarvestResult {
+function buildHarvestResult(state: FarmStateV2, plotIndex: number, now: number): HarvestResult {
   const land = state.lands[plotIndex];
   const crop = land.crop!;
   const season = getCurrentSeason(now);
@@ -845,10 +845,16 @@ function doHarvestSingle(state: FarmStateV2, plotIndex: number, now: number): Ha
     finalYield,
     perfect,
   };
+  return result;
+}
+
+function doHarvestSingle(state: FarmStateV2, plotIndex: number, now: number): HarvestResult {
+  const land = state.lands[plotIndex];
+  const result = buildHarvestResult(state, plotIndex, now);
   pushEvent(state, {
     id: nanoid(), ts: now, type: 'harvest',
-    text: `收获了 ${cropDef.name}（${quality === 'gold' ? '金星' : quality === 'silver' ? '银星' : '普通'}）+${finalYield} 积分`,
-    cropId: crop.cropId, amount: finalYield,
+    text: `收获了 ${result.cropName}（${result.quality === 'gold' ? '金星' : result.quality === 'silver' ? '银星' : '普通'}）+${result.finalYield} 积分`,
+    cropId: result.cropId, amount: result.finalYield,
   });
   // 清空土地
   land.status = 'empty';
@@ -1268,8 +1274,8 @@ export { listStealCandidates };
 
 /** 偷菜：执行（需要双方加锁） */
 export async function executeSteal(
-  thiefId: number, targetUserId: number, landIndex: number,
-): Promise<{ ok: boolean; msg?: string; success?: boolean; amount?: number; lucky?: boolean; balance?: number }> {
+  thiefId: number, targetUserId: number,
+): Promise<{ ok: boolean; msg?: string; success?: boolean; amount?: number; cropId?: CropIdV2; cropName?: string; balance?: number }> {
   if (thiefId === targetUserId) return { ok: false, msg: '不能偷自己' };
   const lockA = await acquireLock(thiefId);
   if (!lockA) return { ok: false, msg: '操作处理中' };
@@ -1287,9 +1293,10 @@ export async function executeSteal(
     const myCnt = thief.myStealMap[String(targetUserId)] ?? 0;
     if (myCnt >= STEAL_LIMITS.perThiefDailyPerTarget) return { ok: false, msg: '今天已偷过该玩家' };
     if (target.stolenTodayCount >= STEAL_LIMITS.perPlayerDailyMaxBeingStolen) return { ok: false, msg: '该玩家今天被偷次数已达上限' };
+    const landIndex = pickRandomStealableMatureIndex(target);
+    if (landIndex == null) return { ok: false, msg: '该玩家暂无可偷的成熟作物' };
     const land = target.lands[landIndex];
     if (!land?.crop || land.status !== 'mature') return { ok: false, msg: '目标作物不可偷' };
-    if (land.crop.stolenCount >= STEAL_LIMITS.perCropMaxTimes) return { ok: false, msg: '该作物已被偷上限' };
 
     const dispatched = dispatchPetTask(thief, 'steal', now, { targetUserId, targetLandIndex: landIndex, targetCropId: land.crop.cropId });
     if (!dispatched.ok) return dispatched;
@@ -1303,16 +1310,16 @@ export async function executeSteal(
       await Promise.all([saveState(thief), saveState(target)]);
       return { ok: true, success: false };
     }
-    const isCat = thief.pet.type === 'cat';
-    const { amount, lucky } = computeStealAmount(land.crop.cropId, isCat);
-    const applied = applyStolenOnTarget(target, thiefId, landIndex, amount, now);
-    if (!applied) return { ok: false, msg: '该作物已被偷上限' };
-    const r = await addPoints(thiefId, amount, 'game_play', `偷菜成功: ${target.userId} 的 ${land.crop ? '' : ''}`);
+    const harvest = buildHarvestResult(target, landIndex, now);
+    const amount = harvest.finalYield;
+    const applied = applyWholeStealOnTarget(target, thiefId, landIndex, amount, now);
+    if (!applied) return { ok: false, msg: '目标作物不可偷' };
+    const r = await addPoints(thiefId, amount, 'game_play', `偷菜成功: ${target.userId} 的 ${harvest.cropName}`);
     thief.points = r.balance;
-    pushEvent(thief, { id: nanoid(), ts: now, type: 'stolen_out', text: `偷菜成功 +${amount} 积分${lucky ? '（小白猫的灵巧偷菜！）' : ''}`, amount });
+    pushEvent(thief, { id: nanoid(), ts: now, type: 'stolen_out', text: `偷菜成功，随机偷到 ${harvest.cropName} +${amount} 积分`, cropId: harvest.cropId, amount });
     thief.myStealMap[String(targetUserId)] = myCnt + 1;
     await Promise.all([saveState(thief), saveState(target)]);
-    return { ok: true, success: true, amount, lucky, balance: thief.points };
+    return { ok: true, success: true, amount, cropId: harvest.cropId, cropName: harvest.cropName, balance: thief.points };
   } finally {
     await releaseLock(lockA);
     await releaseLock(lockB);

@@ -32,7 +32,7 @@ interface UseFarmGameReturn {
   playPet: (itemKey?: ShopItemKey) => Promise<void>;
   dispatchPet: (task: Exclude<PetTask, null>) => Promise<void>;
   loadStealList: () => Promise<StealCandidate[]>;
-  doSteal: (targetUserId: number, landIndex: number) => Promise<{ success: boolean; amount?: number; lucky?: boolean } | null>;
+  doSteal: (targetUserId: number) => Promise<{ success: boolean; amount?: number; cropName?: string } | null>;
 }
 
 async function callApi<T = unknown>(url: string, body?: unknown, method: 'POST' | 'GET' = 'POST'): Promise<T> {
@@ -299,14 +299,14 @@ export function useFarmGame(): UseFarmGameReturn {
     }
   }, []);
 
-  const doSteal = useCallback(async (targetUserId: number, landIndex: number) => {
+  const doSteal = useCallback(async (targetUserId: number) => {
     return await wrap(async () => {
-      const r = await callApi<{ data: FarmStatusResponse; steal: { success: boolean; amount?: number; lucky?: boolean } }>(
-        '/api/farm/steal/do', { targetUserId, landIndex },
+      const r = await callApi<{ data: FarmStatusResponse; steal: { success: boolean; amount?: number; cropName?: string } }>(
+        '/api/farm/steal/do', { targetUserId },
       );
       setStatus(r.data);
       return r.steal;
-    }, `steal:${targetUserId}:${landIndex}`);
+    }, `steal:${targetUserId}`);
   }, [wrap]);
 
   return {
