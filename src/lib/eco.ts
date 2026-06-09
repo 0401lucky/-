@@ -138,6 +138,33 @@ async function saveEcoState(state: EcoState): Promise<void> {
 }
 
 type EcoLockResult<T> = { ok: true; value: T } | { ok: false; message: string };
+type EcoCompensation = () => Promise<void>;
+
+const ecoCompensations = new WeakMap<EcoState, EcoCompensation[]>();
+
+function registerEcoCompensation(state: EcoState, compensation: EcoCompensation): void {
+  const stack = ecoCompensations.get(state) ?? [];
+  stack.push(compensation);
+  ecoCompensations.set(state, stack);
+}
+
+async function rollbackEcoCompensations(state: EcoState): Promise<void> {
+  const stack = ecoCompensations.get(state);
+  ecoCompensations.delete(state);
+  if (!stack || stack.length === 0) return;
+
+  for (const compensation of [...stack].reverse()) {
+    try {
+      await compensation();
+    } catch (error) {
+      console.error('回滚环保行动积分变更失败:', error);
+    }
+  }
+}
+
+function clearEcoCompensations(state: EcoState): void {
+  ecoCompensations.delete(state);
+}
 
 async function withEcoLock<T>(
   userId: number,
@@ -147,9 +174,15 @@ async function withEcoLock<T>(
   if (!lock) return { ok: false, message: '操作处理中，请稍后重试' };
   try {
     const state = await loadEcoState(userId);
-    const value = await fn(state);
-    await saveEcoState(state);
-    return { ok: true, value };
+    try {
+      const value = await fn(state);
+      await saveEcoState(state);
+      clearEcoCompensations(state);
+      return { ok: true, value };
+    } catch (error) {
+      await rollbackEcoCompensations(state);
+      throw error;
+    }
   } finally {
     await releaseEcoLock(userId, lock);
   }
@@ -269,6 +302,14 @@ async function creditTrash(
       'game_play',
       `环保行动·${reason}`,
     );
+    registerEcoCompensation(state, async () => {
+      await deductPoints(
+        state.userId,
+        pointsToAward,
+        'game_play',
+        `环保行动·${reason}回滚`,
+      );
+    });
     points = pointsToAward;
     state.points = result.balance;
     state.lifetimePoints += pointsToAward;
@@ -523,6 +564,14 @@ export async function buyEcoUpgrade(userId: number, key: EcoUpgradeKey): Promise
     if (!deducted.success) {
       return { ok: false as const, message: deducted.message ?? '积分不足' };
     }
+    registerEcoCompensation(state, async () => {
+      await addPoints(
+        userId,
+        cost,
+        'exchange_refund',
+        `环保行动升级·${def.name} Lv${level + 1}回滚`,
+      );
+    });
     state.points = deducted.balance;
     state.upgrades[key] = level + 1;
     const status = await buildEcoStatus(state, null);
@@ -554,12 +603,29 @@ export async function buyEcoItem(userId: number, key: EcoItemKey): Promise<EcoAc
     if (!deducted.success) {
       return { ok: false as const, message: deducted.message ?? '积分不足' };
     }
+    registerEcoCompensation(state, async () => {
+      await addPoints(
+        userId,
+        def.cost,
+        'exchange_refund',
+        `环保行动道具·${def.name}回滚`,
+      );
+    });
     state.points = deducted.balance;
 
     incrementItemPurchaseCount(state, key, dateKey);
 
     if (key === 'clear_truck') {
-      state.pending = Math.min(getStorageCap(state), state.pending + CLEAR_TRUCK_TRASH);
+      const visibleSlots = state.visiblePrizes.length;
+      const basePending = Math.min(
+        Math.max(0, Math.floor(state.pending)),
+        Math.max(0, getStorageCap(state) - visibleSlots),
+      );
+      const availableSlots = Math.max(
+        0,
+        getStorageCap(state) - visibleSlots - basePending,
+      );
+      state.pending = basePending + Math.min(CLEAR_TRUCK_TRASH, availableSlots);
     } else if (key === 'lucky_flashlight') {
       state.luckyGenerationsRemaining += LUCKY_FLASHLIGHT_GENERATIONS;
     } else if (key === 'recycle_glove') {
@@ -647,6 +713,14 @@ export async function sellEcoPrize(
       'game_play',
       `环保行动出售·${ECO_PRIZES[key].name}`,
     );
+    registerEcoCompensation(state, async () => {
+      await deductPoints(
+        userId,
+        total,
+        'game_play',
+        `环保行动出售·${ECO_PRIZES[key].name}回滚`,
+      );
+    });
     state.inventory[key] = Math.max(0, owned - safeQuantity);
     state.points = awarded.balance;
     state.lifetimePoints += total;
