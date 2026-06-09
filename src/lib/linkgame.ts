@@ -10,15 +10,15 @@ import type {
 } from './types/game';
 
 export const LINKGAME_TILE_IDS = [
+  'red-apple', 'orange', 'lemon', 'grapes', 'strawberry', 'cherries', 'peach', 'kiwi',
+  'banana', 'watermelon', 'mango', 'pineapple', 'blueberries', 'melon', 'pear', 'coconut',
+  'green-apple', 'avocado', 'tomato', 'durian', 'dragon-fruit', 'pomegranate', 'plum', 'raspberry',
+];
+
+const LINKGAME_LEGACY_EMOJI_TILE_IDS = [
   '🍎', '🍊', '🍋', '🍇', '🍓', '🍒', '🍑', '🥝',
   '🍌', '🍉', '🥭', '🍍', '🫐', '🍈', '🍐', '🥥',
   '🍏', '🥑', '🍅', '🫒', '🍆', '🌶️', '🥬', '🥕',
-  '🌽', '🥔', '🍠', '🫘', '🫛', '🫑', '🥒', '🧄',
-  '🧅', '🥦', '🍄', '🥜', '🌰', '🫚', '🥐', '🥨',
-  '🥯', '🥞', '🧇', '🧀', '🍞', '🥖', '🫓', '🥮',
-  '🍡', '🍧', '🍨', '🍦', '🥧', '🧁', '🍰', '🎂',
-  '🍮', '🍭', '🍬', '🍫', '🍯', '🥛', '🧃', '🧋',
-  '🍵', '🥤',
 ];
 
 export const LINKGAME_TILE_TYPE_COUNT: Record<LinkGameDifficulty, number> = {
@@ -26,6 +26,24 @@ export const LINKGAME_TILE_TYPE_COUNT: Record<LinkGameDifficulty, number> = {
   normal: 12,
   hard: 24,
 };
+
+const LINKGAME_TILE_ASSET_BASE_PATH = '/images-optimized/ui/games/linkgame/fruits';
+const LINKGAME_TILE_ASSET_VERSION = 'webp-20260607-v1';
+
+export const LINKGAME_TILE_IMAGE_PATHS = LINKGAME_TILE_IDS.reduce<Record<string, string>>(
+  (paths, tileId) => {
+    paths[tileId] = `${LINKGAME_TILE_ASSET_BASE_PATH}/${tileId}.webp?v=${LINKGAME_TILE_ASSET_VERSION}`;
+    return paths;
+  },
+  {},
+);
+
+LINKGAME_LEGACY_EMOJI_TILE_IDS.forEach((legacyTileId, index) => {
+  const tileId = LINKGAME_TILE_IDS[index];
+  if (tileId) {
+    LINKGAME_TILE_IMAGE_PATHS[legacyTileId] = `${LINKGAME_TILE_ASSET_BASE_PATH}/${tileId}.webp?v=${LINKGAME_TILE_ASSET_VERSION}`;
+  }
+});
 
 export const LINKGAME_HARD_DEADLOCK_RATE_BY_STAGE = [0, 0.025, 0.05, 0.1, 0] as const;
 export const LINKGAME_HARD_MAX_DEADLOCK_RATE = 0.1;

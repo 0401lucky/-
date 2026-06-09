@@ -11,6 +11,7 @@ import {
   Gamepad2,
   Gift,
   Megaphone,
+  Recycle,
   ShoppingBag,
   Sparkles,
   Sprout,
@@ -186,6 +187,13 @@ const cards = [
     title: '开心农场',
     desc: '种菜浇水、养宠物偷菜，经营庄园获得海量积分。',
     icon: <Sprout />,
+  },
+  {
+    href: '/games/eco',
+    className: 'card-7',
+    title: '环保行动',
+    desc: '拖垃圾进回收桶赚积分，挂机也能攒，升级商店越玩越高效。',
+    icon: <Recycle />,
   },
 ];
 
@@ -938,6 +946,7 @@ export default function HomePage() {
           --c-blue: #3b82f6;
           --c-lime: #84cc16;
           --c-pink: #ec4899;
+          --c-teal: #14b8a6;
           background-color: #f8fafc;
           color: var(--text-main);
           font-family: 'Outfit', 'Noto Sans SC', sans-serif;
@@ -1175,6 +1184,7 @@ export default function HomePage() {
         .card-4 { grid-column: 2; grid-row: 17 / span 10; }
         .card-5 { grid-column: 1; grid-row: 26 / span 10; }
         .card-6 { grid-column: 2; grid-row: 29 / span 10; }
+        .card-7 { grid-column: 1; grid-row: 38 / span 10; }
 
         .card {
           background: var(--card-bg);
@@ -1219,6 +1229,7 @@ export default function HomePage() {
         .card-4::before { background: radial-gradient(circle, rgba(236, 72, 153, 0.55), transparent 70%); }
         .card-5::before { background: radial-gradient(circle, rgba(59, 130, 246, 0.55), transparent 70%); }
         .card-6::before { background: radial-gradient(circle, rgba(132, 204, 22, 0.55), transparent 70%); }
+        .card-7::before { background: radial-gradient(circle, rgba(20, 184, 166, 0.55), transparent 70%); }
 
         .card::after {
           content: '';
@@ -1284,6 +1295,7 @@ export default function HomePage() {
         .card-4 .icon-wrapper { color: var(--c-pink); box-shadow: 0 8px 18px rgba(236, 72, 153, 0.2), inset 0 2px 0 rgba(255, 255, 255, 1); }
         .card-5 .icon-wrapper { color: var(--c-blue); box-shadow: 0 8px 18px rgba(59, 130, 246, 0.2), inset 0 2px 0 rgba(255, 255, 255, 1); }
         .card-6 .icon-wrapper { color: var(--c-lime); box-shadow: 0 8px 18px rgba(132, 204, 22, 0.2), inset 0 2px 0 rgba(255, 255, 255, 1); }
+        .card-7 .icon-wrapper { color: var(--c-teal); box-shadow: 0 8px 18px rgba(20, 184, 166, 0.2), inset 0 2px 0 rgba(255, 255, 255, 1); }
 
         .card-content {
           display: flex;
@@ -1354,6 +1366,8 @@ export default function HomePage() {
         .card-5:hover .card-btn { background: var(--c-blue); color: #ffffff; }
         .card-6:hover h3, .card-6:hover p { color: var(--c-lime); }
         .card-6:hover .card-btn { background: var(--c-lime); color: #ffffff; }
+        .card-7:hover h3, .card-7:hover p { color: var(--c-teal); }
+        .card-7:hover .card-btn { background: var(--c-teal); color: #ffffff; }
 
         .hot-rewards-section {
           grid-column: 1 / -1;
@@ -2195,7 +2209,7 @@ export default function HomePage() {
           }
 
           .hot-rewards-section { grid-row: auto; margin-bottom: 24px; }
-          .card-1, .card-2, .card-3, .card-4, .card-5, .card-6 {
+          .card-1, .card-2, .card-3, .card-4, .card-5, .card-6, .card-7 {
             grid-column: auto;
             grid-row: auto;
           }

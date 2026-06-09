@@ -115,6 +115,7 @@ function shouldRefreshRogueliteStatusAfterStepError(message: string): boolean {
     || message.includes('网络错误')
     || message.includes('当前事件尚未处理完成')
     || message.includes('操作过于频繁')
+    || message.includes('行动次数过多')
     || message.includes('游戏会话')
   );
 }

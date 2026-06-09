@@ -16,7 +16,10 @@ export type AchievementId =
   | 'game_king'
   | 'farm_owner'
   | 'lucky_star'
-  | 'unlucky_star';
+  | 'unlucky_star'
+  | 'eco_ambassador'
+  | 'gold_digger'
+  | 'xiaoc_fan';
 
 export type AchievementUnlockMode = 'auto' | 'admin' | 'periodic';
 
@@ -66,6 +69,9 @@ export interface ProfileAchievementStats {
   farmUnlockedLands: number;
   lotteryOrangeCount: number;
   lotteryHeartCount: number;
+  ecoLifetimeCleared: number;
+  ecoLifetimePrizeClaims: number;
+  ecoLifetimePhotoClaims: number;
 }
 
 export interface ProfileAchievementOverviewData {
@@ -224,6 +230,32 @@ export const ACHIEVEMENT_DEFINITIONS: AchievementDefinition[] = [
     desc: '累计在每日幸运抽奖中抽到 100 次爱心',
     unlockMode: 'auto',
   },
+  {
+    id: 'eco_ambassador',
+    emoji: '🌱',
+    name: '环保大使',
+    desc: '在环保行动中累计回收 10000 个普通垃圾，奖品不计入',
+    unlockMode: 'auto',
+    series: '环保行动',
+    shine: true,
+  },
+  {
+    id: 'gold_digger',
+    emoji: '⛏️',
+    name: '淘金者',
+    desc: '在环保行动中累计拾取 10 个奖品',
+    unlockMode: 'auto',
+    series: '环保行动',
+  },
+  {
+    id: 'xiaoc_fan',
+    emoji: '📸',
+    name: 'XiaoC忠实粉丝',
+    desc: '在环保行动中累计拾取 5 张照片',
+    unlockMode: 'auto',
+    series: '环保行动',
+    shine: true,
+  },
 ];
 
 export const ACHIEVEMENT_BY_ID = new Map(
@@ -282,6 +314,9 @@ export function getAutomaticAchievementIds(d: ProfileAchievementOverviewData): A
   const farmUnlockedLands = stats?.farmUnlockedLands ?? 0;
   const lotteryOrangeCount = stats?.lotteryOrangeCount ?? 0;
   const lotteryHeartCount = stats?.lotteryHeartCount ?? 0;
+  const ecoLifetimeCleared = stats?.ecoLifetimeCleared ?? 0;
+  const ecoLifetimePrizeClaims = stats?.ecoLifetimePrizeClaims ?? 0;
+  const ecoLifetimePhotoClaims = stats?.ecoLifetimePhotoClaims ?? 0;
 
   const ids: AchievementId[] = ['beginner'];
   if (totalDays >= 1) ids.push('first_checkin');
@@ -299,6 +334,9 @@ export function getAutomaticAchievementIds(d: ProfileAchievementOverviewData): A
   if (farmUnlockedLands >= 8) ids.push('farm_owner');
   if (lotteryOrangeCount >= 100) ids.push('lucky_star');
   if (lotteryHeartCount >= 100) ids.push('unlucky_star');
+  if (ecoLifetimeCleared >= 10000) ids.push('eco_ambassador');
+  if (ecoLifetimePrizeClaims >= 10) ids.push('gold_digger');
+  if (ecoLifetimePhotoClaims >= 5) ids.push('xiaoc_fan');
 
   return ids;
 }

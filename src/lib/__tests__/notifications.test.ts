@@ -118,6 +118,131 @@ describe('notifications', () => {
     });
   });
 
+  it('paginates grouped notification filters by the filtered total', async () => {
+    mockKvZrange.mockResolvedValue(['n1', 'n2', 'n3', 'n4', 'n5', 'n6']);
+    mockKvMget.mockResolvedValue([
+      {
+        id: 'n1',
+        userId: 1001,
+        type: 'lottery_win',
+        title: '中奖 1',
+        content: '内容',
+        createdAt: 6,
+      },
+      {
+        id: 'n2',
+        userId: 1001,
+        type: 'feedback_reply',
+        title: '回复',
+        content: '内容',
+        createdAt: 5,
+      },
+      {
+        id: 'n3',
+        userId: 1001,
+        type: 'raffle_win',
+        title: '中奖 2',
+        content: '内容',
+        createdAt: 4,
+      },
+      {
+        id: 'n4',
+        userId: 1001,
+        type: 'system',
+        title: '系统',
+        content: '内容',
+        createdAt: 3,
+      },
+      {
+        id: 'n5',
+        userId: 1001,
+        type: 'reward',
+        title: '福利',
+        content: '内容',
+        createdAt: 2,
+      },
+      {
+        id: 'n6',
+        userId: 1001,
+        type: 'lottery_win',
+        title: '中奖 3',
+        content: '内容',
+        createdAt: 1,
+      },
+    ]);
+    mockKvScard.mockResolvedValue(2);
+
+    const result = await listUserNotifications(1001, {
+      page: 2,
+      limit: 2,
+      filter: 'prize',
+    });
+
+    expect(result.items.map((item) => item.id)).toEqual(['n6']);
+    expect(result.pagination).toMatchObject({
+      page: 2,
+      limit: 2,
+      total: 3,
+      totalPages: 2,
+      hasMore: false,
+    });
+    expect(result.counts).toMatchObject({
+      all: 6,
+      unread: 2,
+      prize: 3,
+      reply: 1,
+      system: 1,
+      redeem: 1,
+    });
+  });
+
+  it('lists unread notifications with unread pagination total', async () => {
+    mockKvZrange.mockResolvedValue(['n1', 'n2', 'n3']);
+    mockKvMget.mockResolvedValue([
+      {
+        id: 'n1',
+        userId: 1001,
+        type: 'system',
+        title: '系统',
+        content: '内容',
+        createdAt: 3,
+      },
+      {
+        id: 'n2',
+        userId: 1001,
+        type: 'reward',
+        title: '福利',
+        content: '内容',
+        createdAt: 2,
+      },
+      {
+        id: 'n3',
+        userId: 1001,
+        type: 'feedback_reply',
+        title: '回复',
+        content: '内容',
+        createdAt: 1,
+      },
+    ]);
+    mockKvScard.mockResolvedValue(1);
+    mockKvSmembers.mockResolvedValue(['n2']);
+
+    const result = await listUserNotifications(1001, {
+      page: 1,
+      limit: 5,
+      filter: 'unread',
+    });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ id: 'n2', isRead: false });
+    expect(result.pagination).toMatchObject({
+      page: 1,
+      total: 1,
+      totalPages: 1,
+      hasMore: false,
+    });
+  });
+
   it('marks notifications as read and returns remaining unread count', async () => {
     mockKvGet.mockResolvedValue({
       id: 'notification_1',

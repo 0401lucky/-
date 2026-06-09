@@ -2,17 +2,6 @@
 import type { LinkGameDifficulty } from '@/lib/types/game';
 import { LINKGAME_DIFFICULTY_CONFIG } from '@/lib/linkgame';
 
-export const FRUIT_EMOJIS: Record<string, string> = {
-  'apple': '🍎',
-  'orange': '🍊',
-  'lemon': '🍋',
-  'grape': '🍇',
-  'strawberry': '🍓',
-  'cherry': '🍒',
-  'kiwi': '🥝',
-  'peach': '🍑',
-};
-
 export const DIFFICULTY_META: Record<LinkGameDifficulty, {
   name: string;
   description: string;

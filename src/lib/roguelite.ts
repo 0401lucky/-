@@ -35,10 +35,10 @@ import type { GameSessionStatus } from './types/game';
 export { getDailyStats };
 
 const GAME_TYPE = 'roguelite' as const;
-const SESSION_TTL = 30 * 60;
+const SESSION_TTL = 2 * 60 * 60;
 const COOLDOWN_TTL = 5;
 const MAX_RECORD_ENTRIES = 50;
-const MAX_ACTIONS = 360;
+export const ROGUELITE_MAX_ACTIONS = 2400;
 const STEP_LOCK_TTL = 10;
 const MIN_FINISH_DURATION_MS = 2_000;
 const START_LOCK_TTL = 3;
@@ -423,8 +423,12 @@ export async function stepRogueliteGame(
       await deleteSession(session.id, session.userId, useNativeHotStore);
       return { success: false, message: '游戏会话已过期' };
     }
-    if (session.actions.length >= MAX_ACTIONS) {
-      return { success: false, message: '行动次数过多' };
+    if (session.actions.length >= ROGUELITE_MAX_ACTIONS && payloadCheck.action.type !== 'escape') {
+      return {
+        success: false,
+        session: buildSessionView(session),
+        message: '行动次数过多，请撤离结算或重新开始',
+      };
     }
 
     const resolved = resolveRogueliteAction(session.state, payloadCheck.action);

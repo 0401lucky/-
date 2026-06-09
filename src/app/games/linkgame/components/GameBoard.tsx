@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
 import type { LinkGameDifficultyConfig, LinkGamePosition } from '@/lib/types/game';
 import {
   indexOfPosition,
@@ -8,6 +9,7 @@ import {
   isStack3DConfig,
   isStackTileBlocked,
   isStackTileSelectable,
+  LINKGAME_TILE_IMAGE_PATHS,
 } from '@/lib/linkgame';
 import { cn } from '@/lib/utils';
 
@@ -147,7 +149,25 @@ export function GameBoard({
 
   const getTileContent = (tile: string | null) => {
     if (!tile) return null;
-    return tile;
+    const imageSrc = LINKGAME_TILE_IMAGE_PATHS[tile];
+
+    if (!imageSrc) {
+      return tile;
+    }
+
+    return (
+      <Image
+        src={imageSrc}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        width={256}
+        height={256}
+        sizes="(max-width: 640px) 44px, (max-width: 1024px) 64px, 80px"
+        className="pointer-events-none select-none object-contain drop-shadow-sm transition-transform sm:hover:scale-110"
+        style={{ width: '68%', height: '68%' }}
+      />
+    );
   };
 
   const handleAnimationEnd = (animationName: string) => {
@@ -213,7 +233,7 @@ export function GameBoard({
                       disabled={!isSelectable || isMatching}
                       onAnimationEnd={(e) => handleAnimationEnd(e.animationName)}
                       className={cn(
-                        "link-stack-tile relative flex h-full w-full select-none items-center justify-center rounded-2xl border-2 text-xl transition-all duration-300 sm:text-3xl",
+                        "link-stack-tile relative flex h-full w-full select-none items-center justify-center overflow-hidden rounded-2xl border-2 text-xl transition-all duration-300 sm:text-3xl",
                         isVisible
                           ? "bg-white border-white shadow-[0_4px_0_0_rgba(15,23,42,0.08)]"
                           : "invisible opacity-0",
@@ -230,7 +250,9 @@ export function GameBoard({
                       title={isBlocked ? '未完全露出' : undefined}
                       type="button"
                     >
-                      <span className="drop-shadow-sm filter transition-transform sm:hover:scale-110">{getTileContent(tile)}</span>
+                      <span className="flex h-full w-full items-center justify-center drop-shadow-sm filter transition-transform">
+                        {getTileContent(tile)}
+                      </span>
 
                       {isMatching && (
                         <>
@@ -332,7 +354,7 @@ export function GameBoard({
                 disabled={!isVisible || isMatching}
                 onAnimationEnd={(e) => handleAnimationEnd(e.animationName)}
                 className={cn(
-                  "relative w-full h-full flex items-center justify-center text-xl sm:text-3xl md:text-4xl select-none transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]",
+                  "relative w-full h-full flex items-center justify-center overflow-hidden text-xl sm:text-3xl md:text-4xl select-none transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]",
                   "rounded-2xl sm:rounded-3xl aspect-square shadow-[0_3px_0_0_rgba(0,0,0,0.05)] active:shadow-none active:translate-y-[3px]",
                   isVisible
                     ? "bg-white border-b-4 border-r-2 border-l-2 border-t-2 border-white cursor-pointer hover:-translate-y-1 hover:shadow-[0_6px_0_0_rgba(0,0,0,0.05)]"
@@ -351,7 +373,9 @@ export function GameBoard({
                   animationDelay: isVisible && !entranceComplete && !isShaking && !isMatching ? `${delay}ms` : '0ms'
                 }}
               >
-                <span className="drop-shadow-sm filter transform sm:hover:scale-110 transition-transform">{getTileContent(tile)}</span>
+                <span className="flex h-full w-full transform items-center justify-center drop-shadow-sm filter transition-transform sm:hover:scale-110">
+                  {getTileContent(tile)}
+                </span>
 
                 {isMatching && (
                   <>

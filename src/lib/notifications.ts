@@ -13,6 +13,8 @@ export type NotificationType =
   | 'wallet'
   | 'reward';
 
+export type NotificationFilter = 'all' | 'unread' | 'prize' | 'reply' | 'system' | 'redeem';
+
 export interface NotificationItem {
   id: string;
   userId: number;
@@ -36,10 +38,13 @@ export interface NotificationPagination {
   hasMore: boolean;
 }
 
+export type NotificationFilterCounts = Record<NotificationFilter, number>;
+
 export interface NotificationListOptions {
   page?: number;
   limit?: number;
   type?: NotificationType;
+  filter?: NotificationFilter;
 }
 
 export interface CreateNotificationInput {
@@ -58,6 +63,13 @@ const ANNOUNCEMENT_NOTIFIED_KEY = (announcementId: string) =>
   `notifications:announcement:notified:${announcementId}`;
 
 const MAX_PAGE_SIZE = 50;
+
+function getNotificationFilter(type: NotificationType): Exclude<NotificationFilter, 'all' | 'unread'> {
+  if (type === 'lottery_win' || type === 'raffle_win') return 'prize';
+  if (type === 'feedback_reply' || type === 'feedback_status') return 'reply';
+  if (type === 'reward' || type === 'wallet') return 'redeem';
+  return 'system';
+}
 
 function normalizePage(value: number | undefined): number {
   if (!Number.isFinite(value)) return 1;
@@ -78,6 +90,23 @@ function buildPagination(page: number, limit: number, total: number): Notificati
     totalPages,
     hasMore: page < totalPages,
   };
+}
+
+function buildFilterCounts(items: NotificationItem[], unreadCount: number): NotificationFilterCounts {
+  const counts: NotificationFilterCounts = {
+    all: items.length,
+    unread: unreadCount,
+    prize: 0,
+    reply: 0,
+    system: 0,
+    redeem: 0,
+  };
+
+  for (const item of items) {
+    counts[getNotificationFilter(item.type)] += 1;
+  }
+
+  return counts;
 }
 
 function sanitizeText(value: string): string {
@@ -151,9 +180,11 @@ export async function listUserNotifications(
   items: NotificationListItem[];
   unreadCount: number;
   pagination: NotificationPagination;
+  counts: NotificationFilterCounts;
 }> {
   const page = normalizePage(options.page);
   const limit = normalizeLimit(options.limit);
+  const filter = options.filter ?? 'all';
 
   const allIds = await kv.zrange<string>(
     USER_NOTIFICATION_INDEX_KEY(userId),
@@ -163,17 +194,31 @@ export async function listUserNotifications(
   );
 
   const itemsAll = await getNotificationsByIds(allIds ?? []);
-  const filtered = options.type ? itemsAll.filter((item) => item.type === options.type) : itemsAll;
+  const unreadCount = Number(await kv.scard(USER_NOTIFICATION_UNREAD_KEY(userId))) || 0;
+  const counts = buildFilterCounts(itemsAll, unreadCount);
+  const unreadIds =
+    filter === 'unread'
+      ? new Set((await kv.smembers<string>(USER_NOTIFICATION_UNREAD_KEY(userId))) ?? [])
+      : null;
+
+  let filtered = options.type ? itemsAll.filter((item) => item.type === options.type) : itemsAll;
+  if (filter === 'unread') {
+    filtered = filtered.filter((item) => unreadIds?.has(item.id));
+  } else if (filter !== 'all') {
+    filtered = filtered.filter((item) => getNotificationFilter(item.type) === filter);
+  }
 
   const total = filtered.length;
-  const start = (page - 1) * limit;
+  const totalPages = total > 0 ? Math.ceil(total / limit) : 1;
+  const currentPage = Math.min(page, totalPages);
+  const start = (currentPage - 1) * limit;
   const paged = filtered.slice(start, start + limit);
 
-  const unreadChecks = await Promise.all(
-    paged.map((item) => kv.sismember(USER_NOTIFICATION_UNREAD_KEY(userId), item.id))
-  );
-
-  const unreadCount = await kv.scard(USER_NOTIFICATION_UNREAD_KEY(userId));
+  const unreadChecks = unreadIds
+    ? paged.map((item) => (unreadIds.has(item.id) ? 1 : 0))
+    : await Promise.all(
+        paged.map((item) => kv.sismember(USER_NOTIFICATION_UNREAD_KEY(userId), item.id))
+      );
 
   const items = paged.map((item, idx) => {
     const isUnread = Number(unreadChecks[idx]) === 1;
@@ -186,8 +231,9 @@ export async function listUserNotifications(
 
   return {
     items,
-    unreadCount: Number(unreadCount) || 0,
-    pagination: buildPagination(page, limit, total),
+    unreadCount,
+    pagination: buildPagination(currentPage, limit, total),
+    counts,
   };
 }
 

@@ -18,6 +18,9 @@ function makeOverview(
     farmUnlockedLands?: number;
     lotteryOrangeCount?: number;
     lotteryHeartCount?: number;
+    ecoLifetimeCleared?: number;
+    ecoLifetimePrizeClaims?: number;
+    ecoLifetimePhotoClaims?: number;
   } = {}
 ): ProfileAchievementOverviewData {
   return {
@@ -39,6 +42,9 @@ function makeOverview(
       farmUnlockedLands: overrides.farmUnlockedLands ?? 0,
       lotteryOrangeCount: overrides.lotteryOrangeCount ?? 0,
       lotteryHeartCount: overrides.lotteryHeartCount ?? 0,
+      ecoLifetimeCleared: overrides.ecoLifetimeCleared ?? 0,
+      ecoLifetimePrizeClaims: overrides.ecoLifetimePrizeClaims ?? 0,
+      ecoLifetimePhotoClaims: overrides.ecoLifetimePhotoClaims ?? 0,
     },
   };
 }
@@ -87,6 +93,9 @@ describe('profile achievements', () => {
         farmUnlockedLands: 8,
         lotteryOrangeCount: 100,
         lotteryHeartCount: 100,
+        ecoLifetimeCleared: 10000,
+        ecoLifetimePrizeClaims: 10,
+        ecoLifetimePhotoClaims: 5,
       })
     );
 
@@ -94,6 +103,9 @@ describe('profile achievements', () => {
     expect(achievements.get('农场主')?.unlocked).toBe(true);
     expect(achievements.get('幸运之星')?.unlocked).toBe(true);
     expect(achievements.get('倒霉之星')?.unlocked).toBe(true);
+    expect(achievements.get('环保大使')?.unlocked).toBe(true);
+    expect(achievements.get('淘金者')?.unlocked).toBe(true);
+    expect(achievements.get('XiaoC忠实粉丝')?.unlocked).toBe(true);
   });
 
   it('管理员和周期成就只有存在有效颁发记录时解锁', () => {

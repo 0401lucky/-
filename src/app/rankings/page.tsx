@@ -12,6 +12,7 @@ import {
   Crown,
   Home,
   Loader2,
+  Recycle,
   RefreshCw,
   Sparkles,
   Star,
@@ -24,6 +25,7 @@ import type { PublicAchievement } from '@/lib/profile-achievements';
 type GamePeriod = 'daily' | 'weekly' | 'monthly';
 type SimplePeriod = 'all' | 'monthly';
 type LotteryPeriod = 'daily' | 'weekly' | 'monthly';
+type EcoPeriod = 'daily' | 'weekly' | 'monthly';
 
 type SupportedGame = 'linkgame' | 'match3' | 'memory' | 'whack_mole' | 'roguelite' | 'minesweeper';
 
@@ -99,6 +101,23 @@ interface CheckinEntry {
 interface CheckinRankingData {
   period: SimplePeriod;
   leaderboard: CheckinEntry[];
+}
+
+interface EcoRankingEntry {
+  rank: number;
+  userId: number;
+  username: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  equippedAchievement?: PublicAchievement | null;
+  trashCleared: number;
+}
+
+interface EcoRankingData {
+  period: EcoPeriod;
+  periodKey: string;
+  totalParticipants: number;
+  leaderboard: EcoRankingEntry[];
 }
 
 interface LotteryRankingEntry {
@@ -383,6 +402,38 @@ const RANKING_RULES = [
     ],
   },
   {
+    title: '环保排行榜',
+    tag: '日榜 · 周榜 · 月榜',
+    tone: 'green',
+    summary:
+      '记录玩家在环保行动中实际回收的普通垃圾数量，奖品拾取不计入该榜单。',
+    sections: [
+      {
+        label: '周期定义',
+        items: [
+          '【日榜】按中国时间当天 00:00 起统计。',
+          '【周榜】按中国时间当前自然周（周一 00:00 起）统计。',
+          '【月榜】按中国时间当前自然月（1 日 00:00 起）统计。',
+        ],
+      },
+      {
+        label: '计算方式',
+        items: [
+          '只统计普通垃圾的实际回收数量，奖杯、项链、金币、钻石、照片不计入。',
+          '手动拖入垃圾桶和自动回收机器人成功回收的普通垃圾都会计入。',
+          '同数量时按用户 ID 升序稳定排序。',
+        ],
+      },
+      {
+        label: '上榜条件',
+        items: [
+          '所选周期内至少回收过 1 个普通垃圾。',
+          '排行榜数据由环保行动服务端结算时写入，页面刷新不会凭空增加数量。',
+        ],
+      },
+    ],
+  },
+  {
     title: '幸运抽奖榜',
     tag: '日榜 · 周榜 · 月榜',
     tone: 'amber',
@@ -476,6 +527,7 @@ export default function RankingsPage() {
   const [pointsPeriod, setPointsPeriod] = useState<SimplePeriod>('all');
   const [checkinPeriod, setCheckinPeriod] = useState<SimplePeriod>('all');
   const [lotteryPeriod, setLotteryPeriod] = useState<LotteryPeriod>('daily');
+  const [ecoPeriod, setEcoPeriod] = useState<EcoPeriod>('daily');
   const [peakMonthKey, setPeakMonthKey] = useState<string>('');
 
   const [gamesData, setGamesData] = useState<GamesRankingData | null>(null);
@@ -483,6 +535,7 @@ export default function RankingsPage() {
   const [checkinData, setCheckinData] = useState<CheckinRankingData | null>(null);
   const [historyData, setHistoryData] = useState<MonthlyPeakHistoryData | null>(null);
   const [lotteryData, setLotteryData] = useState<LotteryRankingData | null>(null);
+  const [ecoData, setEcoData] = useState<EcoRankingData | null>(null);
 
   const [now, setNow] = useState<Date>(() => new Date());
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -535,22 +588,24 @@ export default function RankingsPage() {
         }
         setMe(meData.user as AuthMeUser);
 
-        const [gamesRes, pointsRes, checkinRes, historyRes, profileRes, lotteryRes] = await Promise.all([
+        const [gamesRes, pointsRes, checkinRes, historyRes, profileRes, lotteryRes, ecoRes] = await Promise.all([
           fetch(`/api/rankings/games?period=${gamePeriod}&limit=10`),
           fetch(`/api/rankings/points?period=${pointsPeriod}&limit=10`),
           fetch(`/api/rankings/checkin-streak?period=${checkinPeriod}&limit=10`),
           fetch('/api/rankings/history?mode=monthly-peaks&months=12&limit=10'),
           fetch('/api/profile/settings', { cache: 'no-store' }),
           fetch(`/api/rankings/lottery?period=${lotteryPeriod}&limit=10`),
+          fetch(`/api/rankings/eco?period=${ecoPeriod}&limit=10`),
         ]);
 
-        const [gamesJson, pointsJson, checkinJson, historyJson, profileJson, lotteryJson] = await Promise.all([
+        const [gamesJson, pointsJson, checkinJson, historyJson, profileJson, lotteryJson, ecoJson] = await Promise.all([
           gamesRes.json(),
           pointsRes.json(),
           checkinRes.json(),
           historyRes.json(),
           profileRes.json().catch(() => ({ success: false })),
           lotteryRes.json().catch(() => ({ success: false })),
+          ecoRes.json().catch(() => ({ success: false })),
         ]);
 
         if (!gamesRes.ok || !gamesJson.success) {
@@ -577,6 +632,12 @@ export default function RankingsPage() {
         } else {
           setLotteryData(null);
         }
+        // 环保榜：失败时置空，不阻断其他排行榜
+        if (ecoRes.ok && ecoJson?.success) {
+          setEcoData(ecoJson.data as EcoRankingData);
+        } else {
+          setEcoData(null);
+        }
         // profile/settings 失败时不阻断排行榜展示，仅退化为账号默认昵称/首字母
         if (profileRes.ok && profileJson?.success && profileJson.data) {
           setMyProfile({
@@ -594,7 +655,7 @@ export default function RankingsPage() {
         setRefreshing(false);
       }
     },
-    [router, gamePeriod, pointsPeriod, checkinPeriod, lotteryPeriod]
+    [router, gamePeriod, pointsPeriod, checkinPeriod, lotteryPeriod, ecoPeriod]
   );
 
   useEffect(() => {
@@ -1283,6 +1344,68 @@ export default function RankingsPage() {
             </div>
           ) : (
             <div className="rk-empty">暂无签到榜数据</div>
+          )}
+        </section>
+
+        {/* 环保排行榜 */}
+        <section className="panel-card">
+          <div className="panel-card-header">
+            <h3 className="panel-card-title t-green">
+              <span className="icon-box">
+                <Recycle />
+              </span>
+              环保排行榜
+              <span className="badge">{ecoData?.totalParticipants ?? 0} 人参与</span>
+            </h3>
+            <div className="lb-select">
+              <select
+                value={ecoPeriod}
+                onChange={(e) => setEcoPeriod(e.target.value as EcoPeriod)}
+                aria-label="切换环保榜周期"
+              >
+                <option value="daily">日榜</option>
+                <option value="weekly">周榜</option>
+                <option value="monthly">月榜</option>
+              </select>
+            </div>
+          </div>
+
+          {ecoData?.leaderboard.length ? (
+            <div className="lb-list">
+              {ecoData.leaderboard.map((entry) => {
+                const isMe = me?.id === entry.userId;
+                const rankClass = entry.rank <= 3 ? `r-${entry.rank}` : '';
+                const rowClass = entry.rank <= 3 ? `r${entry.rank}` : '';
+                const avatarVariant = `a-${getAvatarVariant(entry.userId, AVATAR_VARIANT_COUNT)}`;
+                const medal = entry.rank === 1 ? '🏆' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : null;
+                const name = resolveDisplayName(entry);
+                return (
+                  <div
+                    key={`eco-${entry.userId}`}
+                    className={`lb-row ${rowClass} ${isMe ? 'me' : ''}`}
+                  >
+                    {isMe && <span className="me-tag">我</span>}
+                    <div className={`lb-rank ${rankClass}`}>
+                      {medal ? <span className="lb-rank-medal">{medal}</span> : <span className="lb-rank-num">{entry.rank}</span>}
+                    </div>
+                    <div className={`lb-avatar ${avatarVariant}`}>{renderAvatarContent(entry)}</div>
+                    <div className="lb-info">
+                      <div className="lb-name">{name}</div>
+                      <div className="lb-meta">
+                        <span>用户 ID #{entry.userId}</span>
+                        <AchievementPill achievement={entry.equippedAchievement} compact />
+                      </div>
+                    </div>
+                    <div className="lb-score-wrap">
+                      <div className="lb-score">{formatNumber(entry.trashCleared)}</div>
+                      <div className="lb-trend flat">垃圾</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rk-empty">暂无环保榜数据</div>
           )}
         </section>
 
@@ -2256,6 +2379,7 @@ export default function RankingsPage() {
         .rk-page .rules-card.tone-purple { --rule-accent: linear-gradient(180deg, #c084fc, #6366f1); --rule-dot: #c084fc; }
         .rk-page .rules-card.tone-orange { --rule-accent: linear-gradient(180deg, #fb923c, #f59e0b); --rule-dot: #fb923c; }
         .rk-page .rules-card.tone-blue   { --rule-accent: linear-gradient(180deg, #38bdf8, #3b82f6); --rule-dot: #38bdf8; }
+        .rk-page .rules-card.tone-green  { --rule-accent: linear-gradient(180deg, #34d399, #10b981); --rule-dot: #34d399; }
         .rk-page .rules-card.tone-amber  { --rule-accent: linear-gradient(180deg, #fde047, #f59e0b); --rule-dot: #fde047; }
         .rk-page .rules-card.tone-pink   { --rule-accent: linear-gradient(180deg, #f472b6, #ec4899); --rule-dot: #f472b6; }
 
@@ -3038,6 +3162,7 @@ export default function RankingsPage() {
 
         .rk-page .panel-card-title.t-purple .icon-box { color: var(--c-purple); box-shadow: 0 10px 18px rgba(139, 92, 246, 0.2); }
         .rk-page .panel-card-title.t-blue .icon-box { color: var(--c-blue); box-shadow: 0 10px 18px rgba(59, 130, 246, 0.2); }
+        .rk-page .panel-card-title.t-green .icon-box { color: var(--c-green); box-shadow: 0 10px 18px rgba(16, 185, 129, 0.2); }
         .rk-page .panel-card-title.t-pink .icon-box { color: var(--c-pink); box-shadow: 0 10px 18px rgba(236, 72, 153, 0.2); }
         .rk-page .panel-card-title.t-orange .icon-box { color: var(--c-orange); box-shadow: 0 10px 18px rgba(249, 115, 22, 0.2); }
         .rk-page .panel-card-title.t-amber .icon-box { color: var(--c-amber); box-shadow: 0 10px 18px rgba(251, 191, 36, 0.25); }
