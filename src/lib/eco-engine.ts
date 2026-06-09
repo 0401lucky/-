@@ -64,7 +64,7 @@ export const ECO_PRIZES: Record<EcoPrizeKey, PrizeDef> = {
     name: '钻石',
     emoji: '💎',
     imageSrc: '/images-optimized/ui/games/eco/prizes/diamond.webp?v=1',
-    spawnRate: 0.0005,
+    spawnRate: 0.00005,
     minPrice: 1000,
     maxPrice: 15000,
   },
@@ -72,7 +72,7 @@ export const ECO_PRIZES: Record<EcoPrizeKey, PrizeDef> = {
     name: '金币',
     emoji: '🪙',
     imageSrc: '/images-optimized/ui/games/eco/prizes/coin.webp?v=1',
-    spawnRate: 0.001,
+    spawnRate: 0.0001,
     minPrice: 1000,
     maxPrice: 9000,
   },
@@ -80,7 +80,7 @@ export const ECO_PRIZES: Record<EcoPrizeKey, PrizeDef> = {
     name: '项链',
     emoji: '📿',
     imageSrc: '/images-optimized/ui/games/eco/prizes/necklace.webp?v=1',
-    spawnRate: 0.003,
+    spawnRate: 0.0003,
     minPrice: 1000,
     maxPrice: 7000,
   },
@@ -88,7 +88,7 @@ export const ECO_PRIZES: Record<EcoPrizeKey, PrizeDef> = {
     name: '奖杯',
     emoji: '🏆',
     imageSrc: '/images-optimized/ui/games/eco/prizes/trophy.webp?v=1',
-    spawnRate: 0.005,
+    spawnRate: 0.0005,
     minPrice: 500,
     maxPrice: 5000,
   },
@@ -96,7 +96,7 @@ export const ECO_PRIZES: Record<EcoPrizeKey, PrizeDef> = {
     name: '照片',
     emoji: '🖼️',
     imageSrc: '/images-optimized/ui/games/eco/prizes/photo.webp?v=1',
-    spawnRate: 0.0001,
+    spawnRate: 0.00001,
     minPrice: 5000,
     maxPrice: 50000,
   },
@@ -108,7 +108,7 @@ export const ECO_BASE_PRIZE_RATE = ECO_PRIZE_KEYS.reduce(
   0,
 );
 export const ECO_NORMAL_SINGLE_PRIZE_RATE = 1;
-export const ECO_LUCKY_PRIZE_RATE = 1.5;
+export const ECO_LUCKY_PRIZE_RATE = 10;
 export const LUCKY_FLASHLIGHT_GENERATIONS = 200;
 export const RECYCLE_GLOVE_USES = 50;
 export const CLEAR_TRUCK_TRASH = 80;
@@ -188,7 +188,7 @@ export const ECO_ITEMS: Record<EcoItemKey, ItemDef> = {
   lucky_flashlight: {
     name: '幸运手电',
     emoji: '🔦',
-    desc: `接下来 ${LUCKY_FLASHLIGHT_GENERATIONS} 个在线生成物，奖品出现概率提高 50%`,
+    desc: `接下来 ${LUCKY_FLASHLIGHT_GENERATIONS} 个在线生成物，上述奖品出现概率变为 10 倍`,
     cost: 20,
     dailyLimit: 1,
   },

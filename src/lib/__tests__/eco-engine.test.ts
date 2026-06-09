@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ECO_ITEM_KEYS,
+  ECO_LUCKY_PRIZE_RATE,
   ECO_PRIZE_TTL_MS,
   ECO_PRIZES,
   ECO_PRIZE_KEYS,
@@ -30,11 +31,11 @@ describe('eco engine rules', () => {
   });
 
   it('rolls each prize independently with rare prize rates', () => {
-    expect(ECO_PRIZES.trophy.spawnRate).toBe(0.005);
-    expect(ECO_PRIZES.necklace.spawnRate).toBe(0.003);
-    expect(ECO_PRIZES.coin.spawnRate).toBe(0.001);
-    expect(ECO_PRIZES.diamond.spawnRate).toBe(0.0005);
-    expect(ECO_PRIZES.photo.spawnRate).toBe(0.0001);
+    expect(ECO_PRIZES.trophy.spawnRate).toBe(0.0005);
+    expect(ECO_PRIZES.necklace.spawnRate).toBe(0.0003);
+    expect(ECO_PRIZES.coin.spawnRate).toBe(0.0001);
+    expect(ECO_PRIZES.diamond.spawnRate).toBe(0.00005);
+    expect(ECO_PRIZES.photo.spawnRate).toBe(0.00001);
 
     expect(rollEcoPrizes(() => 0)).toEqual([
       'diamond',
@@ -43,14 +44,21 @@ describe('eco engine rules', () => {
       'trophy',
       'photo',
     ]);
-    expect(rollEcoPrizes(() => 0.005)).toEqual([]);
+    expect(rollEcoPrizes(() => 0.0005)).toEqual([]);
     expect(rollEcoPrize(() => 0)).toBe('diamond');
   });
 
   it('rolls one generated item as either a prize or normal trash', () => {
     expect(rollEcoGeneratedPrize(() => 0)).toBe('diamond');
-    expect(rollEcoGeneratedPrize(() => 0.0005)).toBe('coin');
-    expect(rollEcoGeneratedPrize(() => 0.0097)).toBeNull();
+    expect(rollEcoGeneratedPrize(() => 0.00005)).toBe('coin');
+    expect(rollEcoGeneratedPrize(() => 0.00097)).toBeNull();
+  });
+
+  it('boosts generated prize rates by 10x for lucky flashlight', () => {
+    expect(ECO_LUCKY_PRIZE_RATE).toBe(10);
+    expect(ECO_PRIZES.trophy.spawnRate * ECO_LUCKY_PRIZE_RATE).toBe(0.005);
+    expect(rollEcoGeneratedPrize(() => 0.005)).toBeNull();
+    expect(rollEcoGeneratedPrize(() => 0.005, ECO_LUCKY_PRIZE_RATE)).toBe('trophy');
   });
 
   it('uses the same generation slot for either prize or trash', () => {

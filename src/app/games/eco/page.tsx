@@ -904,7 +904,7 @@ export default function EcoPage() {
                 <span className="rule-icon">💎</span>
                 <div>
                   <h3>奖品概率</h3>
-                  <p>奖杯 0.5%，项链 0.3%，金币 0.1%，钻石 0.05%，照片 0.01%。幸运手电会提高后续在线生成奖品的概率。</p>
+                  <p>奖杯 0.05%，项链 0.03%，金币 0.01%，钻石 0.005%，照片 0.001%。幸运手电会让这些奖品的出现概率变为 10 倍。</p>
                 </div>
               </article>
               <article className="rule-card">
@@ -925,7 +925,7 @@ export default function EcoPage() {
                 <span className="rule-icon">🧤</span>
                 <div>
                   <h3>一次性道具</h3>
-                  <p>清运车补充普通垃圾但不生成奖品；回收手套让后续拖拽额外回收；幸运手电提高后续在线生成奖品概率。</p>
+                  <p>清运车补充普通垃圾但不生成奖品；回收手套让后续拖拽额外回收；幸运手电让后续在线生成上述奖品的概率变为 10 倍。</p>
                 </div>
               </article>
             </div>
