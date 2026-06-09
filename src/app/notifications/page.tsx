@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowRight,
@@ -62,6 +62,7 @@ interface Pagination {
 }
 
 type FilterKey = 'all' | 'unread' | 'prize' | 'reply' | 'system' | 'redeem';
+type FilterCounts = Record<FilterKey, number>;
 
 const FILTERS: Array<{ key: FilterKey; label: string }> = [
   { key: 'all', label: '全部' },
@@ -71,6 +72,15 @@ const FILTERS: Array<{ key: FilterKey; label: string }> = [
   { key: 'system', label: '系统公告' },
   { key: 'redeem', label: '福利兑换' },
 ];
+
+const EMPTY_FILTER_COUNTS: FilterCounts = {
+  all: 0,
+  unread: 0,
+  prize: 0,
+  reply: 0,
+  system: 0,
+  redeem: 0,
+};
 
 const TYPE_LABEL: Record<NotificationType, string> = {
   system: '系统公告',
@@ -122,6 +132,31 @@ function formatTime(timestamp: number) {
   });
 }
 
+function toCount(value: unknown): number {
+  const count = Number(value);
+  return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+}
+
+function normalizeFilterCounts(
+  value: unknown,
+  fallbackAll: number,
+  fallbackUnread: number
+): FilterCounts {
+  const raw =
+    value && typeof value === 'object'
+      ? (value as Partial<Record<FilterKey, unknown>>)
+      : {};
+
+  return {
+    all: toCount(raw.all ?? fallbackAll),
+    unread: toCount(raw.unread ?? fallbackUnread),
+    prize: toCount(raw.prize),
+    reply: toCount(raw.reply),
+    system: toCount(raw.system),
+    redeem: toCount(raw.redeem),
+  };
+}
+
 export default function NotificationsPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -130,6 +165,7 @@ export default function NotificationsPage() {
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [pagination, setPagination] = useState<Pagination | null>(null);
+  const [filterCounts, setFilterCounts] = useState<FilterCounts>(EMPTY_FILTER_COUNTS);
   const [page, setPage] = useState(1);
   const [filter, setFilter] = useState<FilterKey>('all');
   const [selectedItem, setSelectedItem] = useState<NotificationItem | null>(null);
@@ -141,7 +177,7 @@ export default function NotificationsPage() {
   const PAGE_SIZE = 5;
 
   const fetchNotifications = useCallback(
-    async (targetPage = 1, silent = false) => {
+    async (targetPage = 1, silent = false, targetFilter = filter) => {
       if (silent) {
         setRefreshing(true);
       } else {
@@ -161,7 +197,12 @@ export default function NotificationsPage() {
           return;
         }
 
-        const res = await fetch(`/api/notifications?page=${targetPage}&limit=${PAGE_SIZE}`, {
+        const params = new URLSearchParams({
+          page: String(targetPage),
+          limit: String(PAGE_SIZE),
+          filter: targetFilter,
+        });
+        const res = await fetch(`/api/notifications?${params.toString()}`, {
           cache: 'no-store',
         });
         const data = await res.json();
@@ -169,10 +210,21 @@ export default function NotificationsPage() {
           throw new Error(data.message || '获取通知失败');
         }
 
-        setItems(Array.isArray(data.data?.items) ? data.data.items : []);
-        setUnreadCount(Number(data.data?.unreadCount) || 0);
-        setPagination(data.data?.pagination ?? null);
-        setPage(targetPage);
+        const nextItems = Array.isArray(data.data?.items) ? data.data.items : [];
+        const nextUnreadCount = Number(data.data?.unreadCount) || 0;
+        const nextPagination = data.data?.pagination ?? null;
+
+        setItems(nextItems);
+        setUnreadCount(nextUnreadCount);
+        setPagination(nextPagination);
+        setFilterCounts(
+          normalizeFilterCounts(
+            data.data?.counts,
+            targetFilter === 'all' ? nextPagination?.total ?? nextItems.length : nextItems.length,
+            nextUnreadCount
+          )
+        );
+        setPage(Number(nextPagination?.page) || targetPage);
       } catch (err) {
         setError(err instanceof Error ? err.message : '获取通知失败');
       } finally {
@@ -180,7 +232,7 @@ export default function NotificationsPage() {
         setRefreshing(false);
       }
     },
-    [router]
+    [filter, router]
   );
 
   useEffect(() => {
@@ -290,11 +342,7 @@ export default function NotificationsPage() {
     void fetchNotifications(next, true);
   };
 
-  const visibleItems = useMemo(() => {
-    if (filter === 'all') return items;
-    if (filter === 'unread') return items.filter((it) => !it.isRead);
-    return items.filter((it) => getCategory(it.type) === filter);
-  }, [items, filter]);
+  const visibleItems = items;
 
   const renderClaimButton = (item: NotificationItem) => {
     if (item.type !== 'reward' || !item.data) return null;
@@ -409,18 +457,18 @@ export default function NotificationsPage() {
           {/* 筛选 */}
           <div className="nc-filters">
             {FILTERS.map((f) => {
-              const count =
-                f.key === 'all'
-                  ? pagination?.total ?? items.length
-                  : f.key === 'unread'
-                    ? unreadCount
-                    : items.filter((it) => getCategory(it.type) === f.key).length;
+              const count = filterCounts[f.key];
               return (
                 <button
                   key={f.key}
                   type="button"
                   className={`filter-tab ${filter === f.key ? 'active' : ''}`}
-                  onClick={() => setFilter(f.key)}
+                  onClick={() => {
+                    if (filter === f.key) return;
+                    setSelectedItem(null);
+                    setPage(1);
+                    setFilter(f.key);
+                  }}
                 >
                   {f.label}
                   <span className="count">{count}</span>

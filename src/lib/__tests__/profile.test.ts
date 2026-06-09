@@ -12,6 +12,7 @@ import { getMinesweeperRecords } from '../minesweeper';
 import { getRogueliteRecords } from '../roguelite';
 import { getWhackMoleRecords } from '../whack-mole';
 import { getUserLotteryRecords } from '../lottery';
+import { getEcoProgressSummary } from '../eco';
 
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
@@ -77,6 +78,10 @@ vi.mock('../lottery', () => ({
   getUserLotteryRecords: vi.fn(),
 }));
 
+vi.mock('../eco', () => ({
+  getEcoProgressSummary: vi.fn(),
+}));
+
 describe('profile overview', () => {
   const mockKvLrange = vi.mocked(kv.lrange);
   const mockKvGet = vi.mocked(kv.get);
@@ -95,6 +100,7 @@ describe('profile overview', () => {
   const mockGetRogueliteRecords = vi.mocked(getRogueliteRecords);
   const mockGetWhackMoleRecords = vi.mocked(getWhackMoleRecords);
   const mockGetUserLotteryRecords = vi.mocked(getUserLotteryRecords);
+  const mockGetEcoProgressSummary = vi.mocked(getEcoProgressSummary);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -110,6 +116,7 @@ describe('profile overview', () => {
     mockGetRogueliteRecords.mockResolvedValue([]);
     mockGetWhackMoleRecords.mockResolvedValue([]);
     mockGetUserLotteryRecords.mockResolvedValue([]);
+    mockGetEcoProgressSummary.mockResolvedValue(null);
     mockGetUserCardData.mockResolvedValue({
       inventory: ['animal-s1-common-仓鼠', 'animal-s1-rare-柴犬'],
       fragments: 30,
@@ -136,6 +143,14 @@ describe('profile overview', () => {
         total: 1,
         totalPages: 1,
         hasMore: false,
+      },
+      counts: {
+        all: 1,
+        unread: 1,
+        prize: 0,
+        reply: 0,
+        system: 1,
+        redeem: 0,
       },
       items: [
         {
@@ -184,6 +199,9 @@ describe('profile overview', () => {
       farmUnlockedLands: 0,
       lotteryOrangeCount: 0,
       lotteryHeartCount: 0,
+      ecoLifetimeCleared: 0,
+      ecoLifetimePrizeClaims: 0,
+      ecoLifetimePhotoClaims: 0,
     });
     expect(overview.achievements.items.some((item) => item.name === '连签 7 天' && item.unlocked)).toBe(true);
     expect(overview.gameplay.recentRecords[0]).toMatchObject({

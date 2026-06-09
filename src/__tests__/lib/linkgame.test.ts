@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   LINKGAME_TILE_IDS,
+  LINKGAME_TILE_IMAGE_PATHS,
   LINKGAME_DIFFICULTY_CONFIG,
   LINKGAME_TILE_TYPE_COUNT,
   LINKGAME_POINT_REWARD_PERCENT,
@@ -49,6 +50,12 @@ describe('linkgame', () => {
   describe('LINKGAME_TILE_IDS', () => {
     it('should have enough tile IDs for sparse hard boards', () => {
       expect(LINKGAME_TILE_IDS.length).toBeGreaterThanOrEqual(24);
+    });
+
+    it('should map new tile IDs and legacy emoji tiles to fruit images', () => {
+      expect(LINKGAME_TILE_IMAGE_PATHS['red-apple']).toBe('/images-optimized/ui/games/linkgame/fruits/red-apple.webp?v=webp-20260607-v1');
+      expect(LINKGAME_TILE_IMAGE_PATHS['🍎']).toBe('/images-optimized/ui/games/linkgame/fruits/red-apple.webp?v=webp-20260607-v1');
+      expect(LINKGAME_TILE_IMAGE_PATHS['🥕']).toBe('/images-optimized/ui/games/linkgame/fruits/raspberry.webp?v=webp-20260607-v1');
     });
   });
 

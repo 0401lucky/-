@@ -31,6 +31,10 @@ interface GamePageShellProps {
   hero?: ReactNode;
   /** 错误提示（显示在 hero 与主体之间） */
   error?: string | null;
+  /** 顶栏返回按钮目标（默认游戏中心） */
+  backHref?: string;
+  /** 顶栏返回按钮文案（默认"返回游戏中心"） */
+  backLabel?: string;
   /** 主体内容（gameplay 区域） */
   children: ReactNode;
 }
@@ -47,6 +51,8 @@ export default function GamePageShell({
   balance,
   hero,
   error,
+  backHref = '/games',
+  backLabel = '返回游戏中心',
   children,
 }: GamePageShellProps) {
   const [user, setUser] = useState<UserInfo | null>(null);
@@ -94,7 +100,7 @@ export default function GamePageShell({
           {brandTitle}
         </div>
         <div className="topbar-right">
-          <Link href="/games" className="btn-icon" aria-label="返回游戏中心" title="返回游戏中心">
+          <Link href={backHref} className="btn-icon" aria-label={backLabel} title={backLabel}>
             <Home size={16} strokeWidth={2} />
           </Link>
           <Link href="/profile" className="user-profile" aria-label="查看个人主页">

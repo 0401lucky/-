@@ -14,6 +14,7 @@ import { getWhackMoleDifficultyConfig, normalizeWhackMoleDifficulty } from './wh
 import { getRogueliteRecords } from './roguelite';
 import { getLinkGameRecords } from './linkgame-server';
 import { getUserLotteryRecords } from './lottery';
+import { getEcoProgressSummary } from './eco';
 import { FARM_V2_STATE_KEY } from './farm-v2/steal';
 import { MAX_LAND_COUNT } from './farm-v2/config';
 import type { FarmStateV2 } from './types/farm-v2';
@@ -207,16 +208,20 @@ async function getLotteryAchievementCounts(
 }
 
 async function getAchievementStats(userId: number): Promise<ProfileAchievementStats> {
-  const [gameStats, farmUnlockedLands, lotteryCounts] = await Promise.all([
+  const [gameStats, farmUnlockedLands, lotteryCounts, ecoSummary] = await Promise.all([
     getGameWinAchievementStats(userId),
     getFarmUnlockedLandCount(userId),
     getLotteryAchievementCounts(userId),
+    getEcoProgressSummary(userId),
   ]);
 
   return {
     ...gameStats,
     farmUnlockedLands,
     ...lotteryCounts,
+    ecoLifetimeCleared: ecoSummary?.lifetimeCleared ?? 0,
+    ecoLifetimePrizeClaims: ecoSummary?.lifetimePrizeClaims ?? 0,
+    ecoLifetimePhotoClaims: ecoSummary?.lifetimePhotoClaims ?? 0,
   };
 }
 

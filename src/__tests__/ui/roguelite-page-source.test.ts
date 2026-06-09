@@ -22,6 +22,7 @@ describe('roguelite page wiring', () => {
     expect(source).toContain('shouldRefreshRogueliteStatusAfterStepError');
     expect(source).toContain("message.includes('HTTP 503')");
     expect(source).toContain("message.includes('当前事件尚未处理完成')");
+    expect(source).toContain("message.includes('行动次数过多')");
     expect(source).toContain('data?.data?.session');
     expect(source).toContain('void fetchStatus();');
     expect(source).toContain('已同步迷阵状态，请先处理当前事件');

@@ -41,6 +41,15 @@ yarn-error.log*
 
 # local visual verification screenshots
 /*.png
+/*.jpg
+
+# local image cutout / compression candidates
+/tmp/
+/scripts/optimize-eco-assets.mjs
+/public/images-optimized/ui/games/covers/eco.webp
+/public/images-optimized/ui/games/mascots/eco.webp
+/public/images-optimized/ui/games/eco/prizes/*.png
+/public/images-optimized/ui/games/linkgame/fruits/*.png
 
 # duplicate local assets (kept in public/images)
 /images/

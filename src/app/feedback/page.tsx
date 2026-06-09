@@ -894,7 +894,7 @@ export default function FeedbackPage() {
       <div className="feedback-layout">
         <SiteSidebar activeNav="feedback" />
 
-        <main className="feedback-panel-right">
+        <main className={`feedback-panel-right ${viewMode === 'wall' ? 'is-wall-mode' : ''}`}>
           <div className="feedback-header">
             <div>
               <h2 className="feedback-section-title">
@@ -1201,7 +1201,7 @@ export default function FeedbackPage() {
           )}
 
           {viewMode === 'wall' && (
-            <section className="feedback-wall-view">
+            <>
               <div className="feedback-wall-toolbar">
                 <div className="feedback-filters">
                   {[
@@ -1224,6 +1224,7 @@ export default function FeedbackPage() {
                 {renderFeedbackPagination('feedback-pagination-toolbar')}
               </div>
 
+              <section className="feedback-wall-view">
               <div className="feedback-list">
                 {listLoading ? (
                   <div className="feedback-empty">
@@ -1317,7 +1318,8 @@ export default function FeedbackPage() {
 
                 {renderFeedbackPagination()}
               </div>
-            </section>
+              </section>
+            </>
           )}
         </main>
       </div>
@@ -1539,6 +1541,11 @@ export default function FeedbackPage() {
           overflow-x: hidden;
           -webkit-overflow-scrolling: touch;
           scrollbar-gutter: stable;
+          position: relative;
+        }
+
+        .feedback-panel-right.is-wall-mode {
+          overflow: hidden;
         }
 
         .feedback-header {
@@ -1900,18 +1907,37 @@ export default function FeedbackPage() {
           flex-direction: column;
           gap: 16px;
           min-height: 0;
+          overflow: visible;
+        }
+
+        .feedback-panel-right.is-wall-mode .feedback-wall-view {
+          flex: 1;
+          overflow: hidden;
         }
 
         .feedback-wall-toolbar {
           position: sticky;
           top: 0;
-          z-index: 6;
+          z-index: 30;
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 12px;
-          padding: 10px 0 12px;
+          margin: -10px 0 0;
+          padding: 12px;
+          border: 1px solid transparent;
+          border-radius: 24px;
           background: transparent;
+          box-shadow: none;
+          backdrop-filter: none;
+          -webkit-backdrop-filter: none;
+          transform: translateZ(0);
+        }
+
+        .feedback-panel-right.is-wall-mode .feedback-wall-toolbar {
+          position: relative;
+          top: auto;
+          flex-shrink: 0;
         }
 
         .feedback-filters {
@@ -1946,6 +1972,16 @@ export default function FeedbackPage() {
           flex-direction: column;
           gap: 20px;
           width: 100%;
+        }
+
+        .feedback-panel-right.is-wall-mode .feedback-list {
+          flex: 1;
+          min-height: 0;
+          overflow-x: hidden;
+          overflow-y: auto;
+          padding-right: 6px;
+          -webkit-overflow-scrolling: touch;
+          scrollbar-gutter: stable;
         }
 
         .feedback-empty {
@@ -2450,16 +2486,15 @@ export default function FeedbackPage() {
 
         @media (max-width: 640px) {
           .feedback-wall-page {
-            height: auto;
+            height: 100dvh;
             min-height: 100dvh;
-            overflow-x: hidden;
-            overflow-y: auto;
+            overflow: hidden;
           }
 
           .feedback-layout {
-            height: auto;
-            min-height: 100dvh;
-            overflow: visible;
+            height: 100dvh;
+            min-height: 0;
+            overflow: hidden;
           }
 
           .feedback-panel-left { padding: 1.5rem 1.5rem 0; }
@@ -2467,7 +2502,14 @@ export default function FeedbackPage() {
           .feedback-panel-right {
             padding: 0.875rem 1rem max(3rem, calc(2rem + env(safe-area-inset-bottom)));
             gap: 14px;
-            overflow: visible;
+            min-height: 0;
+            overflow-x: hidden;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+          }
+          .feedback-wall-toolbar {
+            margin-top: -4px;
+            border-radius: 20px;
           }
           .feedback-hero-title { font-size: 32px; line-height: 1.2; }
           .feedback-header {
