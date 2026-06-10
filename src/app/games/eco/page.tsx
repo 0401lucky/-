@@ -24,6 +24,10 @@ import type {
   EcoVisiblePrizeView,
 } from '@/lib/types/eco';
 import type { PublicAchievement } from '@/lib/profile-achievements';
+import {
+  LUCKY_FLASHLIGHT_GENERATIONS,
+  RECYCLE_GLOVE_USES,
+} from '@/lib/eco-engine';
 
 // 5 种垃圾外观
 const TRASH_KINDS = ['bottle', 'can', 'glass', 'paper', 'banana'] as const;
@@ -43,6 +47,7 @@ const SYNC_INTERVAL_MS = 12_000;
 const GROW_INTERVAL_MS = 1_000;
 const FLUSH_DEBOUNCE_MS = 650;
 const FLUSH_THRESHOLD = 8;
+const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 interface TrashBoardItem {
   id: string;
@@ -146,6 +151,20 @@ function buildSmoothLine(pts: { x: number; y: number }[]): string {
     );
   }
   return d.join(' ');
+}
+
+function getMsUntilNextChinaMidnight(serverNow: number): number {
+  const chinaNow = new Date(serverNow + CHINA_TZ_OFFSET_MS);
+  const nextChinaMidnight = new Date(chinaNow);
+  nextChinaMidnight.setUTCDate(chinaNow.getUTCDate() + 1);
+  nextChinaMidnight.setUTCHours(0, 0, 0, 0);
+  const nextMidnightUtc = nextChinaMidnight.getTime() - CHINA_TZ_OFFSET_MS;
+  return Math.max(1000, nextMidnightUtc - serverNow);
+}
+
+function getEffectProgressPercent(remaining: number, baseTotal: number): number {
+  if (remaining <= 0 || baseTotal <= 0) return 0;
+  return Math.min(100, Math.round((remaining / baseTotal) * 100));
 }
 
 function PriceSparkline({ history }: { history: PrizeHistory }) {
@@ -475,6 +494,20 @@ export default function EcoPage() {
     }
   }, [applyStatus, spawnPop]);
 
+  useEffect(() => {
+    if (!status) return;
+    const timer = setTimeout(() => {
+      void (async () => {
+        if (pendingDragsRef.current > 0) {
+          await flushCollect();
+        }
+        await loadStatus(true, true);
+      })();
+    }, getMsUntilNextChinaMidnight(status.serverNow) + 250);
+
+    return () => clearTimeout(timer);
+  }, [flushCollect, loadStatus, status]);
+
   const scheduleFlush = useCallback(() => {
     if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
     if (pendingDragsRef.current >= FLUSH_THRESHOLD) {
@@ -622,6 +655,7 @@ export default function EcoPage() {
 
   const cap = status?.storageCap ?? 0;
   const balance = status?.points;
+  const todayTrashPoints = status?.todayTrashPoints ?? 0;
   const initial = (topUser?.name?.[0] ?? '?').toUpperCase();
   const navAchievement = topUser?.equippedAchievement ?? null;
   const navRoleLabel = topUser?.isAdmin ? '管理员' : '用户';
@@ -641,6 +675,26 @@ export default function EcoPage() {
   const pointProgressHint = pointReadyBatches > 0
     ? `待入账 +${pointReadyBatches * pointMultiplier} 积分`
     : `满 ${pointDivisor} 个 +${pointMultiplier} 积分`;
+  const activeItemEffects = [
+    {
+      key: 'lucky-flashlight',
+      emoji: '🔦',
+      name: '幸运手电',
+      remaining: status?.luckyGenerationsRemaining ?? 0,
+      total: LUCKY_FLASHLIGHT_GENERATIONS,
+      unit: '次生成',
+      tone: 'gold',
+    },
+    {
+      key: 'recycle-glove',
+      emoji: '🧤',
+      name: '回收手套',
+      remaining: status?.gloveUsesRemaining ?? 0,
+      total: RECYCLE_GLOVE_USES,
+      unit: '次拖拽',
+      tone: 'teal',
+    },
+  ].filter((effect) => effect.remaining > 0);
   const prizeCount = status?.prizes.reduce((sum, prize) => sum + prize.inventory, 0) ?? 0;
   const selectedPricePrize = status?.prizes.find((prize) => prize.key === selectedPricePrizeKey) ?? status?.prizes[0] ?? null;
   const SelectedPriceTrendIcon = selectedPricePrize && selectedPricePrize.weekChange >= 0 ? TrendingUp : TrendingDown;
@@ -725,6 +779,14 @@ export default function EcoPage() {
             onPointerCancel={onPointerUp}
           >
             {/* 背景由 scene-bg.webp 提供（天空/云/山/草地都在图里） */}
+
+            <div className="scene-today-points" aria-label={`今日捡垃圾获得 ${todayTrashPoints} 积分`}>
+              <span className="scene-today-points-emoji" aria-hidden>🪙</span>
+              <span className="scene-today-points-copy">
+                <b>{todayTrashPoints}</b>
+                <i>今日捡垃圾</i>
+              </span>
+            </div>
 
             {displayPending <= 0 && board.length === 0 && !drag && (
               <div className="scene-empty">
@@ -813,9 +875,40 @@ export default function EcoPage() {
             </div>
           </div>
 
+          {activeItemEffects.length > 0 && (
+            <div className="effect-progress-list" aria-label="道具剩余进度">
+              {activeItemEffects.map((effect) => {
+                const progressPct = getEffectProgressPercent(effect.remaining, effect.total);
+                const stacked = effect.remaining > effect.total;
+                return (
+                  <div key={effect.key} className={`effect-progress ${effect.tone}`}>
+                    <div className="effect-progress-head">
+                      <span className="effect-progress-name">
+                        <span aria-hidden>{effect.emoji}</span>
+                        {effect.name}
+                      </span>
+                      <b>剩余 {effect.remaining} {effect.unit}</b>
+                    </div>
+                    <div
+                      className="effect-progress-track"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={effect.total}
+                      aria-valuenow={Math.min(effect.remaining, effect.total)}
+                      aria-label={`${effect.name}剩余${effect.remaining}${effect.unit}`}
+                    >
+                      <i style={{ width: `${progressPct}%` }} />
+                    </div>
+                    <em>{stacked ? `已叠加，单份进度 ${effect.total}/${effect.total}` : `${effect.remaining}/${effect.total}`}</em>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <p className="stage-tip">
-            {status?.gloveUsesRemaining
-              ? `回收手套生效中，剩余 ${status.gloveUsesRemaining} 次强化拖拽。奖品只能点击拾取。`
+            {activeItemEffects.length > 0
+              ? '道具生效中，剩余进度见上方。奖品只能点击拾取。'
               : '把垃圾拖进回收桶即可回收，奖品只能点击拾取，10 分钟后会消失。'}
           </p>
         </section>
@@ -1262,6 +1355,60 @@ export default function EcoPage() {
 
         .scene::after { content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 1; background: linear-gradient(180deg, rgba(4,47,46,0.16) 0%, transparent 20%, transparent 74%, rgba(4,47,46,0.14) 100%); }
 
+        .scene-today-points {
+          position: absolute;
+          top: 16px;
+          right: 16px;
+          z-index: 26;
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          min-width: 128px;
+          min-height: 48px;
+          padding: 8px 13px 8px 10px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.82);
+          border: 1px solid rgba(255, 255, 255, 0.92);
+          box-shadow: 0 14px 28px rgba(4, 47, 46, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+          backdrop-filter: blur(14px) saturate(1.2);
+          -webkit-backdrop-filter: blur(14px) saturate(1.2);
+          color: var(--c-900);
+          pointer-events: none;
+        }
+        .scene-today-points-emoji {
+          width: 32px;
+          height: 32px;
+          border-radius: 50%;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          background: linear-gradient(135deg, #fef3c7, #f59e0b);
+          box-shadow: 0 8px 15px rgba(245, 158, 11, 0.28);
+          font-size: 18px;
+          line-height: 1;
+        }
+        .scene-today-points-copy {
+          display: flex;
+          flex-direction: column;
+          min-width: 0;
+          line-height: 1.05;
+        }
+        .scene-today-points-copy b {
+          font-size: 19px;
+          font-weight: 950;
+          font-variant-numeric: tabular-nums;
+          color: var(--c-900);
+        }
+        .scene-today-points-copy i {
+          margin-top: 3px;
+          font-size: 11px;
+          font-style: normal;
+          font-weight: 850;
+          color: var(--c-700);
+          white-space: nowrap;
+        }
+
         .scene-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--c-800); font-weight: 700; font-size: 14px; pointer-events: none; text-shadow: 0 1px 0 rgba(255,255,255,0.5); z-index: 5; }
         .scene-empty-emoji { font-size: 46px; animation: eco-bob 3s ease-in-out infinite; }
         @keyframes eco-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
@@ -1277,6 +1424,17 @@ export default function EcoPage() {
         .scene .trash:active { cursor: grabbing; }
         .scene .trash.is-dragging { z-index: 30; width: 66px; height: 66px; transform: translate(-50%, -50%) rotate(-4deg); filter: drop-shadow(0 18px 22px rgba(4,47,46,0.4)); animation: none; cursor: grabbing; }
         @media (max-width: 720px) {
+          .scene-today-points {
+            top: 10px;
+            right: 10px;
+            min-width: 104px;
+            min-height: 40px;
+            gap: 7px;
+            padding: 6px 10px 6px 7px;
+          }
+          .scene-today-points-emoji { width: 27px; height: 27px; font-size: 15px; }
+          .scene-today-points-copy b { font-size: 16px; }
+          .scene-today-points-copy i { margin-top: 2px; font-size: 10px; }
           .scene .trash { width: 44px; height: 44px; }
           .scene .trash.is-dragging { width: 52px; height: 52px; }
         }
@@ -1343,6 +1501,80 @@ export default function EcoPage() {
         .bag-num i { font-style: normal; font-size: 12px; font-weight: 700; color: var(--soft); }
         .bag-bar { height: 9px; border-radius: 999px; background: rgba(15,118,110,0.12); overflow: hidden; }
         .bag-bar i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #5eead4, #14b8a6); transition: width 0.4s ease; }
+        .effect-progress-list {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+          margin-top: 12px;
+        }
+        .effect-progress {
+          min-width: 0;
+          padding: 12px 14px;
+          border-radius: 18px;
+          background: rgba(255,255,255,0.9);
+          border: 1px solid rgba(255,255,255,0.9);
+          box-shadow: 0 14px 28px rgba(4,47,46,0.07), inset 0 1px 0 rgba(255,255,255,0.96);
+        }
+        .effect-progress.gold {
+          background: linear-gradient(180deg, rgba(255,251,235,0.94), rgba(254,243,199,0.78));
+          border-color: rgba(253,230,138,0.9);
+        }
+        .effect-progress.teal {
+          background: linear-gradient(180deg, rgba(240,253,250,0.95), rgba(204,251,241,0.76));
+          border-color: rgba(153,246,228,0.9);
+        }
+        .effect-progress-head {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 10px;
+          min-width: 0;
+        }
+        .effect-progress-name {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          min-width: 0;
+          color: var(--c-900);
+          font-size: 13px;
+          font-weight: 900;
+          white-space: nowrap;
+        }
+        .effect-progress-head b {
+          color: var(--c-800);
+          font-size: 12px;
+          font-weight: 900;
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+        }
+        .effect-progress-track {
+          height: 8px;
+          margin-top: 9px;
+          border-radius: 999px;
+          background: rgba(15,118,110,0.12);
+          overflow: hidden;
+        }
+        .effect-progress-track i {
+          display: block;
+          height: 100%;
+          border-radius: inherit;
+          transition: width 0.24s ease;
+        }
+        .effect-progress.gold .effect-progress-track i {
+          background: linear-gradient(90deg, #f59e0b, #fbbf24);
+        }
+        .effect-progress.teal .effect-progress-track i {
+          background: linear-gradient(90deg, #14b8a6, #2dd4bf);
+        }
+        .effect-progress em {
+          display: block;
+          margin-top: 6px;
+          color: var(--soft);
+          font-size: 11px;
+          font-style: normal;
+          font-weight: 800;
+          font-variant-numeric: tabular-nums;
+        }
         .stage-tip { margin: 12px 4px 0; font-size: 13px; font-weight: 600; color: var(--soft); }
 
         /* BUTTON */
@@ -1541,6 +1773,20 @@ export default function EcoPage() {
           .bag-num { font-size: 15px; }
           .bag-num i { font-size: 10.5px; }
           .bag-bar { height: 7px; }
+          .effect-progress-list {
+            grid-template-columns: 1fr;
+            gap: 8px;
+            margin-top: 8px;
+          }
+          .effect-progress {
+            padding: 10px 11px;
+            border-radius: 15px;
+          }
+          .effect-progress-head { gap: 8px; }
+          .effect-progress-name { font-size: 12px; }
+          .effect-progress-head b { font-size: 11px; }
+          .effect-progress-track { height: 7px; margin-top: 7px; }
+          .effect-progress em { margin-top: 5px; font-size: 10.5px; }
           .stage-tip { margin: 7px 2px 0; font-size: 12px; line-height: 1.4; }
           .specs { gap: 8px; }
           .spec { min-height: 54px; gap: 8px; padding: 10px 9px; border-radius: 14px; }

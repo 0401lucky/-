@@ -28,6 +28,13 @@ export type EcoItemPurchaseState = Partial<Record<EcoItemKey, {
   count: number;
 }>>;
 
+export interface EcoDailyTrashPoints {
+  /** 中国时区日期 YYYY-MM-DD */
+  date: string;
+  /** 当天普通垃圾回收获得的积分，不包含奖品出售 */
+  points: number;
+}
+
 export interface EcoVisiblePrize {
   id: string;
   key: EcoPrizeKey;
@@ -61,6 +68,8 @@ export interface EcoState {
   gloveUsesRemaining: number;
   /** 每日道具购买次数 */
   itemPurchases: EcoItemPurchaseState;
+  /** 今日捡垃圾获得积分，按中国时区 0 点切日 */
+  dailyTrashPoints: EcoDailyTrashPoints;
   /** 环保经验（= 生涯有效回收数） */
   exp: number;
   /** 生涯累计回收数 */
@@ -153,6 +162,10 @@ export interface EcoStatusResponse {
   exp: number;
   lifetimeCleared: number;
   lifetimePoints: number;
+  /** 今日普通垃圾回收积分，不包含奖品出售积分 */
+  todayTrashPoints: number;
+  /** 今日积分统计日期，使用中国时区 YYYY-MM-DD */
+  todayTrashPointsDate: string;
   upgrades: EcoUpgradeView[];
   items: EcoItemView[];
   prizes: EcoPrizeView[];

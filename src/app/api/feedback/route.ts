@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
 import {
   createFeedback,
+  getFeedbackFirstMessage,
   getFeedbackLikeState,
+  getFeedbackLatestAdminReply,
+  getFeedbackMessageCount,
   getFeedbackMessages,
   listAllFeedback,
   listUserFeedback,
@@ -29,6 +32,7 @@ const FEEDBACK_STATUSES = new Set<FeedbackStatus>([
 ]);
 
 const MAX_CONTENT_LENGTH = 1000;
+const MAX_TITLE_LENGTH = 80;
 const MAX_CONTACT_LENGTH = 100;
 
 function parsePage(value: string | null): number {
@@ -86,17 +90,21 @@ export async function GET(request: NextRequest) {
       const publicItemsWithAuthor = await attachFeedbackAuthorProfiles(items);
       const wallItems = await Promise.all(
         publicItemsWithAuthor.map(async (item) => {
-          const messages = [...(await getFeedbackMessages(item.id, 20))].reverse();
-          const firstUserMessage = messages.find((message) => message.role === "user") ?? null;
-          const latestAdminReply = [...messages].reverse().find((message) => message.role === "admin") ?? null;
+          const [firstMessage, latestAdminReply, messageCount, likeState] =
+            await Promise.all([
+              getFeedbackFirstMessage(item.id),
+              getFeedbackLatestAdminReply(item.id),
+              getFeedbackMessageCount(item.id),
+              getFeedbackLikeState(item.id, user.id),
+            ]);
 
           return {
             ...item,
             contact: undefined,
-            firstMessage: firstUserMessage,
+            firstMessage,
             latestAdminReply,
-            replyCount: Math.max(0, messages.length - 1),
-            ...(await getFeedbackLikeState(item.id, user.id)),
+            replyCount: Math.max(0, messageCount - 1),
+            ...likeState,
           };
         })
       );
@@ -167,12 +175,15 @@ export async function POST(request: NextRequest) {
     }
 
     const body = (await request.json().catch(() => null)) as {
+      title?: unknown;
       content?: unknown;
       contact?: unknown;
       images?: unknown;
       anonymous?: unknown;
     } | null;
 
+    const title =
+      typeof body?.title === "string" ? body.title.trim() : "";
     const content =
       typeof body?.content === "string" ? body.content.trim() : "";
     const contact =
@@ -210,6 +221,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (title.length > MAX_TITLE_LENGTH) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `反馈标题不能超过 ${MAX_TITLE_LENGTH} 字`,
+        },
+        { status: 400 }
+      );
+    }
+
     if (contact.length > MAX_CONTACT_LENGTH) {
       return NextResponse.json(
         {
@@ -224,6 +245,7 @@ export async function POST(request: NextRequest) {
       user.id,
       user.username,
       content,
+      title || undefined,
       contact || undefined,
       images,
       anonymous

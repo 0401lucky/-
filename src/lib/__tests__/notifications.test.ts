@@ -20,7 +20,9 @@ vi.mock('@/lib/d1-kv', () => ({
     sismember: vi.fn(),
     scard: vi.fn(),
     zscore: vi.fn(),
+    zrem: vi.fn(),
     get: vi.fn(),
+    del: vi.fn(),
     srem: vi.fn(),
     smembers: vi.fn(),
     expire: vi.fn(),
@@ -44,7 +46,9 @@ describe('notifications', () => {
   const mockKvSismember = vi.mocked(kv.sismember);
   const mockKvScard = vi.mocked(kv.scard);
   const mockKvZscore = vi.mocked(kv.zscore);
+  const mockKvZrem = vi.mocked(kv.zrem);
   const mockKvGet = vi.mocked(kv.get);
+  const mockKvDel = vi.mocked(kv.del);
   const mockKvSrem = vi.mocked(kv.srem);
   const mockKvSmembers = vi.mocked(kv.smembers);
   const mockKvExpire = vi.mocked(kv.expire);
@@ -64,7 +68,9 @@ describe('notifications', () => {
     mockKvSismember.mockResolvedValue(0);
     mockKvScard.mockResolvedValue(0);
     mockKvZscore.mockResolvedValue(1);
+    mockKvZrem.mockResolvedValue(1);
     mockKvGet.mockResolvedValue(null);
+    mockKvDel.mockResolvedValue(1);
     mockKvSrem.mockResolvedValue(1);
     mockKvSmembers.mockResolvedValue([]);
     mockKvExpire.mockResolvedValue(1);
@@ -107,6 +113,7 @@ describe('notifications', () => {
     ]);
     mockKvSismember.mockResolvedValue(1);
     mockKvScard.mockResolvedValue(1);
+    mockKvSmembers.mockResolvedValue(['notification_1']);
 
     const listResult = await listUserNotifications(1001, { page: 1, limit: 20 });
 
@@ -171,6 +178,7 @@ describe('notifications', () => {
       },
     ]);
     mockKvScard.mockResolvedValue(2);
+    mockKvSmembers.mockResolvedValue(['n1', 'n2']);
 
     const result = await listUserNotifications(1001, {
       page: 2,
@@ -240,6 +248,78 @@ describe('notifications', () => {
       total: 1,
       totalPages: 1,
       hasMore: false,
+    });
+  });
+
+  it('cleans stale unread ids so unread count matches unread list', async () => {
+    mockKvZrange.mockResolvedValue([]);
+    mockKvSmembers.mockResolvedValue(['missing_notification']);
+    mockKvMget.mockResolvedValue([]);
+    mockKvZscore.mockResolvedValue(null);
+
+    const result = await listUserNotifications(1001, {
+      page: 1,
+      limit: 5,
+      filter: 'unread',
+    });
+
+    expect(result.unreadCount).toBe(0);
+    expect(result.items).toEqual([]);
+    expect(result.counts.unread).toBe(0);
+    expect(mockKvSrem).toHaveBeenCalledWith(
+      'notifications:user:1001:unread',
+      'missing_notification'
+    );
+  });
+
+  it('shows unread notifications even when they are outside the recent index window', async () => {
+    const rows = new Map([
+      [
+        'notifications:item:recent_read',
+        {
+          id: 'recent_read',
+          userId: 1001,
+          type: 'system',
+          title: '近期已读',
+          content: '内容',
+          createdAt: 2000,
+        },
+      ],
+      [
+        'notifications:item:old_unread',
+        {
+          id: 'old_unread',
+          userId: 1001,
+          type: 'reward',
+          title: '旧未读',
+          content: '内容',
+          createdAt: 1000,
+        },
+      ],
+    ]);
+
+    mockKvZrange.mockResolvedValue(['recent_read']);
+    mockKvSmembers.mockResolvedValue(['old_unread']);
+    mockKvMget.mockImplementation(async (...keys: string[]) =>
+      keys.map((key) => rows.get(key) ?? null)
+    );
+
+    const result = await listUserNotifications(1001, {
+      page: 1,
+      limit: 5,
+      filter: 'unread',
+    });
+
+    expect(result.unreadCount).toBe(1);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      id: 'old_unread',
+      isRead: false,
+    });
+    expect(result.pagination).toMatchObject({
+      page: 1,
+      total: 1,
+      totalPages: 1,
     });
   });
 
