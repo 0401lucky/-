@@ -206,11 +206,15 @@ function getFeedbackFallbackTitle(message?: FeedbackMessage | null): string {
     .find(Boolean) || '附件反馈';
 }
 
-function resolveFeedbackTitle(
+function resolveFeedbackCardTitle(
   feedback: FeedbackItem,
   message?: FeedbackMessage | null
-): string {
-  return feedback.title?.trim() || getFeedbackFallbackTitle(message);
+): string | null {
+  const title = feedback.title?.trim();
+  if (title) {
+    return title;
+  }
+  return message?.content?.trim() ? null : getFeedbackFallbackTitle(message);
 }
 
 function FeedbackAuthorAvatar({ feedback }: { feedback: FeedbackItem }) {
@@ -1303,7 +1307,7 @@ export default function FeedbackPage() {
                     feedbackList.map((item) => {
                       const message = item.firstMessage;
                       const reply = item.latestAdminReply;
-                      const displayTitle = resolveFeedbackTitle(item, message);
+                      const displayTitle = resolveFeedbackCardTitle(item, message);
 
                       return (
                         <article
@@ -1330,7 +1334,7 @@ export default function FeedbackPage() {
                           </div>
 
                           <div className="fb-content">
-                            <h3>{displayTitle}</h3>
+                            {displayTitle && <h3>{displayTitle}</h3>}
                             {message?.content && <p>{message.content}</p>}
                             {message?.images && message.images.length > 0 && (
                               <div className="wall-image-grid">

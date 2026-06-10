@@ -375,7 +375,7 @@ export async function getFeedbackFirstMessage(feedbackId: string): Promise<Feedb
 }
 
 export async function getFeedbackLatestAdminReply(feedbackId: string): Promise<FeedbackMessage | null> {
-  const messages = await getAllFeedbackMessages(feedbackId);
+  const messages = await getFeedbackMessages(feedbackId, 50);
   return messages.find((message) => message.role === 'admin') ?? null;
 }
 
