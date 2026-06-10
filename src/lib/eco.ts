@@ -199,6 +199,21 @@ function incrementItemPurchaseCount(state: EcoState, key: EcoItemKey, dateKey: s
   state.itemPurchases[key] = { date: dateKey, count: count + 1 };
 }
 
+function ensureDailyTrashPoints(state: EcoState, dateKey: string): EcoState['dailyTrashPoints'] {
+  if (!state.dailyTrashPoints || state.dailyTrashPoints.date !== dateKey) {
+    state.dailyTrashPoints = { date: dateKey, points: 0 };
+  }
+
+  state.dailyTrashPoints.points = Math.max(0, Math.floor(state.dailyTrashPoints.points));
+  return state.dailyTrashPoints;
+}
+
+function addDailyTrashPoints(state: EcoState, points: number): void {
+  if (points <= 0) return;
+  const record = ensureDailyTrashPoints(state, getTodayDateString());
+  record.points += Math.floor(points);
+}
+
 function getPreviousDateString(dateKey: string): string {
   const date = new Date(`${dateKey}T00:00:00+08:00`);
   return formatChinaDateKey(new Date(date.getTime() - 24 * 60 * 60 * 1000));
@@ -313,6 +328,7 @@ async function creditTrash(
     points = pointsToAward;
     state.points = result.balance;
     state.lifetimePoints += pointsToAward;
+    addDailyTrashPoints(state, pointsToAward);
   }
 
   try {
@@ -446,6 +462,8 @@ async function buildEcoStatus(
   const now = Date.now();
   pruneExpiredVisiblePrizes(state, now);
   const balance = await getUserPoints(state.userId);
+  const todayDateKey = getTodayDateString();
+  const dailyTrashPoints = ensureDailyTrashPoints(state, todayDateKey);
   state.points = balance;
 
   return {
@@ -463,6 +481,8 @@ async function buildEcoStatus(
     exp: state.exp,
     lifetimeCleared: state.lifetimeCleared,
     lifetimePoints: state.lifetimePoints,
+    todayTrashPoints: dailyTrashPoints.points,
+    todayTrashPointsDate: todayDateKey,
     upgrades: summarizeUpgrades(state),
     items: summarizeItems(state, now),
     prizes: await summarizePrizes(state),

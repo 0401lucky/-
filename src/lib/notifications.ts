@@ -113,6 +113,140 @@ function sanitizeText(value: string): string {
   return value.trim().slice(0, 5000);
 }
 
+async function rollbackNotificationWrite(userId: number, notificationId: string): Promise<void> {
+  try {
+    await Promise.all([
+      kv.del(NOTIFICATION_ITEM_KEY(notificationId)),
+      kv.zrem(USER_NOTIFICATION_INDEX_KEY(userId), notificationId),
+      kv.srem(USER_NOTIFICATION_UNREAD_KEY(userId), notificationId),
+    ]);
+  } catch (error) {
+    console.error('Rollback notification write failed', {
+      userId: maskUserId(userId),
+      notificationId,
+      error,
+    });
+  }
+}
+
+async function removeStaleUnreadIds(userId: number, ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+
+  try {
+    await kv.srem(USER_NOTIFICATION_UNREAD_KEY(userId), ...ids);
+  } catch (error) {
+    console.error('Remove stale unread notification ids failed', {
+      userId: maskUserId(userId),
+      count: ids.length,
+      error,
+    });
+  }
+}
+
+async function repairMissingNotificationIndexes(
+  userId: number,
+  items: NotificationItem[]
+): Promise<void> {
+  if (items.length === 0) return;
+
+  try {
+    await kv.zadd(
+      USER_NOTIFICATION_INDEX_KEY(userId),
+      ...items.map((item) => ({
+        score: item.createdAt,
+        member: item.id,
+      }))
+    );
+  } catch (error) {
+    console.error('Repair unread notification indexes failed', {
+      userId: maskUserId(userId),
+      count: items.length,
+      error,
+    });
+  }
+}
+
+async function resolveUserUnreadState(userId: number): Promise<{
+  ids: string[];
+  idSet: Set<string>;
+  items: NotificationItem[];
+  count: number;
+}> {
+  const rawIds = await kv.smembers<string>(USER_NOTIFICATION_UNREAD_KEY(userId));
+  const unreadIds = Array.from(
+    new Set(
+      (rawIds ?? [])
+        .filter((id): id is string => typeof id === 'string')
+        .map((id) => id.trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (unreadIds.length === 0) {
+    return { ids: [], idSet: new Set(), items: [], count: 0 };
+  }
+
+  const [items, indexScores] = await Promise.all([
+    getNotificationsByIds(unreadIds),
+    Promise.all(
+      unreadIds.map((id) => kv.zscore(USER_NOTIFICATION_INDEX_KEY(userId), id))
+    ),
+  ]);
+
+  const itemMap = new Map(items.map((item) => [item.id, item]));
+  const validIds: string[] = [];
+  const validItems: NotificationItem[] = [];
+  const staleIds: string[] = [];
+  const missingIndexItems: NotificationItem[] = [];
+
+  unreadIds.forEach((id, index) => {
+    const item = itemMap.get(id);
+
+    if (!item || item.userId !== userId) {
+      staleIds.push(id);
+      return;
+    }
+
+    validIds.push(id);
+    validItems.push(item);
+
+    if (indexScores[index] === null) {
+      missingIndexItems.push(item);
+    }
+  });
+
+  await Promise.all([
+    removeStaleUnreadIds(userId, staleIds),
+    repairMissingNotificationIndexes(userId, missingIndexItems),
+  ]);
+
+  const sortedItems = [...validItems].sort((a, b) => b.createdAt - a.createdAt);
+  const idSet = new Set(validIds);
+
+  return {
+    ids: validIds,
+    idSet,
+    items: sortedItems,
+    count: validIds.length,
+  };
+}
+
+function mergeNotificationItems(
+  primary: NotificationItem[],
+  extra: NotificationItem[]
+): NotificationItem[] {
+  const map = new Map<string, NotificationItem>();
+
+  for (const item of primary) {
+    map.set(item.id, item);
+  }
+  for (const item of extra) {
+    map.set(item.id, item);
+  }
+
+  return Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
+}
+
 export async function createUserNotification(input: CreateNotificationInput): Promise<NotificationItem> {
   const title = sanitizeText(input.title);
   const content = sanitizeText(input.content);
@@ -137,14 +271,17 @@ export async function createUserNotification(input: CreateNotificationInput): Pr
     createdAt,
   };
 
-  await Promise.all([
-    kv.set(NOTIFICATION_ITEM_KEY(id), item),
-    kv.zadd(USER_NOTIFICATION_INDEX_KEY(input.userId), {
+  try {
+    await kv.set(NOTIFICATION_ITEM_KEY(id), item);
+    await kv.zadd(USER_NOTIFICATION_INDEX_KEY(input.userId), {
       score: createdAt,
       member: id,
-    }),
-    kv.sadd(USER_NOTIFICATION_UNREAD_KEY(input.userId), id),
-  ]);
+    });
+    await kv.sadd(USER_NOTIFICATION_UNREAD_KEY(input.userId), id);
+  } catch (error) {
+    await rollbackNotificationWrite(input.userId, id);
+    throw error;
+  }
 
   return item;
 }
@@ -193,18 +330,19 @@ export async function listUserNotifications(
     { rev: true }
   );
 
-  const itemsAll = await getNotificationsByIds(allIds ?? []);
-  const unreadCount = Number(await kv.scard(USER_NOTIFICATION_UNREAD_KEY(userId))) || 0;
-  const counts = buildFilterCounts(itemsAll, unreadCount);
-  const unreadIds =
-    filter === 'unread'
-      ? new Set((await kv.smembers<string>(USER_NOTIFICATION_UNREAD_KEY(userId))) ?? [])
-      : null;
+  const [itemsAll, unreadState] = await Promise.all([
+    getNotificationsByIds(allIds ?? []),
+    resolveUserUnreadState(userId),
+  ]);
+  const unreadCount = unreadState.count;
+  const countedItems = mergeNotificationItems(itemsAll, unreadState.items);
+  const counts = buildFilterCounts(countedItems, unreadCount);
 
-  let filtered = options.type ? itemsAll.filter((item) => item.type === options.type) : itemsAll;
-  if (filter === 'unread') {
-    filtered = filtered.filter((item) => unreadIds?.has(item.id));
-  } else if (filter !== 'all') {
+  let filtered = filter === 'unread' ? unreadState.items : itemsAll;
+  if (options.type) {
+    filtered = filtered.filter((item) => item.type === options.type);
+  }
+  if (filter !== 'unread' && filter !== 'all') {
     filtered = filtered.filter((item) => getNotificationFilter(item.type) === filter);
   }
 
@@ -214,14 +352,8 @@ export async function listUserNotifications(
   const start = (currentPage - 1) * limit;
   const paged = filtered.slice(start, start + limit);
 
-  const unreadChecks = unreadIds
-    ? paged.map((item) => (unreadIds.has(item.id) ? 1 : 0))
-    : await Promise.all(
-        paged.map((item) => kv.sismember(USER_NOTIFICATION_UNREAD_KEY(userId), item.id))
-      );
-
-  const items = paged.map((item, idx) => {
-    const isUnread = Number(unreadChecks[idx]) === 1;
+  const items = paged.map((item) => {
+    const isUnread = filter === 'unread' || unreadState.idSet.has(item.id);
     return {
       ...item,
       isRead: !isUnread,
@@ -253,12 +385,12 @@ export async function markUserNotificationsRead(
   let targetIds = uniqueIds;
 
   if (params.markAll) {
-    targetIds = await kv.smembers<string>(USER_NOTIFICATION_UNREAD_KEY(userId));
+    const unreadState = await resolveUserUnreadState(userId);
+    targetIds = unreadState.ids;
   }
 
   if (!Array.isArray(targetIds) || targetIds.length === 0) {
-    const unread = await kv.scard(USER_NOTIFICATION_UNREAD_KEY(userId));
-    return { updated: 0, unreadCount: Number(unread) || 0 };
+    return { updated: 0, unreadCount: await getUserNotificationUnreadCount(userId) };
   }
 
   const now = Date.now();
@@ -266,11 +398,19 @@ export async function markUserNotificationsRead(
 
   const updateResults = await Promise.all(
     targetIds.map(async (notificationId) => {
-      const existsInUserIndex = await kv.zscore(USER_NOTIFICATION_INDEX_KEY(userId), notificationId);
-      if (existsInUserIndex === null) return false;
-
       const item = await kv.get<NotificationItem>(NOTIFICATION_ITEM_KEY(notificationId));
-      if (!item) return false;
+      if (!item || item.userId !== userId) {
+        await kv.srem(USER_NOTIFICATION_UNREAD_KEY(userId), notificationId);
+        return false;
+      }
+
+      const existsInUserIndex = await kv.zscore(USER_NOTIFICATION_INDEX_KEY(userId), notificationId);
+      if (existsInUserIndex === null) {
+        await kv.zadd(USER_NOTIFICATION_INDEX_KEY(userId), {
+          score: item.createdAt,
+          member: notificationId,
+        });
+      }
 
       const nextItem: NotificationItem = {
         ...item,
@@ -288,17 +428,15 @@ export async function markUserNotificationsRead(
 
   updated = updateResults.filter(Boolean).length;
 
-  const unread = await kv.scard(USER_NOTIFICATION_UNREAD_KEY(userId));
-
   return {
     updated,
-    unreadCount: Number(unread) || 0,
+    unreadCount: await getUserNotificationUnreadCount(userId),
   };
 }
 
 export async function getUserNotificationUnreadCount(userId: number): Promise<number> {
-  const unread = await kv.scard(USER_NOTIFICATION_UNREAD_KEY(userId));
-  return Number(unread) || 0;
+  const unreadState = await resolveUserUnreadState(userId);
+  return unreadState.count;
 }
 
 export async function deleteUserNotifications(
@@ -315,8 +453,7 @@ export async function deleteUserNotifications(
   );
 
   if (uniqueIds.length === 0) {
-    const unread = await kv.scard(USER_NOTIFICATION_UNREAD_KEY(userId));
-    return { deleted: 0, unreadCount: Number(unread) || 0 };
+    return { deleted: 0, unreadCount: await getUserNotificationUnreadCount(userId) };
   }
 
   const results = await Promise.all(
@@ -341,9 +478,8 @@ export async function deleteUserNotifications(
   );
 
   const deleted = results.filter(Boolean).length;
-  const unread = await kv.scard(USER_NOTIFICATION_UNREAD_KEY(userId));
 
-  return { deleted, unreadCount: Number(unread) || 0 };
+  return { deleted, unreadCount: await getUserNotificationUnreadCount(userId) };
 }
 
 export async function getNotificationById(id: string): Promise<NotificationItem | null> {

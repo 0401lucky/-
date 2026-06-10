@@ -3,7 +3,7 @@ import { getAuthUser } from "@/lib/auth";
 import {
   getFeedbackById,
   getFeedbackLikeState,
-  getFeedbackMessages,
+  getAllFeedbackMessages,
 } from "@/lib/feedback";
 import { attachFeedbackAuthorProfile } from "@/lib/feedback-author";
 
@@ -39,7 +39,7 @@ export async function GET(
       );
     }
 
-    const messages = await getFeedbackMessages(id);
+    const messages = await getAllFeedbackMessages(id);
     const likeState = await getFeedbackLikeState(id, user.id);
     const feedbackWithAuthor = await attachFeedbackAuthorProfile(feedback);
 

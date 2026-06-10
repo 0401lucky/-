@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import {
@@ -25,6 +25,7 @@ import SiteSidebar from '@/components/SiteSidebar';
 import type { PublicAchievement } from '@/lib/profile-achievements';
 
 type FeedbackStatus = 'open' | 'processing' | 'resolved' | 'closed';
+type FeedbackFilterStatus = 'all' | FeedbackStatus;
 type FeedbackRole = 'user' | 'admin';
 
 interface UserData {
@@ -38,6 +39,7 @@ interface FeedbackItem {
   id: string;
   userId: number;
   username: string;
+  title?: string | null;
   displayName?: string | null;
   avatarUrl?: string | null;
   equippedAchievement?: PublicAchievement | null;
@@ -162,8 +164,23 @@ const TARGET_FEEDBACK_IMAGE_BYTES = 384 * 1024;
 const MAX_FEEDBACK_IMAGE_DIMENSION = 1280;
 const MAX_FEEDBACK_SOURCE_IMAGE_BYTES = 8 * 1024 * 1024;
 const COMPRESSIBLE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const MAX_FEEDBACK_TITLE_LENGTH = 80;
 const FEEDBACK_PAGE_SIZE = 5;
 const COMMENT_PAGE_SIZE = 5;
+const FEEDBACK_FILTERS: Array<{ value: FeedbackFilterStatus; label: string }> = [
+  { value: 'all', label: '全部反馈' },
+  { value: 'open', label: '待处理' },
+  { value: 'processing', label: '处理中' },
+  { value: 'resolved', label: '已解决' },
+  { value: 'closed', label: '已关闭' },
+];
+const INITIAL_FEEDBACK_PAGES: Record<FeedbackFilterStatus, number> = {
+  all: 1,
+  open: 1,
+  processing: 1,
+  resolved: 1,
+  closed: 1,
+};
 
 function formatFeedbackTime(timestamp: number): string {
   const diff = Date.now() - timestamp;
@@ -180,6 +197,20 @@ function formatFeedbackTime(timestamp: number): string {
 
 function resolveFeedbackAuthorName(feedback: FeedbackItem): string {
   return feedback.displayName?.trim() || feedback.username || '用户';
+}
+
+function getFeedbackFallbackTitle(message?: FeedbackMessage | null): string {
+  return message?.content
+    ?.split('\n')
+    .map((line) => line.trim())
+    .find(Boolean) || '附件反馈';
+}
+
+function resolveFeedbackTitle(
+  feedback: FeedbackItem,
+  message?: FeedbackMessage | null
+): string {
+  return feedback.title?.trim() || getFeedbackFallbackTitle(message);
 }
 
 function FeedbackAuthorAvatar({ feedback }: { feedback: FeedbackItem }) {
@@ -324,7 +355,7 @@ export default function FeedbackPage() {
   const [listHasMore, setListHasMore] = useState(false);
   const [listTotal, setListTotal] = useState(0);
   const [listTotalPages, setListTotalPages] = useState(1);
-  const [filterStatus, setFilterStatus] = useState<'all' | FeedbackStatus>('all');
+  const [filterStatus, setFilterStatus] = useState<FeedbackFilterStatus>('all');
   const [viewMode, setViewMode] = useState<'wall' | 'compose' | 'detail'>('wall');
   const [selectedFeedback, setSelectedFeedback] = useState<FeedbackItem | null>(null);
   const [selectedMessages, setSelectedMessages] = useState<FeedbackMessage[]>([]);
@@ -335,6 +366,7 @@ export default function FeedbackPage() {
   const [replySubmitting, setReplySubmitting] = useState(false);
   const [likeSubmittingId, setLikeSubmittingId] = useState<string | null>(null);
 
+  const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [contact, setContact] = useState('');
   const [draftImages, setDraftImages] = useState<DraftImage[]>([]);
@@ -344,6 +376,10 @@ export default function FeedbackPage() {
   const [success, setSuccess] = useState<string | null>(null);
 
   const router = useRouter();
+  const listPageByStatusRef = useRef<Record<FeedbackFilterStatus, number>>({
+    ...INITIAL_FEEDBACK_PAGES,
+  });
+  const listRequestIdRef = useRef(0);
 
   const appendImages = useCallback(
     async (
@@ -481,15 +517,18 @@ export default function FeedbackPage() {
   };
 
   const loadFeedbackList = useCallback(
-    async (options: { page?: number } = {}) => {
-      const page = options.page ?? 1;
+    async (options: { page?: number; status?: FeedbackFilterStatus } = {}) => {
+      const targetStatus = options.status ?? filterStatus;
+      const page = options.page ?? listPageByStatusRef.current[targetStatus] ?? 1;
+      const requestId = listRequestIdRef.current + 1;
+      listRequestIdRef.current = requestId;
 
       setListLoading(true);
       setError(null);
 
       try {
         const statusQuery =
-          filterStatus === 'all' ? '' : `&status=${encodeURIComponent(filterStatus)}`;
+          targetStatus === 'all' ? '' : `&status=${encodeURIComponent(targetStatus)}`;
         const response = await fetch(
           `/api/feedback?scope=wall&page=${page}&limit=${FEEDBACK_PAGE_SIZE}${statusQuery}`,
           { cache: 'no-store' }
@@ -506,6 +545,10 @@ export default function FeedbackPage() {
           return;
         }
 
+        if (requestId !== listRequestIdRef.current) {
+          return;
+        }
+
         const items = (data.items as FeedbackItem[]) ?? [];
         const pagination = (data.pagination ?? {}) as {
           page?: number;
@@ -513,10 +556,15 @@ export default function FeedbackPage() {
           totalPages?: number;
           hasMore?: boolean;
         };
+        const nextPage =
+          typeof pagination.page === 'number' ? pagination.page : page;
 
-        setListPage(
-          typeof pagination.page === 'number' ? pagination.page : page
-        );
+        listPageByStatusRef.current = {
+          ...listPageByStatusRef.current,
+          [targetStatus]: nextPage,
+        };
+
+        setListPage(nextPage);
         setListHasMore(Boolean(pagination.hasMore));
         setListTotal(typeof pagination.total === 'number' ? pagination.total : items.length);
         setListTotalPages(Math.max(1, typeof pagination.totalPages === 'number' ? pagination.totalPages : 1));
@@ -525,7 +573,9 @@ export default function FeedbackPage() {
         console.error('Load feedback list failed:', fetchError);
         setError('获取反馈列表失败，请稍后重试');
       } finally {
-        setListLoading(false);
+        if (requestId === listRequestIdRef.current) {
+          setListLoading(false);
+        }
       }
     },
     [filterStatus, router]
@@ -536,14 +586,14 @@ export default function FeedbackPage() {
       return;
     }
     const safePage = Math.min(Math.max(1, nextPage), listTotalPages);
-    await loadFeedbackList({ page: safePage });
-  }, [listLoading, listTotalPages, loadFeedbackList]);
+    await loadFeedbackList({ page: safePage, status: filterStatus });
+  }, [filterStatus, listLoading, listTotalPages, loadFeedbackList]);
 
-  const handleChangeFilterStatus = (nextStatus: 'all' | FeedbackStatus) => {
+  const handleChangeFilterStatus = (nextStatus: FeedbackFilterStatus) => {
     if (nextStatus === filterStatus) {
       return;
     }
-    setListPage(1);
+    setListPage(listPageByStatusRef.current[nextStatus] ?? 1);
     setListHasMore(false);
     setListTotal(0);
     setListTotalPages(1);
@@ -597,17 +647,27 @@ export default function FeedbackPage() {
       setListHasMore(false);
       setListTotal(0);
       setListTotalPages(1);
+      listPageByStatusRef.current = { ...INITIAL_FEEDBACK_PAGES };
       return;
     }
-    void loadFeedbackList({ page: 1 });
+    void loadFeedbackList({
+      page: listPageByStatusRef.current[filterStatus] ?? 1,
+      status: filterStatus,
+    });
   }, [user, filterStatus, loadFeedbackList]);
 
   const handleSubmitFeedback = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const trimmedContent = content.trim();
+    const trimmedTitle = title.trim();
     if (!trimmedContent && draftImages.length === 0) {
       setError('请填写反馈内容或上传图片/视频');
+      return;
+    }
+
+    if (trimmedTitle.length > MAX_FEEDBACK_TITLE_LENGTH) {
+      setError(`反馈标题不能超过 ${MAX_FEEDBACK_TITLE_LENGTH} 字`);
       return;
     }
 
@@ -620,6 +680,7 @@ export default function FeedbackPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          title: trimmedTitle || undefined,
           content: trimmedContent,
           contact: contact.trim() || undefined,
           anonymous: isAnonymous,
@@ -639,13 +700,14 @@ export default function FeedbackPage() {
       }
 
       setSuccess('反馈已提交，我们会尽快处理');
+      setTitle('');
       setContent('');
       setContact('');
       setDraftImages([]);
       setIsAnonymous(false);
       setViewMode('wall');
 
-      await loadFeedbackList();
+      await loadFeedbackList({ page: 1, status: filterStatus });
     } catch (submitError) {
       console.error('Submit feedback failed:', submitError);
       setError('提交反馈失败，请稍后重试');
@@ -840,6 +902,8 @@ export default function FeedbackPage() {
     (safeCommentPage - 1) * COMMENT_PAGE_SIZE,
     safeCommentPage * COMMENT_PAGE_SIZE
   );
+  const firstSelectedMessage = selectedMessages[0] ?? null;
+  const selectedFeedbackTitle = selectedFeedback?.title?.trim() ?? '';
 
   const renderFeedbackPagination = (className = '') => {
     if (listTotalPages <= 1) {
@@ -859,10 +923,12 @@ export default function FeedbackPage() {
           上一页
         </button>
         <span className="feedback-page-indicator">
+          第
           <strong>{listPage}</strong>
           <span>/</span>
           {listTotalPages}
-          <em>共 {listTotal} 条</em>
+          页
+          <em>（共 {listTotal} 条）</em>
         </span>
         <button
           type="button"
@@ -944,6 +1010,13 @@ export default function FeedbackPage() {
 
               <form className="composer-form" onSubmit={handleSubmitFeedback}>
                 <input
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  maxLength={MAX_FEEDBACK_TITLE_LENGTH}
+                  placeholder="反馈标题（可选）"
+                  className="feedback-input"
+                />
+                <input
                   value={contact}
                   onChange={(event) => setContact(event.target.value)}
                   maxLength={100}
@@ -973,7 +1046,7 @@ export default function FeedbackPage() {
                     onChange={handleDraftFileChange}
                   />
                   <div className="feedback-counter">
-                    {content.length}/1000 · {draftImages.length}/{MAX_FEEDBACK_IMAGES} 个附件
+                    标题 {title.length}/{MAX_FEEDBACK_TITLE_LENGTH} · 正文 {content.length}/1000 · {draftImages.length}/{MAX_FEEDBACK_IMAGES} 个附件
                   </div>
                 </div>
 
@@ -1044,12 +1117,13 @@ export default function FeedbackPage() {
                     </div>
 
                     <div className="fb-content">
-                      {selectedMessages[0]?.content && <p>{selectedMessages[0].content}</p>}
-                      {selectedMessages[0]?.images && selectedMessages[0].images.length > 0 && (
+                      {selectedFeedbackTitle && <h3>{selectedFeedbackTitle}</h3>}
+                      {firstSelectedMessage?.content && <p>{firstSelectedMessage.content}</p>}
+                      {firstSelectedMessage?.images && firstSelectedMessage.images.length > 0 && (
                         <div className="wall-image-grid">
-                          {selectedMessages[0].images.map((image, index) => (
+                          {firstSelectedMessage.images.map((image, index) => (
                             <FeedbackMediaLink
-                              key={`${selectedMessages[0].id}-${index}`}
+                              key={`${firstSelectedMessage.id}-${index}`}
                               media={image}
                               alt={getMediaAlt(image, `反馈图片${index + 1}`)}
                               imageClassName="wall-feedback-image"
@@ -1204,120 +1278,113 @@ export default function FeedbackPage() {
             <>
               <div className="feedback-wall-toolbar">
                 <div className="feedback-filters">
-                  {[
-                    ['all', '全部反馈'],
-                    ['open', '待处理'],
-                    ['processing', '处理中'],
-                    ['resolved', '已解决'],
-                    ['closed', '已关闭'],
-                  ].map(([value, label]) => (
+                  {FEEDBACK_FILTERS.map(({ value, label }) => (
                     <button
                       key={value}
                       type="button"
-                      onClick={() => handleChangeFilterStatus(value as 'all' | FeedbackStatus)}
+                      onClick={() => handleChangeFilterStatus(value)}
                       className={`filter-tab ${filterStatus === value ? 'active' : ''}`}
                     >
                       {label}
                     </button>
                   ))}
                 </div>
-                {renderFeedbackPagination('feedback-pagination-toolbar')}
               </div>
 
               <section className="feedback-wall-view">
-              <div className="feedback-list">
-                {listLoading ? (
-                  <div className="feedback-empty">
-                    <Loader2 className="spin-icon" />
-                  </div>
-                ) : feedbackList.length === 0 ? (
-                  <div className="feedback-empty">暂无公开反馈</div>
-                ) : (
-                  feedbackList.map((item) => {
-                    const message = item.firstMessage;
-                    const reply = item.latestAdminReply;
+                <div className="feedback-list">
+                  {listLoading ? (
+                    <div className="feedback-empty">
+                      <Loader2 className="spin-icon" />
+                    </div>
+                  ) : feedbackList.length === 0 ? (
+                    <div className="feedback-empty">暂无公开反馈</div>
+                  ) : (
+                    feedbackList.map((item) => {
+                      const message = item.firstMessage;
+                      const reply = item.latestAdminReply;
+                      const displayTitle = resolveFeedbackTitle(item, message);
 
-                    return (
-                      <article
-                        key={item.id}
-                        className="feedback-card wall-card"
-                        onClick={() => void handleOpenDetail(item.id)}
-                      >
-                        <div className="fb-header">
-                          <div className="fb-user">
-                            <FeedbackAuthorAvatar feedback={item} />
-                            <div>
-                              <div className="fb-name-line">
-                                <h4 className="fb-name">{resolveFeedbackAuthorName(item)}</h4>
-                                <FeedbackAchievementBadge achievement={item.equippedAchievement} />
+                      return (
+                        <article
+                          key={item.id}
+                          className="feedback-card wall-card"
+                          onClick={() => void handleOpenDetail(item.id)}
+                        >
+                          <div className="fb-header">
+                            <div className="fb-user">
+                              <FeedbackAuthorAvatar feedback={item} />
+                              <div>
+                                <div className="fb-name-line">
+                                  <h4 className="fb-name">{resolveFeedbackAuthorName(item)}</h4>
+                                  <FeedbackAchievementBadge achievement={item.equippedAchievement} />
+                                </div>
+                                <p className="fb-time">
+                                  {formatFeedbackTime(item.createdAt)} · #{item.id}
+                                </p>
                               </div>
-                              <p className="fb-time">
-                                {formatFeedbackTime(item.createdAt)} · #{item.id}
-                              </p>
+                            </div>
+                            <div className={`fb-status ${WALL_STATUS_CLASS[item.status]}`}>
+                              {STATUS_LABEL[item.status]}
                             </div>
                           </div>
-                          <div className={`fb-status ${WALL_STATUS_CLASS[item.status]}`}>
-                            {STATUS_LABEL[item.status]}
-                          </div>
-                        </div>
 
-                        <div className="fb-content">
-                          <h3>{message?.content?.split('\n')[0] || '附件反馈'}</h3>
-                          {message?.content && <p>{message.content}</p>}
-                          {message?.images && message.images.length > 0 && (
-                            <div className="wall-image-grid">
-                              {message.images.map((image, index) => (
-                                <FeedbackMediaLink
-                                  key={`${message.id}-${index}`}
-                                  media={image}
-                                  alt={getMediaAlt(image, `反馈图片${index + 1}`)}
-                                  imageClassName="wall-feedback-image"
-                                  onClick={(event) => event.stopPropagation()}
-                                />
-                              ))}
-                            </div>
-                          )}
-
-                          {reply && (
-                            <div className="official-reply">
-                              <div className="reply-header">
-                                <span className="admin-badge">管理员回复</span>
-                                <span className="reply-time">{formatFeedbackTime(reply.createdAt)}</span>
+                          <div className="fb-content">
+                            <h3>{displayTitle}</h3>
+                            {message?.content && <p>{message.content}</p>}
+                            {message?.images && message.images.length > 0 && (
+                              <div className="wall-image-grid">
+                                {message.images.map((image, index) => (
+                                  <FeedbackMediaLink
+                                    key={`${message.id}-${index}`}
+                                    media={image}
+                                    alt={getMediaAlt(image, `反馈图片${index + 1}`)}
+                                    imageClassName="wall-feedback-image"
+                                    onClick={(event) => event.stopPropagation()}
+                                  />
+                                ))}
                               </div>
-                              {reply.content && <p>{reply.content}</p>}
-                            </div>
-                          )}
-                        </div>
+                            )}
 
-                        <div className="fb-footer">
-                          <button
-                            type="button"
-                            onClick={(event) => void handleToggleLike(item.id, event)}
-                            disabled={likeSubmittingId === item.id}
-                            className={`fb-action-btn like-btn ${item.likedByMe ? 'active' : ''}`}
-                          >
-                            <ThumbsUp />
-                            {item.likeCount ?? 0} 点赞
-                          </button>
-                          <button
-                            type="button"
-                            className="fb-action-btn"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void handleOpenDetail(item.id);
-                            }}
-                          >
-                            <MessageSquareText />
-                            {item.replyCount ?? 0} 条评论
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })
-                )}
+                            {reply && (
+                              <div className="official-reply">
+                                <div className="reply-header">
+                                  <span className="admin-badge">管理员回复</span>
+                                  <span className="reply-time">{formatFeedbackTime(reply.createdAt)}</span>
+                                </div>
+                                {reply.content && <p>{reply.content}</p>}
+                              </div>
+                            )}
+                          </div>
 
-                {renderFeedbackPagination()}
-              </div>
+                          <div className="fb-footer">
+                            <button
+                              type="button"
+                              onClick={(event) => void handleToggleLike(item.id, event)}
+                              disabled={likeSubmittingId === item.id}
+                              className={`fb-action-btn like-btn ${item.likedByMe ? 'active' : ''}`}
+                            >
+                              <ThumbsUp />
+                              {item.likeCount ?? 0} 点赞
+                            </button>
+                            <button
+                              type="button"
+                              className="fb-action-btn"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleOpenDetail(item.id);
+                              }}
+                            >
+                              <MessageSquareText />
+                              {item.replyCount ?? 0} 条评论
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })
+                  )}
+                </div>
+                {renderFeedbackPagination('feedback-pagination-bottom')}
               </section>
             </>
           )}
@@ -1708,12 +1775,6 @@ export default function FeedbackPage() {
           border-radius: 999px;
         }
 
-        .composer-only .feedback-submit-btn {
-          position: sticky;
-          bottom: 0;
-          z-index: 2;
-        }
-
         .composer-actions {
           display: flex;
           align-items: center;
@@ -1972,6 +2033,7 @@ export default function FeedbackPage() {
           flex-direction: column;
           gap: 20px;
           width: 100%;
+          min-height: 0;
         }
 
         .feedback-panel-right.is-wall-mode .feedback-list {
@@ -1982,6 +2044,11 @@ export default function FeedbackPage() {
           padding-right: 6px;
           -webkit-overflow-scrolling: touch;
           scrollbar-gutter: stable;
+        }
+
+        .feedback-list > .feedback-card,
+        .feedback-list > .feedback-empty {
+          flex: 0 0 auto;
         }
 
         .feedback-empty {
@@ -2091,6 +2158,8 @@ export default function FeedbackPage() {
           font-weight: 800;
           margin: 0 0 12px;
           line-height: 1.4;
+          white-space: pre-wrap;
+          word-break: break-word;
         }
 
         .fb-content p {
@@ -2256,16 +2325,24 @@ export default function FeedbackPage() {
           align-items: center;
           justify-content: center;
           gap: 12px;
+          margin-top: 12px;
           padding: 12px 14px;
-          border-radius: 18px;
+          border-radius: 20px;
           background: rgba(255, 255, 255, 0.58);
-          border: 1px solid rgba(255, 255, 255, 0.86);
+          border: 1px solid rgba(255, 255, 255, 0.85);
           backdrop-filter: blur(14px);
           -webkit-backdrop-filter: blur(14px);
           box-shadow: 0 14px 28px rgba(15, 23, 42, 0.04);
+          flex-wrap: wrap;
+        }
+
+        .feedback-pagination-bottom {
+          flex-shrink: 0;
+          margin-top: 0;
         }
 
         .feedback-pagination.compact {
+          margin-top: 0;
           padding: 10px 12px;
           border-radius: 16px;
           box-shadow: none;
@@ -2331,7 +2408,12 @@ export default function FeedbackPage() {
         }
 
         .feedback-page-indicator {
-          min-width: 104px;
+          min-width: 120px;
+          min-height: 46px;
+          padding: 6px 14px;
+          border-radius: 999px;
+          background: linear-gradient(135deg, rgba(255, 122, 0, 0.12), rgba(255, 0, 76, 0.08));
+          border: 1px solid rgba(249, 115, 22, 0.16);
           display: inline-flex;
           align-items: center;
           justify-content: center;
@@ -2351,7 +2433,7 @@ export default function FeedbackPage() {
           color: var(--text-light);
           font-size: 12px;
           font-style: normal;
-          font-weight: 700;
+          font-weight: 500;
           margin-left: 4px;
         }
 

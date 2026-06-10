@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kv } from '@/lib/d1-kv';
-import { buyEcoItem, getEcoTrashLeaderboard } from '../eco';
+import { buyEcoItem, collectEcoTrash, getEcoStatus, getEcoTrashLeaderboard, sellEcoPrize } from '../eco';
 import { createInitialEcoState, getStorageCap } from '../eco-engine';
 import { getAllUsers } from '../kv';
 import { getCustomUserProfile } from '../user-profile';
@@ -17,6 +17,8 @@ vi.mock('@/lib/d1-kv', () => ({
     hgetall: vi.fn(),
     zrange: vi.fn(),
     zcard: vi.fn(),
+    zincrby: vi.fn(),
+    expire: vi.fn(),
   },
 }));
 
@@ -53,6 +55,8 @@ describe('eco service', () => {
   const mockKvHgetall = vi.mocked(kv.hgetall);
   const mockKvZrange = vi.mocked(kv.zrange);
   const mockKvZcard = vi.mocked(kv.zcard);
+  const mockKvZincrby = vi.mocked(kv.zincrby);
+  const mockKvExpire = vi.mocked(kv.expire);
   const mockGetAllUsers = vi.mocked(getAllUsers);
   const mockGetCustomUserProfile = vi.mocked(getCustomUserProfile);
   const mockGetEquippedAchievementForUser = vi.mocked(getEquippedAchievementForUser);
@@ -69,6 +73,8 @@ describe('eco service', () => {
     mockKvSet.mockResolvedValue('OK');
     mockKvHgetall.mockResolvedValue({});
     mockKvZcard.mockResolvedValue(3);
+    mockKvZincrby.mockResolvedValue(1);
+    mockKvExpire.mockResolvedValue(1);
     mockGetAllUsers.mockResolvedValue([
       { id: 1001, username: 'alice', firstSeen: 1 },
       { id: 1002, username: 'bob', firstSeen: 1 },
@@ -82,6 +88,10 @@ describe('eco service', () => {
     mockAddPoints.mockResolvedValue({ success: true, balance: 1000 });
     mockDeductPoints.mockResolvedValue({ success: true, balance: 965 });
     mockGetUserPoints.mockResolvedValue(965);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('builds eco trash leaderboard and resolves ties by user id', async () => {
@@ -150,5 +160,70 @@ describe('eco service', () => {
       'exchange_refund',
       '环保行动道具·回收手套回滚',
     );
+  });
+
+  it('tracks today trash points from normal trash using China date', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-10T15:50:00.000Z'));
+
+    const now = Date.now();
+    const state = createInitialEcoState(1001, now);
+    state.pending = 10;
+    state.lastTickAt = now;
+    mockKvGet.mockResolvedValue(state);
+    mockAddPoints.mockResolvedValue({ success: true, balance: 966 });
+    mockGetUserPoints.mockResolvedValue(966);
+
+    const result = await collectEcoTrash(1001, 10);
+
+    expect(result.ok).toBe(true);
+    expect(result.pointsEarned).toBe(1);
+    expect(result.data?.todayTrashPoints).toBe(1);
+    expect(result.data?.todayTrashPointsDate).toBe('2026-06-10');
+
+    const saved = mockKvSet.mock.calls.find(([key]) => key === 'eco:state:1001')?.[1] as EcoState;
+    expect(saved.dailyTrashPoints).toEqual({ date: '2026-06-10', points: 1 });
+  });
+
+  it('does not count prize sale points as today trash points', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-10T15:55:00.000Z'));
+
+    const now = Date.now();
+    const state = createInitialEcoState(1001, now);
+    state.inventory.coin = 1;
+    state.dailyTrashPoints = { date: '2026-06-10', points: 4 };
+    mockKvGet.mockResolvedValue(state);
+    mockAddPoints.mockResolvedValue({ success: true, balance: 2000 });
+    mockGetUserPoints.mockResolvedValue(2000);
+
+    const result = await sellEcoPrize(1001, 'coin', 1);
+
+    expect(result.ok).toBe(true);
+    expect(result.pointsEarned).toBeGreaterThan(0);
+    expect(result.data?.todayTrashPoints).toBe(4);
+    expect(result.data?.todayTrashPointsDate).toBe('2026-06-10');
+
+    const saved = mockKvSet.mock.calls.find(([key]) => key === 'eco:state:1001')?.[1] as EcoState;
+    expect(saved.dailyTrashPoints).toEqual({ date: '2026-06-10', points: 4 });
+  });
+
+  it('resets today trash points after China midnight', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-10T16:00:01.000Z'));
+
+    const now = Date.now();
+    const state = createInitialEcoState(1001, now);
+    state.dailyTrashPoints = { date: '2026-06-10', points: 9 };
+    state.lastTickAt = now;
+    mockKvGet.mockResolvedValue(state);
+
+    const status = await getEcoStatus(1001);
+
+    expect(status.todayTrashPoints).toBe(0);
+    expect(status.todayTrashPointsDate).toBe('2026-06-11');
+
+    const saved = mockKvSet.mock.calls.find(([key]) => key === 'eco:state:1001')?.[1] as EcoState;
+    expect(saved.dailyTrashPoints).toEqual({ date: '2026-06-11', points: 0 });
   });
 });

@@ -505,6 +505,7 @@ export function createInitialEcoState(userId: number, now: number): EcoState {
     luckyGenerationsRemaining: 0,
     gloveUsesRemaining: 0,
     itemPurchases: {},
+    dailyTrashPoints: { date: '', points: 0 },
     exp: 0,
     lifetimeCleared: 0,
     lifetimePoints: 0,
@@ -551,6 +552,11 @@ export function normalizeEcoState(raw: EcoState, now: number): EcoState {
       { date: value.date, count: Math.max(0, Math.floor(value.count)) },
     ]),
   );
+  const rawDailyTrashPoints = raw.dailyTrashPoints;
+  const dailyTrashPoints = {
+    date: typeof rawDailyTrashPoints?.date === 'string' ? rawDailyTrashPoints.date : '',
+    points: Math.floor(safeNumber(rawDailyTrashPoints?.points, 0)),
+  };
 
   return {
     userId: raw.userId,
@@ -580,6 +586,7 @@ export function normalizeEcoState(raw: EcoState, now: number): EcoState {
     luckyGenerationsRemaining: Math.floor(safeNumber(raw.luckyGenerationsRemaining, 0)),
     gloveUsesRemaining: Math.floor(safeNumber(raw.gloveUsesRemaining, 0)),
     itemPurchases,
+    dailyTrashPoints,
     exp: Math.floor(safeNumber(raw.exp, 0)),
     lifetimeCleared: Math.floor(safeNumber(raw.lifetimeCleared, 0)),
     lifetimePoints: Math.floor(safeNumber(raw.lifetimePoints, 0)),

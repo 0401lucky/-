@@ -18,6 +18,7 @@ export interface FeedbackItem {
   id: string;
   userId: number;
   username: string;
+  title?: string;
   contact?: string;
   anonymous?: boolean;
   status: FeedbackStatus;
@@ -299,6 +300,7 @@ export async function createFeedback(
   userId: number,
   username: string,
   content: string,
+  title?: string,
   contact?: string,
   images: FeedbackImage[] = [],
   anonymous: boolean = false
@@ -319,6 +321,7 @@ export async function createFeedback(
     id: feedbackId,
     userId,
     username,
+    ...(title ? { title } : {}),
     contact,
     anonymous,
     status: 'open',
@@ -355,6 +358,25 @@ export async function getFeedbackMessages(feedbackId: string, limit: number = 20
   const safeLimit = Math.max(1, Math.min(500, Math.floor(limit)));
   const messages = await kv.lrange<FeedbackMessage>(FEEDBACK_MESSAGES_KEY(feedbackId), 0, safeLimit - 1);
   return messages ?? [];
+}
+
+export async function getAllFeedbackMessages(feedbackId: string): Promise<FeedbackMessage[]> {
+  const messages = await kv.lrange<FeedbackMessage>(FEEDBACK_MESSAGES_KEY(feedbackId), 0, -1);
+  return messages ?? [];
+}
+
+export async function getFeedbackMessageCount(feedbackId: string): Promise<number> {
+  return kv.llen(FEEDBACK_MESSAGES_KEY(feedbackId));
+}
+
+export async function getFeedbackFirstMessage(feedbackId: string): Promise<FeedbackMessage | null> {
+  const messages = await kv.lrange<FeedbackMessage>(FEEDBACK_MESSAGES_KEY(feedbackId), -1, -1);
+  return messages[0] ?? null;
+}
+
+export async function getFeedbackLatestAdminReply(feedbackId: string): Promise<FeedbackMessage | null> {
+  const messages = await getAllFeedbackMessages(feedbackId);
+  return messages.find((message) => message.role === 'admin') ?? null;
 }
 
 export async function getFeedbackLikeState(
