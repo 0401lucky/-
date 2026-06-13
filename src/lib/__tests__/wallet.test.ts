@@ -4,6 +4,24 @@ import { creditQuotaToUser, deductQuotaFromUser } from '../new-api';
 import { createUserNotification } from '../notifications';
 import { executeTopup, executeWithdraw } from '../wallet';
 
+const kvMock = vi.hoisted(() => ({
+  set: vi.fn(),
+  lpush: vi.fn(),
+  ltrim: vi.fn(),
+}));
+
+const withKvLockMock = vi.hoisted(() => vi.fn(
+  async (_key: string, handler: () => Promise<unknown>) => handler(),
+));
+
+vi.mock('@/lib/d1-kv', () => ({
+  kv: kvMock,
+}));
+
+vi.mock('../economy-lock', () => ({
+  withKvLock: withKvLockMock,
+}));
+
 vi.mock('../points', () => ({
   getUserPoints: vi.fn(),
   deductPoints: vi.fn(),
@@ -49,6 +67,11 @@ describe('wallet notifications', () => {
       content: '钱包通知内容',
       createdAt: 1700000000000,
     });
+
+    kvMock.set.mockResolvedValue('OK');
+    kvMock.lpush.mockResolvedValue(1);
+    kvMock.ltrim.mockResolvedValue(undefined);
+    withKvLockMock.mockImplementation(async (_key: string, handler: () => Promise<unknown>) => handler());
   });
 
   it('creates a wallet notification after confirmed withdraw success', async () => {
@@ -57,6 +80,20 @@ describe('wallet notifications', () => {
     expect(result.success).toBe(true);
     expect(result.balance).toBe(900);
     expect(result.dollars).toBe(9.7);
+    expect(withKvLockMock).toHaveBeenCalledWith(
+      'lock:user:wallet:1001',
+      expect.any(Function),
+      expect.objectContaining({ ttlSeconds: 60 }),
+    );
+    expect(kvMock.set).toHaveBeenCalledWith(
+      expect.stringMatching(/^wallet:transaction:/),
+      expect.objectContaining({
+        operation: 'withdraw',
+        status: 'success',
+        pointsDelta: -100,
+        dollarsDelta: 9.7,
+      }),
+    );
     expect(mockCreateUserNotification).toHaveBeenCalledTimes(1);
     expect(mockCreateUserNotification).toHaveBeenCalledWith({
       userId: 1001,
@@ -75,12 +112,48 @@ describe('wallet notifications', () => {
     });
   });
 
+  it('records uncertain withdraw transactions for follow-up', async () => {
+    mockCreditQuotaToUser.mockResolvedValueOnce({
+      success: false,
+      message: '充值结果不确定',
+      uncertain: true,
+    });
+
+    const result = await executeWithdraw(1001, 100);
+
+    expect(result.success).toBe(false);
+    expect(result.uncertain).toBe(true);
+    expect(kvMock.set).toHaveBeenCalledWith(
+      expect.stringMatching(/^wallet:transaction:/),
+      expect.objectContaining({
+        operation: 'withdraw',
+        status: 'uncertain',
+        pointsDelta: -100,
+        dollarsDelta: 9.7,
+        message: '充值结果不确定',
+      }),
+    );
+    expect(kvMock.lpush).toHaveBeenCalledWith(
+      'wallet:uncertain:1001',
+      expect.any(String),
+    );
+  });
+
   it('creates a wallet notification after confirmed topup success', async () => {
     const result = await executeTopup(1001, 3);
 
     expect(result.success).toBe(true);
     expect(result.balance).toBe(130);
     expect(result.pointsGained).toBe(30);
+    expect(kvMock.set).toHaveBeenCalledWith(
+      expect.stringMatching(/^wallet:transaction:/),
+      expect.objectContaining({
+        operation: 'topup',
+        status: 'success',
+        pointsDelta: 30,
+        dollarsDelta: -3,
+      }),
+    );
     expect(mockApplyPointsDelta).toHaveBeenCalledWith(
       1001,
       30,
@@ -117,6 +190,19 @@ describe('wallet notifications', () => {
     expect(result.success).toBe(true);
     expect(result.uncertain).toBe(true);
     expect(mockApplyPointsDelta).toHaveBeenCalled();
+    expect(kvMock.set).toHaveBeenCalledWith(
+      expect.stringMatching(/^wallet:transaction:/),
+      expect.objectContaining({
+        operation: 'topup',
+        status: 'uncertain',
+        pointsDelta: 30,
+        dollarsDelta: -3,
+      }),
+    );
+    expect(kvMock.lpush).toHaveBeenCalledWith(
+      'wallet:uncertain:1001',
+      expect.any(String),
+    );
     expect(mockCreateUserNotification).not.toHaveBeenCalled();
   });
 

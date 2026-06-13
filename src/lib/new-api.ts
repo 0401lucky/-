@@ -6,7 +6,7 @@ let _newApiUrl: string | null = null;
 const CHECKIN_TIMEOUT_MS = 4000;
 
 const USER_QUOTA_LOCK_PREFIX = 'newapi:quota:credit:lock:';
-const USER_QUOTA_LOCK_TTL_SECONDS = 15;
+const USER_QUOTA_LOCK_TTL_SECONDS = 60;
 const USER_QUOTA_LOCK_RETRY_MS = 120;
 const USER_QUOTA_LOCK_MAX_RETRIES = 25;
 export const NEW_API_QUOTA_PER_DOLLAR = 500000;
