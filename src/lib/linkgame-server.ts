@@ -138,6 +138,22 @@ async function isCurrentActiveSession(
   return (await kv.get<string>(ACTIVE_SESSION_KEY(userId))) === sessionId;
 }
 
+async function findSettledLinkGameRecord(
+  userId: number,
+  sessionId: string,
+  useNativeHotStore: boolean,
+): Promise<LinkGameRecord | null> {
+  const records = useNativeHotStore
+    ? await listNativeGameRecords<LinkGameRecord>(userId, 'linkgame', MAX_RECORD_ENTRIES)
+    : ((await kv.lrange<LinkGameRecord>(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)) ?? []);
+
+  return records.find((record) => record.sessionId === sessionId) ?? null;
+}
+
+function buildSettledLinkGameResult(record: LinkGameRecord) {
+  return { success: true as const, record, pointsEarned: record.pointsEarned };
+}
+
 // ============ 纯验证函数（可单独测试） ============
 
 export interface ValidationResult {
@@ -430,10 +446,19 @@ export async function submitLinkGameResult(
   payload: LinkGameResultSubmit
 ): Promise<{ success: boolean; record?: LinkGameRecord; pointsEarned?: number; message?: string }> {
   const useNativeHotStore = await isNativeHotStoreReady();
+  const settledBeforeLock = await findSettledLinkGameRecord(userId, payload.sessionId, useNativeHotStore);
+  if (settledBeforeLock) {
+    return buildSettledLinkGameResult(settledBeforeLock);
+  }
+
   // 幂等锁
   const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
   const lockToken = await acquireGameLock(lockKey, SUBMIT_LOCK_TTL, useNativeHotStore);
   if (!lockToken) {
+    const settledWhileLocked = await findSettledLinkGameRecord(userId, payload.sessionId, useNativeHotStore);
+    if (settledWhileLocked) {
+      return buildSettledLinkGameResult(settledWhileLocked);
+    }
     return { success: false, message: '请勿重复提交' };
   }
 
@@ -447,6 +472,11 @@ export async function submitLinkGameResult(
     : await kv.get<LinkGameSession>(SESSION_KEY(payload.sessionId));
 
   if (!session) {
+    const settledRecord = await findSettledLinkGameRecord(userId, payload.sessionId, useNativeHotStore);
+    if (settledRecord) {
+      await releaseLock();
+      return buildSettledLinkGameResult(settledRecord);
+    }
     await releaseLock();
     return { success: false, message: '游戏会话不存在或已过期' };
   }
@@ -457,16 +487,31 @@ export async function submitLinkGameResult(
   }
 
   if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
+    const settledRecord = await findSettledLinkGameRecord(userId, session.id, useNativeHotStore);
+    if (settledRecord) {
+      await releaseLock();
+      return buildSettledLinkGameResult(settledRecord);
+    }
     await releaseLock();
     return { success: false, message: '游戏会话已不是当前活跃局' };
   }
 
   if (session.status !== 'playing') {
+    const settledRecord = await findSettledLinkGameRecord(userId, session.id, useNativeHotStore);
+    if (settledRecord) {
+      await releaseLock();
+      return buildSettledLinkGameResult(settledRecord);
+    }
     await releaseLock();
     return { success: false, message: '游戏会话已结束' };
   }
 
   if (Date.now() > session.expiresAt) {
+    const settledRecord = await findSettledLinkGameRecord(userId, session.id, useNativeHotStore);
+    if (settledRecord) {
+      await releaseLock();
+      return buildSettledLinkGameResult(settledRecord);
+    }
     if (!useNativeHotStore) {
       await kv.del(SESSION_KEY(payload.sessionId));
     }

@@ -9,10 +9,13 @@ export { MinesweeperSessionDurableObject } from "./src/durable-objects/minesweep
 const DELIVERY_PATH = "/api/internal/raffle/delivery";
 const NUMBER_BOMB_SETTLE_PATH = "/api/internal/number-bomb/settle";
 const FARM_MATURITY_EMAIL_PATH = "/api/internal/farm/maturity-email";
+const ECO_THEFT_INVESTIGATION_PATH = "/api/internal/eco/theft-investigation";
 const DAILY_CRON = "0 16 * * *";
 const FARM_MATURITY_EMAIL_CRON = "*/10 * * * *";
+const ECO_THEFT_INVESTIGATION_CRON = "*/10 * * * *";
 const DEFAULT_MAX_JOBS = 20;
 const DEFAULT_FARM_MATURITY_EMAIL_MAX_USERS = 100;
+const DEFAULT_ECO_THEFT_INVESTIGATION_LIMIT = 50;
 const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 const IMAGE_PREFIX = "/images/";
 const IMAGE_CACHE_CONTROL = "public, max-age=31536000, immutable";
@@ -45,6 +48,15 @@ function parseFarmMaturityEmailMaxUsers(env) {
     return DEFAULT_FARM_MATURITY_EMAIL_MAX_USERS;
   }
   return Math.max(1, Math.min(500, value));
+}
+
+function parseEcoTheftInvestigationLimit(env) {
+  const raw = String(env.ECO_THEFT_INVESTIGATION_CRON_LIMIT || "").trim();
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isFinite(value)) {
+    return DEFAULT_ECO_THEFT_INVESTIGATION_LIMIT;
+  }
+  return Math.max(1, Math.min(100, value));
 }
 
 function formatDateKeyFromUtcDate(date) {
@@ -159,6 +171,37 @@ async function triggerFarmMaturityEmail(env) {
   if (!response.ok) {
     const detail = await response.text();
     console.error(`[cron] 农场成熟邮件提醒调用失败: ${response.status} ${detail}`);
+  }
+}
+
+async function triggerEcoTheftInvestigation(env) {
+  const secret = readSecret(env);
+  if (!secret) {
+    console.warn("[cron] 缺少 RAFFLE_DELIVERY_CRON_SECRET/CRON_SECRET，跳过环保行动偷盗追查");
+    return;
+  }
+
+  if (!env.WORKER_SELF_REFERENCE?.fetch) {
+    console.warn("[cron] 缺少 WORKER_SELF_REFERENCE 绑定，跳过环保行动偷盗追查");
+    return;
+  }
+
+  const limit = parseEcoTheftInvestigationLimit(env);
+  const response = await env.WORKER_SELF_REFERENCE.fetch(
+    `https://internal${ECO_THEFT_INVESTIGATION_PATH}`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${secret}`,
+      },
+      body: JSON.stringify({ limit }),
+    },
+  );
+
+  if (!response.ok) {
+    const detail = await response.text();
+    console.error(`[cron] 环保行动偷盗追查调用失败: ${response.status} ${detail}`);
   }
 }
 
@@ -303,6 +346,9 @@ const workerWrapper = {
     }
     if (!cron || cron === FARM_MATURITY_EMAIL_CRON) {
       ctx.waitUntil(triggerFarmMaturityEmail(env));
+    }
+    if (!cron || cron === ECO_THEFT_INVESTIGATION_CRON) {
+      ctx.waitUntil(triggerEcoTheftInvestigation(env));
     }
   },
 };

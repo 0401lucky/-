@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ECO_ITEM_KEYS,
+  ECO_GLOBAL_PRIZE_LIMITS,
   ECO_LUCKY_PRIZE_RATE,
   ECO_PRIZE_TTL_MS,
   ECO_PRIZES,
@@ -11,6 +12,7 @@ import {
   getGrabSize,
   getUpgradeCost,
   normalizeEcoState,
+  pruneExpiredVisiblePrizesDetailed,
   pruneExpiredVisiblePrizes,
   rollEcoGeneratedPrize,
   rollEcoPrize,
@@ -30,7 +32,17 @@ describe('eco engine rules', () => {
     expect(getUpgradeCost('auto', 5)).toBe(5600);
   });
 
-  it('rolls each prize independently with rare prize rates', () => {
+  it('uses fixed global prize limits for the new limited stock rules', () => {
+    expect(ECO_GLOBAL_PRIZE_LIMITS).toEqual({
+      photo: 10,
+      diamond: 10,
+      coin: 15,
+      necklace: 15,
+      trophy: 20,
+    });
+  });
+
+  it('rolls each prize independently with configured prize rates', () => {
     expect(ECO_PRIZES.trophy.spawnRate).toBe(0.0005);
     expect(ECO_PRIZES.necklace.spawnRate).toBe(0.0003);
     expect(ECO_PRIZES.coin.spawnRate).toBe(0.0001);
@@ -44,21 +56,21 @@ describe('eco engine rules', () => {
       'trophy',
       'photo',
     ]);
-    expect(rollEcoPrizes(() => 0.0005)).toEqual([]);
+    expect(rollEcoPrizes(() => 0.00049)).toEqual(['trophy']);
     expect(rollEcoPrize(() => 0)).toBe('diamond');
   });
 
   it('rolls one generated item as either a prize or normal trash', () => {
     expect(rollEcoGeneratedPrize(() => 0)).toBe('diamond');
     expect(rollEcoGeneratedPrize(() => 0.00005)).toBe('coin');
+    expect(rollEcoGeneratedPrize(() => 0.0007)).toBe('trophy');
     expect(rollEcoGeneratedPrize(() => 0.00097)).toBeNull();
   });
 
-  it('boosts generated prize rates by 10x for lucky flashlight', () => {
-    expect(ECO_LUCKY_PRIZE_RATE).toBe(10);
-    expect(ECO_PRIZES.trophy.spawnRate * ECO_LUCKY_PRIZE_RATE).toBe(0.005);
-    expect(rollEcoGeneratedPrize(() => 0.005)).toBeNull();
-    expect(rollEcoGeneratedPrize(() => 0.005, ECO_LUCKY_PRIZE_RATE)).toBe('trophy');
+  it('boosts generated prize rates by 5x for lucky flashlight', () => {
+    expect(ECO_LUCKY_PRIZE_RATE).toBe(5);
+    expect(Math.min(1, ECO_PRIZES.trophy.spawnRate * ECO_LUCKY_PRIZE_RATE)).toBe(0.0025);
+    expect(rollEcoGeneratedPrize(() => 0.0047, ECO_LUCKY_PRIZE_RATE)).toBe('trophy');
   });
 
   it('uses the same generation slot for either prize or trash', () => {
@@ -127,11 +139,14 @@ describe('eco engine rules', () => {
       gloveUsesRemaining: 3,
       itemPurchases: { clear_truck: { date: '2026-06-08', count: 1 } },
     } as unknown as EcoState;
+    delete (oldSave as Partial<EcoState>).limitedPrizeInventory;
 
     const normalized = normalizeEcoState(oldSave, now);
     expect(normalized.upgrades).toEqual({ spawn: 2, storage: 1, value: 0, auto: 0 });
     expect(normalized.inventory.diamond).toBe(2);
     expect(normalized.inventory.coin).toBe(0);
+    expect(normalized.limitedPrizeInventory.diamond).toBe(0);
+    expect(normalized.visiblePrizes[0]?.limited).toBe(false);
     expect(normalized.lifetimePrizeClaims).toBe(2);
     expect(normalized.lifetimePrizeClaimCounts.diamond).toBe(2);
     expect(normalized.visiblePrizes).toHaveLength(1);
@@ -151,6 +166,22 @@ describe('eco engine rules', () => {
     ];
 
     expect(pruneExpiredVisiblePrizes(state, now)).toBe(1);
+    expect(state.visiblePrizes.map((prize) => prize.id)).toEqual(['fresh']);
+  });
+
+  it('returns expired prize details when pruning visible prizes', () => {
+    const now = 1_700_000_000_000;
+    const state = createInitialEcoState(1001, now);
+    state.visiblePrizes = [
+      { id: 'fresh', key: 'coin', createdAt: now, limited: true },
+      { id: 'expired', key: 'diamond', createdAt: now - ECO_PRIZE_TTL_MS - 1, limited: true },
+    ];
+
+    const expired = pruneExpiredVisiblePrizesDetailed(state, now);
+
+    expect(expired).toEqual([
+      { id: 'expired', key: 'diamond', createdAt: now - ECO_PRIZE_TTL_MS - 1, limited: true },
+    ]);
     expect(state.visiblePrizes.map((prize) => prize.id)).toEqual(['fresh']);
   });
 

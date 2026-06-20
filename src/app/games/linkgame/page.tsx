@@ -249,6 +249,8 @@ export default function LinkGamePage() {
       setSelectedDifficulty(pendingOutcome.difficulty);
       setPendingOutcome(null);
       setPhase('result');
+    } else {
+      autoSubmittedOutcomeRef.current = false;
     }
   }, [pendingOutcome, submitResult]);
 
@@ -652,6 +654,7 @@ export default function LinkGamePage() {
           <LinkGameOutcomeModal
             outcome={pendingOutcome}
             loading={loading}
+            error={error}
             onSubmit={() => void handleSettleOutcome()}
           />
         )}
@@ -1324,10 +1327,12 @@ export default function LinkGamePage() {
 function LinkGameOutcomeModal({
   outcome,
   loading,
+  error,
   onSubmit,
 }: {
   outcome: GameOutcome;
   loading: boolean;
+  error?: string | null;
   onSubmit: () => void;
 }) {
   const won = outcome.completed;
@@ -1362,6 +1367,12 @@ function LinkGameOutcomeModal({
           <LinkResultStat label="预计得分" value={String(outcome.scorePreview)} />
         </div>
 
+        {error && (
+          <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-center text-sm font-black text-rose-700" role="alert">
+            {error}
+          </div>
+        )}
+
         <button
           onClick={onSubmit}
           disabled={loading}
@@ -1369,7 +1380,7 @@ function LinkGameOutcomeModal({
           type="button"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-          {loading ? '结算中' : isDeadlock ? '立即结算' : '结算成绩'}
+          {loading ? '结算中' : error ? '重新结算' : isDeadlock ? '立即结算' : '结算成绩'}
         </button>
       </div>
     </div>

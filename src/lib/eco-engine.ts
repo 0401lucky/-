@@ -13,6 +13,7 @@ import type {
   EcoTrashKind,
   EcoPrizeInventory,
   EcoPrizeKey,
+  EcoPrizeLot,
 } from './types/eco';
 
 export type EcoPrizeClaimStats = Partial<Record<EcoPrizeKey, number>> & {
@@ -103,12 +104,19 @@ export const ECO_PRIZES: Record<EcoPrizeKey, PrizeDef> = {
 };
 
 export const ECO_PRIZE_KEYS = Object.keys(ECO_PRIZES) as EcoPrizeKey[];
+export const ECO_GLOBAL_PRIZE_LIMITS: Record<EcoPrizeKey, number> = {
+  photo: 10,
+  diamond: 10,
+  coin: 15,
+  necklace: 15,
+  trophy: 20,
+};
 export const ECO_BASE_PRIZE_RATE = ECO_PRIZE_KEYS.reduce(
   (sum, key) => sum + ECO_PRIZES[key].spawnRate,
   0,
 );
 export const ECO_NORMAL_SINGLE_PRIZE_RATE = 1;
-export const ECO_LUCKY_PRIZE_RATE = 10;
+export const ECO_LUCKY_PRIZE_RATE = 5;
 export const LUCKY_FLASHLIGHT_GENERATIONS = 200;
 export const RECYCLE_GLOVE_USES = 50;
 export const CLEAR_TRUCK_TRASH = 80;
@@ -188,7 +196,7 @@ export const ECO_ITEMS: Record<EcoItemKey, ItemDef> = {
   lucky_flashlight: {
     name: '幸运手电',
     emoji: '🔦',
-    desc: `接下来 ${LUCKY_FLASHLIGHT_GENERATIONS} 个在线生成物，上述奖品出现概率变为 10 倍`,
+    desc: `接下来 ${LUCKY_FLASHLIGHT_GENERATIONS} 个在线生成物，上述奖品出现概率变为 5 倍`,
     cost: 20,
     dailyLimit: 1,
   },
@@ -332,13 +340,24 @@ export function rollEcoGeneratedPrize(
 }
 
 export function pruneExpiredVisiblePrizes(state: EcoState, now: number): number {
-  const before = state.visiblePrizes.length;
-  state.visiblePrizes = state.visiblePrizes.filter((prize) => (
-    Number.isFinite(prize.createdAt)
-    && prize.createdAt <= now
-    && now - prize.createdAt <= ECO_PRIZE_TTL_MS
-  ));
-  return before - state.visiblePrizes.length;
+  return pruneExpiredVisiblePrizesDetailed(state, now).length;
+}
+
+export function pruneExpiredVisiblePrizesDetailed(state: EcoState, now: number): EcoState['visiblePrizes'] {
+  const expired: EcoState['visiblePrizes'] = [];
+  const active: EcoState['visiblePrizes'] = [];
+  for (const prize of state.visiblePrizes) {
+    const alive = Number.isFinite(prize.createdAt)
+      && prize.createdAt <= now
+      && now - prize.createdAt <= ECO_PRIZE_TTL_MS;
+    if (alive) {
+      active.push(prize);
+    } else {
+      expired.push(prize);
+    }
+  }
+  state.visiblePrizes = active;
+  return expired;
 }
 
 // ───────────────────────── 核心结算 ─────────────────────────
@@ -499,6 +518,8 @@ export function createInitialEcoState(userId: number, now: number): EcoState {
     pointBuffer: 0,
     upgrades: { spawn: 0, storage: 0, value: 0, auto: 0 },
     inventory: createEmptyPrizeInventory(),
+    prizeLots: [],
+    limitedPrizeInventory: createEmptyPrizeInventory(),
     lifetimePrizeClaims: 0,
     lifetimePrizeClaimCounts: createEmptyPrizeInventory(),
     visiblePrizes: [],
@@ -528,6 +549,39 @@ export function normalizeEcoState(raw: EcoState, now: number): EcoState {
     const value = raw.inventory?.[key];
     inventory[key] = Number.isFinite(value) ? Math.max(0, Math.floor(value as number)) : 0;
   }
+  const limitedPrizeInventory = createEmptyPrizeInventory();
+  for (const key of ECO_PRIZE_KEYS) {
+    const value = raw.limitedPrizeInventory?.[key];
+    const normalizedValue = Number.isFinite(value)
+      ? Math.max(0, Math.floor(value as number))
+      : 0;
+    limitedPrizeInventory[key] = Math.min(normalizedValue, inventory[key]);
+  }
+  const prizeLots = Array.isArray(raw.prizeLots)
+    ? raw.prizeLots.filter((lot) => (
+        lot
+        && typeof lot.id === 'string'
+        && typeof lot.key === 'string'
+        && (ECO_PRIZE_KEYS as string[]).includes(lot.key)
+        && Number.isFinite(lot.acquiredAt)
+      )).map((lot) => ({
+        id: lot.id,
+        key: lot.key,
+        acquiredAt: Math.max(0, Math.floor(lot.acquiredAt)),
+        availableAt: Number.isFinite(lot.availableAt)
+          ? Math.max(0, Math.floor(lot.availableAt))
+          : Math.max(0, Math.floor(lot.acquiredAt)),
+        limited: lot.limited === true,
+        source: (lot.source === 'stolen' || lot.source === 'restored' ? lot.source : 'claim') as EcoPrizeLot['source'],
+        publicEntryId: typeof lot.publicEntryId === 'string' ? lot.publicEntryId : null,
+        publiclyListedAt: Number.isFinite(lot.publiclyListedAt) ? Math.max(0, Math.floor(lot.publiclyListedAt as number)) : null,
+        merchantAvailableAt: Number.isFinite(lot.merchantAvailableAt) ? Math.max(0, Math.floor(lot.merchantAvailableAt as number)) : null,
+        stolenFromUserId: Number.isSafeInteger(lot.stolenFromUserId) ? lot.stolenFromUserId : null,
+        stolenAt: Number.isFinite(lot.stolenAt) ? Math.max(0, Math.floor(lot.stolenAt as number)) : null,
+        theftId: typeof lot.theftId === 'string' ? lot.theftId : null,
+        blackMarketAvailableAt: Number.isFinite(lot.blackMarketAvailableAt) ? Math.max(0, Math.floor(lot.blackMarketAvailableAt as number)) : null,
+      })).slice(0, ECO_PRIZE_KEYS.reduce((sum, key) => sum + inventory[key], 0))
+    : [];
   const legacyPrizeTotal = ECO_PRIZE_KEYS.reduce((sum, key) => sum + inventory[key], 0);
   const lifetimePrizeClaimCounts = createEmptyPrizeInventory();
   for (const key of ECO_PRIZE_KEYS) {
@@ -557,6 +611,28 @@ export function normalizeEcoState(raw: EcoState, now: number): EcoState {
     date: typeof rawDailyTrashPoints?.date === 'string' ? rawDailyTrashPoints.date : '',
     points: Math.floor(safeNumber(rawDailyTrashPoints?.points, 0)),
   };
+  const normalizedVisiblePrizes = Array.isArray(raw.visiblePrizes)
+    ? raw.visiblePrizes.filter(
+        (prize) =>
+          prize
+          && typeof prize.id === 'string'
+          && typeof prize.key === 'string'
+          && (ECO_PRIZE_KEYS as string[]).includes(prize.key)
+          && Number.isFinite(prize.createdAt)
+          && prize.createdAt <= now,
+      ).map((prize) => ({
+        id: prize.id,
+        key: prize.key,
+        createdAt: prize.createdAt,
+        limited: prize.limited === true,
+      }))
+    : [];
+  const activeVisiblePrizes = normalizedVisiblePrizes.filter(
+    (prize) => now - prize.createdAt <= ECO_PRIZE_TTL_MS,
+  );
+  const expiredLimitedVisiblePrizes = normalizedVisiblePrizes.filter(
+    (prize) => prize.limited === true && now - prize.createdAt > ECO_PRIZE_TTL_MS,
+  );
 
   return {
     userId: raw.userId,
@@ -566,23 +642,17 @@ export function normalizeEcoState(raw: EcoState, now: number): EcoState {
     pointBuffer: Math.floor(safeNumber(raw.pointBuffer, 0)),
     upgrades,
     inventory,
+    prizeLots,
+    limitedPrizeInventory,
     lifetimePrizeClaims: Math.max(
       Math.floor(safeNumber(raw.lifetimePrizeClaims, legacyPrizeTotal)),
       normalizedPrizeTotal,
     ),
     lifetimePrizeClaimCounts,
-    visiblePrizes: Array.isArray(raw.visiblePrizes)
-      ? raw.visiblePrizes.filter(
-          (prize) =>
-            prize
-            && typeof prize.id === 'string'
-            && typeof prize.key === 'string'
-            && (ECO_PRIZE_KEYS as string[]).includes(prize.key)
-            && Number.isFinite(prize.createdAt)
-            && prize.createdAt <= now
-            && now - prize.createdAt <= ECO_PRIZE_TTL_MS,
-        ).slice(0, MAX_VISIBLE_PRIZES)
-      : [],
+    visiblePrizes: [
+      ...expiredLimitedVisiblePrizes,
+      ...activeVisiblePrizes.slice(0, MAX_VISIBLE_PRIZES),
+    ],
     luckyGenerationsRemaining: Math.floor(safeNumber(raw.luckyGenerationsRemaining, 0)),
     gloveUsesRemaining: Math.floor(safeNumber(raw.gloveUsesRemaining, 0)),
     itemPurchases,

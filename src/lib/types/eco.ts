@@ -39,6 +39,40 @@ export interface EcoVisiblePrize {
   id: string;
   key: EcoPrizeKey;
   createdAt: number;
+  /** 是否占用新规则下的全服奖品库存 */
+  limited?: boolean;
+}
+
+export interface EcoPrizeLot {
+  id: string;
+  key: EcoPrizeKey;
+  acquiredAt: number;
+  availableAt: number;
+  limited?: boolean;
+  source: 'claim' | 'stolen' | 'restored';
+  publicEntryId?: string | null;
+  publiclyListedAt?: number | null;
+  merchantAvailableAt?: number | null;
+  stolenFromUserId?: number | null;
+  stolenAt?: number | null;
+  theftId?: string | null;
+  blackMarketAvailableAt?: number | null;
+}
+
+export interface EcoPublicPrizeEntry {
+  id: string;
+  key: EcoPrizeKey;
+  ownerUserId: number;
+  ownerName: string;
+  ownerAvatarUrl?: string | null;
+  ownerLotId: string;
+  publicAt: number;
+  merchantAvailableAt: number;
+  status: 'listed' | 'stolen';
+  thiefUserId?: number | null;
+  thiefName?: string | null;
+  theftMessage?: string | null;
+  stolenAt?: number | null;
 }
 
 /** 用户持久状态（存于 eco:state:{userId}，单 JSON blob） */
@@ -56,6 +90,10 @@ export interface EcoState {
   upgrades: EcoUpgradeState;
   /** 背包内奖品库存 */
   inventory: EcoPrizeInventory;
+  /** 新规则后按件追踪的奖品；旧版本聚合库存没有明细，按已解锁处理 */
+  prizeLots: EcoPrizeLot[];
+  /** 新规则后领取且仍未出售的受限奖品库存；旧版本库存不计入 */
+  limitedPrizeInventory: EcoPrizeInventory;
   /** 生涯累计拾取奖品数（出售不扣减） */
   lifetimePrizeClaims: number;
   /** 生涯累计拾取各类奖品数（出售不扣减） */
@@ -117,6 +155,13 @@ export interface EcoPrizeView {
   emoji: string;
   imageSrc: string;
   inventory: number;
+  sellableInventory: number;
+  lockedInventory: number;
+  publicInventory: number;
+  stolenInventory: number;
+  merchantAvailableCount: number;
+  merchantPrice: number;
+  blackMarketAvailableCount: number;
   todayPrice: number;
   yesterdayPrice: number;
   change: number;
@@ -124,10 +169,39 @@ export interface EcoPrizeView {
   priceHistory: Array<{
     date: string;
     price: number;
+    /** 该日价格参考的前一天，该奖品全服领取数量 */
+    previousDayClaimCount: number;
+    /** 该日价格参考的前一天，全部奖品全服领取总量 */
+    previousDayTotalClaims: number;
   }>;
   minPrice: number;
   maxPrice: number;
   spawnRate: number;
+}
+
+export interface EcoPublicBoardView {
+  remaining: EcoPrizeInventory;
+  entries: Array<{
+    id: string;
+    key: EcoPrizeKey;
+    name: string;
+    emoji: string;
+    imageSrc: string;
+    ownerUserId: number;
+    ownerName: string;
+    ownerUsername?: string | null;
+    ownerDisplayName?: string | null;
+    ownerAvatarUrl?: string | null;
+    merchantAvailableAt: number;
+    status: EcoPublicPrizeEntry['status'];
+    canSteal?: boolean;
+    stealDisabledReason?: string | null;
+    thiefUserId?: number | null;
+    thiefName?: string | null;
+    thiefAvatarUrl?: string | null;
+    theftMessage?: string | null;
+    stolenAt?: number | null;
+  }>;
 }
 
 export interface EcoVisiblePrizeView {
@@ -169,6 +243,7 @@ export interface EcoStatusResponse {
   upgrades: EcoUpgradeView[];
   items: EcoItemView[];
   prizes: EcoPrizeView[];
+  publicBoard: EcoPublicBoardView;
   visiblePrizes: EcoVisiblePrizeView[];
   luckyGenerationsRemaining: number;
   gloveUsesRemaining: number;

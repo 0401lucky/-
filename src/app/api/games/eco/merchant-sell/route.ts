@@ -1,20 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withUserRateLimit } from '@/lib/rate-limit';
-import { claimEcoPrize } from '@/lib/eco';
+import { sellEcoPrizeToMerchant } from '@/lib/eco';
+import type { EcoPrizeKey } from '@/lib/types/eco';
 
-export const POST = withUserRateLimit('game:action', async (request: NextRequest, user) => {
-  let body: { prizeId?: unknown; makePublic?: unknown };
+export const POST = withUserRateLimit('store:exchange', async (request: NextRequest, user) => {
+  let body: { key?: unknown };
   try {
-    body = (await request.json()) as { prizeId?: unknown; makePublic?: unknown };
+    body = (await request.json()) as { key?: unknown };
   } catch {
     return NextResponse.json({ success: false, message: '参数错误' }, { status: 400 });
   }
 
-  if (typeof body.prizeId !== 'string') {
+  if (typeof body.key !== 'string') {
     return NextResponse.json({ success: false, message: '参数错误' }, { status: 400 });
   }
 
-  const result = await claimEcoPrize(user.id, body.prizeId, { makePublic: body.makePublic === true });
+  const result = await sellEcoPrizeToMerchant(user.id, body.key as EcoPrizeKey);
   if (!result.ok) {
     return NextResponse.json({ success: false, message: result.message }, { status: 400 });
   }
@@ -23,6 +24,9 @@ export const POST = withUserRateLimit('game:action', async (request: NextRequest
     success: true,
     data: {
       prizeKey: result.prizeKey,
+      quantitySold: result.quantitySold,
+      price: result.price,
+      pointsEarned: result.pointsEarned,
       status: result.data,
     },
   });

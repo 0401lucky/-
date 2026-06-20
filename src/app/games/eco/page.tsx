@@ -72,6 +72,7 @@ interface PrizeBoardItem {
 }
 
 type BoardItem = TrashBoardItem | PrizeBoardItem;
+type EcoPublicBoardEntry = EcoStatusResponse['publicBoard']['entries'][number];
 
 interface FloatPop {
   id: number;
@@ -81,6 +82,7 @@ interface FloatPop {
 }
 
 interface TopUser {
+  id: number;
   name: string;
   fallbackName: string;
   avatarUrl: string | null;
@@ -89,6 +91,7 @@ interface TopUser {
 }
 
 interface AuthMeUser {
+  id: number;
   username: string;
   displayName?: string;
   isAdmin?: boolean;
@@ -167,7 +170,15 @@ function getEffectProgressPercent(remaining: number, baseTotal: number): number 
   return Math.min(100, Math.round((remaining / baseTotal) * 100));
 }
 
-function PriceSparkline({ history }: { history: PrizeHistory }) {
+function PriceSparkline({
+  history,
+  selectedDate,
+  onSelectDate,
+}: {
+  history: PrizeHistory;
+  selectedDate: string | null;
+  onSelectDate: (date: string) => void;
+}) {
   const prices = history.map((point) => point.price);
   if (prices.length === 0) {
     return <div className="sparkline-empty">暂无行情数据</div>;
@@ -195,7 +206,10 @@ function PriceSparkline({ history }: { history: PrizeHistory }) {
   const first = plotted[0];
   const last = plotted[plotted.length - 1];
   const areaPath = `${linePath} L ${last.x.toFixed(2)} 100 L ${first.x.toFixed(2)} 100 Z`;
-  const lastIndex = plotted.length - 1;
+  const fallbackDate = plotted[plotted.length - 1]?.point.date ?? null;
+  const activeDate = selectedDate && plotted.some(({ point }) => point.date === selectedDate)
+    ? selectedDate
+    : fallbackDate;
 
   return (
     <div className="sparkline">
@@ -236,12 +250,15 @@ function PriceSparkline({ history }: { history: PrizeHistory }) {
             <path className="sparkline-area" d={areaPath} fill="url(#eco-spark-fill)" />
             <path className="sparkline-line" d={linePath} vectorEffect="non-scaling-stroke" />
           </svg>
-          {plotted.map(({ point, x, y }, index) => (
-            <span
+          {plotted.map(({ point, x, y }) => (
+            <button
               key={point.date}
-              className={index === lastIndex ? 'sparkline-node last' : 'sparkline-node'}
-              title={`${point.date} · ${point.price}`}
+              type="button"
+              className={point.date === activeDate ? 'sparkline-node selected' : 'sparkline-node'}
+              title={`${point.date} · ${point.price} 积分 · 前一天收集 ${point.previousDayClaimCount}`}
               style={{ left: `${x}%`, top: `${y}%` }}
+              onClick={() => onSelectDate(point.date)}
+              aria-label={`${point.date} 价格 ${point.price} 积分，前一天全服收集 ${point.previousDayClaimCount}`}
             />
           ))}
         </div>
@@ -269,22 +286,32 @@ export default function EcoPage() {
   const [binActive, setBinActive] = useState(false);
   const [binEat, setBinEat] = useState(0);
   const [shopTab, setShopTab] = useState<'upgrade' | 'item'>('upgrade');
-  const [activeModal, setActiveModal] = useState<'shop' | 'bag' | 'rules' | null>(null);
+  const [activeModal, setActiveModal] = useState<'shop' | 'bag' | 'rules' | 'claim' | 'steal' | null>(null);
   const [selectedPricePrizeKey, setSelectedPricePrizeKey] = useState<EcoPrizeKey>('diamond');
+  const [selectedPriceDate, setSelectedPriceDate] = useState<string | null>(null);
   const [buying, setBuying] = useState<string | null>(null);
   const [claiming, setClaiming] = useState<string | null>(null);
   const [selling, setSelling] = useState<string | null>(null);
   const [offline, setOffline] = useState<EcoStatusResponse['offline']>(null);
   const [topUser, setTopUser] = useState<TopUser | null>(null);
+  const [pendingClaimItem, setPendingClaimItem] = useState<PrizeBoardItem | null>(null);
+  const [pendingStealEntry, setPendingStealEntry] = useState<EcoPublicBoardEntry | null>(null);
+  const [theftMessage, setTheftMessage] = useState('');
 
   const displayPendingRef = useRef(0);
   const [displayPending, setDisplayPending] = useState(0);
   const growCarryRef = useRef(0);
   const pendingDragsRef = useRef(0);
+  const inFlightDragsRef = useRef(0);
+  const [, setOptimisticRevision] = useState(0);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flushingRef = useRef(false);
   const yardRef = useRef<HTMLDivElement>(null);
   const binRef = useRef<HTMLDivElement>(null);
+
+  const refreshOptimisticCounters = useCallback(() => {
+    setOptimisticRevision((value) => (value + 1) % 1_000_000);
+  }, []);
 
   const setPending = useCallback((next: number) => {
     const cap = status?.storageCap ?? 9999;
@@ -370,12 +397,14 @@ export default function EcoPage() {
           const profileData = settings?.success ? settings.data : null;
           const fallbackName = me.user.displayName || me.user.username;
           setTopUser({
+            id: me.user.id,
             name: profileData?.displayName || fallbackName,
             fallbackName,
             avatarUrl: profileData?.avatarUrl ?? null,
             isAdmin: Boolean(me.user.isAdmin),
             equippedAchievement: profileData?.equippedAchievement ?? null,
           });
+          void loadStatus(false, false);
         }
       } catch {
         /* 顶栏降级 */
@@ -408,7 +437,7 @@ export default function EcoPage() {
       cancelled = true;
       window.removeEventListener('lucky:profile-updated', handleProfileUpdated);
     };
-  }, []);
+  }, [loadStatus]);
 
   useEffect(() => {
     void loadStatus(true);
@@ -466,7 +495,10 @@ export default function EcoPage() {
     const drags = pendingDragsRef.current;
     if (drags <= 0) return;
     pendingDragsRef.current = 0;
+    inFlightDragsRef.current += drags;
+    refreshOptimisticCounters();
     flushingRef.current = true;
+    let completed = false;
     try {
       const res = await fetch('/api/games/eco/collect', {
         method: 'POST',
@@ -477,6 +509,9 @@ export default function EcoPage() {
         | { success?: boolean; data?: { cleared: number; pointsEarned: number; status: EcoStatusResponse }; message?: string }
         | null;
       if (res.ok && json?.success && json.data) {
+        completed = true;
+        inFlightDragsRef.current = Math.max(0, inFlightDragsRef.current - drags);
+        refreshOptimisticCounters();
         applyStatus(json.data.status, true);
         if (json.data.pointsEarned > 0) {
           spawnPop(`+${json.data.pointsEarned} 积分`);
@@ -487,12 +522,17 @@ export default function EcoPage() {
     } catch {
       /* 失败下次同步纠正 */
     } finally {
+      if (!completed) {
+        inFlightDragsRef.current = Math.max(0, inFlightDragsRef.current - drags);
+        pendingDragsRef.current += drags;
+        refreshOptimisticCounters();
+      }
       flushingRef.current = false;
-      if (pendingDragsRef.current > 0) {
+      if (completed && pendingDragsRef.current > 0) {
         void flushCollect();
       }
     }
-  }, [applyStatus, spawnPop]);
+  }, [applyStatus, refreshOptimisticCounters, spawnPop]);
 
   useEffect(() => {
     if (!status) return;
@@ -524,8 +564,9 @@ export default function EcoPage() {
     setPending(displayPendingRef.current - 1);
     setBinEat((n) => n + 1);
     pendingDragsRef.current += 1;
+    refreshOptimisticCounters();
     scheduleFlush();
-  }, [setPending, scheduleFlush]);
+  }, [refreshOptimisticCounters, setPending, scheduleFlush]);
 
   const onPointerDown = (e: React.PointerEvent, item: TrashBoardItem) => {
     const yard = yardRef.current;
@@ -591,14 +632,19 @@ export default function EcoPage() {
     }
   }, [applyStatus]);
 
-  const claimPrize = useCallback(async (item: PrizeBoardItem) => {
+  const openClaimPrizeModal = useCallback((item: PrizeBoardItem) => {
+    setPendingClaimItem(item);
+    setActiveModal('claim');
+  }, []);
+
+  const claimPrize = useCallback(async (item: PrizeBoardItem, makePublic: boolean) => {
     if (claiming) return;
     setClaiming(item.prizeId);
     try {
       const res = await fetch('/api/games/eco/claim-prize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prizeId: item.prizeId }),
+        body: JSON.stringify({ prizeId: item.prizeId, makePublic }),
       });
       const json = (await res.json().catch(() => null)) as
         | { success?: boolean; data?: { status: EcoStatusResponse }; message?: string }
@@ -607,6 +653,8 @@ export default function EcoPage() {
         setBoard((prev) => prev.filter((entry) => entry.id !== item.id));
         applyStatus(json.data.status, false);
         spawnPop(`${item.name} +1`);
+        setPendingClaimItem(null);
+        setActiveModal(null);
         setError(null);
       } else {
         setError(json?.message ?? '拾取失败');
@@ -618,13 +666,21 @@ export default function EcoPage() {
     }
   }, [applyStatus, claiming, spawnPop]);
 
-  const sellPrize = useCallback(async (key: EcoPrizeKey) => {
+  const sellPrize = useCallback(async (
+    key: EcoPrizeKey,
+    mode: 'normal' | 'merchant' | 'blackMarket' = 'normal',
+  ) => {
     setSelling(key);
     try {
-      const res = await fetch('/api/games/eco/sell', {
+      const endpoint = mode === 'merchant'
+        ? '/api/games/eco/merchant-sell'
+        : mode === 'blackMarket'
+          ? '/api/games/eco/black-market-sell'
+          : '/api/games/eco/sell';
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key, quantity: 1 }),
+        body: JSON.stringify(mode === 'normal' ? { key, quantity: 1 } : { key }),
       });
       const json = (await res.json().catch(() => null)) as
         | { success?: boolean; data?: { pointsEarned?: number; status: EcoStatusResponse }; message?: string }
@@ -645,6 +701,49 @@ export default function EcoPage() {
     }
   }, [applyStatus, spawnPop]);
 
+  const openStealModal = useCallback((entry: EcoPublicBoardEntry) => {
+    if (entry.canSteal === false) {
+      setError(entry.stealDisabledReason || '当前无法偷盗');
+      return;
+    }
+    if (topUser?.id === entry.ownerUserId) {
+      setError('不能偷自己的奖品');
+      return;
+    }
+    setPendingStealEntry(entry);
+    setTheftMessage('');
+    setActiveModal('steal');
+  }, [topUser?.id]);
+
+  const stealPublicPrize = useCallback(async (entry: EcoPublicBoardEntry, message: string) => {
+    const cleanMessage = message.trim();
+    if (!cleanMessage) {
+      setError('请输入偷盗留言');
+      return;
+    }
+    try {
+      const res = await fetch('/api/games/eco/steal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entryId: entry.id, message: cleanMessage }),
+      });
+      const json = (await res.json().catch(() => null)) as
+        | { success?: boolean; data?: { status: EcoStatusResponse }; message?: string }
+        | null;
+      if (res.ok && json?.success && json.data) {
+        applyStatus(json.data.status, true);
+        setPendingStealEntry(null);
+        setTheftMessage('');
+        setActiveModal(null);
+        setError(null);
+      } else {
+        setError(json?.message ?? '偷盗失败');
+      }
+    } catch {
+      setError('网络错误');
+    }
+  }, [applyStatus]);
+
   useEffect(() => {
     return () => {
       if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
@@ -655,7 +754,6 @@ export default function EcoPage() {
 
   const cap = status?.storageCap ?? 0;
   const balance = status?.points;
-  const todayTrashPoints = status?.todayTrashPoints ?? 0;
   const initial = (topUser?.name?.[0] ?? '?').toUpperCase();
   const navAchievement = topUser?.equippedAchievement ?? null;
   const navRoleLabel = topUser?.isAdmin ? '管理员' : '用户';
@@ -664,17 +762,17 @@ export default function EcoPage() {
   const bagPct = cap > 0 ? Math.min(100, Math.round((displayPendingTotal / cap) * 100)) : 0;
   const pointDivisor = Math.max(1, status?.pointDivisor ?? 10);
   const pointMultiplier = Math.max(1, status?.pointMultiplier ?? 1);
-  const optimisticTrash = pendingDragsRef.current * Math.max(1, status?.grabSize ?? 1);
+  const optimisticDragCount = pendingDragsRef.current + inFlightDragsRef.current;
+  const optimisticTrash = optimisticDragCount * Math.max(1, status?.grabSize ?? 1);
   const pointRawProgress = Math.max(0, (status?.pointBuffer ?? 0) + optimisticTrash);
   const pointReadyBatches = Math.floor(pointRawProgress / pointDivisor);
-  const pointRemainder = pointRawProgress % pointDivisor;
-  const pointProgressValue = pointRawProgress > 0 && pointReadyBatches > 0 && pointRemainder === 0
-    ? pointDivisor
-    : pointRemainder;
+  const optimisticPointsEarned = pointReadyBatches * pointMultiplier;
+  const pointProgressValue = pointRawProgress % pointDivisor;
   const pointProgressPct = Math.min(100, Math.round((pointProgressValue / pointDivisor) * 100));
-  const pointProgressHint = pointReadyBatches > 0
-    ? `待入账 +${pointReadyBatches * pointMultiplier} 积分`
+  const pointProgressHint = optimisticPointsEarned > 0
+    ? `本次已预估 +${optimisticPointsEarned} 积分`
     : `满 ${pointDivisor} 个 +${pointMultiplier} 积分`;
+  const todayTrashPoints = (status?.todayTrashPoints ?? 0) + optimisticPointsEarned;
   const activeItemEffects = [
     {
       key: 'lucky-flashlight',
@@ -697,6 +795,11 @@ export default function EcoPage() {
   ].filter((effect) => effect.remaining > 0);
   const prizeCount = status?.prizes.reduce((sum, prize) => sum + prize.inventory, 0) ?? 0;
   const selectedPricePrize = status?.prizes.find((prize) => prize.key === selectedPricePrizeKey) ?? status?.prizes[0] ?? null;
+  const selectedPricePoint = selectedPricePrize
+    ? selectedPricePrize.priceHistory.find((point) => point.date === selectedPriceDate)
+      ?? selectedPricePrize.priceHistory[selectedPricePrize.priceHistory.length - 1]
+      ?? null
+    : null;
   const SelectedPriceTrendIcon = selectedPricePrize && selectedPricePrize.weekChange >= 0 ? TrendingUp : TrendingDown;
 
   const specs = status
@@ -804,7 +907,7 @@ export default function EcoPage() {
                     type="button"
                     className={`prize ${claiming === item.prizeId ? 'is-claiming' : ''}`}
                     style={{ left: `${item.x}%`, top: `${item.y}%`, ['--rot' as string]: `${item.rot}deg` }}
-                    onClick={() => void claimPrize(item)}
+                    onClick={() => openClaimPrizeModal(item)}
                     disabled={claiming === item.prizeId}
                     aria-label={`拾取${item.name}`}
                     title={`拾取${item.name}`}
@@ -913,6 +1016,68 @@ export default function EcoPage() {
           </p>
         </section>
 
+        <section className="public-board">
+          <div className="public-board-head">
+            <div>
+              <h2>公开栏</h2>
+              <span>全服剩余与公开展示</span>
+            </div>
+          </div>
+          <div className="public-remaining">
+            {status?.prizes.map((prize) => (
+              <span key={prize.key}>
+                {prize.emoji}{prize.name} <b>{status.publicBoard.remaining[prize.key]}</b>
+              </span>
+            ))}
+          </div>
+          <div className="public-list">
+            {status?.publicBoard.entries.length ? status.publicBoard.entries.map((entry) => {
+              const isOwnPrize = topUser?.id === entry.ownerUserId;
+              const rankLikeOwnerName = entry.ownerDisplayName || entry.ownerUsername || entry.ownerName;
+              const ownerDisplayName = isOwnPrize ? (topUser?.name ?? rankLikeOwnerName) : rankLikeOwnerName;
+              const ownerAvatarUrl = isOwnPrize ? (topUser?.avatarUrl ?? entry.ownerAvatarUrl) : entry.ownerAvatarUrl;
+              const ownerInitial = (ownerDisplayName?.[0] ?? '?').toUpperCase();
+              const canSteal = entry.canSteal !== false && entry.status === 'listed';
+              const stealButtonLabel = entry.stealDisabledReason || (isOwnPrize ? '自己的奖品' : '偷盗');
+              return (
+                <article key={entry.id} className={`public-entry ${entry.status}`}>
+                  <div className="public-entry-main">
+                    <span className="public-entry-emoji">{entry.emoji}</span>
+                    <span className="public-entry-avatar public-entry-avatar-nav eco-user-av" aria-hidden>
+                      {ownerAvatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={ownerAvatarUrl} alt="" />
+                      ) : ownerInitial}
+                    </span>
+                    <div>
+                      <b>{entry.name}</b>
+                      <span>{ownerDisplayName} 持有</span>
+                      {entry.status === 'stolen' && (
+                        <span className="public-entry-thief">已被偷走，警察追查中</span>
+                      )}
+                      {entry.theftMessage && <i>“{entry.theftMessage}”</i>}
+                    </div>
+                  </div>
+                  {entry.status === 'listed' ? (
+                    <button
+                      type="button"
+                      className="eco-btn soft"
+                      disabled={!canSteal}
+                      onClick={() => openStealModal(entry)}
+                    >
+                      {canSteal ? '偷盗' : stealButtonLabel}
+                    </button>
+                  ) : (
+                    <span className="public-entry-tag">追查中</span>
+                  )}
+                </article>
+              );
+            }) : (
+              <div className="public-empty">暂无公开展示的奖品</div>
+            )}
+          </div>
+        </section>
+
         {/* ───────── 生产参数 ───────── */}
         <section className="specs">
           {specs.length === 0
@@ -960,8 +1125,9 @@ export default function EcoPage() {
 
             <div className="rules-summary" aria-label="规则摘要">
               <span><b>10</b> 个垃圾 = 基础 <b>1</b> 积分</span>
-              <span>奖品占用待回收容量</span>
-              <span>奖品 10 分钟未领取会消失</span>
+              <span>奖品次日早上 <b>6</b> 点后可售</span>
+              <span>行情每日 <b>0</b> 点刷新</span>
+              <span>警察后台自动追查偷盗</span>
             </div>
 
             <div className="rules-grid">
@@ -976,7 +1142,14 @@ export default function EcoPage() {
                 <span className="rule-icon">🎁</span>
                 <div>
                   <h3>奖品生成</h3>
-                  <p>每次生成会先判定本次物品是普通垃圾还是奖品。奖品与垃圾共用待回收容量，不会在容量满时额外刷出。</p>
+                  <p>每次生成会先判定普通垃圾或奖品。奖品与垃圾共用待回收容量，不会在容量满时额外刷出。</p>
+                </div>
+              </article>
+              <article className="rule-card">
+                <span className="rule-icon">📦</span>
+                <div>
+                  <h3>全服限量</h3>
+                  <p>全服同时持有上限：照片 10、钻石 10、金币 15、项链 15、奖杯 20。达到上限后，不会再刷出对应奖品。</p>
                 </div>
               </article>
               <article className="rule-card">
@@ -997,14 +1170,63 @@ export default function EcoPage() {
                 <span className="rule-icon">💎</span>
                 <div>
                   <h3>奖品概率</h3>
-                  <p>奖杯 0.05%，项链 0.03%，金币 0.01%，钻石 0.005%，照片 0.001%。幸运手电会让这些奖品的出现概率变为 10 倍。</p>
+                  <p>奖杯 0.05%，项链 0.03%，金币 0.01%，钻石 0.005%，照片 0.001%。幸运手电会让这些奖品的出现概率变为 5 倍，最高不超过 100%。</p>
                 </div>
               </article>
               <article className="rule-card">
                 <span className="rule-icon">🏪</span>
                 <div>
                   <h3>商店与行情</h3>
-                  <p>奖品可在背包出售。今日价格会根据全服前一天领取率浮动，领取得多则价格更低，领取少则价格更高。</p>
+                  <p>奖品价格每天凌晨 0 点刷新。七日行情的每个节点都可点击，查看当天价格和前一天全服收集数量。</p>
+                </div>
+              </article>
+              <article className="rule-card">
+                <span className="rule-icon">🔒</span>
+                <div>
+                  <h3>出售时间</h3>
+                  <p>玩家拾取奖品后不能立刻出售，需要等到第二天早上 6 点。旧版本已获得的奖品不会被回收。</p>
+                </div>
+              </article>
+              <article className="rule-card">
+                <span className="rule-icon">📣</span>
+                <div>
+                  <h3>公开展示</h3>
+                  <p>是否公开只能在拾取奖品时选择。选择公开后不能手动取消，奖品会持续展示在公开栏，全服玩家都能看见持有人。</p>
+                </div>
+              </article>
+              <article className="rule-card">
+                <span className="rule-icon">🧑‍💼</span>
+                <div>
+                  <h3>商人收购</h3>
+                  <p>公开展示的奖品会在第二天早上 6 点吸引商人。到时可选择普通出售，也可按当天市场价 1.2 倍卖给商人；未出售前仍可能被偷。</p>
+                </div>
+              </article>
+              <article className="rule-card">
+                <span className="rule-icon">🕵️</span>
+                <div>
+                  <h3>偷盗条件</h3>
+                  <p>只有当前一个奖品都没有的玩家，才能偷走公开栏中的奖品。偷盗时必须留下一句话。</p>
+                </div>
+              </article>
+              <article className="rule-card">
+                <span className="rule-icon">🚓</span>
+                <div>
+                  <h3>警察追查</h3>
+                  <p>偷盗后警察会由系统后台自动追查，不需要玩家挂机。初始抓捕概率 10%，每过 1 小时增加 3%，每半小时检查一次。</p>
+                </div>
+              </article>
+              <article className="rule-card">
+                <span className="rule-icon">⚖️</span>
+                <div>
+                  <h3>抓捕结果</h3>
+                  <p>被抓后奖品物归原主，小偷扣除当天售价 10% 的积分并强制佩戴“小偷”成就 10 小时，原主获得扣分的一半。</p>
+                </div>
+              </article>
+              <article className="rule-card">
+                <span className="rule-icon">🌑</span>
+                <div>
+                  <h3>黑市出售</h3>
+                  <p>偷来的奖品不能普通出售，只能等 24 小时内未被抓后在黑市出售，售价为该奖品的最高价格。</p>
                 </div>
               </article>
               <article className="rule-card">
@@ -1018,9 +1240,137 @@ export default function EcoPage() {
                 <span className="rule-icon">🧤</span>
                 <div>
                   <h3>一次性道具</h3>
-                  <p>清运车补充普通垃圾但不生成奖品；回收手套让后续拖拽额外回收；幸运手电让后续在线生成上述奖品的概率变为 10 倍。</p>
+                  <p>清运车补充普通垃圾但不生成奖品；回收手套让后续拖拽额外回收；幸运手电让后续在线生成上述奖品的概率变为 5 倍。</p>
                 </div>
               </article>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {activeModal === 'claim' && pendingClaimItem && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => {
+          if (e.target === e.currentTarget) {
+            setPendingClaimItem(null);
+            setActiveModal(null);
+          }
+        }}>
+          <section className="eco-modal choice-modal" role="dialog" aria-modal="true" aria-labelledby="eco-claim-title">
+            <div className="modal-head">
+              <h2 id="eco-claim-title" className="shop-title">
+                <span className="shop-title-icon"><Package size={18} /></span>拾取奖品
+              </h2>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => {
+                  setPendingClaimItem(null);
+                  setActiveModal(null);
+                }}
+                aria-label="关闭拾取弹窗"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="choice-prize">
+              <span className="sc-prize-img">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={pendingClaimItem.imageSrc} alt={pendingClaimItem.name} draggable={false} />
+              </span>
+              <div>
+                <h3>{pendingClaimItem.name}</h3>
+                <p>选择公开后会展示在公开栏，全服玩家能看见你持有该奖品；次日早上 6 点会吸引商人，但未出售前仍可能被偷。</p>
+              </div>
+            </div>
+            <div className="choice-actions">
+              <button
+                type="button"
+                className="eco-btn full soft"
+                disabled={claiming === pendingClaimItem.prizeId}
+                onClick={() => void claimPrize(pendingClaimItem, false)}
+              >
+                不公开，收入背包
+              </button>
+              <button
+                type="button"
+                className="eco-btn full"
+                disabled={claiming === pendingClaimItem.prizeId}
+                onClick={() => void claimPrize(pendingClaimItem, true)}
+              >
+                公开展示
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {activeModal === 'steal' && pendingStealEntry && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => {
+          if (e.target === e.currentTarget) {
+            setPendingStealEntry(null);
+            setTheftMessage('');
+            setActiveModal(null);
+          }
+        }}>
+          <section className="eco-modal choice-modal" role="dialog" aria-modal="true" aria-labelledby="eco-steal-title">
+            <div className="modal-head">
+              <h2 id="eco-steal-title" className="shop-title">
+                <span className="shop-title-icon"><BookOpen size={18} /></span>偷盗留言
+              </h2>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => {
+                  setPendingStealEntry(null);
+                  setTheftMessage('');
+                  setActiveModal(null);
+                }}
+                aria-label="关闭偷盗弹窗"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="choice-prize">
+              <span className="sc-prize-img">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={pendingStealEntry.imageSrc} alt={pendingStealEntry.name} draggable={false} />
+              </span>
+              <div>
+                <h3>{pendingStealEntry.name}</h3>
+                <p>你将尝试偷走 {pendingStealEntry.ownerName} 公开展示的奖品。警察会后台追查，若被抓会归还奖品并扣除处罚积分。</p>
+              </div>
+            </div>
+            <label className="choice-field">
+              <span>留下的话</span>
+              <textarea
+                value={theftMessage}
+                maxLength={40}
+                rows={3}
+                placeholder="最多 40 字"
+                onChange={(event) => setTheftMessage(event.target.value)}
+              />
+              <i>{theftMessage.trim().length}/40</i>
+            </label>
+            <div className="choice-actions">
+              <button
+                type="button"
+                className="eco-btn full soft"
+                onClick={() => {
+                  setPendingStealEntry(null);
+                  setTheftMessage('');
+                  setActiveModal(null);
+                }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="eco-btn full danger"
+                disabled={!theftMessage.trim()}
+                onClick={() => void stealPublicPrize(pendingStealEntry, theftMessage)}
+              >
+                确认偷盗
+              </button>
             </div>
           </section>
         </div>
@@ -1152,7 +1502,31 @@ export default function EcoPage() {
                       <b>{selectedPricePrize.minPrice}-{selectedPricePrize.maxPrice}</b>
                     </div>
                   </div>
-                  <PriceSparkline history={selectedPricePrize.priceHistory} />
+                  <PriceSparkline
+                    history={selectedPricePrize.priceHistory}
+                    selectedDate={selectedPricePoint?.date ?? null}
+                    onSelectDate={setSelectedPriceDate}
+                  />
+                  {selectedPricePoint && (
+                    <div className="price-point-detail">
+                      <div>
+                        <span>日期</span>
+                        <b>{selectedPricePoint.date}</b>
+                      </div>
+                      <div>
+                        <span>当天价格</span>
+                        <b>{selectedPricePoint.price}</b>
+                      </div>
+                      <div>
+                        <span>前日该奖品收集</span>
+                        <b>{selectedPricePoint.previousDayClaimCount}</b>
+                      </div>
+                      <div>
+                        <span>前日全部奖品收集</span>
+                        <b>{selectedPricePoint.previousDayTotalClaims}</b>
+                      </div>
+                    </div>
+                  )}
                 </article>
               ) : (
                 <div className="price-empty">暂无行情数据</div>
@@ -1179,7 +1553,11 @@ export default function EcoPage() {
                 {status?.prizes.map((prize) => {
                   const owned = prize.inventory;
                   const busy = selling === prize.key;
-                  const canSell = owned > 0 && !busy;
+                  const canSell = prize.sellableInventory > 0 && !busy;
+                  const canMerchantSell = prize.merchantAvailableCount > 0 && !busy;
+                  const canBlackMarketSell = prize.blackMarketAvailableCount > 0 && !busy;
+                  const privateInventory = Math.max(0, prize.inventory - prize.publicInventory - prize.stolenInventory);
+                  const showNormalSell = prize.sellableInventory > 0 || privateInventory > 0;
                   const TrendIcon = prize.change >= 0 ? TrendingUp : TrendingDown;
                   return (
                     <article key={prize.key} className="sc prize-card">
@@ -1200,15 +1578,39 @@ export default function EcoPage() {
                         <span>库存 <b>{owned}</b></span>
                         <span>今日 <b>{prize.todayPrice}</b> 分</span>
                       </div>
-                      <p className="sc-desc">价格区间 {prize.minPrice}-{prize.maxPrice} 分，出售收益直接加入积分余额。</p>
-                      <button
-                        type="button"
-                        className="eco-btn full soft"
-                        disabled={!canSell}
-                        onClick={() => void sellPrize(prize.key)}
-                      >
-                        {busy ? '出售中…' : owned <= 0 ? '暂无库存' : `出售 1 个 · +${prize.todayPrice} 积分`}
-                      </button>
+                      <p className="sc-desc">
+                        可售 {prize.sellableInventory}，锁定 {prize.lockedInventory}，公开 {prize.publicInventory}，偷来 {prize.stolenInventory}。
+                      </p>
+                      {showNormalSell && (
+                        <button
+                          type="button"
+                          className="eco-btn full soft"
+                          disabled={!canSell}
+                          onClick={() => void sellPrize(prize.key, 'normal')}
+                        >
+                          {busy ? '出售中…' : prize.sellableInventory <= 0 ? '次日 6 点后可售' : `出售 1 个 · +${prize.todayPrice} 积分`}
+                        </button>
+                      )}
+                      {prize.publicInventory > 0 && (
+                        <button
+                          type="button"
+                          className="eco-btn full"
+                          disabled={!canMerchantSell}
+                          onClick={() => void sellPrize(prize.key, 'merchant')}
+                        >
+                          {prize.merchantAvailableCount > 0 ? `商人收购 · +${prize.merchantPrice} 积分` : '商人次日 6 点到达'}
+                        </button>
+                      )}
+                      {prize.stolenInventory > 0 && (
+                        <button
+                          type="button"
+                          className="eco-btn full danger"
+                          disabled={!canBlackMarketSell}
+                          onClick={() => void sellPrize(prize.key, 'blackMarket')}
+                        >
+                          {prize.blackMarketAvailableCount > 0 ? `黑市出售 · +${prize.maxPrice} 积分` : '黑市 24 小时后接货'}
+                        </button>
+                      )}
                     </article>
                   );
                 })}
@@ -1586,6 +1988,63 @@ export default function EcoPage() {
         .eco-btn.full { width: 100%; }
         .eco-btn.soft { background: linear-gradient(180deg, #fff, #f0fdfa); color: var(--c-700); border: 2px solid var(--c-100); box-shadow: 0 5px 0 rgba(20,184,166,0.14), 0 9px 14px rgba(20,184,166,0.16); }
         .eco-btn.soft:hover:not(:disabled) { background: linear-gradient(180deg, #fff, #ccfbf1); }
+        .eco-btn.danger { background: linear-gradient(180deg, #fb7185, #e11d48); box-shadow: 0 7px 0 rgba(159,18,57,0.6), 0 11px 18px rgba(225,29,72,0.25); }
+
+        .public-board {
+          display: flex; flex-direction: column; gap: 12px;
+          padding: 16px; border-radius: 22px;
+          background: rgba(255,255,255,0.88); border: 1px solid rgba(255,255,255,0.9);
+          box-shadow: 0 16px 32px rgba(4,47,46,0.08);
+        }
+        .public-board-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .public-board-head h2 { margin: 0; font-size: 18px; font-weight: 950; color: var(--c-900); }
+        .public-board-head span { display: block; margin-top: 2px; font-size: 12px; font-weight: 800; color: var(--soft); }
+        .public-remaining { display: flex; flex-wrap: wrap; gap: 8px; }
+        .public-remaining span {
+          display: inline-flex; align-items: center; gap: 4px;
+          padding: 6px 9px; border-radius: 999px;
+          background: rgba(240,253,250,0.9); border: 1px solid var(--c-100);
+          font-size: 12px; font-weight: 850; color: var(--c-800);
+        }
+        .public-remaining b { font-variant-numeric: tabular-nums; }
+        .public-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .public-entry {
+          min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+          padding: 12px; border-radius: 16px; background: #fff; border: 1px solid var(--c-100);
+        }
+        .public-entry.stolen { background: #fff1f2; border-color: #fecdd3; }
+        .public-entry-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+        .public-entry-emoji { font-size: 24px; flex-shrink: 0; }
+        .public-entry-avatar,
+        .public-entry-mini-avatar {
+          flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+          overflow: hidden; border-radius: 999px; background: linear-gradient(135deg, var(--c-100), #fff);
+          border: 1px solid rgba(153,246,228,0.9); color: var(--c-800); font-weight: 950;
+        }
+        .public-entry-avatar { width: 34px; height: 34px; font-size: 12px; }
+        .public-entry-avatar.public-entry-avatar-nav {
+          width: 36px;
+          height: 36px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+          border: 0;
+          color: #475569;
+          font-weight: 800;
+          font-size: 14px;
+          text-transform: uppercase;
+        }
+        .public-entry-mini-avatar { width: 18px; height: 18px; margin: 0 4px; font-size: 9px; vertical-align: middle; }
+        .public-entry-avatar img,
+        .public-entry-mini-avatar img { width: 100%; height: 100%; object-fit: cover; }
+        .public-entry-main div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+        .public-entry-main b { font-size: 14px; font-weight: 950; color: var(--c-900); }
+        .public-entry-main span, .public-entry-main i {
+          min-width: 0; font-size: 12px; font-style: normal; font-weight: 750; color: var(--soft);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .public-entry-thief { display: inline-flex; align-items: center; }
+        .public-entry-tag { flex-shrink: 0; padding: 5px 8px; border-radius: 999px; background: #ffe4e6; color: #be123c; font-size: 12px; font-weight: 900; }
+        .public-empty { grid-column: 1 / -1; padding: 16px; border-radius: 14px; background: rgba(240,253,250,0.75); color: var(--c-700); font-size: 13px; font-weight: 850; text-align: center; }
 
         /* SPECS */
         .specs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
@@ -1628,6 +2087,7 @@ export default function EcoPage() {
         .shop-modal { display: flex; flex-direction: column; gap: 16px; }
         .bag-modal { width: min(880px, 100%); display: flex; flex-direction: column; gap: 16px; }
         .rules-modal { width: min(900px, 100%); display: flex; flex-direction: column; gap: 16px; }
+        .choice-modal { width: min(520px, 100%); display: flex; flex-direction: column; gap: 16px; }
         .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
         .modal-close {
           width: 38px; height: 38px; border: 1px solid var(--c-100); border-radius: 13px;
@@ -1641,6 +2101,24 @@ export default function EcoPage() {
         /* SHOP */
         .shop-title { display: inline-flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 900; letter-spacing: -0.5px; margin: 0; }
         .shop-title-icon { width: 34px; height: 34px; border-radius: 11px; background: linear-gradient(135deg, #14b8a6, #0f766e); color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 20px rgba(20,184,166,0.35); }
+        .choice-prize {
+          display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 14px; align-items: center;
+          padding: 14px; border-radius: 18px; background: linear-gradient(180deg, #fff, #f0fdfa);
+          border: 1px solid var(--c-100);
+        }
+        .choice-prize h3 { margin: 0 0 5px; font-size: 17px; font-weight: 950; color: var(--c-900); }
+        .choice-prize p { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--soft); font-weight: 700; }
+        .choice-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .choice-field { display: flex; flex-direction: column; gap: 8px; }
+        .choice-field span { font-size: 12px; font-weight: 950; color: var(--c-800); }
+        .choice-field textarea {
+          width: 100%; resize: vertical; min-height: 86px; border-radius: 16px; border: 1px solid var(--c-100);
+          padding: 11px 12px; outline: none; background: rgba(255,255,255,0.92);
+          color: var(--ink); font: inherit; font-size: 13px; font-weight: 700;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,1);
+        }
+        .choice-field textarea:focus { border-color: var(--c-300); box-shadow: 0 0 0 3px rgba(20,184,166,0.16); }
+        .choice-field i { align-self: flex-end; font-size: 11px; font-style: normal; font-weight: 800; color: var(--soft); }
         .rules-summary {
           display: flex; flex-wrap: wrap; gap: 8px;
           padding: 12px; border-radius: 18px;
@@ -1740,14 +2218,34 @@ export default function EcoPage() {
         .sparkline-grid { fill: none; stroke: var(--c-700); stroke-opacity: 0.13; stroke-width: 1; stroke-dasharray: 2.5 4; stroke-linecap: round; }
         .sparkline-area { stroke: none; }
         .sparkline-line { fill: none; stroke: var(--c-600); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 4px 7px rgba(13,148,136,0.28)); }
-        .sparkline-node { position: absolute; width: 8px; height: 8px; border-radius: 999px; background: #fff; border: 2px solid var(--c-600); box-shadow: 0 2px 6px rgba(13,148,136,0.25); transform: translate(-50%, -50%); pointer-events: none; }
-        .sparkline-node.last {
-          width: 13px; height: 13px; border-color: var(--c);
+        .sparkline-node {
+          position: absolute; width: 16px; height: 16px; padding: 0; border-radius: 999px;
+          background: #fff; border: 2px solid var(--c-600);
+          box-shadow: 0 2px 6px rgba(13,148,136,0.25);
+          transform: translate(-50%, -50%); cursor: pointer;
+        }
+        .sparkline-node::after {
+          content: ""; position: absolute; inset: 3px; border-radius: inherit; background: var(--c-600);
+        }
+        .sparkline-node:hover,
+        .sparkline-node:focus-visible {
+          outline: none;
+          box-shadow: 0 0 0 4px rgba(20,184,166,0.18), 0 4px 11px rgba(13,148,136,0.38);
+        }
+        .sparkline-node.selected {
+          width: 18px; height: 18px; border-color: var(--c);
           box-shadow: 0 0 0 4px rgba(20,184,166,0.18), 0 4px 11px rgba(13,148,136,0.38);
         }
         .sparkline-date-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; }
         .sparkline-date-labels { position: relative; height: 16px; color: var(--c-700); font-size: 11px; font-weight: 800; }
         .sparkline-date-labels span { position: absolute; top: 0; line-height: 1; transform: translateX(-50%); white-space: nowrap; opacity: 0.82; }
+        .price-point-detail { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+        .price-point-detail div {
+          min-width: 0; padding: 9px 10px; border-radius: 14px;
+          background: rgba(255,255,255,0.82); border: 1px solid var(--c-100);
+        }
+        .price-point-detail span { display: block; font-size: 11px; font-weight: 900; color: var(--c-700); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .price-point-detail b { display: block; margin-top: 3px; font-size: 15px; font-weight: 950; color: var(--c-900); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
         @media (max-width: 720px) {
           .scene-empty { gap: 7px; font-size: 12.5px; text-align: center; padding: 0 18px; }
@@ -1796,6 +2294,12 @@ export default function EcoPage() {
           .spec-label { font-size: 10px; letter-spacing: 0.2px; }
           .spec-value { font-size: 13px; }
           .eco-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+          .public-board { padding: 11px; border-radius: 16px; gap: 9px; }
+          .public-list { grid-template-columns: 1fr; gap: 8px; }
+          .public-entry { padding: 10px; border-radius: 14px; }
+          .public-entry-avatar { width: 30px; height: 30px; }
+          .public-entry-avatar.public-entry-avatar-nav { width: 32px; height: 32px; font-size: 12px; }
+          .public-entry .eco-btn { min-height: 34px; padding: 7px 10px; font-size: 12px; }
           .action-tile { min-height: 58px; gap: 9px; padding: 10px; border-radius: 16px; }
           .action-icon { width: 34px; height: 34px; border-radius: 11px; }
           .action-icon svg { width: 18px; height: 18px; }
@@ -1816,7 +2320,8 @@ export default function EcoPage() {
           }
           .shop-modal,
           .bag-modal,
-          .rules-modal { gap: 10px; }
+          .rules-modal,
+          .choice-modal { gap: 10px; }
           .modal-head { gap: 10px; }
           .modal-close { width: 34px; height: 34px; border-radius: 11px; }
           .shop-title { gap: 8px; font-size: 17px; }
@@ -1828,6 +2333,12 @@ export default function EcoPage() {
           .rule-icon { width: 34px; height: 34px; border-radius: 12px; font-size: 18px; }
           .rule-card h3 { margin-bottom: 3px; font-size: 13.5px; }
           .rule-card p { font-size: 11.5px; line-height: 1.5; }
+          .choice-prize { grid-template-columns: 46px minmax(0, 1fr); gap: 10px; padding: 11px; border-radius: 15px; }
+          .choice-prize .sc-prize-img { width: 44px; height: 44px; }
+          .choice-prize h3 { font-size: 14.5px; }
+          .choice-prize p { font-size: 11.5px; line-height: 1.48; }
+          .choice-actions { grid-template-columns: 1fr; gap: 8px; }
+          .choice-field textarea { min-height: 78px; border-radius: 14px; font-size: 12.5px; }
           .shop-tabs { width: 100%; }
           .shop-tabs button { flex: 1; padding: 7px 10px; font-size: 13px; }
           .shop-grid { gap: 9px; }
@@ -1871,6 +2382,10 @@ export default function EcoPage() {
           .sparkline-chart, .sparkline-date-row { grid-template-columns: 28px minmax(0, 1fr); gap: 6px; }
           .sparkline-y-labels, .sparkline-plot { height: 104px; }
           .sparkline-y-labels, .sparkline-date-labels { font-size: 10px; }
+          .price-point-detail { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+          .price-point-detail div { padding: 7px 8px; border-radius: 12px; }
+          .price-point-detail span { font-size: 10px; }
+          .price-point-detail b { font-size: 13px; }
         }
       `}</style>
     </div>

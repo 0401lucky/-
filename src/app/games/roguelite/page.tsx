@@ -84,6 +84,7 @@ type RoguelitePendingView = NonNullable<RogueliteStateView['pending']>;
 
 const ROGUELITE_ART_BASE = '/images-optimized/ui/games/roguelite';
 const ROGUELITE_BOARD_ART = `${ROGUELITE_ART_BASE}/board-background-premium-clean.webp`;
+const ROGUELITE_REQUEST_TIMEOUT_MS = 15_000;
 
 const ROGUELITE_CELL_ART: Record<RogueliteCellView['type'], string> = {
   hidden: `${ROGUELITE_ART_BASE}/fog.webp`,
@@ -106,6 +107,35 @@ async function parseJson<T>(res: Response): Promise<ApiResponse<T> | null> {
   } catch {
     return null;
   }
+}
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs: number = ROGUELITE_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError';
+}
+
+function getRequestErrorMessage(error: unknown, timeoutMessage: string, fallbackMessage: string): string {
+  if (isAbortError(error)) {
+    return timeoutMessage;
+  }
+  return error instanceof Error ? error.message : fallbackMessage;
 }
 
 function shouldRefreshRogueliteStatusAfterStepError(message: string): boolean {
@@ -171,7 +201,7 @@ export default function RoguelitePage() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/games/roguelite/status');
+      const res = await fetchWithTimeout('/api/games/roguelite/status');
       const data = await parseJson<RogueliteStatus>(res);
       if (!res.ok || !data?.success || !data.data) {
         throw new Error(data?.message ?? (res.status === 401 ? '请先登录后开始游戏' : '加载游戏状态失败'));
@@ -184,7 +214,7 @@ export default function RoguelitePage() {
         setMessage('已恢复正在进行的迷阵');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '网络错误，请稍后重试');
+      setError(getRequestErrorMessage(err, '加载状态超时，请检查网络后重试', '网络错误，请稍后重试'));
     }
   }, []);
 
@@ -206,7 +236,7 @@ export default function RoguelitePage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/games/roguelite/submit', {
+      const res = await fetchWithTimeout('/api/games/roguelite/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: targetSession.sessionId }),
@@ -223,7 +253,7 @@ export default function RoguelitePage() {
       setMessage(`本局获得 ${data.data.pointsEarned} 福利积分`);
       void fetchStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '结算失败，请稍后重试');
+      setError(getRequestErrorMessage(err, '结算请求超时，请检查网络后重试', '结算失败，请稍后重试'));
     } finally {
       submittingRef.current = false;
       setLoading(false);
@@ -235,7 +265,7 @@ export default function RoguelitePage() {
     setError(null);
     setResult(null);
     try {
-      const res = await fetch('/api/games/roguelite/start', {
+      const res = await fetchWithTimeout('/api/games/roguelite/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
@@ -249,7 +279,7 @@ export default function RoguelitePage() {
       setLastOutcome(null);
       setMessage('选择相邻格子，点亮第一片星砂');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '开始游戏失败，请稍后重试');
+      setError(getRequestErrorMessage(err, '开始游戏超时，请检查网络后重试', '开始游戏失败，请稍后重试'));
     } finally {
       setLoading(false);
     }
@@ -259,7 +289,7 @@ export default function RoguelitePage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/games/roguelite/cancel', { method: 'POST' });
+      const res = await fetchWithTimeout('/api/games/roguelite/cancel', { method: 'POST' });
       const data = await parseJson<null>(res);
       if (!res.ok || !data?.success) {
         throw new Error(data?.message ?? '取消游戏失败');
@@ -270,7 +300,7 @@ export default function RoguelitePage() {
       setMessage('本局已放弃');
       void fetchStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '取消游戏失败，请稍后重试');
+      setError(getRequestErrorMessage(err, '取消游戏超时，请检查网络后重试', '取消游戏失败，请稍后重试'));
     } finally {
       setLoading(false);
     }
@@ -283,7 +313,7 @@ export default function RoguelitePage() {
     setError(null);
     let syncedSessionFromError = false;
     try {
-      const res = await fetch('/api/games/roguelite/step', {
+      const res = await fetchWithTimeout('/api/games/roguelite/step', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: session.sessionId, action }),
@@ -308,7 +338,7 @@ export default function RoguelitePage() {
       setLastOutcome(data.data.outcome);
       setMessage(data.data.outcome.message);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '行动失败，请稍后重试';
+      const errorMessage = getRequestErrorMessage(err, '行动请求超时，请检查网络后重试', '行动失败，请稍后重试');
       setError(errorMessage);
       if (!syncedSessionFromError && shouldRefreshRogueliteStatusAfterStepError(errorMessage)) {
         void fetchStatus();

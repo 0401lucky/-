@@ -43,6 +43,7 @@ const STEP_LOCK_TTL = 10;
 const MIN_FINISH_DURATION_MS = 2_000;
 const START_LOCK_TTL = 3;
 const SUBMIT_LOCK_TTL = 20;
+const RETAINED_ACTION_LOG_LIMIT = 120;
 
 const SESSION_KEY = (sessionId: string) => `roguelite:session:${sessionId}`;
 const ACTIVE_SESSION_KEY = (userId: number) => `roguelite:active:${userId}`;
@@ -62,6 +63,8 @@ export interface RogueliteGameSession {
   status: GameSessionStatus;
   state: RogueliteGameState;
   actions: RogueliteAction[];
+  actionCount?: number;
+  moveCount?: number;
 }
 
 export interface RogueliteGameRecord {
@@ -123,6 +126,8 @@ function generateSession(userId: number): RogueliteGameSession {
     status: 'playing',
     state: createInitialRogueliteState(seed),
     actions: [],
+    actionCount: 0,
+    moveCount: 0,
   };
 }
 
@@ -133,6 +138,30 @@ function normalizeActions(actions: unknown): RogueliteAction[] {
   return actions.filter((action): action is RogueliteAction =>
     Boolean(action) && typeof action === 'object' && typeof (action as { type?: unknown }).type === 'string',
   );
+}
+
+function getActionCount(session: Pick<RogueliteGameSession, 'actions' | 'actionCount'>): number {
+  const stored = Number.isSafeInteger(session.actionCount) ? Math.max(0, session.actionCount ?? 0) : 0;
+  return Math.max(stored, session.actions.length);
+}
+
+function getMoveCount(session: Pick<RogueliteGameSession, 'actions' | 'moveCount'>): number {
+  const stored = Number.isSafeInteger(session.moveCount) ? Math.max(0, session.moveCount ?? 0) : 0;
+  const retainedMoves = session.actions.filter((action) => action.type === 'move').length;
+  return Math.max(stored, retainedMoves);
+}
+
+function appendCompactAction(session: RogueliteGameSession, action: RogueliteAction): RogueliteGameSession {
+  const totalActions = getActionCount(session) + 1;
+  const totalMoves = getMoveCount(session) + (action.type === 'move' ? 1 : 0);
+  const retainedActions = [...session.actions, action].slice(-RETAINED_ACTION_LOG_LIMIT);
+
+  return {
+    ...session,
+    actions: retainedActions,
+    actionCount: totalActions,
+    moveCount: totalMoves,
+  };
 }
 
 function normalizeRogueliteSession(raw: unknown): RogueliteGameSession | null {
@@ -156,6 +185,8 @@ function normalizeRogueliteSession(raw: unknown): RogueliteGameSession | null {
     return null;
   }
 
+  const actions = normalizeActions(session.actions);
+
   return {
     id: session.id,
     userId: session.userId,
@@ -165,7 +196,13 @@ function normalizeRogueliteSession(raw: unknown): RogueliteGameSession | null {
     expiresAt: session.expiresAt,
     status: session.status as GameSessionStatus,
     state: session.state,
-    actions: normalizeActions(session.actions),
+    actions,
+    actionCount: Number.isSafeInteger(session.actionCount)
+      ? Math.max(Math.max(0, session.actionCount ?? 0), actions.length)
+      : actions.length,
+    moveCount: Number.isSafeInteger(session.moveCount)
+      ? Math.max(Math.max(0, session.moveCount ?? 0), actions.filter((action) => action.type === 'move').length)
+      : actions.filter((action) => action.type === 'move').length,
   };
 }
 
@@ -174,7 +211,7 @@ function buildSessionView(session: RogueliteGameSession): RogueliteSessionView {
     sessionId: session.id,
     startedAt: session.startedAt,
     expiresAt: session.expiresAt,
-    actionsCount: session.actions.length,
+    actionsCount: getActionCount(session),
     state: buildRogueliteStateView(session.state),
   };
 }
@@ -314,6 +351,22 @@ export async function getRogueliteRecords(userId: number, limit: number = 20): P
   return (await kv.lrange<RogueliteGameRecord>(RECORDS_KEY(userId), 0, limit - 1)) ?? [];
 }
 
+async function findSettledRogueliteRecord(
+  userId: number,
+  sessionId: string,
+  useNativeHotStore: boolean,
+): Promise<RogueliteGameRecord | null> {
+  const records = useNativeHotStore
+    ? await listNativeGameRecords<RogueliteGameRecord>(userId, GAME_TYPE, MAX_RECORD_ENTRIES)
+    : ((await kv.lrange<RogueliteGameRecord>(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)) ?? []);
+
+  return records.find((record) => record.sessionId === sessionId) ?? null;
+}
+
+function buildSettledRogueliteResult(record: RogueliteGameRecord) {
+  return { success: true as const, record, pointsEarned: record.pointsEarned };
+}
+
 export async function getActiveRogueliteSession(userId: number): Promise<RogueliteGameSession | null> {
   const useNativeHotStore = await isNativeHotStoreReady();
   if (useNativeHotStore) {
@@ -423,7 +476,7 @@ export async function stepRogueliteGame(
       await deleteSession(session.id, session.userId, useNativeHotStore);
       return { success: false, message: '游戏会话已过期' };
     }
-    if (session.actions.length >= ROGUELITE_MAX_ACTIONS && payloadCheck.action.type !== 'escape') {
+    if (getActionCount(session) >= ROGUELITE_MAX_ACTIONS && payloadCheck.action.type !== 'escape') {
       return {
         success: false,
         session: buildSessionView(session),
@@ -440,11 +493,13 @@ export async function stepRogueliteGame(
       };
     }
 
-    const nextSession: RogueliteGameSession = {
-      ...session,
-      state: resolved.state,
-      actions: [...session.actions, payloadCheck.action],
-    };
+    const nextSession: RogueliteGameSession = appendCompactAction(
+      {
+        ...session,
+        state: resolved.state,
+      },
+      payloadCheck.action,
+    );
 
     await saveSession(nextSession, useNativeHotStore);
 
@@ -468,9 +523,18 @@ export async function submitRogueliteResult(
   }
 
   const useNativeHotStore = await isNativeHotStoreReady();
+  const settledBeforeLock = await findSettledRogueliteRecord(userId, payload.sessionId, useNativeHotStore);
+  if (settledBeforeLock) {
+    return buildSettledRogueliteResult(settledBeforeLock);
+  }
+
   const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
   const lockToken = await acquireGameLock(lockKey, SUBMIT_LOCK_TTL, useNativeHotStore);
   if (!lockToken) {
+    const settledWhileLocked = await findSettledRogueliteRecord(userId, payload.sessionId, useNativeHotStore);
+    if (settledWhileLocked) {
+      return buildSettledRogueliteResult(settledWhileLocked);
+    }
     return { success: false, message: '请勿重复提交' };
   }
 
@@ -485,18 +549,34 @@ export async function submitRogueliteResult(
   try {
     const session = await loadSessionById(payload.sessionId, useNativeHotStore);
     if (!session) {
+      const settledRecord = await findSettledRogueliteRecord(userId, payload.sessionId, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledRogueliteResult(settledRecord);
+      }
       return { success: false, message: '游戏会话不存在或已过期' };
     }
     if (session.userId !== userId) {
       return { success: false, message: '会话不属于该用户' };
     }
     if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
+      const settledRecord = await findSettledRogueliteRecord(userId, session.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledRogueliteResult(settledRecord);
+      }
       return { success: false, message: '游戏会话已不是当前活跃局' };
     }
     if (session.status !== 'playing') {
+      const settledRecord = await findSettledRogueliteRecord(userId, session.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledRogueliteResult(settledRecord);
+      }
       return { success: false, message: '游戏会话已结束' };
     }
     if (Date.now() > session.expiresAt) {
+      const settledRecord = await findSettledRogueliteRecord(userId, session.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledRogueliteResult(settledRecord);
+      }
       await deleteSession(session.id, userId, useNativeHotStore);
       return { success: false, message: '游戏会话已过期' };
     }
@@ -536,7 +616,7 @@ export async function submitRogueliteResult(
       relics: session.state.player.relics.length,
       monstersDefeated: session.state.player.monstersDefeated,
       chestsOpened: session.state.player.chestsOpened,
-      stepsUsed: session.actions.filter((action) => action.type === 'move').length,
+      stepsUsed: getMoveCount(session),
       duration: serverDuration,
       scoreBreakdown,
       createdAt: Date.now(),

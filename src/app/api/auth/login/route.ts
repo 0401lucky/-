@@ -10,6 +10,7 @@ import {
 import { hasNativeHotStoreBinding, upsertNativeUser } from "@/lib/hot-d1";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { enforceTrustedApiRequest } from "@/lib/request-security";
+import { updatePublicSessionUserProfile } from "@/lib/user-profile";
 
 const TRUSTED_IP_HEADERS = ["cf-connecting-ip", "true-client-ip", "x-real-ip"] as const;
 
@@ -165,6 +166,13 @@ export async function POST(request: NextRequest) {
       iat: Date.now(),
       exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 天过期
     };
+
+    await updatePublicSessionUserProfile(result.user.id, {
+      username: result.user.username,
+      displayName: sessionData.displayName,
+    }).catch((error) => {
+      console.error("Update public session profile error:", error);
+    });
 
     // 使用 HMAC 签名创建安全的 session token
     const sessionToken = createSessionToken(sessionData);
