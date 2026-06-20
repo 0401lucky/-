@@ -639,6 +639,78 @@ describe('eco service', () => {
     expect(states.get('eco:state:1002')?.inventory.coin).toBe(0);
   });
 
+  it('restores both user states when stealing fails after one side is saved', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-10T10:00:00.000Z'));
+    const now = Date.now();
+    const ownerState = createInitialEcoState(1001, now);
+    const thiefState = createInitialEcoState(1002, now);
+    ownerState.inventory.coin = 1;
+    ownerState.limitedPrizeInventory.coin = 1;
+    ownerState.prizeLots = [{
+      id: 'owner-lot-1',
+      key: 'coin',
+      acquiredAt: now - 60_000,
+      availableAt: now + 24 * 60 * 60 * 1000,
+      limited: true,
+      source: 'claim',
+      publicEntryId: 'public-1',
+      publiclyListedAt: now - 60_000,
+      merchantAvailableAt: now + 24 * 60 * 60 * 1000,
+    }];
+    const states = new Map<string, EcoState>([
+      ['eco:state:1001', ownerState],
+      ['eco:state:1002', thiefState],
+    ]);
+    let publicEntries: EcoPublicPrizeEntry[] = [{
+      id: 'public-1',
+      key: 'coin',
+      ownerUserId: 1001,
+      ownerName: 'alice',
+      ownerLotId: 'owner-lot-1',
+      publicAt: now - 60_000,
+      merchantAvailableAt: now + 24 * 60 * 60 * 1000,
+      status: 'listed',
+    }];
+    let thefts: unknown[] = [];
+    let failThiefSave = true;
+
+    mockKvGet.mockImplementation(async (key: string) => {
+      if (key === 'eco:public-prizes') return publicEntries;
+      if (key === 'eco:thefts') return thefts;
+      return states.get(key) ?? null;
+    });
+    mockKvSet.mockImplementation(async (key: string, value: unknown) => {
+      if (key === 'eco:public-prizes') {
+        publicEntries = value as EcoPublicPrizeEntry[];
+        return 'OK';
+      }
+      if (key === 'eco:thefts') {
+        thefts = value as unknown[];
+        return 'OK';
+      }
+      if (key === 'eco:state:1002' && failThiefSave) {
+        failThiefSave = false;
+        throw new Error('thief state save failed');
+      }
+      if (key.startsWith('eco:state:')) {
+        states.set(key, value as EcoState);
+      }
+      return 'OK';
+    });
+
+    await expect(stealEcoPublicPrize(1002, 'public-1', '拿走了'))
+      .rejects.toThrow('thief state save failed');
+
+    expect(publicEntries[0]).toMatchObject({ status: 'listed' });
+    expect(publicEntries[0]?.thiefUserId).toBeUndefined();
+    expect(thefts).toEqual([]);
+    expect(states.get('eco:state:1001')?.inventory.coin).toBe(1);
+    expect(states.get('eco:state:1001')?.prizeLots).toHaveLength(1);
+    expect(states.get('eco:state:1002')?.inventory.coin).toBe(0);
+    expect(states.get('eco:state:1002')?.prizeLots).toHaveLength(0);
+  });
+
   it('moves claimed limited visible prizes into limited inventory without reserving twice', async () => {
     const now = Date.now();
     const state = createInitialEcoState(1001, now);

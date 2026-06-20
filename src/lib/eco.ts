@@ -252,6 +252,14 @@ function clearEcoCompensations(state: EcoState): void {
   ecoCompensations.delete(state);
 }
 
+function cloneEcoStateSnapshot(state: EcoState): EcoState {
+  return JSON.parse(JSON.stringify(state)) as EcoState;
+}
+
+async function restoreEcoStateSnapshot(state: EcoState): Promise<void> {
+  await kv.set(ECO_STATE_KEY(state.userId), cloneEcoStateSnapshot(state));
+}
+
 async function withEcoLock<T>(
   userId: number,
   fn: (state: EcoState) => Promise<T>,
@@ -289,6 +297,8 @@ async function withTwoEcoLocks<T>(
     if (!secondLock) return { ok: false, message: '操作处理中，请稍后重试' };
     const firstState = await loadEcoState(firstUser);
     const secondState = await loadEcoState(secondUser);
+    const firstSnapshot = cloneEcoStateSnapshot(firstState);
+    const secondSnapshot = cloneEcoStateSnapshot(secondState);
     const stateA = userA === firstUser ? firstState : secondState;
     const stateB = userB === firstUser ? firstState : secondState;
     try {
@@ -301,6 +311,10 @@ async function withTwoEcoLocks<T>(
       await Promise.all([
         rollbackEcoCompensations(firstState),
         rollbackEcoCompensations(secondState),
+      ]);
+      await Promise.allSettled([
+        restoreEcoStateSnapshot(firstSnapshot),
+        restoreEcoStateSnapshot(secondSnapshot),
       ]);
       throw error;
     }
