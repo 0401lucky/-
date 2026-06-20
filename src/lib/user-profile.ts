@@ -18,8 +18,18 @@ export interface CustomUserProfile {
   updatedAt?: number;
 }
 
+export interface PublicSessionUserProfile {
+  username?: string;
+  displayName?: string;
+  updatedAt?: number;
+}
+
 function customProfileKey(userId: number): string {
   return `user:profile:custom:${userId}`;
+}
+
+function publicSessionProfileKey(userId: number): string {
+  return `user:profile:session:${userId}`;
 }
 
 /**
@@ -47,6 +57,34 @@ export async function getCustomUserProfile(userId: number): Promise<CustomUserPr
     result.updatedAt = raw.updatedAt;
   }
   return result;
+}
+
+export async function getPublicSessionUserProfile(userId: number): Promise<PublicSessionUserProfile> {
+  const raw = await kv.get<PublicSessionUserProfile>(publicSessionProfileKey(userId));
+  if (!raw || typeof raw !== 'object') return {};
+  const result: PublicSessionUserProfile = {};
+  if (typeof raw.username === 'string' && raw.username.length > 0) {
+    result.username = raw.username;
+  }
+  if (typeof raw.displayName === 'string' && raw.displayName.length > 0) {
+    result.displayName = raw.displayName;
+  }
+  if (typeof raw.updatedAt === 'number') {
+    result.updatedAt = raw.updatedAt;
+  }
+  return result;
+}
+
+export async function updatePublicSessionUserProfile(
+  userId: number,
+  profile: { username?: string | null; displayName?: string | null },
+): Promise<void> {
+  const next: PublicSessionUserProfile = { updatedAt: Date.now() };
+  const username = typeof profile.username === 'string' ? profile.username.trim() : '';
+  const displayName = typeof profile.displayName === 'string' ? profile.displayName.trim() : '';
+  if (username) next.username = username;
+  if (displayName) next.displayName = displayName;
+  await kv.set(publicSessionProfileKey(userId), next);
 }
 
 /**

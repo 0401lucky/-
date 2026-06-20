@@ -19,7 +19,8 @@ export type AchievementId =
   | 'unlucky_star'
   | 'eco_ambassador'
   | 'gold_digger'
-  | 'xiaoc_fan';
+  | 'xiaoc_fan'
+  | 'thief';
 
 export type AchievementUnlockMode = 'auto' | 'admin' | 'periodic';
 
@@ -255,6 +256,14 @@ export const ACHIEVEMENT_DEFINITIONS: AchievementDefinition[] = [
     unlockMode: 'auto',
     series: '环保行动',
     shine: true,
+  },
+  {
+    id: 'thief',
+    emoji: '🕵️',
+    name: '小偷',
+    desc: '在环保行动偷盗奖品后被警察抓住，限时强制佩戴',
+    unlockMode: 'auto',
+    series: '环保行动',
   },
 ];
 

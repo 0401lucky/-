@@ -45,6 +45,26 @@ interface GameResult {
   pointsEarned: number;
 }
 
+const SUBMIT_TIMEOUT_MS = 15_000;
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError';
+}
+
 export function useGameSession() {
   const [session, setSession] = useState<GameSession | null>(null);
   const [status, setStatus] = useState<GameStatus | null>(null);
@@ -136,23 +156,33 @@ export function useGameSession() {
     completed: boolean,
     outcome?: LinkGameSettlementOutcome
   ): Promise<GameResult | null> => {
-    if (!session || hasSubmittedRef.current) return null;
+    if (!session) {
+      setError('游戏会话已丢失，请刷新页面后重试');
+      return null;
+    }
+
+    if (hasSubmittedRef.current) return null;
     
     hasSubmittedRef.current = true;
     setLoading(true);
+    setError(null);
     
     try {
-      const res = await fetch('/api/games/linkgame/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: session.sessionId,
-          moves,
-          completed,
-          outcome,
-          duration: 0,
-        }),
-      });
+      const res = await fetchWithTimeout(
+        '/api/games/linkgame/submit',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: session.sessionId,
+            moves,
+            completed,
+            outcome,
+            duration: 0,
+          }),
+        },
+        SUBMIT_TIMEOUT_MS
+      );
       
       const data = await res.json();
       
@@ -167,9 +197,9 @@ export function useGameSession() {
       fetchStatus();
 
       return data.data;
-    } catch {
+    } catch (err) {
       hasSubmittedRef.current = false;
-      setError('网络错误');
+      setError(isAbortError(err) ? '结算请求超时，请检查网络后重试' : '网络错误，请稍后重试');
       return null;
     } finally {
       setLoading(false);

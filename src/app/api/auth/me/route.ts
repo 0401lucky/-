@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth";
+import { updatePublicSessionUserProfile } from "@/lib/user-profile";
 import { cookies } from "next/headers";
 
 export async function GET() {
@@ -15,6 +16,13 @@ export async function GET() {
   const response = NextResponse.json({
     success: true,
     user,
+  });
+
+  await updatePublicSessionUserProfile(user.id, {
+    username: user.username,
+    displayName: user.displayName,
+  }).catch((error) => {
+    console.error("Update public session profile error:", error);
   });
 
   // 兼容：多人抽奖模块使用的 session cookie（与 app_session 同值）

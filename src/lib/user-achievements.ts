@@ -15,6 +15,7 @@ import {
 
 const USER_ACHIEVEMENTS_KEY = (userId: number) => `user:achievements:${userId}`;
 const USER_EQUIPPED_ACHIEVEMENT_KEY = (userId: number) => `user:achievement:equipped:${userId}`;
+const USER_FORCED_ACHIEVEMENT_KEY = (userId: number) => `user:achievement:forced:${userId}`;
 const PEAK_FIRST_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface UserAchievementSummary {
@@ -98,6 +99,13 @@ async function saveUserAchievementGrants(userId: number, grants: UserAchievement
 }
 
 export async function getEquippedAchievementId(userId: number): Promise<AchievementId | null> {
+  const forced = await kv.get<{ id?: unknown; until?: unknown }>(USER_FORCED_ACHIEVEMENT_KEY(userId));
+  if (isAchievementId(forced?.id) && typeof forced.until === 'number' && forced.until > Date.now()) {
+    return forced.id;
+  }
+  if (forced && typeof forced.until === 'number' && forced.until <= Date.now()) {
+    await kv.del(USER_FORCED_ACHIEVEMENT_KEY(userId));
+  }
   const raw = await kv.get<unknown>(USER_EQUIPPED_ACHIEVEMENT_KEY(userId));
   return isAchievementId(raw) ? raw : null;
 }
@@ -226,6 +234,11 @@ export async function setEquippedAchievement(
   achievementId: AchievementId | null,
   availableItems: AchievementDef[]
 ): Promise<PublicAchievement | null> {
+  const forced = await kv.get<{ id?: unknown; until?: unknown }>(USER_FORCED_ACHIEVEMENT_KEY(userId));
+  if (isAchievementId(forced?.id) && typeof forced.until === 'number' && forced.until > Date.now()) {
+    throw new Error('当前有强制佩戴成就，暂时无法更换');
+  }
+
   if (achievementId === null) {
     await kv.del(USER_EQUIPPED_ACHIEVEMENT_KEY(userId));
     return null;
@@ -243,6 +256,20 @@ export async function setEquippedAchievement(
     grantedAt: item.grantedAt ?? Date.now(),
     expiresAt: item.expiresAt ?? null,
   });
+}
+
+export async function forceEquipAchievement(
+  userId: number,
+  achievementId: AchievementId,
+  until: number,
+): Promise<void> {
+  if (!isAchievementId(achievementId)) {
+    throw new Error('未知成就');
+  }
+  await Promise.all([
+    kv.set(USER_EQUIPPED_ACHIEVEMENT_KEY(userId), achievementId),
+    kv.set(USER_FORCED_ACHIEVEMENT_KEY(userId), { id: achievementId, until }),
+  ]);
 }
 
 export async function grantPeakFirstAchievement(input: {

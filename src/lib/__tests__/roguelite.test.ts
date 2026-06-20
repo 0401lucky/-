@@ -4,8 +4,10 @@ import {
   ROGUELITE_MAX_ACTIONS,
   startRogueliteGame,
   stepRogueliteGame,
+  submitRogueliteResult,
   type RogueliteGameSession,
 } from '../roguelite';
+import { addGamePointsWithLimit } from '@/lib/points';
 import type { RogueliteAction } from '../roguelite-engine';
 
 vi.mock('@/lib/d1-kv', () => ({
@@ -62,6 +64,9 @@ describe('roguelite service', () => {
   const mockKvDel = vi.mocked(kv.del);
   const mockKvTtl = vi.mocked(kv.ttl);
   const mockKvLrange = vi.mocked(kv.lrange);
+  const mockKvLpush = vi.mocked(kv.lpush);
+  const mockKvLtrim = vi.mocked(kv.ltrim);
+  const mockAddGamePointsWithLimit = vi.mocked(addGamePointsWithLimit);
   let store: Map<string, unknown>;
   let lists: Map<string, unknown[]>;
 
@@ -93,6 +98,24 @@ describe('roguelite service', () => {
       const list = lists.get(key) ?? [];
       const end = stop < 0 ? list.length + stop : stop;
       return list.slice(start, end + 1) as never;
+    });
+    mockKvLpush.mockImplementation(async (key: string, value: unknown) => {
+      const list = lists.get(key) ?? [];
+      list.unshift(value);
+      lists.set(key, list);
+      return list.length;
+    });
+    mockKvLtrim.mockImplementation(async (key: string, start: number, stop: number) => {
+      const list = lists.get(key) ?? [];
+      const end = stop < 0 ? list.length + stop : stop;
+      lists.set(key, list.slice(start, end + 1));
+    });
+    mockAddGamePointsWithLimit.mockResolvedValue({
+      success: true,
+      pointsEarned: 120,
+      balance: 120,
+      dailyEarned: 120,
+      limitReached: false,
     });
   });
 
@@ -132,5 +155,20 @@ describe('roguelite service', () => {
     expect(escaped.success).toBe(true);
     expect(escaped.session?.state.status).toBe('escaped');
     expect(escaped.session?.actionsCount).toBe(ROGUELITE_MAX_ACTIONS + 1);
+
+    const compactedSession = store.get(sessionKey) as RogueliteGameSession;
+    expect(compactedSession.actionCount).toBe(ROGUELITE_MAX_ACTIONS + 1);
+    expect(compactedSession.moveCount).toBe(ROGUELITE_MAX_ACTIONS);
+    expect(compactedSession.actions.length).toBeLessThan(ROGUELITE_MAX_ACTIONS);
+
+    vi.advanceTimersByTime(2_500);
+
+    const settled = await submitRogueliteResult(1001, { sessionId });
+    const retried = await submitRogueliteResult(1001, { sessionId });
+
+    expect(settled.success).toBe(true);
+    expect(retried.success).toBe(true);
+    expect(retried.record).toEqual(settled.record);
+    expect(retried.pointsEarned).toBe(settled.pointsEarned);
   });
 });
