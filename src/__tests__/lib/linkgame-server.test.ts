@@ -133,8 +133,31 @@ describe('linkgame server validation', () => {
     });
   });
 
-  it('should reject deadlock settlement outside hard mode', () => {
-    const session = createSession(generateEasyBoard());
+  it('should validate easy deadlock settlement when no match remains', () => {
+    const config = LINKGAME_DIFFICULTY_CONFIG.easy;
+    const board = generateEasyDeadlockBoard();
+    expect(findHintByConfig(board, config)).toBeNull();
+
+    const session = createSession(board, 'easy');
+    const payload: LinkGameResultSubmit = {
+      sessionId: session.id,
+      moves: [],
+      completed: false,
+      outcome: 'deadlock',
+      duration: 1000,
+    };
+
+    expect(validateLinkGameResult(session, payload)).toMatchObject({
+      ok: true,
+      matchedPairs: 0,
+      completed: false,
+      deadlocked: true,
+      outcome: 'deadlock',
+    });
+  });
+
+  it('should reject easy deadlock settlement while a match exists', () => {
+    const session = createSession(generateEasyBoard(), 'easy');
     const payload: LinkGameResultSubmit = {
       sessionId: session.id,
       moves: [],
@@ -145,7 +168,7 @@ describe('linkgame server validation', () => {
 
     expect(validateLinkGameResult(session, payload)).toEqual({
       ok: false,
-      message: '只有困难模式支持死局结算',
+      message: '当前牌面仍有可消除的牌',
     });
   });
 
@@ -196,6 +219,13 @@ function generateEasyBoard(): (string | null)[] {
   board[0] = 'A';
   board[1] = 'A';
   return board;
+}
+
+function generateEasyDeadlockBoard(): (string | null)[] {
+  return Array.from(
+    { length: LINKGAME_DIFFICULTY_CONFIG.easy.rows * LINKGAME_DIFFICULTY_CONFIG.easy.cols },
+    (_, index) => `T${index}`,
+  );
 }
 
 function generateHardDeadlockBoard(): (string | null)[] {

@@ -297,7 +297,7 @@ export default function LinkGamePage() {
 
   useEffect(() => {
     if (phase !== 'playing' || !session || isProcessing || board.length === 0) return;
-    if (!isStack3DConfig(session.config) || checkGameComplete(board)) return;
+    if (checkGameComplete(board)) return;
     if (findHintByConfig(board, session.config) !== null) return;
 
     const frame = requestAnimationFrame(() => {
@@ -434,7 +434,7 @@ export default function LinkGamePage() {
           });
           setScore(finalScore);
           void handleGameOver(true, 'completed', finalScore);
-        } else if (isStackMode && findHintByConfig(newBoard, config) === null) {
+        } else if (findHintByConfig(newBoard, config) === null) {
           const finalScore = calculateScore({
             ...scoreParams,
             outcome: 'deadlock',

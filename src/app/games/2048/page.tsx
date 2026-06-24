@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -27,6 +28,7 @@ import {
 import { requestGameFallback } from '../_lib/fallback';
 import {
   GAME2048_BOARD_SIZE,
+  GAME2048_MAX_MOVES,
   GAME2048_MAX_POINT_REWARD,
   GAME2048_REWARD_DIVISOR,
   GAME2048_WIN_TILE,
@@ -35,7 +37,7 @@ import {
   getGame2048HighestTile,
   isGame2048Over,
   moveGame2048Grid,
-  simulateGame2048,
+  spawnGame2048Tile,
   type Game2048Direction,
   type Game2048Grid,
 } from '@/lib/game-2048-engine';
@@ -48,6 +50,9 @@ interface Game2048SessionView {
   startedAt: number;
   expiresAt: number;
   initialGrid: Game2048Grid;
+  baseScore?: number;
+  baseMoves?: number;
+  baseMovesSubmitted?: number;
 }
 
 interface Game2048Record {
@@ -81,13 +86,18 @@ interface SubmitResponse {
   pointsEarned: number;
 }
 
+interface CheckpointResponse extends Game2048SessionView {}
+
 const SUBMIT_TIMEOUT_MS = 15_000;
-const TILE_SETTLE_MS = 125;
-const TILE_POP_MS = 200;
-const TILE_POP_CLEANUP_MS = TILE_POP_MS + 40;
+const TILE_SLIDE_MS = 135;
+const TILE_SETTLE_MS = TILE_SLIDE_MS + 24;
+const TILE_POP_MS = 185;
+const TILE_POP_CLEANUP_MS = TILE_POP_MS + 32;
+const CHECKPOINT_SYNC_THRESHOLD = GAME2048_MAX_MOVES - 200;
 const TILE_IMAGE_BASE = '/images-optimized/ui/games/2048/tiles';
 const GAME2048_TILE_IMAGE_MAX = 65536;
 const GAME2048_TILE_IMAGE_VALUES = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] as const;
+const TILE_OFFSET_PERCENT = ['33.606%', '134.423%', '235.241%', '336.058%', '436.876%'] as const;
 const EMPTY_GRID: Game2048Grid = Array.from({ length: GAME2048_BOARD_SIZE }, () =>
   Array.from({ length: GAME2048_BOARD_SIZE }, () => 0),
 );
@@ -96,13 +106,15 @@ function getGridCellIndex(row: number, col: number): number {
   return row * GAME2048_BOARD_SIZE + col;
 }
 
-type VisualTileState = 'new' | 'merged';
+type VisualTileState = 'new' | 'merged' | 'sliding';
 
 interface VisualTile {
   id: string;
   value: number;
   row: number;
   col: number;
+  fromRow?: number;
+  fromCol?: number;
   state?: VisualTileState;
 }
 
@@ -202,12 +214,18 @@ function buildAnimatedVisualTileFrames(
           value: current.value,
           row,
           col,
+          fromRow: current.tile.row,
+          fromCol: current.tile.col,
+          state: current.tile.row === row && current.tile.col === col ? undefined : 'sliding',
         });
         movingTiles.push({
           id: next.tile.id,
           value: next.value,
           row,
           col,
+          fromRow: next.tile.row,
+          fromCol: next.tile.col,
+          state: next.tile.row === row && next.tile.col === col ? undefined : 'sliding',
         });
         settledTiles.push({
           id: current.tile.id,
@@ -218,11 +236,14 @@ function buildAnimatedVisualTileFrames(
         });
         sourceIndex += 1;
       } else {
-        const tile = {
+        const tile: VisualTile = {
           id: current.tile.id,
           value: current.value,
           row,
           col,
+          fromRow: current.tile.row,
+          fromCol: current.tile.col,
+          state: current.tile.row === row && current.tile.col === col ? undefined : 'sliding',
         };
         movingTiles.push(tile);
         settledTiles.push(tile);
@@ -249,13 +270,21 @@ function movesStorageKey(sessionId: string): string {
   return `game2048:moves:${sessionId}`;
 }
 
-function loadStoredMoves(sessionId: string): Game2048Direction[] {
+function loadStoredMoves(sessionId: string, baseMoves = 0): Game2048Direction[] {
   try {
     const raw = window.localStorage.getItem(movesStorageKey(sessionId));
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is Game2048Direction =>
+    if (Array.isArray(parsed)) {
+      if (baseMoves > 0) return [];
+      return parsed.filter((item): item is Game2048Direction =>
+        item === 'up' || item === 'down' || item === 'left' || item === 'right',
+      );
+    }
+    if (!parsed || typeof parsed !== 'object') return [];
+    const stored = parsed as { baseMoves?: unknown; moves?: unknown };
+    if (stored.baseMoves !== baseMoves || !Array.isArray(stored.moves)) return [];
+    return stored.moves.filter((item): item is Game2048Direction =>
       item === 'up' || item === 'down' || item === 'left' || item === 'right',
     );
   } catch {
@@ -263,9 +292,9 @@ function loadStoredMoves(sessionId: string): Game2048Direction[] {
   }
 }
 
-function saveStoredMoves(sessionId: string, moves: Game2048Direction[]) {
+function saveStoredMoves(sessionId: string, moves: Game2048Direction[], baseMoves = 0) {
   try {
-    window.localStorage.setItem(movesStorageKey(sessionId), JSON.stringify(moves));
+    window.localStorage.setItem(movesStorageKey(sessionId), JSON.stringify({ baseMoves, moves }));
   } catch {
     // 本地存储不可用时，当前内存中的 moves 仍可用于本次兜底结算。
   }
@@ -330,6 +359,36 @@ function getDigitsClass(value: number): string {
   return 'digits-short';
 }
 
+function replayGame2048Segment(
+  view: Game2048SessionView,
+  moves: Game2048Direction[],
+): { ok: true; grid: Game2048Grid; score: number; movesApplied: number; highestTile: number; gameOver: boolean } | { ok: false; message: string } {
+  let grid = view.initialGrid;
+  let score = view.baseScore ?? 0;
+  let movesApplied = view.baseMoves ?? 0;
+
+  for (const direction of moves) {
+    const moved = moveGame2048Grid(grid, direction);
+    if (!moved.moved) {
+      continue;
+    }
+
+    score += moved.scoreDelta;
+    grid = spawnGame2048Tile(moved.grid, view.seed, movesApplied + 2);
+    movesApplied += 1;
+  }
+
+  const highestTile = getGame2048HighestTile(grid);
+  return {
+    ok: true,
+    grid,
+    score,
+    movesApplied,
+    highestTile,
+    gameOver: isGame2048Over(grid),
+  };
+}
+
 export default function Game2048Page() {
   const [phase, setPhase] = useState<Phase>('ready');
   const [session, setSession] = useState<Game2048SessionView | null>(null);
@@ -340,6 +399,7 @@ export default function Game2048Page() {
   const [movesCount, setMovesCount] = useState(0);
   const [result, setResult] = useState<Game2048Record | null>(null);
   const [loading, setLoading] = useState(false);
+  const [checkpointing, setCheckpointing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState('准备开始 2048');
   const [isRestored, setIsRestored] = useState(false);
@@ -349,15 +409,21 @@ export default function Game2048Page() {
   const sessionRef = useRef<Game2048SessionView | null>(null);
   const phaseRef = useRef<Phase>('ready');
   const gridRef = useRef<Game2048Grid>(EMPTY_GRID);
+  const scoreRef = useRef(0);
+  const highestTileRef = useRef(0);
   const visualTilesRef = useRef<VisualTile[]>([]);
   const movesRef = useRef<Game2048Direction[]>([]);
   const submittingRef = useRef(false);
+  const checkpointingRef = useRef(false);
   const pointerStartRef = useRef<{ x: number; y: number; pointerId: number | null } | null>(null);
   const lastPointerEventAtRef = useRef(0);
   const visualTileIdRef = useRef(0);
   const visualSettleTimerRef = useRef<number | null>(null);
   const visualCleanupTimerRef = useRef<number | null>(null);
   const visualUnlockTimerRef = useRef<number | null>(null);
+  const visualSettleFrameRef = useRef<number | null>(null);
+  const visualCleanupFrameRef = useRef<number | null>(null);
+  const checkpointTimerRef = useRef<number | null>(null);
   const moveAnimationLockedRef = useRef(false);
   const pendingMoveRef = useRef<Game2048Direction | null>(null);
   const handleMoveRef = useRef<(direction: Game2048Direction) => void>(() => {});
@@ -397,6 +463,14 @@ export default function Game2048Page() {
       window.clearTimeout(visualUnlockTimerRef.current);
       visualUnlockTimerRef.current = null;
     }
+    if (visualSettleFrameRef.current !== null) {
+      window.cancelAnimationFrame(visualSettleFrameRef.current);
+      visualSettleFrameRef.current = null;
+    }
+    if (visualCleanupFrameRef.current !== null) {
+      window.cancelAnimationFrame(visualCleanupFrameRef.current);
+      visualCleanupFrameRef.current = null;
+    }
     moveAnimationLockedRef.current = false;
     pendingMoveRef.current = null;
   }, []);
@@ -414,33 +488,45 @@ export default function Game2048Page() {
     });
   }, []);
 
+  const unlockVisualMove = useCallback(() => {
+    moveAnimationLockedRef.current = false;
+    visualUnlockTimerRef.current = null;
+    const queued = pendingMoveRef.current;
+    if (queued) {
+      pendingMoveRef.current = null;
+      handleMoveRef.current(queued);
+    }
+  }, []);
+
   const scheduleVisualTileSettling = useCallback((settledTiles: VisualTile[]) => {
     clearVisualTimers();
     moveAnimationLockedRef.current = true;
 
-    visualSettleTimerRef.current = window.setTimeout(() => {
-      setVisualTilesSynced(settledTiles);
-      visualSettleTimerRef.current = null;
+    visualSettleFrameRef.current = window.requestAnimationFrame(() => {
+      visualSettleFrameRef.current = null;
+      visualSettleTimerRef.current = window.setTimeout(() => {
+        visualSettleTimerRef.current = null;
+        visualCleanupFrameRef.current = window.requestAnimationFrame(() => {
+          visualCleanupFrameRef.current = null;
+          setVisualTilesSynced(settledTiles);
 
-      visualCleanupTimerRef.current = window.setTimeout(() => {
-        clearVisualTileStates();
-        visualCleanupTimerRef.current = null;
-      }, TILE_POP_CLEANUP_MS);
-    }, TILE_SETTLE_MS);
+          visualCleanupTimerRef.current = window.setTimeout(() => {
+            clearVisualTileStates();
+            visualCleanupTimerRef.current = null;
+          }, TILE_POP_CLEANUP_MS);
 
-    visualUnlockTimerRef.current = window.setTimeout(() => {
-      moveAnimationLockedRef.current = false;
-      visualUnlockTimerRef.current = null;
-      const queued = pendingMoveRef.current;
-      if (queued) {
-        pendingMoveRef.current = null;
-        handleMoveRef.current(queued);
-      }
-    }, TILE_SETTLE_MS + 20);
-  }, [clearVisualTileStates, clearVisualTimers, setVisualTilesSynced]);
+          visualUnlockTimerRef.current = window.setTimeout(unlockVisualMove, 24);
+        });
+      }, TILE_SETTLE_MS);
+    });
+  }, [clearVisualTimers, clearVisualTileStates, setVisualTilesSynced, unlockVisualMove]);
 
   useEffect(() => () => {
     clearVisualTimers();
+    if (checkpointTimerRef.current !== null) {
+      window.clearTimeout(checkpointTimerRef.current);
+      checkpointTimerRef.current = null;
+    }
   }, [clearVisualTimers]);
 
   const rewardPreview = useMemo(
@@ -451,20 +537,23 @@ export default function Game2048Page() {
   const applySimulation = useCallback((nextGrid: Game2048Grid, nextScore: number, nextMoves: number) => {
     setGrid(nextGrid);
     gridRef.current = nextGrid;
+    scoreRef.current = nextScore;
     setScore(nextScore);
-    setHighestTile(getGame2048HighestTile(nextGrid));
+    const nextHighestTile = getGame2048HighestTile(nextGrid);
+    highestTileRef.current = nextHighestTile;
+    setHighestTile(nextHighestTile);
     setMovesCount(nextMoves);
   }, []);
 
   const applySession = useCallback((view: Game2048SessionView, restoredMoves?: Game2048Direction[]) => {
-    const moves = restoredMoves ?? loadStoredMoves(view.sessionId);
-    const simulation = simulateGame2048(view.seed, moves);
+    const moves = restoredMoves ?? loadStoredMoves(view.sessionId, view.baseMoves ?? 0);
+    const simulation = replayGame2048Segment(view, moves);
     let nextGrid = view.initialGrid;
 
     if (!simulation.ok) {
       clearStoredMoves(view.sessionId);
       movesRef.current = [];
-      applySimulation(view.initialGrid, 0, 0);
+      applySimulation(view.initialGrid, view.baseScore ?? 0, view.baseMoves ?? 0);
       setMessage('本地进度异常，已重置当前局');
     } else {
       movesRef.current = moves;
@@ -598,6 +687,10 @@ export default function Game2048Page() {
   const settleGame = useCallback(async () => {
     const activeSession = sessionRef.current;
     if (!activeSession || submittingRef.current) return;
+    if (checkpointingRef.current) {
+      setError('正在同步长局进度，请稍后再结算');
+      return;
+    }
 
     submittingRef.current = true;
     setLoading(true);
@@ -664,9 +757,74 @@ export default function Game2048Page() {
     }
   }, [handleSettlementSuccess]);
 
+  const startCheckpointSync = useCallback((delayMs = 0) => {
+    const activeSession = sessionRef.current;
+    if (!activeSession || checkpointingRef.current || movesRef.current.length === 0) return;
+
+    checkpointingRef.current = true;
+    setCheckpointing(true);
+    setMessage('正在同步长局进度');
+    setError(null);
+
+    if (checkpointTimerRef.current !== null) {
+      window.clearTimeout(checkpointTimerRef.current);
+      checkpointTimerRef.current = null;
+    }
+
+    checkpointTimerRef.current = window.setTimeout(() => {
+      checkpointTimerRef.current = null;
+      const sessionSnapshot = sessionRef.current;
+      const movesSnapshot = [...movesRef.current];
+      if (!sessionSnapshot || movesSnapshot.length === 0) {
+        checkpointingRef.current = false;
+        setCheckpointing(false);
+        return;
+      }
+
+      void (async () => {
+        try {
+          const res = await fetchWithTimeout(
+            '/api/games/2048/checkpoint',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sessionId: sessionSnapshot.sessionId,
+                moves: movesSnapshot,
+              }),
+            },
+            SUBMIT_TIMEOUT_MS,
+          );
+          const data = await parseJson<CheckpointResponse>(res);
+          if (!res.ok || !data?.success || !data.data) {
+            throw new Error(data?.message ?? `同步长局进度失败（HTTP ${res.status}）`);
+          }
+
+          clearStoredMoves(sessionSnapshot.sessionId);
+          movesRef.current = [];
+          setSession(data.data);
+          sessionRef.current = data.data;
+          applySimulation(data.data.initialGrid, data.data.baseScore ?? 0, data.data.baseMoves ?? 0);
+          syncVisualTilesFromGrid(data.data.initialGrid);
+          setMessage('长局进度已同步，可以继续游戏');
+        } catch (err) {
+          setError(isAbortError(err) ? '同步长局进度超时，请稍后重试' : err instanceof Error ? err.message : '同步长局进度失败');
+          setMessage('长局进度同步失败，请重试');
+        } finally {
+          checkpointingRef.current = false;
+          setCheckpointing(false);
+        }
+      })();
+    }, delayMs);
+  }, [applySimulation, syncVisualTilesFromGrid]);
+
   const handleMove = useCallback((direction: Game2048Direction) => {
     const activeSession = sessionRef.current;
-    if (!activeSession || phaseRef.current !== 'playing' || loading) return;
+    if (!activeSession || phaseRef.current !== 'playing' || loading || checkpointingRef.current) return;
+    if (movesRef.current.length >= CHECKPOINT_SYNC_THRESHOLD) {
+      startCheckpointSync();
+      return;
+    }
     if (moveAnimationLockedRef.current) {
       // 动画进行中：记下最新一次方向，解锁后自动补播，避免操作被吞。
       pendingMoveRef.current = direction;
@@ -685,38 +843,40 @@ export default function Game2048Page() {
     }
 
     const nextMoves = [...movesRef.current, direction];
-    const simulation = simulateGame2048(activeSession.seed, nextMoves);
-    if (!simulation.ok) {
-      setError(simulation.message);
-      return;
-    }
-
-    const previousHighest = highestTile;
+    const baseMoves = activeSession.baseMoves ?? 0;
+    const nextGrid = spawnGame2048Tile(movement.grid, activeSession.seed, baseMoves + nextMoves.length + 1);
+    const nextScore = scoreRef.current + movement.scoreDelta;
+    const nextHighest = getGame2048HighestTile(nextGrid);
+    const nextGameOver = isGame2048Over(nextGrid);
+    const previousHighest = highestTileRef.current;
     movesRef.current = nextMoves;
-    saveStoredMoves(activeSession.sessionId, nextMoves);
+    saveStoredMoves(activeSession.sessionId, nextMoves, activeSession.baseMoves ?? 0);
     const nextVisualFrames = buildAnimatedVisualTileFrames(
       visualTilesRef.current.length
         ? visualTilesRef.current
         : createVisualTilesFromGrid(previousGrid, createVisualTileId),
       previousGrid,
       movement.grid,
-      simulation.grid,
+      nextGrid,
       direction,
       createVisualTileId,
     );
     setVisualTilesSynced(nextVisualFrames.movingTiles);
     scheduleVisualTileSettling(nextVisualFrames.settledTiles);
-    applySimulation(simulation.grid, simulation.score, simulation.movesApplied);
+    applySimulation(nextGrid, nextScore, nextMoves.length);
     setError(null);
 
-    if (simulation.gameOver) {
+    if (nextMoves.length >= CHECKPOINT_SYNC_THRESHOLD) {
+      setMessage('正在同步长局进度');
+      startCheckpointSync(TILE_SETTLE_MS + TILE_POP_CLEANUP_MS);
+    } else if (nextGameOver) {
       setMessage('棋盘已满，本局可以结算');
-    } else if (previousHighest < GAME2048_WIN_TILE && simulation.highestTile >= GAME2048_WIN_TILE) {
+    } else if (previousHighest < GAME2048_WIN_TILE && nextHighest >= GAME2048_WIN_TILE) {
       setMessage('已合成 2048，可以继续冲更高分');
     } else {
       setMessage(`本步合成 +${movement.scoreDelta}`);
     }
-  }, [applySimulation, createVisualTileId, highestTile, loading, scheduleVisualTileSettling, setVisualTilesSynced]);
+  }, [applySimulation, createVisualTileId, loading, scheduleVisualTileSettling, setVisualTilesSynced, startCheckpointSync]);
 
   useEffect(() => {
     handleMoveRef.current = handleMove;
@@ -802,8 +962,8 @@ export default function Game2048Page() {
     finishBoardSwipe(event.clientX, event.clientY);
   }, [finishBoardSwipe]);
 
-  const canPlay = phase === 'playing' && !!session && !loading;
-  const canSettle = (phase === 'playing' || phase === 'submitting') && !!session;
+  const canPlay = phase === 'playing' && !!session && !loading && !checkpointing;
+  const canSettle = (phase === 'playing' || phase === 'submitting') && !!session && !checkpointing;
   const gameOver = isGame2048Over(grid);
 
   return (
@@ -841,7 +1001,7 @@ export default function Game2048Page() {
               <span className="g2048-separator">/</span>
               <span>{message}</span>
             </div>
-            <p>{phase === 'ready' ? '准备开始数字合成' : gameOver ? '棋盘已无可移动方块' : '合成更大的数字方块'}</p>
+            <p>{phase === 'ready' ? '准备开始数字合成' : checkpointing ? '正在同步长局进度' : gameOver ? '棋盘已无可移动方块' : '合成更大的数字方块'}</p>
           </div>
           <div className="g2048-command-actions">
             <button type="button" className="g2048-action-btn" onClick={() => setShowRules(true)}>
@@ -853,7 +1013,7 @@ export default function Game2048Page() {
                 type="button"
                 className="g2048-action-btn danger"
                 onClick={() => void cancelGame()}
-                disabled={loading}
+                disabled={loading || checkpointing}
               >
                 <X className="h-4 w-4" />
                 放弃
@@ -1249,6 +1409,7 @@ export default function Game2048Page() {
           border-radius: 30px;
         }
         .g2048-board {
+          --tile-slide-duration: 135ms;
           --tile-size: 17.56%;
           position: relative;
           width: min(100%, 580px);
@@ -1258,8 +1419,12 @@ export default function Game2048Page() {
           border: 0;
           background: url('/images-optimized/ui/games/2048/board.webp?v=2') center / 100% 100% no-repeat;
           cursor: grab;
+          overflow: hidden;
           touch-action: none;
           user-select: none;
+          contain: layout paint style;
+          isolation: isolate;
+          transform: translateZ(0);
           box-shadow: 0 20px 44px rgba(2, 44, 34, 0.18);
         }
         .g2048-board.is-disabled {
@@ -1273,6 +1438,8 @@ export default function Game2048Page() {
           position: absolute;
           inset: 0;
           pointer-events: none;
+          contain: layout paint style;
+          transform: translateZ(0);
         }
         .g2048-tile {
           position: absolute;
@@ -1292,16 +1459,13 @@ export default function Game2048Page() {
           font-weight: 1000;
           line-height: 1;
           text-align: center;
-          contain: layout paint;
+          contain: strict;
           font-variant-numeric: tabular-nums;
           opacity: 1;
           transform: translate3d(var(--tile-x, 0px), var(--tile-y, 0px), 0);
-          transition:
-            transform 120ms cubic-bezier(0.22, 0.85, 0.3, 1),
-            opacity 100ms ease;
+          transition: opacity 90ms linear;
           will-change: transform, opacity;
           backface-visibility: hidden;
-          transform-style: preserve-3d;
           z-index: 2;
         }
         .g2048-tile.is-img .g2048-tile-value {
@@ -1344,24 +1508,37 @@ export default function Game2048Page() {
         .g2048-tile.digits-6 { font-size: 13px; }
         .g2048-tile.v-131072 { background: linear-gradient(135deg, #020617, #e879f9); color: #fff; border-color: #d946ef; }
         .g2048-tile.v-super { background: linear-gradient(135deg, #020617, #22d3ee); color: #fff; border-color: #06b6d4; }
+        .g2048-tile.is-sliding {
+          z-index: 3;
+          animation: g2048-tile-slide var(--tile-slide-duration) cubic-bezier(0.18, 0.86, 0.2, 1) both;
+        }
         .g2048-tile.is-new {
           z-index: 3;
-          animation: g2048-tile-spawn-card 200ms cubic-bezier(0.34, 1.56, 0.5, 1) both;
+          animation: g2048-tile-spawn-card 170ms cubic-bezier(0.18, 0.9, 0.28, 1.16) both;
         }
         .g2048-tile.is-merged {
           z-index: 4;
-          animation: g2048-tile-merge-pop 200ms cubic-bezier(0.34, 1.56, 0.5, 1) both;
+          animation: g2048-tile-merge-pop 185ms cubic-bezier(0.18, 0.9, 0.28, 1.12) both;
         }
         .g2048-tile.is-merged::after {
-          animation: g2048-tile-merge-flash 200ms ease-out both;
+          animation: g2048-tile-merge-flash 185ms ease-out both;
+        }
+        @keyframes g2048-tile-slide {
+          0% {
+            transform: translate3d(var(--tile-from-x, var(--tile-x, 0px)), var(--tile-from-y, var(--tile-y, 0px)), 0) scale(1);
+          }
+          100% {
+            transform: translate3d(var(--tile-x, 0px), var(--tile-y, 0px), 0) scale(1);
+          }
         }
         @keyframes g2048-tile-spawn-card {
           0% {
             opacity: 0;
-            transform: translate3d(var(--tile-x, 0px), var(--tile-y, 0px), 0) scale(0.3);
+            transform: translate3d(var(--tile-x, 0px), var(--tile-y, 0px), 0) scale(0.52);
           }
-          55% {
+          70% {
             opacity: 1;
+            transform: translate3d(var(--tile-x, 0px), var(--tile-y, 0px), 0) scale(1.06);
           }
           100% {
             opacity: 1;
@@ -1372,8 +1549,8 @@ export default function Game2048Page() {
           0% {
             transform: translate3d(var(--tile-x, 0px), var(--tile-y, 0px), 0) scale(1);
           }
-          42% {
-            transform: translate3d(var(--tile-x, 0px), var(--tile-y, 0px), 0) scale(1.32);
+          48% {
+            transform: translate3d(var(--tile-x, 0px), var(--tile-y, 0px), 0) scale(1.18);
           }
           100% {
             transform: translate3d(var(--tile-x, 0px), var(--tile-y, 0px), 0) scale(1);
@@ -1381,8 +1558,8 @@ export default function Game2048Page() {
         }
         @keyframes g2048-tile-merge-flash {
           0% { opacity: 0; transform: scale(0.9); }
-          40% { opacity: 1; transform: scale(1.12); }
-          100% { opacity: 0; transform: scale(1.24); }
+          42% { opacity: 0.82; transform: scale(1.08); }
+          100% { opacity: 0; transform: scale(1.18); }
         }
         .g2048-restore-note {
           margin-bottom: 14px;
@@ -1607,7 +1784,7 @@ export default function Game2048Page() {
   );
 }
 
-function Game2048Board({
+const Game2048Board = memo(function Game2048Board({
   tiles,
   disabled,
   onPointerDown,
@@ -1635,29 +1812,36 @@ function Game2048Board({
       aria-label="2048 棋盘"
     >
       <div className="g2048-tile-layer" aria-hidden>
-        {tiles.map((tile) => {
-          const hasImg = tile.value <= GAME2048_TILE_IMAGE_MAX;
-          return (
-            <div
-              key={tile.id}
-              className={[
-                'g2048-tile',
-                `r-${tile.row}`,
-                `c-${tile.col}`,
-                hasImg ? 'is-img' : getTileClass(tile.value),
-                getDigitsClass(tile.value),
-                tile.state ? `is-${tile.state}` : '',
-              ].filter(Boolean).join(' ')}
-              style={hasImg ? ({ ['--tile-img']: `url('${TILE_IMAGE_BASE}/${tile.value}.webp')` } as CSSProperties) : undefined}
-            >
-              <span className="g2048-tile-value">{tile.value}</span>
-            </div>
-          );
-        })}
+        {tiles.map((tile) => <Game2048Tile key={tile.id} tile={tile} />)}
       </div>
     </div>
   );
-}
+});
+
+const Game2048Tile = memo(function Game2048Tile({ tile }: { tile: VisualTile }) {
+  const hasImg = tile.value <= GAME2048_TILE_IMAGE_MAX;
+  const tileStyle = {
+    ...(hasImg ? { ['--tile-img']: `url('${TILE_IMAGE_BASE}/${tile.value}.webp')` } : {}),
+    ...(typeof tile.fromCol === 'number' ? { ['--tile-from-x']: TILE_OFFSET_PERCENT[tile.fromCol] } : {}),
+    ...(typeof tile.fromRow === 'number' ? { ['--tile-from-y']: TILE_OFFSET_PERCENT[tile.fromRow] } : {}),
+  } as CSSProperties;
+
+  return (
+    <div
+      className={[
+        'g2048-tile',
+        `r-${tile.row}`,
+        `c-${tile.col}`,
+        hasImg ? 'is-img' : getTileClass(tile.value),
+        getDigitsClass(tile.value),
+        tile.state ? `is-${tile.state}` : '',
+      ].filter(Boolean).join(' ')}
+      style={tileStyle}
+    >
+      <span className="g2048-tile-value">{tile.value}</span>
+    </div>
+  );
+});
 
 function Game2048Stat({
   icon,

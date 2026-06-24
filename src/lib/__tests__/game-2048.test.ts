@@ -8,10 +8,13 @@ import {
   type Game2048Direction,
 } from '../game-2048-engine';
 import {
+  checkpointGame2048,
   settleGame2048Fallback,
   startGame2048,
+  submitGame2048Result,
 } from '../game-2048';
 import { settleGameFallbackTransfer } from '../game-fallback';
+import { addGamePointsWithLimit } from '../points';
 
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
@@ -109,6 +112,7 @@ describe('game-2048 service fallback', () => {
   const mockKvLpush = vi.mocked(kv.lpush);
   const mockKvLtrim = vi.mocked(kv.ltrim);
   const mockSettleGameFallbackTransfer = vi.mocked(settleGameFallbackTransfer);
+  const mockAddGamePointsWithLimit = vi.mocked(addGamePointsWithLimit);
 
   let store: Map<string, unknown>;
   let lists: Map<string, unknown[]>;
@@ -153,6 +157,13 @@ describe('game-2048 service fallback', () => {
       const end = stop < 0 ? list.length + stop : stop;
       lists.set(key, list.slice(start, end + 1));
     });
+    mockAddGamePointsWithLimit.mockImplementation(async (_userId, amount) => ({
+      success: true,
+      pointsEarned: amount,
+      balance: amount,
+      dailyEarned: amount,
+      limitReached: false,
+    }));
   });
 
   afterEach(() => {
@@ -194,5 +205,32 @@ describe('game-2048 service fallback', () => {
         gameName: '2048',
       }),
     );
+  });
+
+  it('支持检查点分段后继续提交，分数与整局重放一致', async () => {
+    const started = await startGame2048(1001);
+    expect(started.success).toBe(true);
+    const session = started.session!;
+    const firstSegment: Game2048Direction[] = ['left', 'up', 'right', 'down', 'left', 'up', 'right'];
+    const secondSegment: Game2048Direction[] = ['down', 'left', 'up', 'right', 'down'];
+    const fullSimulation = simulateGame2048(session.seed, [...firstSegment, ...secondSegment]);
+    expect(fullSimulation.ok).toBe(true);
+
+    const checkpoint = await checkpointGame2048(1001, {
+      sessionId: session.id,
+      moves: firstSegment,
+    });
+    expect(checkpoint.success).toBe(true);
+    expect(checkpoint.session?.checkpointMovesApplied).toBe(firstSegment.length);
+
+    const result = await submitGame2048Result(1001, {
+      sessionId: session.id,
+      moves: secondSegment,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.record?.score).toBe(fullSimulation.ok ? fullSimulation.score : 0);
+    expect(result.record?.moves).toBe(fullSimulation.ok ? fullSimulation.movesApplied : 0);
+    expect(result.record?.movesSubmitted).toBe(firstSegment.length + secondSegment.length);
   });
 });

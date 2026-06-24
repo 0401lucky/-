@@ -291,9 +291,6 @@ export function validateLinkGameResult(
       return { ok: false, message: '完成状态不一致' };
     }
   } else if (requestedOutcome === 'deadlock') {
-    if (session.difficulty !== 'hard') {
-      return { ok: false, message: '只有困难模式支持死局结算' };
-    }
     if (payload.completed || actuallyCompleted) {
       return { ok: false, message: '死局状态不一致' };
     }

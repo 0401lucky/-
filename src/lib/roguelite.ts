@@ -68,6 +68,7 @@ export interface RogueliteGameSession {
   state: RogueliteGameState;
   actions: RogueliteAction[];
   actionCount?: number;
+  actionSegmentCount?: number;
   moveCount?: number;
 }
 
@@ -131,6 +132,7 @@ function generateSession(userId: number): RogueliteGameSession {
     state: createInitialRogueliteState(seed),
     actions: [],
     actionCount: 0,
+    actionSegmentCount: 0,
     moveCount: 0,
   };
 }
@@ -149,14 +151,30 @@ function getActionCount(session: Pick<RogueliteGameSession, 'actions' | 'actionC
   return Math.max(stored, session.actions.length);
 }
 
+function getActionSegmentCount(session: Pick<RogueliteGameSession, 'actions' | 'actionSegmentCount'>): number {
+  const stored = Number.isSafeInteger(session.actionSegmentCount)
+    ? Math.max(0, session.actionSegmentCount ?? 0)
+    : 0;
+  return Math.max(stored, session.actions.length);
+}
+
 function getMoveCount(session: Pick<RogueliteGameSession, 'actions' | 'moveCount'>): number {
   const stored = Number.isSafeInteger(session.moveCount) ? Math.max(0, session.moveCount ?? 0) : 0;
   const retainedMoves = session.actions.filter((action) => action.type === 'move').length;
   return Math.max(stored, retainedMoves);
 }
 
+function checkpointActionSegment(session: RogueliteGameSession): RogueliteGameSession {
+  return {
+    ...session,
+    actions: [],
+    actionSegmentCount: 0,
+  };
+}
+
 function appendCompactAction(session: RogueliteGameSession, action: RogueliteAction): RogueliteGameSession {
   const totalActions = getActionCount(session) + 1;
+  const segmentActions = getActionSegmentCount(session) + 1;
   const totalMoves = getMoveCount(session) + (action.type === 'move' ? 1 : 0);
   const retainedActions = [...session.actions, action].slice(-RETAINED_ACTION_LOG_LIMIT);
 
@@ -164,6 +182,7 @@ function appendCompactAction(session: RogueliteGameSession, action: RogueliteAct
     ...session,
     actions: retainedActions,
     actionCount: totalActions,
+    actionSegmentCount: segmentActions,
     moveCount: totalMoves,
   };
 }
@@ -203,6 +222,9 @@ function normalizeRogueliteSession(raw: unknown): RogueliteGameSession | null {
     actions,
     actionCount: Number.isSafeInteger(session.actionCount)
       ? Math.max(Math.max(0, session.actionCount ?? 0), actions.length)
+      : actions.length,
+    actionSegmentCount: Number.isSafeInteger(session.actionSegmentCount)
+      ? Math.max(Math.max(0, session.actionSegmentCount ?? 0), actions.length)
       : actions.length,
     moveCount: Number.isSafeInteger(session.moveCount)
       ? Math.max(Math.max(0, session.moveCount ?? 0), actions.filter((action) => action.type === 'move').length)
@@ -480,26 +502,22 @@ export async function stepRogueliteGame(
       await deleteSession(session.id, session.userId, useNativeHotStore);
       return { success: false, message: '游戏会话已过期' };
     }
-    if (getActionCount(session) >= ROGUELITE_MAX_ACTIONS && payloadCheck.action.type !== 'escape') {
-      return {
-        success: false,
-        session: buildSessionView(session),
-        message: '行动次数过多，请撤离结算或重新开始',
-      };
-    }
+    const playableSession = getActionSegmentCount(session) >= ROGUELITE_MAX_ACTIONS
+      ? checkpointActionSegment(session)
+      : session;
 
-    const resolved = resolveRogueliteAction(session.state, payloadCheck.action);
+    const resolved = resolveRogueliteAction(playableSession.state, payloadCheck.action);
     if (!resolved.ok) {
       return {
         success: false,
-        session: buildSessionView(session),
+        session: buildSessionView(playableSession),
         message: resolved.message,
       };
     }
 
     const nextSession: RogueliteGameSession = appendCompactAction(
       {
-        ...session,
+        ...playableSession,
         state: resolved.state,
       },
       payloadCheck.action,

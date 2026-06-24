@@ -123,7 +123,7 @@ describe('roguelite service', () => {
     vi.useRealTimers();
   });
 
-  it('长局达到行动日志上限后阻止继续行动，但仍允许撤离结算', async () => {
+  it('长局达到行动日志上限后自动切段，仍可继续移动并保留总步数结算', async () => {
     const started = await startRogueliteGame(1001);
     expect(started.success).toBe(true);
     const sessionId = started.session!.id;
@@ -133,19 +133,25 @@ describe('roguelite service', () => {
     savedSession.state.floor = 4;
     savedSession.state.player.floorsCleared = 3;
     savedSession.state.pending = undefined;
+    savedSession.state.visited.push('0,1');
     savedSession.actions = repeatedActions(ROGUELITE_MAX_ACTIONS);
     store.set(sessionKey, savedSession);
 
-    const blocked = await stepRogueliteGame(1001, {
+    const continued = await stepRogueliteGame(1001, {
       sessionId,
       action: { type: 'move', to: { row: 0, col: 1 } },
     });
 
-    expect(blocked.success).toBe(false);
-    expect(blocked.message).toContain('行动次数过多');
-    expect(blocked.session?.sessionId).toBe(sessionId);
-    expect(blocked.session?.actionsCount).toBe(ROGUELITE_MAX_ACTIONS);
-    expect((store.get(sessionKey) as RogueliteGameSession).actions).toHaveLength(ROGUELITE_MAX_ACTIONS);
+    expect(continued.success).toBe(true);
+    expect(continued.session?.sessionId).toBe(sessionId);
+    expect(continued.session?.actionsCount).toBe(ROGUELITE_MAX_ACTIONS + 1);
+    expect(continued.session?.state.player.position).toEqual({ row: 0, col: 1 });
+
+    const checkpointedSession = store.get(sessionKey) as RogueliteGameSession;
+    expect(checkpointedSession.actionCount).toBe(ROGUELITE_MAX_ACTIONS + 1);
+    expect(checkpointedSession.actionSegmentCount).toBe(1);
+    expect(checkpointedSession.moveCount).toBe(ROGUELITE_MAX_ACTIONS + 1);
+    expect(checkpointedSession.actions).toHaveLength(1);
 
     const escaped = await stepRogueliteGame(1001, {
       sessionId,
@@ -154,11 +160,12 @@ describe('roguelite service', () => {
 
     expect(escaped.success).toBe(true);
     expect(escaped.session?.state.status).toBe('escaped');
-    expect(escaped.session?.actionsCount).toBe(ROGUELITE_MAX_ACTIONS + 1);
+    expect(escaped.session?.actionsCount).toBe(ROGUELITE_MAX_ACTIONS + 2);
 
     const compactedSession = store.get(sessionKey) as RogueliteGameSession;
-    expect(compactedSession.actionCount).toBe(ROGUELITE_MAX_ACTIONS + 1);
-    expect(compactedSession.moveCount).toBe(ROGUELITE_MAX_ACTIONS);
+    expect(compactedSession.actionCount).toBe(ROGUELITE_MAX_ACTIONS + 2);
+    expect(compactedSession.actionSegmentCount).toBe(2);
+    expect(compactedSession.moveCount).toBe(ROGUELITE_MAX_ACTIONS + 1);
     expect(compactedSession.actions.length).toBeLessThan(ROGUELITE_MAX_ACTIONS);
 
     vi.advanceTimersByTime(2_500);
@@ -167,6 +174,7 @@ describe('roguelite service', () => {
     const retried = await submitRogueliteResult(1001, { sessionId });
 
     expect(settled.success).toBe(true);
+    expect(settled.record?.stepsUsed).toBe(ROGUELITE_MAX_ACTIONS + 1);
     expect(retried.success).toBe(true);
     expect(retried.record).toEqual(settled.record);
     expect(retried.pointsEarned).toBe(settled.pointsEarned);

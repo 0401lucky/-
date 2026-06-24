@@ -17,14 +17,20 @@ import {
   getNativeGameSession,
   isNativeHotStoreReady,
   listNativeGameRecords,
+  updateNativeGameSession,
 } from './hot-d1';
 import { acquireGameLock, releaseGameLock } from './game-locks';
 import {
   GAME2048_MAX_MOVES,
+  GAME2048_WIN_TILE,
   calculateGame2048PointReward,
   createInitialGame2048Grid,
+  getGame2048HighestTile,
+  isGame2048Over,
+  isValidGame2048Grid,
+  moveGame2048Grid,
   normalizeGame2048Moves,
-  simulateGame2048,
+  spawnGame2048Tile,
   type Game2048Direction,
   type Game2048Grid,
   type Game2048SimulationResult,
@@ -39,6 +45,7 @@ const COOLDOWN_TTL = 5;
 const MAX_RECORD_ENTRIES = 50;
 const START_LOCK_TTL = 3;
 const SUBMIT_LOCK_TTL = 20;
+const CHECKPOINT_LOCK_TTL = 20;
 
 const SESSION_KEY = (sessionId: string) => `game_2048:session:${sessionId}`;
 const ACTIVE_SESSION_KEY = (userId: number) => `game_2048:active:${userId}`;
@@ -46,6 +53,7 @@ const RECORDS_KEY = (userId: number) => `game_2048:records:${userId}`;
 const COOLDOWN_KEY = (userId: number) => `game_2048:cooldown:${userId}`;
 const START_LOCK_KEY = (userId: number) => `game_2048:start:${userId}`;
 const SUBMIT_LOCK_KEY = (sessionId: string) => `game_2048:submit:${sessionId}`;
+const CHECKPOINT_LOCK_KEY = (sessionId: string) => `game_2048:checkpoint:${sessionId}`;
 
 export interface Game2048Session {
   id: string;
@@ -55,6 +63,10 @@ export interface Game2048Session {
   startedAt: number;
   expiresAt: number;
   status: GameSessionStatus;
+  checkpointGrid?: Game2048Grid;
+  checkpointScore?: number;
+  checkpointMovesApplied?: number;
+  checkpointMovesSubmitted?: number;
 }
 
 export interface Game2048SessionView {
@@ -63,6 +75,9 @@ export interface Game2048SessionView {
   startedAt: number;
   expiresAt: number;
   initialGrid: Game2048Grid;
+  baseScore: number;
+  baseMoves: number;
+  baseMovesSubmitted: number;
 }
 
 export interface Game2048Record {
@@ -86,6 +101,8 @@ export interface Game2048ResultSubmit {
   sessionId: string;
   moves: Game2048Direction[];
 }
+
+export type Game2048CheckpointSubmit = Game2048ResultSubmit;
 
 type Game2048SubmitResult = {
   success: boolean;
@@ -135,22 +152,113 @@ function normalizeSession(raw: unknown): Game2048Session | null {
     startedAt: session.startedAt,
     expiresAt: session.expiresAt,
     status: session.status as GameSessionStatus,
+    checkpointGrid: isValidGame2048Grid(session.checkpointGrid) ? session.checkpointGrid : undefined,
+    checkpointScore: typeof session.checkpointScore === 'number' && Number.isSafeInteger(session.checkpointScore) && session.checkpointScore >= 0
+      ? session.checkpointScore
+      : undefined,
+    checkpointMovesApplied: typeof session.checkpointMovesApplied === 'number' && Number.isSafeInteger(session.checkpointMovesApplied) && session.checkpointMovesApplied >= 0
+      ? session.checkpointMovesApplied
+      : undefined,
+    checkpointMovesSubmitted: typeof session.checkpointMovesSubmitted === 'number' && Number.isSafeInteger(session.checkpointMovesSubmitted) && session.checkpointMovesSubmitted >= 0
+      ? session.checkpointMovesSubmitted
+      : undefined,
+  };
+}
+
+function getGame2048Checkpoint(session: Game2048Session): {
+  grid: Game2048Grid;
+  score: number;
+  movesApplied: number;
+  movesSubmitted: number;
+} {
+  if (
+    isValidGame2048Grid(session.checkpointGrid)
+    && typeof session.checkpointScore === 'number'
+    && Number.isSafeInteger(session.checkpointScore)
+    && session.checkpointScore >= 0
+    && typeof session.checkpointMovesApplied === 'number'
+    && Number.isSafeInteger(session.checkpointMovesApplied)
+    && session.checkpointMovesApplied >= 0
+    && typeof session.checkpointMovesSubmitted === 'number'
+    && Number.isSafeInteger(session.checkpointMovesSubmitted)
+    && session.checkpointMovesSubmitted >= session.checkpointMovesApplied
+  ) {
+    return {
+      grid: session.checkpointGrid,
+      score: session.checkpointScore,
+      movesApplied: session.checkpointMovesApplied,
+      movesSubmitted: session.checkpointMovesSubmitted,
+    };
+  }
+
+  return {
+    grid: createInitialGame2048Grid(session.seed),
+    score: 0,
+    movesApplied: 0,
+    movesSubmitted: 0,
+  };
+}
+
+function simulateGame2048Segment(
+  session: Game2048Session,
+  moves: Game2048Direction[],
+): Game2048SimulationResult {
+  const checkpoint = getGame2048Checkpoint(session);
+  let grid = checkpoint.grid;
+  let score = checkpoint.score;
+  let movesApplied = checkpoint.movesApplied;
+
+  for (const direction of moves) {
+    const moved = moveGame2048Grid(grid, direction);
+    if (!moved.moved) {
+      continue;
+    }
+
+    score += moved.scoreDelta;
+    grid = spawnGame2048Tile(moved.grid, session.seed, movesApplied + 2);
+    movesApplied += 1;
+  }
+
+  const highestTile = getGame2048HighestTile(grid);
+  return {
+    grid,
+    score,
+    highestTile,
+    movesSubmitted: checkpoint.movesSubmitted + moves.length,
+    movesApplied,
+    won: highestTile >= GAME2048_WIN_TILE,
+    gameOver: isGame2048Over(grid),
   };
 }
 
 export function buildGame2048SessionView(session: Game2048Session): Game2048SessionView {
+  const checkpoint = getGame2048Checkpoint(session);
   return {
     sessionId: session.id,
     seed: session.seed,
     startedAt: session.startedAt,
     expiresAt: session.expiresAt,
-    initialGrid: createInitialGame2048Grid(session.seed),
+    initialGrid: checkpoint.grid,
+    baseScore: checkpoint.score,
+    baseMoves: checkpoint.movesApplied,
+    baseMovesSubmitted: checkpoint.movesSubmitted,
   };
 }
 
 async function saveSession(session: Game2048Session, useNativeHotStore: boolean): Promise<void> {
   if (useNativeHotStore) {
     await createNativeGameSession(session);
+    return;
+  }
+
+  const ttl = Math.max(1, Math.ceil((session.expiresAt - Date.now()) / 1000));
+  await kv.set(SESSION_KEY(session.id), session, { ex: ttl });
+  await kv.set(ACTIVE_SESSION_KEY(session.userId), session.id, { ex: ttl });
+}
+
+async function updateSessionCheckpoint(session: Game2048Session, useNativeHotStore: boolean): Promise<void> {
+  if (useNativeHotStore) {
+    await updateNativeGameSession(session);
     return;
   }
 
@@ -384,6 +492,58 @@ export async function cancelGame2048(userId: number): Promise<{ success: boolean
   return { success: true };
 }
 
+export async function checkpointGame2048(
+  userId: number,
+  payload: Game2048CheckpointSubmit,
+): Promise<{ success: boolean; session?: Game2048Session; message?: string }> {
+  const payloadCheck = validateSubmitPayload(payload);
+  if (!payloadCheck.ok) {
+    return { success: false, message: payloadCheck.message };
+  }
+
+  const useNativeHotStore = await isNativeHotStoreReady();
+  const lockKey = CHECKPOINT_LOCK_KEY(payloadCheck.sessionId);
+  const lockToken = await acquireGameLock(lockKey, CHECKPOINT_LOCK_TTL, useNativeHotStore);
+  if (!lockToken) {
+    return { success: false, message: '游戏进度正在同步，请稍后再试' };
+  }
+
+  try {
+    const session = await loadSessionById(payloadCheck.sessionId, useNativeHotStore);
+    if (!session) {
+      return { success: false, message: '游戏会话不存在或已过期' };
+    }
+    if (session.userId !== userId) {
+      return { success: false, message: '会话不属于该用户' };
+    }
+    if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
+      return { success: false, message: '游戏会话已不是当前活跃局' };
+    }
+    if (session.status !== 'playing') {
+      return { success: false, message: '游戏会话已结束' };
+    }
+    if (Date.now() > session.expiresAt) {
+      if (!useNativeHotStore) {
+        await clearLegacySession(session.id, userId);
+      }
+      return { success: false, message: '游戏会话已过期' };
+    }
+
+    const simulation = simulateGame2048Segment(session, payloadCheck.moves);
+    const nextSession: Game2048Session = {
+      ...session,
+      checkpointGrid: simulation.grid,
+      checkpointScore: simulation.score,
+      checkpointMovesApplied: simulation.movesApplied,
+      checkpointMovesSubmitted: simulation.movesSubmitted,
+    };
+    await updateSessionCheckpoint(nextSession, useNativeHotStore);
+    return { success: true, session: nextSession };
+  } finally {
+    await releaseGameLock(lockKey, lockToken, useNativeHotStore);
+  }
+}
+
 export async function submitGame2048Result(
   userId: number,
   payload: Game2048ResultSubmit,
@@ -442,10 +602,7 @@ export async function submitGame2048Result(
       return { success: false, message: '游戏会话已过期' };
     }
 
-    const simulation = simulateGame2048(session.seed, payloadCheck.moves, { maxMoves: GAME2048_MAX_MOVES });
-    if (!simulation.ok) {
-      return { success: false, message: simulation.message };
-    }
+    const simulation = simulateGame2048Segment(session, payloadCheck.moves);
 
     const pointReward = calculateGame2048PointReward(simulation.score, simulation.highestTile);
     const dailyPointsLimit = await getDailyPointsLimit();
@@ -521,10 +678,7 @@ export async function settleGame2048Fallback(
       return { success: false, message: '游戏会话已过期' };
     }
 
-    const simulation = simulateGame2048(session.seed, payloadCheck.moves, { maxMoves: GAME2048_MAX_MOVES });
-    if (!simulation.ok) {
-      return { success: false, message: simulation.message };
-    }
+    const simulation = simulateGame2048Segment(session, payloadCheck.moves);
 
     const pointReward = calculateGame2048PointReward(simulation.score, simulation.highestTile);
     const transferResult = await settleGameFallbackTransfer({
