@@ -13,7 +13,9 @@ const staticImageCacheHeaders = [
   { key: "Cache-Control", value: "public, max-age=2592000" },
 ];
 
-initOpenNextCloudflareForDev();
+if (process.env.SKIP_OPENNEXT_DEV_INIT !== "1") {
+  initOpenNextCloudflareForDev();
+}
 
 const nextConfig: NextConfig = {
   output: "standalone",

@@ -1,0 +1,5 @@
+INSERT INTO "kv_hashes" ("key","field","value") VALUES('store:categories','fixture-store-cat','{"id":"fixture-store-cat","name":"Fixture 商城分类","color":"#06b6d4","sortOrder":2,"enabled":true,"createdAt":1000,"updatedAt":2000}');
+INSERT INTO "kv_hashes" ("key","field","value") VALUES('store:items','fixture-store-item','{"id":"fixture-store-item","name":"Fixture 商城商品","description":"说明","type":"lottery_spin","categoryId":"fixture-store-cat","pointsCost":120,"value":1,"dailyLimit":1,"totalStock":10,"sortOrder":3,"enabled":true,"createdAt":1000,"updatedAt":2000}');
+INSERT INTO "kv_hashes" ("key","field","value") VALUES('store:item:purchase_counts','fixture-store-item','5');
+INSERT INTO "kv_lists" ("id","key","value") VALUES(1,'exchange_log:98001','{"id":"fixture-store-exchange-1","userId":98001,"itemId":"fixture-store-item","itemName":"Fixture 商城商品","pointsCost":120,"value":1,"type":"lottery_spin","createdAt":3000}');
+INSERT INTO "kv_data" ("key","value","expires_at") VALUES('exchange:daily:98001:2026-06-22:fixture-store-item','2',NULL);

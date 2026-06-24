@@ -1,0 +1,115 @@
+package game2048
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestMoveGridMergesLeft(t *testing.T) {
+	result := MoveGrid(Grid{
+		{2, 2, 2, 2, 2},
+		{2, 2, 4, 0, 4},
+		{4, 0, 4, 4, 4},
+		{0, 0, 0, 0, 0},
+		{8, 8, 8, 0, 8},
+	}, DirectionLeft)
+
+	expected := Grid{
+		{4, 4, 2, 0, 0},
+		{4, 8, 0, 0, 0},
+		{8, 8, 0, 0, 0},
+		{0, 0, 0, 0, 0},
+		{16, 16, 0, 0, 0},
+	}
+	if !result.Moved {
+		t.Fatal("expected grid to move")
+	}
+	if result.ScoreDelta != 68 {
+		t.Fatalf("unexpected score delta: got %d want 68", result.ScoreDelta)
+	}
+	if !reflect.DeepEqual(result.Grid, expected) {
+		t.Fatalf("unexpected grid:\n got %#v\nwant %#v", result.Grid, expected)
+	}
+}
+
+func TestCreateInitialGridMatchesTypeScriptSeed(t *testing.T) {
+	expected := Grid{
+		{0, 0, 0, 0, 0},
+		{0, 0, 0, 0, 0},
+		{0, 0, 0, 2, 0},
+		{0, 0, 0, 0, 0},
+		{0, 2, 0, 0, 0},
+	}
+	if got := CreateInitialGrid("fixed-seed"); !reflect.DeepEqual(got, expected) {
+		t.Fatalf("unexpected initial grid:\n got %#v\nwant %#v", got, expected)
+	}
+}
+
+func TestSimulateMatchesTypeScriptSeed(t *testing.T) {
+	result := Simulate("fixed-seed", []Direction{
+		DirectionLeft,
+		DirectionUp,
+		DirectionRight,
+		DirectionDown,
+		DirectionLeft,
+		DirectionUp,
+	}, MaxMoves)
+
+	expectedGrid := Grid{
+		{4, 2, 0, 0, 0},
+		{2, 8, 0, 0, 0},
+		{0, 0, 0, 0, 0},
+		{0, 0, 0, 0, 0},
+		{0, 0, 0, 0, 0},
+	}
+	if !result.OK {
+		t.Fatalf("expected simulation ok, got message=%q", result.Message)
+	}
+	if result.Score != 20 || result.HighestTile != 8 || result.MovesSubmitted != 6 || result.MovesApplied != 6 {
+		t.Fatalf("unexpected simulation summary: %+v", result)
+	}
+	if result.Won || result.GameOver {
+		t.Fatalf("unexpected terminal flags: won=%v gameOver=%v", result.Won, result.GameOver)
+	}
+	if !reflect.DeepEqual(result.Grid, expectedGrid) {
+		t.Fatalf("unexpected final grid:\n got %#v\nwant %#v", result.Grid, expectedGrid)
+	}
+}
+
+func TestCalculatePointReward(t *testing.T) {
+	cases := []struct {
+		score       int64
+		highestTile int
+		want        int64
+	}{
+		{score: 0, highestTile: 2, want: 0},
+		{score: 127, highestTile: 128, want: 0},
+		{score: 128, highestTile: 128, want: 1},
+		{score: 2048, highestTile: 2048, want: 96},
+		{score: 999999, highestTile: 4096, want: MaxPointReward},
+	}
+	for _, tc := range cases {
+		if got := CalculatePointReward(tc.score, tc.highestTile); got != tc.want {
+			t.Fatalf("CalculatePointReward(%d, %d)=%d want %d", tc.score, tc.highestTile, got, tc.want)
+		}
+	}
+}
+
+func TestValidateInput(t *testing.T) {
+	if IsValidGrid(Grid{{2}}) {
+		t.Fatal("expected short grid to be invalid")
+	}
+	if IsValidTile(3) {
+		t.Fatal("expected non power-of-two tile to be invalid")
+	}
+	if _, ok, _ := NormalizeMoves([]Direction{Direction("bad")}, MaxMoves); ok {
+		t.Fatal("expected invalid direction to fail")
+	}
+	tooManyMoves := make([]Direction, MaxMoves+1)
+	for index := range tooManyMoves {
+		tooManyMoves[index] = DirectionLeft
+	}
+	if _, ok, message := NormalizeMoves(tooManyMoves, MaxMoves); ok || message != "操作步数过多" {
+		t.Fatalf("expected too many moves failure, ok=%v message=%q", ok, message)
+	}
+}

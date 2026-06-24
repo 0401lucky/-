@@ -1,0 +1,107 @@
+name: redemption
+
+services:
+  gateway:
+    build:
+      context: ./gateway
+    environment:
+      PORT: "8080"
+      API_UPSTREAM: api:8080
+      WEB_UPSTREAM: web:3000
+    ports:
+      - "8080:8080"
+    depends_on:
+      - web
+      - api
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PORT: "3000"
+      NODE_ENV: production
+      NEXT_PUBLIC_BASE_URL: http://localhost:8080
+      SESSION_SECRET: local-development-session-secret-at-least-32-chars
+      ADMIN_USERNAMES: admin
+    expose:
+      - "3000"
+    depends_on:
+      - api
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      APP_MODE: api
+      PORT: "8080"
+      DATABASE_URL: postgres://app:app@postgres:5432/app?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      SESSION_SECRET: local-development-session-secret-at-least-32-chars
+      ADMIN_USERNAMES: admin
+      INTERNAL_API_SECRET: local-internal-secret
+      NEW_API_URL: ""
+      R2_PUBLIC_URL: ""
+      FEEDBACK_MEDIA_DIR: /data/feedback-media
+    expose:
+      - "8080"
+    volumes:
+      - feedback-media-data:/data/feedback-media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    entrypoint: ["/app/worker"]
+    environment:
+      APP_MODE: worker
+      DATABASE_URL: postgres://app:app@postgres:5432/app?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      SESSION_SECRET: local-development-session-secret-at-least-32-chars
+      INTERNAL_API_SECRET: local-internal-secret
+      RAFFLE_DELIVERY_CRON_SECRET: local-cron-secret
+      CRON_SECRET: local-cron-secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres-data:
+  redis-data:
+  feedback-media-data:

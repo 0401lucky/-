@@ -1,0 +1,28 @@
+FROM golang:1.23-alpine AS builder
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
+	&& CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker \
+	&& CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate \
+	&& CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/migrate-d1 ./cmd/migrate-d1
+
+FROM alpine:3.20
+WORKDIR /app
+
+RUN adduser -D -H appuser
+
+COPY --from=builder /out/api /app/api
+COPY --from=builder /out/worker /app/worker
+COPY --from=builder /out/migrate /app/migrate
+COPY --from=builder /out/migrate-d1 /app/migrate-d1
+COPY migrations /app/migrations
+
+USER appuser
+
+EXPOSE 8080
+
+CMD ["/app/api"]

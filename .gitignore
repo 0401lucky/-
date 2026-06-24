@@ -58,6 +58,8 @@ yarn-error.log*
 .env*.local
 .env
 .dev.vars*
+/deploy/zeabur.env
+/deploy/production-cutover-evidence.json
 
 # vercel
 .vercel

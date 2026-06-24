@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "generatedAt": "replace-with-review-time",
+  "reviewOwner": "replace-with-review-owner",
+  "database": {
+    "mode": "fresh-zeabur",
+    "migrationsApplied": false,
+    "seedDataReviewed": false,
+    "notes": "默认新部署到 Zeabur，不从 Cloudflare D1 导入历史数据；如需归档迁移，另建 d1Export 并把 mode 改为 d1-import"
+  },
+  "zeaburEnv": {
+    "envFile": "replace-with-local-zeabur-env-path",
+    "runtimeEnvAuditPassed": false,
+    "remoteRuntimeSmokePassed": false
+  },
+  "modules": {
+    "wallet": {
+      "newApiConfigured": false,
+      "authenticatedApiSmokePassed": false,
+      "pageSmokePassed": false,
+      "gatewayCutoverApproved": false,
+      "notes": "需要 NEW_API 配置、真实登录态余额冒烟和充值/提现切流决策"
+    },
+    "profile": {
+      "authenticatedApiSmokePassed": false,
+      "pageSmokePassed": false,
+      "gatewayCutoverApproved": false,
+      "notes": "fresh 部署下需要复核新用户默认资料、成就默认状态和页面流程"
+    },
+    "notifications": {
+      "authenticatedApiSmokePassed": false,
+      "pageSmokePassed": false,
+      "gatewayCutoverApproved": false,
+      "notes": "fresh 部署下需要复核新库通知默认状态、奖励领取和页面流程"
+    },
+    "farm": {
+      "authenticatedApiSmokePassed": false,
+      "pageSmokePassed": false,
+      "gatewayCutoverApproved": false,
+      "notes": "fresh 部署下需要复核农场初始状态、购买、种植、收获、偷菜等页面流程"
+    },
+    "cards": {
+      "authenticatedApiSmokePassed": false,
+      "adminAuthenticatedApiSmokePassed": false,
+      "pageSmokePassed": false,
+      "adminPageSmokePassed": false,
+      "gatewayCutoverApproved": false,
+      "notes": "fresh 部署下需要复核卡牌规则、默认奖励、前台抽卡和后台配置页面"
+    }
+  }
+}

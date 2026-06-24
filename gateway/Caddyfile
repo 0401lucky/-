@@ -1,0 +1,220 @@
+:{$PORT:8080} {
+	encode zstd gzip
+
+	handle /healthz {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
+	handle /readyz {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
+	# 第一批 Go 切流前缀在对应业务实现完成后再打开：
+	handle /api/points {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/rankings/eco {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 游戏中心个人战绩已从 PostgreSQL 聚合迁移到 Go；只精确切前端实际调用路径。
+	handle /api/games/profile {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 环保行动已覆盖的前端调用路径先精确切流；未知子路径仍留给 Next，避免通配误伤。
+	handle /api/games/eco/status {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/eco/collect {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/eco/buy {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/eco/claim-prize {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/eco/sell {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/eco/merchant-sell {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/eco/black-market-sell {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/eco/steal {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 记忆游戏已完整覆盖 start/status/flip/submit/cancel，先精确切流这一组路径。
+	handle /api/games/memory/status {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/memory/start {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/memory/flip {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/memory/submit {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/memory/cancel {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 消消乐已覆盖前端实际调用的 start/status/submit/cancel，继续保持精确切流。
+	handle /api/games/match3/status {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/match3/start {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/match3/submit {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/match3/cancel {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 打地鼠已覆盖前端实际调用的 status/sync/start/submit/cancel，继续保持精确切流。
+	handle /api/games/whack-mole/status {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/whack-mole/sync {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/whack-mole/start {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/whack-mole/submit {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/whack-mole/cancel {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 扫雷已覆盖前端实际调用的 status/start/step/submit/cancel，step 由 Go 接管权威会话推进。
+	handle /api/games/minesweeper/status {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/minesweeper/start {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/minesweeper/step {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/minesweeper/submit {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/minesweeper/cancel {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 连连看已覆盖前端实际调用的 status/start/submit/cancel，submit 由 Go 服务端重放 moves 结算。
+	handle /api/games/linkgame/status {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/linkgame/start {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/linkgame/submit {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/linkgame/cancel {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 星尘迷阵已覆盖前端实际调用的 status/start/step/submit/cancel，step 由 Go 接管权威会话推进。
+	handle /api/games/roguelite/status {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/roguelite/start {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/roguelite/step {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/roguelite/submit {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/roguelite/cancel {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 商城需要细粒度切流，避免钱包路径在 new-api 未完成配置冒烟前被整体误转发：
+	handle /api/store {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/store/exchange {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# handle /api/games/eco* {
+	# 	reverse_proxy api:8080
+	# }
+
+	# 商城后台已完成 Go 内部迁移，仅精确切后台配置路径，不转发前台购买/钱包路径。
+	handle /api/store/admin {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
+	# 抽奖后台已完成 Go 内部迁移，仅精确切 raffle 后台路径，避免误转发其它 /api/admin/*。
+	handle /api/admin/raffle {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/raffle/* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
+	# PR #9 后台与 2048 已完成 Go 内部迁移，部署测试阶段只打开精确路径，不开放 /api/admin/* 或 /api/games/* 通配。
+	handle /api/admin/eco {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/points {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/users {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/users/* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/dashboard {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/projects {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/projects/* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/feedback {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/feedback/* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/2048/status {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/2048/start {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/2048/checkpoint {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/2048/submit {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/2048/cancel {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
+	# 公开抽奖列表、详情与参与已迁移到 Go。
+	handle /api/projects {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/raffle {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/raffle/* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
+	handle {
+		reverse_proxy {$WEB_UPSTREAM:web:3000}
+	}
+}
