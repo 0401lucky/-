@@ -86,7 +86,7 @@ interface SubmitResponse {
   pointsEarned: number;
 }
 
-interface CheckpointResponse extends Game2048SessionView {}
+type CheckpointResponse = Game2048SessionView;
 
 const SUBMIT_TIMEOUT_MS = 15_000;
 const TILE_SLIDE_MS = 135;
