@@ -88,6 +88,9 @@ describe('creditQuotaToUser', () => {
       success: true,
       message: '成功充值 $2',
       newQuota: 1002000,
+      previousQuota: 2000,
+      expectedQuota: 1002000,
+      quotaDelta: 1000000,
       newBalanceDollars: 2,
       newBalanceWholeDollars: 2,
     });
@@ -157,6 +160,9 @@ describe('creditQuotaToUser', () => {
       success: true,
       message: '成功扣减 $2',
       newQuota: 500000,
+      previousQuota: 1500000,
+      expectedQuota: 500000,
+      quotaDelta: -1000000,
       newBalanceDollars: 1,
       newBalanceWholeDollars: 1,
     });
@@ -212,6 +218,9 @@ describe('creditQuotaToUser', () => {
       success: true,
       message: '充值已确认成功',
       newQuota: 500000,
+      previousQuota: 0,
+      expectedQuota: 500000,
+      quotaDelta: 500000,
       newBalanceDollars: 1,
       newBalanceWholeDollars: 1,
     });

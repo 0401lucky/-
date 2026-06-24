@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withUserRateLimit } from '@/lib/rate-limit';
-import { executeTopup, MIN_TOPUP_DOLLARS } from '@/lib/wallet';
+import { executeTopup, MIN_TOPUP_DOLLARS, recoverWalletTransactions } from '@/lib/wallet';
 import { getUserPoints } from '@/lib/points';
 import {
   NEW_API_QUOTA_PER_DOLLAR,
@@ -12,6 +12,10 @@ export const dynamic = 'force-dynamic';
 export const GET = withUserRateLimit(
   'store:balance',
   async (_request, user) => {
+    await recoverWalletTransactions(user.id).catch((error) => {
+      console.error('wallet balance recovery failed:', error);
+    });
+
     const result = await getNewApiQuotaBalanceForUser(user.id);
 
     if (!result.success) {
@@ -74,6 +78,10 @@ export const POST = withUserRateLimit(
         { status: 400 },
       );
     }
+
+    await recoverWalletTransactions(user.id).catch((error) => {
+      console.error('wallet topup recovery failed:', error);
+    });
 
     const result = await executeTopup(user.id, dollars);
 

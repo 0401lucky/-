@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withUserRateLimit } from '@/lib/rate-limit';
-import { executeWithdraw, MIN_WITHDRAW_POINTS } from '@/lib/wallet';
+import { executeWithdraw, MIN_WITHDRAW_POINTS, recoverWalletTransactions } from '@/lib/wallet';
 import { getUserPoints } from '@/lib/points';
 
 // POST /api/store/withdraw
@@ -41,6 +41,10 @@ export const POST = withUserRateLimit(
         { status: 400 },
       );
     }
+
+    await recoverWalletTransactions(user.id).catch((error) => {
+      console.error('wallet withdraw recovery failed:', error);
+    });
 
     const result = await executeWithdraw(user.id, points);
 

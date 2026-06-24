@@ -6,7 +6,7 @@
 import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import { applyPointsDelta, deductPoints, getUserPoints } from './points';
-import { creditQuotaToUser, deductQuotaFromUser } from './new-api';
+import { creditQuotaToUser, deductQuotaFromUser, getNewApiQuotaBalanceForUser } from './new-api';
 import { createUserNotification } from './notifications';
 import { maskUserId } from './logging';
 import { withKvLock } from './economy-lock';
@@ -56,6 +56,11 @@ export interface WalletTransactionRecord {
   message: string;
   newApiBalanceDollars?: number;
   newApiBalanceWholeDollars?: number;
+  previousQuota?: number;
+  expectedQuota?: number;
+  quotaDelta?: number;
+  pointsApplied?: boolean;
+  compensatedAt?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -193,6 +198,175 @@ async function updateWalletTransaction(
   return next;
 }
 
+function isQuotaConfirmedIncreased(record: Pick<WalletTransactionRecord, 'expectedQuota'>, quota: number | undefined): boolean {
+  return typeof record.expectedQuota === 'number'
+    && typeof quota === 'number'
+    && quota >= record.expectedQuota;
+}
+
+function isQuotaConfirmedNotIncreased(record: Pick<WalletTransactionRecord, 'previousQuota'>, quota: number | undefined): boolean {
+  return typeof record.previousQuota === 'number'
+    && typeof quota === 'number'
+    && quota <= record.previousQuota;
+}
+
+function isQuotaConfirmedDeducted(record: Pick<WalletTransactionRecord, 'expectedQuota'>, quota: number | undefined): boolean {
+  return typeof record.expectedQuota === 'number'
+    && typeof quota === 'number'
+    && quota <= record.expectedQuota;
+}
+
+function isQuotaConfirmedNotDeducted(record: Pick<WalletTransactionRecord, 'previousQuota'>, quota: number | undefined): boolean {
+  return typeof record.previousQuota === 'number'
+    && typeof quota === 'number'
+    && quota >= record.previousQuota;
+}
+
+async function refundWithdrawPoints(
+  record: WalletTransactionRecord,
+  reason: string,
+): Promise<{ success: boolean; balance?: number; message: string }> {
+  const refundPoints = Math.abs(record.pointsDelta);
+  if (refundPoints <= 0) {
+    return { success: true, message: '无需退回积分' };
+  }
+
+  const refund = await applyPointsDelta(
+    record.userId,
+    refundPoints,
+    'exchange_refund',
+    `提现异常自动退款：${reason}`,
+  );
+
+  await updateWalletTransaction(record, {
+    status: refund.success ? 'failed' : 'uncertain',
+    message: refund.success
+      ? `${reason}，已自动退回 ${refundPoints} 积分`
+      : `${reason}，自动退款失败：${refund.message ?? '未知错误'}`,
+    compensatedAt: refund.success ? Date.now() : undefined,
+  });
+
+  return {
+    success: refund.success,
+    balance: refund.balance,
+    message: refund.success
+      ? `${reason}，已自动退回积分`
+      : `${reason}，自动退款失败，请联系管理员`,
+  };
+}
+
+async function resolveWithdrawUncertain(
+  record: WalletTransactionRecord,
+  fallbackMessage: string,
+): Promise<WithdrawResult> {
+  const quota = await getNewApiQuotaBalanceForUser(record.userId);
+
+  if (quota.success && isQuotaConfirmedIncreased(record, quota.quota)) {
+    await updateWalletTransaction(record, {
+      status: 'success',
+      message: '提现到账已自动确认',
+      newApiBalanceDollars: quota.balanceDollars,
+      newApiBalanceWholeDollars: quota.balanceWholeDollars,
+    });
+    return {
+      success: true,
+      message: '提现到账已自动确认',
+      balance: await getUserPoints(record.userId),
+      dollars: record.requestedDollars ?? Math.max(0, record.dollarsDelta),
+      feePoints: record.feePoints,
+    };
+  }
+
+  if (!quota.success || isQuotaConfirmedNotIncreased(record, quota.quota)) {
+    const refund = await refundWithdrawPoints(record, fallbackMessage);
+    return {
+      success: false,
+      message: refund.message,
+      balance: refund.balance,
+      dollars: record.requestedDollars ?? Math.max(0, record.dollarsDelta),
+      feePoints: record.feePoints,
+      uncertain: !refund.success,
+    };
+  }
+
+  await updateWalletTransaction(record, {
+    status: 'uncertain',
+    message: fallbackMessage,
+    newApiBalanceDollars: quota.balanceDollars,
+    newApiBalanceWholeDollars: quota.balanceWholeDollars,
+  });
+  return {
+    success: false,
+    message: `${fallbackMessage}，系统仍在自动核对，请稍后刷新。`,
+    balance: await getUserPoints(record.userId),
+    dollars: record.requestedDollars ?? Math.max(0, record.dollarsDelta),
+    feePoints: record.feePoints,
+    uncertain: true,
+  };
+}
+
+async function resolveTopupUncertainBeforeGrant(
+  record: WalletTransactionRecord,
+): Promise<'deducted' | 'not_deducted' | 'unknown'> {
+  const quota = await getNewApiQuotaBalanceForUser(record.userId);
+  if (!quota.success) return 'unknown';
+  if (isQuotaConfirmedDeducted(record, quota.quota)) return 'deducted';
+  if (isQuotaConfirmedNotDeducted(record, quota.quota)) return 'not_deducted';
+  return 'unknown';
+}
+
+export async function recoverWalletTransactions(userId: number, limit = 20): Promise<void> {
+  const ids = await kv.lrange<string>(WALLET_UNCERTAIN_LIST_KEY(userId), 0, Math.max(0, limit - 1));
+  for (const id of ids ?? []) {
+    const record = await kv.get<WalletTransactionRecord>(WALLET_TRANSACTION_KEY(id));
+    if (!record || record.userId !== userId || record.status !== 'uncertain') continue;
+
+    if (record.operation === 'withdraw') {
+      await resolveWithdrawUncertain(record, record.message || '提现未确认到账');
+      continue;
+    }
+
+    const quotaState = await resolveTopupUncertainBeforeGrant(record);
+    if (quotaState === 'not_deducted') {
+      if (record.pointsApplied && record.pointsDelta > 0) {
+        const rollback = await applyPointsDelta(
+          userId,
+          -record.pointsDelta,
+          'exchange_refund',
+          `充值异常自动回滚积分：额度未扣减，交易 ${record.id}`,
+        );
+        await updateWalletTransaction(record, {
+          status: rollback.success ? 'failed' : 'uncertain',
+          message: rollback.success ? '额度未扣减，已自动回滚积分' : '额度未扣减，但积分回滚失败',
+          compensatedAt: rollback.success ? Date.now() : undefined,
+        });
+      } else {
+        await updateWalletTransaction(record, {
+          status: 'failed',
+          message: '额度未扣减，充值已自动关闭',
+          compensatedAt: Date.now(),
+        });
+      }
+      continue;
+    }
+
+    if (quotaState === 'deducted' && !record.pointsApplied && record.pointsDelta > 0) {
+      const grant = await applyPointsDelta(
+        userId,
+        record.pointsDelta,
+        'exchange_topup',
+        `充值异常自动补发积分：交易 ${record.id}`,
+      );
+      await updateWalletTransaction(record, {
+        status: grant.success ? 'success' : 'uncertain',
+        message: grant.success ? '额度已扣减，积分已自动补发' : '额度已扣减，积分自动补发失败',
+        pointsApplied: grant.success,
+        compensatedAt: grant.success ? Date.now() : undefined,
+      });
+    }
+  }
+}
+
 /**
  * 执行积分提现（积分 → 账户额度）
  * 顺序：扣积分 → 调 new-api 加额度；明确失败则把积分退回；
@@ -226,7 +400,12 @@ async function executeWithdrawInner(
     operation: 'withdraw',
     pointsDelta: -preview.deducted,
     dollarsDelta: preview.dollars,
+    previousQuota: undefined,
+    expectedQuota: undefined,
+    quotaDelta: undefined,
+    pointsApplied: true,
     requestedPoints: preview.deducted,
+    requestedDollars: preview.dollars,
     feePoints: preview.feePoints,
     netPoints: preview.netPoints,
     message: description,
@@ -254,11 +433,20 @@ async function executeWithdrawInner(
   }
 
   const creditResult = await creditQuotaToUser(userId, preview.dollars);
+  const transactionWithQuota: WalletTransactionRecord = {
+    ...transaction,
+    previousQuota: creditResult.previousQuota,
+    expectedQuota: creditResult.expectedQuota,
+    quotaDelta: creditResult.quotaDelta,
+  };
 
   if (creditResult.success) {
-    await updateWalletTransaction(transaction, {
+    await updateWalletTransaction(transactionWithQuota, {
       status: 'success',
       message: creditResult.message || '提现成功到账',
+      previousQuota: creditResult.previousQuota,
+      expectedQuota: creditResult.expectedQuota,
+      quotaDelta: creditResult.quotaDelta,
       newApiBalanceDollars: creditResult.newBalanceDollars,
       newApiBalanceWholeDollars: creditResult.newBalanceWholeDollars,
     });
@@ -287,21 +475,20 @@ async function executeWithdrawInner(
   }
 
   if (creditResult.uncertain) {
-    await updateWalletTransaction(transaction, {
+    await updateWalletTransaction(transactionWithQuota, {
       status: 'uncertain',
       message: creditResult.message || '提现额度入账结果不确定',
+      previousQuota: creditResult.previousQuota,
+      expectedQuota: creditResult.expectedQuota,
+      quotaDelta: creditResult.quotaDelta,
       newApiBalanceDollars: creditResult.newBalanceDollars,
       newApiBalanceWholeDollars: creditResult.newBalanceWholeDollars,
     });
 
-    return {
-      success: false,
-      message: `提现请求已受理，但额度入账结果暂不确定，请稍后查看新 API 余额。${creditResult.message ?? ''}`.trim(),
-      balance: deductResult.balance,
-      dollars: preview.dollars,
-      feePoints: preview.feePoints,
-      uncertain: true,
-    };
+    return resolveWithdrawUncertain(
+      transactionWithQuota,
+      creditResult.message || '提现额度入账结果不确定',
+    );
   }
 
   // 加额度明确失败：退回积分
@@ -363,6 +550,7 @@ async function executeTopupInner(
     pointsDelta: preview.pointsGained,
     dollarsDelta: -preview.spentDollars,
     requestedDollars: preview.spentDollars,
+    pointsApplied: false,
     message: `账户额度充值：扣 $${preview.spentDollars} 兑换 ${preview.pointsGained} 积分`,
   });
   if (!transaction) {
@@ -370,11 +558,20 @@ async function executeTopupInner(
   }
 
   const deductResult = await deductQuotaFromUser(userId, preview.spentDollars);
+  const transactionWithQuota: WalletTransactionRecord = {
+    ...transaction,
+    previousQuota: deductResult.previousQuota,
+    expectedQuota: deductResult.expectedQuota,
+    quotaDelta: deductResult.quotaDelta,
+  };
 
   if (!deductResult.success && !deductResult.uncertain) {
-    await updateWalletTransaction(transaction, {
+    await updateWalletTransaction(transactionWithQuota, {
       status: 'failed',
       message: deductResult.message || '账户额度扣减失败',
+      previousQuota: deductResult.previousQuota,
+      expectedQuota: deductResult.expectedQuota,
+      quotaDelta: deductResult.quotaDelta,
       newApiBalanceDollars: deductResult.newBalanceDollars,
       newApiBalanceWholeDollars: deductResult.newBalanceWholeDollars,
     });
@@ -385,6 +582,41 @@ async function executeTopupInner(
       newApiBalanceDollars: deductResult.newBalanceDollars,
       newApiBalanceWholeDollars: deductResult.newBalanceWholeDollars,
     };
+  }
+
+  if (deductResult.uncertain) {
+    const quotaState = await resolveTopupUncertainBeforeGrant(transactionWithQuota);
+    if (quotaState === 'not_deducted') {
+      await updateWalletTransaction(transactionWithQuota, {
+        status: 'failed',
+        message: deductResult.message || '账户额度未扣减，充值已自动关闭',
+        newApiBalanceDollars: deductResult.newBalanceDollars,
+        newApiBalanceWholeDollars: deductResult.newBalanceWholeDollars,
+        compensatedAt: Date.now(),
+      });
+      return {
+        success: false,
+        message: deductResult.message || '账户额度未扣减，充值已自动关闭',
+        newApiBalanceDollars: deductResult.newBalanceDollars,
+        newApiBalanceWholeDollars: deductResult.newBalanceWholeDollars,
+      };
+    }
+
+    if (quotaState === 'unknown') {
+      await updateWalletTransaction(transactionWithQuota, {
+        status: 'uncertain',
+        message: deductResult.message || '账户额度扣减结果待确认，暂不发放积分',
+        newApiBalanceDollars: deductResult.newBalanceDollars,
+        newApiBalanceWholeDollars: deductResult.newBalanceWholeDollars,
+      });
+      return {
+        success: false,
+        message: '账户额度扣减结果待确认，系统会自动核对并在确认扣减后补发积分',
+        newApiBalanceDollars: deductResult.newBalanceDollars,
+        newApiBalanceWholeDollars: deductResult.newBalanceWholeDollars,
+        uncertain: true,
+      };
+    }
   }
 
   const grantResult = await applyPointsDelta(
@@ -400,7 +632,7 @@ async function executeTopupInner(
       const rollbackHint = rollback.success
         ? '已自动退回账户额度'
         : '额度退回失败，请联系管理员';
-      await updateWalletTransaction(transaction, {
+      await updateWalletTransaction(transactionWithQuota, {
         status: rollback.success ? 'failed' : 'uncertain',
         message: `${grantResult.message ?? '积分入账失败'}（${rollbackHint}）`,
         newApiBalanceDollars: rollback.newBalanceDollars,
@@ -411,7 +643,7 @@ async function executeTopupInner(
         message: `${grantResult.message ?? '积分入账失败'}（${rollbackHint}）`,
       };
     }
-    await updateWalletTransaction(transaction, {
+    await updateWalletTransaction(transactionWithQuota, {
       status: 'uncertain',
       message: '充值失败：积分入账与额度扣减状态均不确定',
       newApiBalanceDollars: deductResult.newBalanceDollars,
@@ -425,29 +657,30 @@ async function executeTopupInner(
   }
 
   if (deductResult.uncertain) {
-    await updateWalletTransaction(transaction, {
-      status: 'uncertain',
-      message: deductResult.message || '账户额度扣减结果待确认，积分已入账',
+    await updateWalletTransaction(transactionWithQuota, {
+      status: 'success',
+      message: '账户额度扣减已自动确认，积分已入账',
       newApiBalanceDollars: deductResult.newBalanceDollars,
       newApiBalanceWholeDollars: deductResult.newBalanceWholeDollars,
+      pointsApplied: true,
     });
 
     return {
       success: true,
-      message: `已为您加上 ${preview.pointsGained} 积分；账户额度扣减结果待确认，请稍后核对新 API 余额`,
+      message: `已确认账户额度扣减，并为您加上 ${preview.pointsGained} 积分`,
       balance: grantResult.balance,
       pointsGained: preview.pointsGained,
       newApiBalanceDollars: deductResult.newBalanceDollars,
       newApiBalanceWholeDollars: deductResult.newBalanceWholeDollars,
-      uncertain: true,
     };
   }
 
-  await updateWalletTransaction(transaction, {
+  await updateWalletTransaction(transactionWithQuota, {
     status: 'success',
     message: deductResult.message || '充值成功到账',
     newApiBalanceDollars: deductResult.newBalanceDollars,
     newApiBalanceWholeDollars: deductResult.newBalanceWholeDollars,
+    pointsApplied: true,
   });
 
   await createWalletNotification({

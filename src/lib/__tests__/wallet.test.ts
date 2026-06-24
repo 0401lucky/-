@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyPointsDelta, deductPoints, getUserPoints } from '../points';
-import { creditQuotaToUser, deductQuotaFromUser } from '../new-api';
+import { creditQuotaToUser, deductQuotaFromUser, getNewApiQuotaBalanceForUser } from '../new-api';
 import { createUserNotification } from '../notifications';
 import { executeTopup, executeWithdraw } from '../wallet';
 
 const kvMock = vi.hoisted(() => ({
   set: vi.fn(),
+  get: vi.fn(),
   lpush: vi.fn(),
+  lrange: vi.fn(),
   ltrim: vi.fn(),
 }));
 
@@ -31,6 +33,7 @@ vi.mock('../points', () => ({
 vi.mock('../new-api', () => ({
   creditQuotaToUser: vi.fn(),
   deductQuotaFromUser: vi.fn(),
+  getNewApiQuotaBalanceForUser: vi.fn(),
 }));
 
 vi.mock('../notifications', () => ({
@@ -43,6 +46,7 @@ describe('wallet notifications', () => {
   const mockApplyPointsDelta = vi.mocked(applyPointsDelta);
   const mockCreditQuotaToUser = vi.mocked(creditQuotaToUser);
   const mockDeductQuotaFromUser = vi.mocked(deductQuotaFromUser);
+  const mockGetNewApiQuotaBalanceForUser = vi.mocked(getNewApiQuotaBalanceForUser);
   const mockCreateUserNotification = vi.mocked(createUserNotification);
 
   beforeEach(() => {
@@ -59,6 +63,10 @@ describe('wallet notifications', () => {
       newBalanceDollars: 7,
       newBalanceWholeDollars: 7,
     });
+    mockGetNewApiQuotaBalanceForUser.mockResolvedValue({
+      success: false,
+      message: 'balance unavailable',
+    });
     mockCreateUserNotification.mockResolvedValue({
       id: 'notification_1',
       userId: 1001,
@@ -69,7 +77,9 @@ describe('wallet notifications', () => {
     });
 
     kvMock.set.mockResolvedValue('OK');
+    kvMock.get.mockResolvedValue(null);
     kvMock.lpush.mockResolvedValue(1);
+    kvMock.lrange.mockResolvedValue([]);
     kvMock.ltrim.mockResolvedValue(undefined);
     withKvLockMock.mockImplementation(async (_key: string, handler: () => Promise<unknown>) => handler());
   });
@@ -112,30 +122,36 @@ describe('wallet notifications', () => {
     });
   });
 
-  it('records uncertain withdraw transactions for follow-up', async () => {
+  it('refunds points when withdraw quota delivery is uncertain and cannot be confirmed', async () => {
     mockCreditQuotaToUser.mockResolvedValueOnce({
       success: false,
       message: '充值结果不确定',
+      previousQuota: 1000,
+      expectedQuota: 2000,
+      quotaDelta: 1000,
       uncertain: true,
     });
+    mockApplyPointsDelta.mockResolvedValueOnce({ success: true, balance: 1000 });
 
     const result = await executeWithdraw(1001, 100);
 
     expect(result.success).toBe(false);
-    expect(result.uncertain).toBe(true);
+    expect(result.uncertain).toBeFalsy();
+    expect(mockApplyPointsDelta).toHaveBeenCalledWith(
+      1001,
+      100,
+      'exchange_refund',
+      expect.stringContaining('提现异常自动退款'),
+    );
     expect(kvMock.set).toHaveBeenCalledWith(
       expect.stringMatching(/^wallet:transaction:/),
       expect.objectContaining({
         operation: 'withdraw',
-        status: 'uncertain',
+        status: 'failed',
         pointsDelta: -100,
         dollarsDelta: 9.7,
-        message: '充值结果不确定',
+        message: expect.stringContaining('已自动退回'),
       }),
-    );
-    expect(kvMock.lpush).toHaveBeenCalledWith(
-      'wallet:uncertain:1001',
-      expect.any(String),
     );
   });
 
@@ -178,18 +194,21 @@ describe('wallet notifications', () => {
     });
   });
 
-  it('does not create a success notification when topup quota deduct is uncertain', async () => {
+  it('does not grant points when topup quota deduct is uncertain and cannot be confirmed', async () => {
     mockDeductQuotaFromUser.mockResolvedValue({
       success: false,
       message: '扣减结果待确认',
+      previousQuota: 5000,
+      expectedQuota: 3500,
+      quotaDelta: -1500,
       uncertain: true,
     });
 
     const result = await executeTopup(1001, 3);
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
     expect(result.uncertain).toBe(true);
-    expect(mockApplyPointsDelta).toHaveBeenCalled();
+    expect(mockApplyPointsDelta).not.toHaveBeenCalled();
     expect(kvMock.set).toHaveBeenCalledWith(
       expect.stringMatching(/^wallet:transaction:/),
       expect.objectContaining({

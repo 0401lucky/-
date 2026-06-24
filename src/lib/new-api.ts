@@ -85,6 +85,9 @@ export interface CreditQuotaResult {
   success: boolean;
   message: string;
   newQuota?: number;
+  previousQuota?: number;
+  expectedQuota?: number;
+  quotaDelta?: number;
   newBalanceDollars?: number;
   newBalanceWholeDollars?: number;
   uncertain?: boolean;
@@ -335,7 +338,8 @@ export async function getNewApiQuotaBalanceForUser(
 async function verifyQuotaUpdate(
   userId: number,
   expectedQuota: number | undefined,
-  authHeaders: Record<string, string>
+  authHeaders: Record<string, string>,
+  meta: Pick<CreditQuotaResult, 'previousQuota' | 'quotaDelta'> = {},
 ): Promise<CreditQuotaResult> {
   try {
     const baseUrl = getNewApiUrl();
@@ -352,6 +356,9 @@ async function verifyQuotaUpdate(
           success: true,
           message: '充值已确认成功',
           newQuota: currentQuota,
+          previousQuota: meta.previousQuota,
+          expectedQuota,
+          quotaDelta: meta.quotaDelta,
           newBalanceDollars: newApiQuotaToDollars(currentQuota),
           newBalanceWholeDollars: newApiQuotaToWholeDollars(currentQuota),
         };
@@ -360,6 +367,9 @@ async function verifyQuotaUpdate(
           success: false,
           message: '无法确认充值结果',
           newQuota: currentQuota,
+          previousQuota: meta.previousQuota,
+          expectedQuota,
+          quotaDelta: meta.quotaDelta,
           newBalanceDollars: newApiQuotaToDollars(currentQuota),
           newBalanceWholeDollars: newApiQuotaToWholeDollars(currentQuota),
           uncertain: true,
@@ -368,10 +378,10 @@ async function verifyQuotaUpdate(
         return { success: false, message: '充值确认失败' };
       }
     }
-    return { success: false, message: '验证用户信息失败', uncertain: true };
+    return { success: false, message: '验证用户信息失败', previousQuota: meta.previousQuota, expectedQuota, quotaDelta: meta.quotaDelta, uncertain: true };
   } catch (error) {
     console.error('Verify quota update error:', error);
-    return { success: false, message: '验证失败', uncertain: true };
+    return { success: false, message: '验证失败', previousQuota: meta.previousQuota, expectedQuota, quotaDelta: meta.quotaDelta, uncertain: true };
   }
 }
 
@@ -382,7 +392,8 @@ async function verifyQuotaUpdate(
 async function verifyQuotaDeducted(
   userId: number,
   expectedQuota: number | undefined,
-  authHeaders: Record<string, string>
+  authHeaders: Record<string, string>,
+  meta: Pick<CreditQuotaResult, 'previousQuota' | 'quotaDelta'> = {},
 ): Promise<CreditQuotaResult> {
   try {
     const baseUrl = getNewApiUrl();
@@ -399,6 +410,9 @@ async function verifyQuotaDeducted(
           success: true,
           message: '扣减已确认成功',
           newQuota: currentQuota,
+          previousQuota: meta.previousQuota,
+          expectedQuota,
+          quotaDelta: meta.quotaDelta,
           newBalanceDollars: newApiQuotaToDollars(currentQuota),
           newBalanceWholeDollars: newApiQuotaToWholeDollars(currentQuota),
         };
@@ -408,6 +422,9 @@ async function verifyQuotaDeducted(
           success: false,
           message: '无法确认扣减结果',
           newQuota: currentQuota,
+          previousQuota: meta.previousQuota,
+          expectedQuota,
+          quotaDelta: meta.quotaDelta,
           newBalanceDollars: newApiQuotaToDollars(currentQuota),
           newBalanceWholeDollars: newApiQuotaToWholeDollars(currentQuota),
           uncertain: true,
@@ -415,10 +432,10 @@ async function verifyQuotaDeducted(
       }
       return { success: false, message: '扣减确认失败' };
     }
-    return { success: false, message: '验证用户信息失败', uncertain: true };
+    return { success: false, message: '验证用户信息失败', previousQuota: meta.previousQuota, expectedQuota, quotaDelta: meta.quotaDelta, uncertain: true };
   } catch (error) {
     console.error('Verify quota deduct error:', error);
-    return { success: false, message: '验证失败', uncertain: true };
+    return { success: false, message: '验证失败', previousQuota: meta.previousQuota, expectedQuota, quotaDelta: meta.quotaDelta, uncertain: true };
   }
 }
 
@@ -450,6 +467,8 @@ export async function creditQuotaToUser(
   }
 
   let expectedQuota: number | undefined;
+  let previousQuota: number | undefined;
+  let quotaToAdd: number | undefined;
 
   try {
     try {
@@ -463,7 +482,8 @@ export async function creditQuotaToUser(
 
       const user = userData.data;
       const currentQuota = readQuotaValue(user.quota);
-      const quotaToAdd = dollarsToNewApiQuota(dollars);
+      previousQuota = currentQuota;
+      quotaToAdd = dollarsToNewApiQuota(dollars);
       const newQuota = currentQuota + quotaToAdd;
       expectedQuota = newQuota;
 
@@ -501,12 +521,18 @@ export async function creditQuotaToUser(
           success: true,
           message: `成功充值 $${dollars}`,
           newQuota,
+          previousQuota,
+          expectedQuota: newQuota,
+          quotaDelta: quotaToAdd,
           newBalanceDollars: newApiQuotaToDollars(newQuota),
           newBalanceWholeDollars: newApiQuotaToWholeDollars(newQuota),
         };
       }
 
-      const verifyResult = await verifyQuotaUpdate(userId, newQuota, authHeaders);
+      const verifyResult = await verifyQuotaUpdate(userId, newQuota, authHeaders, {
+        previousQuota,
+        quotaDelta: quotaToAdd,
+      });
       if (verifyResult.success || verifyResult.uncertain) {
         return verifyResult;
       }
@@ -517,11 +543,17 @@ export async function creditQuotaToUser(
     } catch (error) {
       console.error('Credit quota error:', error);
       try {
-        const verifyResult = await verifyQuotaUpdate(userId, expectedQuota, authHeaders);
+        const verifyResult = await verifyQuotaUpdate(userId, expectedQuota, authHeaders, {
+          previousQuota,
+          quotaDelta: quotaToAdd,
+        });
         if (verifyResult.uncertain) {
           return {
             success: false,
             message: '充值结果不确定，请稍后检查余额',
+            previousQuota,
+            expectedQuota,
+            quotaDelta: quotaToAdd,
             uncertain: true,
           };
         }
@@ -532,6 +564,9 @@ export async function creditQuotaToUser(
       return {
         success: false,
         message: '服务连接失败，结果不确定，请检查余额',
+        previousQuota,
+        expectedQuota,
+        quotaDelta: quotaToAdd,
         uncertain: true,
       };
     }
@@ -567,6 +602,8 @@ export async function deductQuotaFromUser(
   }
 
   let expectedQuota: number | undefined;
+  let previousQuota: number | undefined;
+  let quotaToDeduct: number | undefined;
 
   try {
     try {
@@ -578,7 +615,8 @@ export async function deductQuotaFromUser(
 
       const user = userData.data;
       const currentQuota = readQuotaValue(user.quota);
-      const quotaToDeduct = dollarsToNewApiQuota(dollars);
+      previousQuota = currentQuota;
+      quotaToDeduct = dollarsToNewApiQuota(dollars);
 
       if (quotaToDeduct <= 0) {
         return { success: false, message: '扣减金额无效' };
@@ -588,6 +626,8 @@ export async function deductQuotaFromUser(
           success: false,
           message: `账户额度不足，可用 $${newApiQuotaToDollars(currentQuota).toFixed(2)}`,
           newQuota: currentQuota,
+          previousQuota,
+          quotaDelta: -quotaToDeduct,
           newBalanceDollars: newApiQuotaToDollars(currentQuota),
           newBalanceWholeDollars: newApiQuotaToWholeDollars(currentQuota),
         };
@@ -623,12 +663,18 @@ export async function deductQuotaFromUser(
           success: true,
           message: `成功扣减 $${dollars}`,
           newQuota,
+          previousQuota,
+          expectedQuota: newQuota,
+          quotaDelta: -quotaToDeduct,
           newBalanceDollars: newApiQuotaToDollars(newQuota),
           newBalanceWholeDollars: newApiQuotaToWholeDollars(newQuota),
         };
       }
 
-      const verifyResult = await verifyQuotaDeducted(userId, newQuota, authHeaders);
+      const verifyResult = await verifyQuotaDeducted(userId, newQuota, authHeaders, {
+        previousQuota,
+        quotaDelta: -quotaToDeduct,
+      });
       if (verifyResult.success || verifyResult.uncertain) {
         return verifyResult;
       }
@@ -639,11 +685,17 @@ export async function deductQuotaFromUser(
     } catch (error) {
       console.error('Deduct quota error:', error);
       try {
-        const verifyResult = await verifyQuotaDeducted(userId, expectedQuota, authHeaders);
+        const verifyResult = await verifyQuotaDeducted(userId, expectedQuota, authHeaders, {
+          previousQuota,
+          quotaDelta: typeof quotaToDeduct === 'number' ? -quotaToDeduct : undefined,
+        });
         if (verifyResult.uncertain) {
           return {
             success: false,
             message: '扣减结果不确定，请稍后检查余额',
+            previousQuota,
+            expectedQuota,
+            quotaDelta: typeof quotaToDeduct === 'number' ? -quotaToDeduct : undefined,
             uncertain: true,
           };
         }
@@ -654,6 +706,9 @@ export async function deductQuotaFromUser(
       return {
         success: false,
         message: '服务连接失败，结果不确定，请检查余额',
+        previousQuota,
+        expectedQuota,
+        quotaDelta: typeof quotaToDeduct === 'number' ? -quotaToDeduct : undefined,
         uncertain: true,
       };
     }

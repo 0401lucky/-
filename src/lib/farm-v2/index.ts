@@ -5,7 +5,7 @@ import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import seedrandom from 'seedrandom';
 import { acquireNativeLock, hasNativeHotStoreBinding, releaseNativeLock } from '@/lib/hot-d1';
-import { addPoints, deductPoints, getUserPoints } from '@/lib/points';
+import { addPoints, applyPointsDelta, deductPoints, getUserPoints } from '@/lib/points';
 import type {
   FarmStateV2, FarmStatusResponse, CropIdV2,
   HarvestResult, ShopItemKey, PetType, PetTask, PetSkillBookKey,
@@ -54,6 +54,39 @@ const LOCK_RETRY_MS = 80;
 const LOCK_MAX_RETRIES = 25;
 const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 const FRIDAY_EVENT_CROP_DELAY_MS = 10 * 60 * 1000;
+const FARM_PURCHASE_TX_LIST_KEY = (userId: number) => `farmv2:purchase:tx:list:${userId}`;
+const FARM_PURCHASE_TX_KEY = (id: string) => `farmv2:purchase:tx:${id}`;
+const FARM_PURCHASE_TX_MAX = 100;
+const FARM_TX_MARKER_PREFIX = 'farm-tx:';
+
+const FARM_ACTION_HOOKS = Symbol('farm-action-hooks');
+
+type FarmPurchaseTransactionStatus = 'pending' | 'success' | 'refunded' | 'refund_failed';
+type FarmPurchaseTransactionKind = 'seed' | 'item' | 'land';
+
+interface FarmPurchaseTransaction {
+  id: string;
+  userId: number;
+  kind: FarmPurchaseTransactionKind;
+  status: FarmPurchaseTransactionStatus;
+  pointsCost: number;
+  targetKey: string;
+  quantity: number;
+  previousCount?: number;
+  message: string;
+  createdAt: number;
+  updatedAt: number;
+  refundMessage?: string;
+}
+
+interface FarmActionHooks {
+  afterSave?: () => Promise<void>;
+  onSaveFailed?: (error: unknown) => Promise<{ ok: boolean; message: string }>;
+}
+
+type FarmActionHookCarrier = {
+  [FARM_ACTION_HOOKS]?: FarmActionHooks;
+};
 
 function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -85,6 +118,116 @@ async function releaseLock(lock: Lock): Promise<void> {
     }
   } catch (error) {
     console.error('释放农场状态锁失败:', error);
+  }
+}
+
+function markerForFarmTransaction(id: string): string {
+  return `${FARM_TX_MARKER_PREFIX}${id}`;
+}
+
+function stateHasTransactionMarker(state: FarmStateV2, id: string): boolean {
+  const marker = markerForFarmTransaction(id);
+  return state.events.some((event) => event.text.includes(marker));
+}
+
+function withFarmActionHooks<T extends object>(result: T, hooks: FarmActionHooks): T {
+  Object.defineProperty(result, FARM_ACTION_HOOKS, {
+    value: hooks,
+    enumerable: false,
+    configurable: false,
+  });
+  return result;
+}
+
+function getFarmActionHooks(result: unknown): FarmActionHooks | null {
+  if (!result || typeof result !== 'object') return null;
+  return (result as FarmActionHookCarrier)[FARM_ACTION_HOOKS] ?? null;
+}
+
+async function beginFarmPurchaseTransaction(input: Omit<FarmPurchaseTransaction, 'id' | 'status' | 'createdAt' | 'updatedAt'>): Promise<FarmPurchaseTransaction | null> {
+  const now = Date.now();
+  const tx: FarmPurchaseTransaction = {
+    ...input,
+    id: nanoid(),
+    status: 'pending',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  try {
+    await kv.set(FARM_PURCHASE_TX_KEY(tx.id), tx);
+    await kv.lpush(FARM_PURCHASE_TX_LIST_KEY(tx.userId), tx.id);
+    await kv.ltrim(FARM_PURCHASE_TX_LIST_KEY(tx.userId), 0, FARM_PURCHASE_TX_MAX - 1);
+    return tx;
+  } catch (error) {
+    console.error('创建农场购买补偿订单失败:', error);
+    return null;
+  }
+}
+
+async function updateFarmPurchaseTransaction(
+  tx: FarmPurchaseTransaction,
+  updates: Partial<Omit<FarmPurchaseTransaction, 'id' | 'userId' | 'kind' | 'createdAt'>>,
+): Promise<FarmPurchaseTransaction> {
+  const next: FarmPurchaseTransaction = {
+    ...tx,
+    ...updates,
+    updatedAt: Date.now(),
+  };
+  await kv.set(FARM_PURCHASE_TX_KEY(next.id), next);
+  return next;
+}
+
+async function refundFarmPurchaseTransaction(
+  tx: FarmPurchaseTransaction,
+  reason: string,
+): Promise<{ ok: boolean; message: string }> {
+  const refund = await applyPointsDelta(
+    tx.userId,
+    tx.pointsCost,
+    'exchange_refund',
+    `农场购买异常自动退款：${tx.message}，${reason}`,
+  );
+
+  await updateFarmPurchaseTransaction(tx, {
+    status: refund.success ? 'refunded' : 'refund_failed',
+    refundMessage: refund.success ? '已自动退款' : refund.message ?? '自动退款失败',
+  });
+
+  if (refund.success) {
+    return { ok: true, message: '农场购买保存失败，已自动退回积分' };
+  }
+
+  return { ok: false, message: '农场购买保存失败，自动退款暂未成功，系统已登记并会继续补偿' };
+}
+
+async function markFarmPurchaseDelivered(tx: FarmPurchaseTransaction): Promise<void> {
+  await updateFarmPurchaseTransaction(tx, { status: 'success' });
+}
+
+export async function recoverFarmPurchaseCompensations(userId: number, limit = 20): Promise<void> {
+  const lock = await acquireLock(userId);
+  if (!lock) return;
+
+  try {
+    const ids = await kv.lrange<string>(FARM_PURCHASE_TX_LIST_KEY(userId), 0, Math.max(0, limit - 1));
+    if (!ids || ids.length === 0) return;
+
+    const state = await getOrCreateFarmV2(userId);
+    for (const id of ids) {
+      const tx = await kv.get<FarmPurchaseTransaction>(FARM_PURCHASE_TX_KEY(id));
+      if (!tx || tx.userId !== userId) continue;
+      if (tx.status !== 'pending' && tx.status !== 'refund_failed') continue;
+
+      if (stateHasTransactionMarker(state, tx.id)) {
+        await updateFarmPurchaseTransaction(tx, { status: 'success' });
+        continue;
+      }
+
+      await refundFarmPurchaseTransaction(tx, '未检测到商品到账记录');
+    }
+  } finally {
+    await releaseLock(lock);
   }
 }
 
@@ -606,7 +749,22 @@ async function withLock<T>(
     if (shouldRunPassivePetSkills(result)) {
       await processPassivePetSkills(state, Date.now());
     }
-    await saveState(state);
+    try {
+      await saveState(state);
+    } catch (error) {
+      const compensation = getFarmActionHooks(result)?.onSaveFailed;
+      if (compensation) {
+        const compensated = await compensation(error);
+        return { error: compensated.message };
+      }
+      throw error;
+    }
+    const afterSave = getFarmActionHooks(result)?.afterSave;
+    if (afterSave) {
+      await afterSave().catch((error) => {
+        console.error('农场购买订单确认失败，将由自动补偿扫描兜底:', error);
+      });
+    }
     if (options.includeStatus) {
       const status = await buildFarmStatusResponseFromState(userId, state, Date.now(), options);
       return { result, status };
@@ -619,6 +777,10 @@ async function withLock<T>(
 
 /** 公开接口：获取状态（含 tick） */
 export async function getFarmStatus(userId: number): Promise<FarmStatusResponse> {
+  await recoverFarmPurchaseCompensations(userId).catch((error) => {
+    console.error('农场购买自动补偿失败:', error);
+  });
+
   const lock = await acquireLock(userId);
   let state: FarmStateV2;
   try {
@@ -959,6 +1121,10 @@ export async function removeWithered(userId: number, plotIndex: number): Promise
 
 /** 购买种子 */
 export async function buySeeds(userId: number, cropId: CropIdV2, qty: number): Promise<{ ok: boolean; msg?: string; balance?: number }> {
+  await recoverFarmPurchaseCompensations(userId).catch((error) => {
+    console.error('购买种子前自动补偿失败:', error);
+  });
+
   const r = await withLock(userId, async (state) => {
     const cropDef = CROPS_V2[cropId];
     if (!cropDef) return { ok: false, msg: '未知作物' };
@@ -967,11 +1133,48 @@ export async function buySeeds(userId: number, cropId: CropIdV2, qty: number): P
     if (cropDef.unlockLandCount > unlockedLandCount) return { ok: false, msg: '作物尚未解锁' };
     const totalCost = cropDef.seedCost * qty;
     if (state.points < totalCost) return { ok: false, msg: '积分不足' };
+    const previousCount = state.seedInventory[cropId] ?? 0;
+    const tx = await beginFarmPurchaseTransaction({
+      userId,
+      kind: 'seed',
+      pointsCost: totalCost,
+      targetKey: cropId,
+      quantity: qty,
+      previousCount,
+      message: `购买${cropDef.name}种子 x${qty}`,
+    });
+    if (!tx) return { ok: false, msg: '购买订单创建失败，请稍后重试' };
+
     const ded = await deductPoints(userId, totalCost, 'exchange', `农场购买种子: ${cropDef.name} x${qty}`);
-    if (!ded.success) return { ok: false, msg: ded.message ?? '积分不足' };
+    if (!ded.success) {
+      await updateFarmPurchaseTransaction(tx, {
+        status: 'refunded',
+        refundMessage: ded.message ?? '积分未扣除',
+      }).catch((error) => {
+        console.error('更新农场种子购买失败订单失败:', error);
+      });
+      return { ok: false, msg: ded.message ?? '积分不足' };
+    }
     state.points = ded.balance;
     state.seedInventory[cropId] = (state.seedInventory[cropId] ?? 0) + qty;
-    return { ok: true, balance: state.points };
+    pushEvent(state, {
+      id: nanoid(),
+      ts: Date.now(),
+      type: 'plant',
+      text: `购买${cropDef.name}种子 ×${qty}（${markerForFarmTransaction(tx.id)}）`,
+      cropId,
+    });
+
+    return withFarmActionHooks(
+      { ok: true, balance: state.points },
+      {
+        afterSave: () => markFarmPurchaseDelivered(tx),
+        onSaveFailed: (error) => refundFarmPurchaseTransaction(
+          tx,
+          error instanceof Error ? error.message : '农场状态保存失败',
+        ),
+      },
+    );
   });
   return r.error ? { ok: false, msg: r.error } : (r.result as any);
 }
@@ -1034,30 +1237,86 @@ async function applyBuyItemPurchase(
     }
   }
   const totalCost = def.cost * qty;
+  const previousCount = state.inventory[key]?.count ?? 0;
+  const tx = await beginFarmPurchaseTransaction({
+    userId,
+    kind: 'item',
+    pointsCost: totalCost,
+    targetKey: key,
+    quantity: qty,
+    previousCount,
+    message: `购买${def.name} x${qty}`,
+  });
+  if (!tx) return { ok: false, msg: '购买订单创建失败，请稍后重试' };
+
   const ded = await deductPoints(userId, totalCost, 'exchange', `农场购买: ${def.name} x${qty}`);
-  if (!ded.success) return { ok: false, msg: ded.message ?? '积分不足' };
+  if (!ded.success) {
+    await updateFarmPurchaseTransaction(tx, {
+      status: 'refunded',
+      refundMessage: ded.message ?? '积分未扣除',
+    }).catch((error) => {
+      console.error('更新农场道具购买失败订单失败:', error);
+    });
+    return { ok: false, msg: ded.message ?? '积分不足' };
+  }
   state.points = ded.balance;
   addToInventory(state, key, qty, Date.now());
+  pushEvent(state, {
+    id: nanoid(),
+    ts: Date.now(),
+    type: 'pet_task',
+    text: `购买${def.name} ×${qty}（${markerForFarmTransaction(tx.id)}）`,
+  });
   if (dailyKey) {
-    const store = kv as typeof kv & {
-      incrby?: (key: string, amount: number) => Promise<number>;
-      expire?: (key: string, seconds: number) => Promise<unknown>;
-    };
-    const count = typeof store.incrby === 'function'
-      ? await store.incrby(dailyKey, qty)
-      : ((Number(await kv.get<number>(dailyKey)) || 0) + qty);
-    if (typeof store.incrby !== 'function') {
-      await kv.set(dailyKey, count);
-    }
-    if (count === qty) {
-      await store.expire?.(dailyKey, 48 * 60 * 60);
+    try {
+      const store = kv as typeof kv & {
+        incrby?: (key: string, amount: number) => Promise<number>;
+        expire?: (key: string, seconds: number) => Promise<unknown>;
+      };
+      const count = typeof store.incrby === 'function'
+        ? await store.incrby(dailyKey, qty)
+        : ((Number(await kv.get<number>(dailyKey)) || 0) + qty);
+      if (typeof store.incrby !== 'function') {
+        await kv.set(dailyKey, count);
+      }
+      if (count === qty) {
+        await store.expire?.(dailyKey, 48 * 60 * 60);
+      }
+    } catch (error) {
+      state.inventory[key] = { count: previousCount, updatedAt: Date.now() };
+      const refund = await refundFarmPurchaseTransaction(
+        tx,
+        error instanceof Error ? error.message : '限购计数保存失败',
+      );
+      state.points = await getUserPoints(userId);
+      return { ok: false, msg: refund.message, balance: state.points };
     }
   }
-  return { ok: true, balance: state.points };
+  return withFarmActionHooks(
+    { ok: true, balance: state.points },
+    {
+      afterSave: () => markFarmPurchaseDelivered(tx),
+      onSaveFailed: async (error) => {
+        if (dailyKey) {
+          await kv.decrby(dailyKey, qty).catch((rollbackError) => {
+            console.error('农场道具购买限购计数回滚失败:', rollbackError);
+          });
+        }
+        return refundFarmPurchaseTransaction(
+          tx,
+          error instanceof Error ? error.message : '农场状态保存失败',
+        );
+      },
+    },
+  );
 }
 
 /** 购买道具 */
 export async function buyItem(userId: number, key: ShopItemKey, qty: number): Promise<{ ok: boolean; msg?: string; balance?: number }> {
+  await recoverFarmPurchaseCompensations(userId).catch((error) => {
+    console.error('购买道具前自动补偿失败:', error);
+  });
+
   const items = await getEffectiveFarmShopItems();
   const def = getShopItemDef(items, key);
   const r = await withLock(userId, async (state) => {
@@ -1072,6 +1331,10 @@ export async function buyItemWithStatus(
   key: ShopItemKey,
   qty: number,
 ): Promise<{ ok: boolean; msg?: string; balance?: number; data?: FarmStatusResponse }> {
+  await recoverFarmPurchaseCompensations(userId).catch((error) => {
+    console.error('购买道具前自动补偿失败:', error);
+  });
+
   const items = await getEffectiveFarmShopItems();
   const def = getShopItemDef(items, key);
   const r = await withLock(userId, async (state) => {

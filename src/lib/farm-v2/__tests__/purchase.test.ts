@@ -1,15 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kv } from '@/lib/d1-kv';
 import { acquireNativeLock, hasNativeHotStoreBinding, releaseNativeLock } from '@/lib/hot-d1';
-import { addPoints, deductPoints, getUserPoints } from '@/lib/points';
+import { addPoints, applyPointsDelta, deductPoints, getUserPoints } from '@/lib/points';
 import type { FarmStateV2, PetState } from '@/lib/types/farm-v2';
-import { buyItem, buyItemWithStatus, getFarmStatus, processFarmMaturityEmails, useItemWithStatus } from '../index';
+import { buyItem, buyItemWithStatus, buySeeds, getFarmStatus, processFarmMaturityEmails, recoverFarmPurchaseCompensations, useItemWithStatus } from '../index';
 
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
     get: vi.fn(),
     mget: vi.fn(),
     set: vi.fn(),
+    lpush: vi.fn(),
+    lrange: vi.fn(),
+    ltrim: vi.fn(),
+    incrby: vi.fn(),
+    decrby: vi.fn(),
+    expire: vi.fn(),
     del: vi.fn(),
     scan: vi.fn(),
   },
@@ -23,6 +29,7 @@ vi.mock('@/lib/hot-d1', () => ({
 
 vi.mock('@/lib/points', () => ({
   addPoints: vi.fn(async (_userId: number, amount: number) => ({ success: true, balance: amount })),
+  applyPointsDelta: vi.fn(async (_userId: number, amount: number) => ({ success: true, balance: 1000 + amount })),
   deductPoints: vi.fn(async (_userId: number, amount: number) => ({ success: true, balance: 1000 - amount })),
   getUserPoints: vi.fn(async () => 1000),
 }));
@@ -33,9 +40,16 @@ describe('farm-v2 shop purchases', () => {
   const mockKvSet = vi.mocked(kv.set);
   const mockKvGet = vi.mocked(kv.get);
   const mockKvMget = vi.mocked(kv.mget);
+  const mockKvLpush = vi.mocked(kv.lpush);
+  const mockKvLrange = vi.mocked(kv.lrange);
+  const mockKvLtrim = vi.mocked(kv.ltrim);
+  const mockKvIncrby = vi.mocked(kv.incrby);
+  const mockKvDecrby = vi.mocked(kv.decrby);
+  const mockKvExpire = vi.mocked(kv.expire);
   const mockKvDel = vi.mocked(kv.del);
   const mockKvScan = vi.mocked(kv.scan);
   const mockAddPoints = vi.mocked(addPoints);
+  const mockApplyPointsDelta = vi.mocked(applyPointsDelta);
   const mockDeductPoints = vi.mocked(deductPoints);
   const mockGetUserPoints = vi.mocked(getUserPoints);
   const mockAcquireNativeLock = vi.mocked(acquireNativeLock);
@@ -56,6 +70,32 @@ describe('farm-v2 shop purchases', () => {
     });
     mockKvGet.mockImplementation(async (key: string) => (store.has(key) ? store.get(key) : null) as any);
     mockKvMget.mockImplementation(async (...keys: string[]) => keys.map((key) => (store.has(key) ? store.get(key) : null)) as any);
+    mockKvLpush.mockImplementation(async (key: string, ...values: unknown[]) => {
+      const list = (store.get(key) as unknown[] | undefined) ?? [];
+      store.set(key, [...values, ...list]);
+      return list.length + values.length;
+    });
+    mockKvLrange.mockImplementation(async (key: string, start: number, stop: number) => {
+      const list = (store.get(key) as unknown[] | undefined) ?? [];
+      const normalizedStop = stop < 0 ? list.length + stop : stop;
+      return list.slice(start, normalizedStop + 1) as any;
+    });
+    mockKvLtrim.mockImplementation(async (key: string, start: number, stop: number) => {
+      const list = (store.get(key) as unknown[] | undefined) ?? [];
+      const normalizedStop = stop < 0 ? list.length + stop : stop;
+      store.set(key, list.slice(start, normalizedStop + 1));
+    });
+    mockKvIncrby.mockImplementation(async (key: string, amount: number) => {
+      const next = (Number(store.get(key)) || 0) + amount;
+      store.set(key, next);
+      return next;
+    });
+    mockKvDecrby.mockImplementation(async (key: string, amount: number) => {
+      const next = (Number(store.get(key)) || 0) - amount;
+      store.set(key, next);
+      return next;
+    });
+    mockKvExpire.mockResolvedValue(1);
     mockKvDel.mockImplementation(async (...keys: string[]) => {
       let deleted = 0;
       for (const key of keys) {
@@ -64,6 +104,7 @@ describe('farm-v2 shop purchases', () => {
       return deleted;
     });
     mockKvScan.mockResolvedValue([0, []]);
+    mockApplyPointsDelta.mockResolvedValue({ success: true, balance: 1000 });
   });
 
   afterEach(() => {
@@ -147,6 +188,64 @@ describe('farm-v2 shop purchases', () => {
     expect(result.data?.shopDailyPurchases?.pet_food_normal).toBe(2);
     expect(savedState.inventory.pet_food_normal?.count).toBe(2);
     expect(stateSaveCount).toBe(1);
+  });
+
+  it('购买种子保存农场状态失败时自动退回积分', async () => {
+    const state = createFarmState();
+    state.lands = Array.from({ length: 4 }, (_, index) => ({
+      index: index + 1,
+      status: 'empty',
+      crop: null,
+    }));
+    store.set(stateKey, state);
+    mockKvSet.mockImplementation(async (key: string, value: unknown, options?: { nx?: boolean }) => {
+      if (options?.nx && store.has(key)) return null;
+      if (key === stateKey) throw new Error('save failed');
+      store.set(key, value);
+      return 'OK';
+    });
+
+    const result = await buySeeds(userId, 'wheat', 2);
+
+    expect(result.ok).toBe(false);
+    expect(result.msg).toContain('已自动退回积分');
+    expect(mockDeductPoints).toHaveBeenCalledWith(userId, 10, 'exchange', '农场购买种子: 小麦 x2');
+    expect(mockApplyPointsDelta).toHaveBeenCalledWith(
+      userId,
+      10,
+      'exchange_refund',
+      expect.stringContaining('农场购买异常自动退款'),
+    );
+  });
+
+  it('待补偿农场购买未检测到到账记录时自动退款', async () => {
+    const txId = 'tx-pending-1';
+    store.set(`farmv2:purchase:tx:list:${userId}`, [txId]);
+    store.set(`farmv2:purchase:tx:${txId}`, {
+      id: txId,
+      userId,
+      kind: 'seed',
+      status: 'pending',
+      pointsCost: 25,
+      targetKey: 'wheat',
+      quantity: 5,
+      previousCount: 0,
+      message: '购买小麦种子 x5',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+
+    await recoverFarmPurchaseCompensations(userId);
+
+    expect(mockApplyPointsDelta).toHaveBeenCalledWith(
+      userId,
+      25,
+      'exchange_refund',
+      expect.stringContaining('未检测到商品到账记录'),
+    );
+    expect(store.get(`farmv2:purchase:tx:${txId}`)).toEqual(
+      expect.objectContaining({ status: 'refunded' }),
+    );
   });
 
   it('使用道具时直接返回最新农场状态', async () => {
