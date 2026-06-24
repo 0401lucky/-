@@ -5,8 +5,8 @@
   "services": {
     "gateway": {
       "type": "docker",
-      "context": "./gateway",
-      "dockerfile": "Dockerfile",
+      "context": ".",
+      "dockerfile": "Dockerfile.gateway",
       "port": 8080,
       "public": true,
       "dependsOn": [
@@ -22,7 +22,7 @@
     "web": {
       "type": "docker",
       "context": ".",
-      "dockerfile": "Dockerfile",
+      "dockerfile": "Dockerfile.web",
       "port": 3000,
       "public": false,
       "dependsOn": [
@@ -38,8 +38,8 @@
     },
     "api": {
       "type": "docker",
-      "context": "./backend",
-      "dockerfile": "Dockerfile",
+      "context": ".",
+      "dockerfile": "Dockerfile.api",
       "port": 8080,
       "public": false,
       "dependsOn": [
@@ -67,9 +67,8 @@
     },
     "worker": {
       "type": "docker",
-      "context": "./backend",
-      "dockerfile": "Dockerfile",
-      "entrypoint": "/app/worker",
+      "context": ".",
+      "dockerfile": "Dockerfile.worker",
       "public": false,
       "dependsOn": [
         "postgres",

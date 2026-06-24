@@ -3,6 +3,8 @@ node_modules
 .open-next
 .wrangler
 .vercel
+.gocache
+.tmp
 .git
 .gitignore
 .claude
@@ -21,6 +23,5 @@ tmp
 .dev.vars
 deploy/zeabur.env
 deploy/production-cutover-evidence.json
-backend
-gateway
+/images
 backups

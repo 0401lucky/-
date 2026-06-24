@@ -30,12 +30,14 @@ deploy/zeabur-services.example.json
 
 ## 服务拓扑
 
-Zeabur 上建议保持 6 个服务：
+Zeabur 上建议保持 6 个服务。
+所有 Git 服务的根目录都填仓库根目录 `/`，服务名必须分别叫 `gateway`、`web`、`api`、`worker`。
+仓库根目录提供了 `Dockerfile.gateway`、`Dockerfile.web`、`Dockerfile.api`、`Dockerfile.worker`，Zeabur 会按服务名自动匹配对应 Dockerfile。
 
-- `gateway`：唯一公网入口，使用 `gateway/Dockerfile`，公开 8080。
-- `web`：Next.js standalone 服务，使用根目录 `Dockerfile`，仅内网访问 3000。
-- `api`：Go API 服务，使用 `backend/Dockerfile`，仅内网访问 8080。
-- `worker`：Go Worker 服务，使用 `backend/Dockerfile` 并覆盖 entrypoint 为 `/app/worker`。
+- `gateway`：唯一公网入口，使用根目录 `Dockerfile.gateway`，公开 8080。
+- `web`：Next.js standalone 服务，使用根目录 `Dockerfile.web`，仅内网访问 3000。
+- `api`：Go API 服务，使用根目录 `Dockerfile.api`，仅内网访问 8080。
+- `worker`：Go Worker 服务，使用根目录 `Dockerfile.worker`，不公开公网端口。
 - `postgres`：Zeabur 托管 PostgreSQL，提供 `DATABASE_URL`。
 - `redis`：Zeabur 托管 Redis，提供 `REDIS_URL`。
 
@@ -50,6 +52,13 @@ Gateway 的上游地址通过环境变量配置：
 
 Zeabur 服务名或内网端口和本地 Compose 不一致时，只覆盖这两个变量。
 不要为了适配 Zeabur 服务名去改 `gateway/Caddyfile` 的路径切流清单。
+
+如果 Zeabur 没有按服务名自动匹配 Dockerfile，就在对应服务环境变量里显式设置：
+
+- `gateway`：`ZBPACK_DOCKERFILE_NAME=gateway`
+- `web`：`ZBPACK_DOCKERFILE_NAME=web`
+- `api`：`ZBPACK_DOCKERFILE_NAME=api`
+- `worker`：`ZBPACK_DOCKERFILE_NAME=worker`
 
 ## 环境变量来源
 

@@ -31,15 +31,37 @@ node scripts/audit-gateway-allowed-cutovers.mjs
 node scripts/preflight-zeabur-go-api.mjs
 ```
 
-Zeabur 服务创建顺序参考 `deploy/zeabur-services.example.json`：
+Zeabur 服务创建顺序参考 `deploy/zeabur-services.example.json`。
+当前仓库为 Zeabur 提供了根目录级 Dockerfile 自动匹配：
+
+- `Dockerfile.gateway`
+- `Dockerfile.web`
+- `Dockerfile.api`
+- `Dockerfile.worker`
+
+创建 Git 服务时，`gateway`、`web`、`api`、`worker` 的根目录都填 `/`。
+服务名称必须分别叫 `gateway`、`web`、`api`、`worker`，让 Zeabur 按服务名匹配对应 Dockerfile。
+不要再把 `api` 或 `worker` 的根目录填成 `/backend`，也不要把 `gateway` 的根目录填成 `/gateway`。
+如果旧服务日志里出现 `/etc/caddy/Caddyfile`，但服务不是 `gateway`，说明它已经构建错了；直接按本节配置重建该服务或修正根目录和 Dockerfile 匹配后重新部署。
 
 1. 创建托管 PostgreSQL，并记录 `DATABASE_URL`。
 2. 创建托管 Redis，并记录 `REDIS_URL`。
-3. 创建 `api` 服务，使用 `backend/Dockerfile`。
+3. 创建 `api` 服务，根目录 `/`，服务名 `api`，使用 `Dockerfile.api`。
 4. 在 `api` 服务环境变量配置完成后先运行 `/app/migrate`，并用 `node scripts/audit-postgres-live-schema.mjs` 复核 schema 版本。
-5. 创建 `worker` 服务，使用 `backend/Dockerfile` 并覆盖 entrypoint 为 `/app/worker`。
-6. 创建 `web` 服务，使用根目录 `Dockerfile`。
-7. 创建 `gateway` 服务，使用 `gateway/Dockerfile`，只公开 Gateway。
+5. 创建 `worker` 服务，根目录 `/`，服务名 `worker`，使用 `Dockerfile.worker`。
+6. 创建 `web` 服务，根目录 `/`，服务名 `web`，使用 `Dockerfile.web`。
+7. 创建 `gateway` 服务，根目录 `/`，服务名 `gateway`，使用 `Dockerfile.gateway`，只公开 Gateway。
+
+如果 Zeabur 未自动匹配对应 Dockerfile，则给服务补充环境变量：
+
+```bash
+ZBPACK_DOCKERFILE_NAME=api
+ZBPACK_DOCKERFILE_NAME=worker
+ZBPACK_DOCKERFILE_NAME=web
+ZBPACK_DOCKERFILE_NAME=gateway
+```
+
+每个服务只填自己对应的值。
 
 需要复跑未切流模块的本地写路径门禁时：
 

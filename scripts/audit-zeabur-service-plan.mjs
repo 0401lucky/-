@@ -5,10 +5,10 @@ const envExamplePath = process.env.ZEABUR_ENV_EXAMPLE || 'deploy/zeabur.env.exam
 
 const requiredServices = ['gateway', 'web', 'api', 'worker', 'postgres', 'redis'];
 const requiredDockerServices = {
-  gateway: { context: './gateway', dockerfile: 'Dockerfile', port: 8080 },
-  web: { context: '.', dockerfile: 'Dockerfile', port: 3000 },
-  api: { context: './backend', dockerfile: 'Dockerfile', port: 8080 },
-  worker: { context: './backend', dockerfile: 'Dockerfile', entrypoint: '/app/worker' },
+  gateway: { context: '.', dockerfile: 'Dockerfile.gateway', port: 8080 },
+  web: { context: '.', dockerfile: 'Dockerfile.web', port: 3000 },
+  api: { context: '.', dockerfile: 'Dockerfile.api', port: 8080 },
+  worker: { context: '.', dockerfile: 'Dockerfile.worker' },
 };
 const requiredDependencies = [
   ['gateway', 'web'],
