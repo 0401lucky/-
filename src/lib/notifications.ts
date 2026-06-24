@@ -543,3 +543,61 @@ export async function fanoutAnnouncementNotification(announcement: {
     notifiedUsers,
   };
 }
+
+export async function ensureAnnouncementNotificationsForUser(
+  userId: number,
+  announcements: Array<{
+    id: string;
+    title: string;
+    content: string;
+    publishedAt?: number;
+    createdAt?: number;
+  }>
+): Promise<{ created: number }> {
+  const normalizedUserId = Number(userId);
+  if (!Number.isFinite(normalizedUserId) || normalizedUserId <= 0 || announcements.length === 0) {
+    return { created: 0 };
+  }
+
+  let created = 0;
+
+  await Promise.all(
+    announcements.map(async (announcement) => {
+      if (!announcement.id || !announcement.title || !announcement.content) return;
+
+      const dedupeKey = ANNOUNCEMENT_NOTIFIED_KEY(announcement.id);
+
+      try {
+        const added = await kv.sadd(dedupeKey, normalizedUserId);
+        if (Number(added) !== 1) return;
+
+        await createUserNotification({
+          userId: normalizedUserId,
+          type: 'announcement',
+          title: `系统公告：${announcement.title}`,
+          content: announcement.content,
+          data: {
+            announcementId: announcement.id,
+          },
+          createdAt: announcement.publishedAt ?? announcement.createdAt ?? Date.now(),
+        });
+
+        await kv.expire(dedupeKey, 180 * 24 * 60 * 60);
+        created += 1;
+      } catch (error) {
+        try {
+          await kv.srem(dedupeKey, normalizedUserId);
+        } catch {
+          // ignore rollback error
+        }
+        console.error('ensureAnnouncementNotificationsForUser failed', {
+          announcementId: announcement.id,
+          userId: maskUserId(normalizedUserId),
+          error,
+        });
+      }
+    })
+  );
+
+  return { created };
+}

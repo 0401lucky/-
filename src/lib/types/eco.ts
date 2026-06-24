@@ -69,6 +69,8 @@ export interface EcoPublicPrizeEntry {
   publicAt: number;
   merchantAvailableAt: number;
   status: 'listed' | 'stolen';
+  stealProtectedUntil?: number | null;
+  theftCaughtCount?: number;
   thiefUserId?: number | null;
   thiefName?: string | null;
   theftMessage?: string | null;
@@ -196,6 +198,8 @@ export interface EcoPublicBoardView {
     status: EcoPublicPrizeEntry['status'];
     canSteal?: boolean;
     stealDisabledReason?: string | null;
+    stealProtectedUntil?: number | null;
+    theftCaughtCount?: number;
     thiefUserId?: number | null;
     thiefName?: string | null;
     thiefAvatarUrl?: string | null;

@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { withAdmin } from '@/lib/api-guards';
-import { addPoints, deductPoints, getUserPoints, getPointsLogs } from '@/lib/points';
+import { addPoints, deductPoints, getUserPoints, getPointsLogsPage } from '@/lib/points';
 
 // 统一响应格式
 function jsonResponse(
@@ -15,11 +15,13 @@ function jsonResponse(
 
 /**
  * GET - 查询用户积分和流水
- * Query params: userId
+ * Query params: userId, page, limit
  */
 export const GET = withAdmin(async (request: NextRequest) => {
   const { searchParams } = new URL(request.url);
   const userIdStr = searchParams.get('userId');
+  const page = Number.parseInt(searchParams.get('page') || '1', 10);
+  const limit = Number.parseInt(searchParams.get('limit') || '10', 10);
 
   if (!userIdStr) {
     return jsonResponse({ success: false, message: '缺少 userId 参数' }, 400);
@@ -31,15 +33,19 @@ export const GET = withAdmin(async (request: NextRequest) => {
   }
 
   try {
-    const [balance, logs] = await Promise.all([
+    const [balance, logsPage] = await Promise.all([
       getUserPoints(userId),
-      // 与 points.ts 的流水保留上限对齐：最多返回最近100条
-      getPointsLogs(userId, 100),
+      getPointsLogsPage(userId, page, limit),
     ]);
 
     return jsonResponse({
       success: true,
-      data: { userId, balance, logs },
+      data: {
+        userId,
+        balance,
+        logs: logsPage.logs,
+        pagination: logsPage.pagination,
+      },
     });
   } catch (error) {
     console.error('Get user points error:', error);

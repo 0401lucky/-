@@ -3,6 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { requestGameFallback } from '../_lib/fallback';
 import { ArrowLeft, BookOpen, Bomb, Hammer, Loader2, Play, RotateCcw, Sparkles, Target, Timer, Trophy, X, Zap } from 'lucide-react';
 import {
   WHACK_MOLE_GAME_DURATION_MS,
@@ -414,6 +415,33 @@ export default function WhackMolePage() {
       const data = await parseJson<SubmitResult>(res);
 
       if (!res.ok || !data?.success || !data.data) {
+        if (res.status >= 500) {
+          const fallback = await requestGameFallback<WhackMoleRecord>({
+            game: 'whack-mole',
+            sessionId: targetSession.sessionId,
+            events: eventsRef.current,
+          });
+          if (fallback) {
+            const record = fallback.record;
+            setResult(record);
+            setSelectedDifficulty(normalizeWhackMoleDifficulty(record.difficulty));
+            clearPersistedEvents();
+            eventsRef.current = [];
+            setBestScore((current) => {
+              const nextBest = Math.max(current, record.score);
+              window.localStorage.setItem(BEST_SCORE_KEY, String(nextBest));
+              return nextBest;
+            });
+            setSession(null);
+            sessionRef.current = null;
+            resetRoundView();
+            updateLocalProgress(record.score, 0);
+            setLastHit(`已启用兜底结算，本局获得 ${record.pointsEarned} 积分`);
+            setRoundPhase('finished');
+            void fetchStatus();
+            return;
+          }
+        }
         throw new Error(data?.message ?? `结算失败（HTTP ${res.status}）`);
       }
 
@@ -435,6 +463,35 @@ export default function WhackMolePage() {
       setRoundPhase('finished');
       void fetchStatus();
     } catch (err) {
+      try {
+        const fallback = await requestGameFallback<WhackMoleRecord>({
+          game: 'whack-mole',
+          sessionId: targetSession.sessionId,
+          events: eventsRef.current,
+        });
+        if (fallback) {
+          const record = fallback.record;
+          setResult(record);
+          setSelectedDifficulty(normalizeWhackMoleDifficulty(record.difficulty));
+          clearPersistedEvents();
+          eventsRef.current = [];
+          setBestScore((current) => {
+            const nextBest = Math.max(current, record.score);
+            window.localStorage.setItem(BEST_SCORE_KEY, String(nextBest));
+            return nextBest;
+          });
+          setSession(null);
+          sessionRef.current = null;
+          resetRoundView();
+          updateLocalProgress(record.score, 0);
+          setLastHit(`已启用兜底结算，本局获得 ${record.pointsEarned} 积分`);
+          setRoundPhase('finished');
+          void fetchStatus();
+          return;
+        }
+      } catch (fallbackError) {
+        console.error('Whack mole fallback settlement error:', fallbackError);
+      }
       submittedRef.current = false;
       setRoundPhase('finished');
       setLastHit('结算未完成，请重试本局结算');

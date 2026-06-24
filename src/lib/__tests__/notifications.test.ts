@@ -3,6 +3,7 @@ import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import {
   createUserNotification,
+  ensureAnnouncementNotificationsForUser,
   fanoutAnnouncementNotification,
   getUserNotificationUnreadCount,
   listUserNotifications,
@@ -364,5 +365,44 @@ describe('notifications', () => {
     expect(mockKvSadd).toHaveBeenCalledWith('notifications:announcement:notified:announcement_1', 1001);
     expect(mockKvSadd).toHaveBeenCalledWith('notifications:announcement:notified:announcement_1', 1002);
     expect(mockKvExpire).toHaveBeenCalledWith('notifications:announcement:notified:announcement_1', 180 * 24 * 60 * 60);
+  });
+
+  it('backfills missing announcement notification for current user', async () => {
+    mockNanoid.mockReturnValue('notification_backfill');
+
+    const result = await ensureAnnouncementNotificationsForUser(1001, [
+      {
+        id: 'announcement_backfill',
+        title: '补发公告',
+        content: '公告内容',
+        publishedAt: 1700000000000,
+      },
+    ]);
+
+    expect(result).toEqual({ created: 1 });
+    expect(mockKvSadd).toHaveBeenCalledWith(
+      'notifications:announcement:notified:announcement_backfill',
+      1001
+    );
+    expect(mockKvSet).toHaveBeenCalledWith(
+      'notifications:item:notification_backfill',
+      expect.objectContaining({
+        id: 'notification_backfill',
+        userId: 1001,
+        type: 'announcement',
+        title: '系统公告：补发公告',
+        content: '公告内容',
+        createdAt: 1700000000000,
+        data: { announcementId: 'announcement_backfill' },
+      })
+    );
+    expect(mockKvZadd).toHaveBeenCalledWith('notifications:user:1001:index', {
+      score: 1700000000000,
+      member: 'notification_backfill',
+    });
+    expect(mockKvExpire).toHaveBeenCalledWith(
+      'notifications:announcement:notified:announcement_backfill',
+      180 * 24 * 60 * 60
+    );
   });
 });

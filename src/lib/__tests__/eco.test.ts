@@ -639,6 +639,111 @@ describe('eco service', () => {
     expect(states.get('eco:state:1002')?.inventory.coin).toBe(0);
   });
 
+  it('blocks stealing public prizes during police protection', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-10T10:00:00.000Z'));
+    const now = Date.now();
+    let publicEntries: EcoPublicPrizeEntry[] = [{
+      id: 'public-1',
+      key: 'coin',
+      ownerUserId: 1001,
+      ownerName: 'alice',
+      ownerLotId: 'owner-lot-1',
+      publicAt: now - 60_000,
+      merchantAvailableAt: now,
+      status: 'listed',
+      stealProtectedUntil: now + 24 * 60 * 60 * 1000,
+      theftCaughtCount: 1,
+    }];
+    let thefts: unknown[] = [];
+
+    mockKvGet.mockImplementation(async (key: string) => {
+      if (key === 'eco:public-prizes') return publicEntries;
+      if (key === 'eco:thefts') return thefts;
+      return null;
+    });
+    mockKvSet.mockImplementation(async (key: string, value: unknown) => {
+      if (key === 'eco:public-prizes') publicEntries = value as EcoPublicPrizeEntry[];
+      if (key === 'eco:thefts') thefts = value as unknown[];
+      return 'OK';
+    });
+
+    const result = await stealEcoPublicPrize(1002, 'public-1', '拿走了');
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toBe('这个奖品还在保护期内');
+    expect(publicEntries[0]).toMatchObject({
+      status: 'listed',
+      stealProtectedUntil: now + 24 * 60 * 60 * 1000,
+      theftCaughtCount: 1,
+    });
+    expect(thefts).toEqual([]);
+  });
+
+  it('records previous police restore count when stealing protected-history prizes again', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-10T10:00:00.000Z'));
+    const now = Date.now();
+    const ownerState = createInitialEcoState(1001, now);
+    const thiefState = createInitialEcoState(1002, now);
+    ownerState.inventory.coin = 1;
+    ownerState.limitedPrizeInventory.coin = 1;
+    ownerState.prizeLots = [{
+      id: 'owner-lot-1',
+      key: 'coin',
+      acquiredAt: now - 60_000,
+      availableAt: now,
+      limited: true,
+      source: 'restored',
+      publicEntryId: 'public-1',
+      publiclyListedAt: now - 60_000,
+      merchantAvailableAt: now,
+    }];
+    const states = new Map<string, EcoState>([
+      ['eco:state:1001', ownerState],
+      ['eco:state:1002', thiefState],
+    ]);
+    let publicEntries: EcoPublicPrizeEntry[] = [{
+      id: 'public-1',
+      key: 'coin',
+      ownerUserId: 1001,
+      ownerName: 'alice',
+      ownerLotId: 'owner-lot-1',
+      publicAt: now - 60_000,
+      merchantAvailableAt: now,
+      status: 'listed',
+      stealProtectedUntil: now - 1,
+      theftCaughtCount: 1,
+    }];
+    let thefts: unknown[] = [];
+
+    mockKvGet.mockImplementation(async (key: string) => {
+      if (key === 'eco:public-prizes') return publicEntries;
+      if (key === 'eco:thefts') return thefts;
+      return states.get(key) ?? null;
+    });
+    mockKvSet.mockImplementation(async (key: string, value: unknown) => {
+      if (key === 'eco:public-prizes') publicEntries = value as EcoPublicPrizeEntry[];
+      else if (key === 'eco:thefts') thefts = value as unknown[];
+      else if (key.startsWith('eco:state:')) states.set(key, value as EcoState);
+      return 'OK';
+    });
+
+    const result = await stealEcoPublicPrize(1002, 'public-1', '再次拿走');
+
+    expect(result.ok).toBe(true);
+    expect(publicEntries[0]).toMatchObject({
+      status: 'stolen',
+      stealProtectedUntil: null,
+      theftCaughtCount: 1,
+    });
+    expect(thefts[0]).toMatchObject({
+      publicEntryId: 'public-1',
+      caughtCountBeforeTheft: 1,
+      nextCheckAt: now + 20 * 60 * 1000,
+    });
+  });
+
   it('restores both user states when stealing fails after one side is saved', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-10T10:00:00.000Z'));
@@ -893,7 +998,54 @@ describe('eco service', () => {
       locked: true,
     });
     expect(thefts[0]?.resolvedAt).toBeUndefined();
-    expect(thefts[0]?.nextCheckAt).toBe(now - 1 + 30 * 60 * 1000);
+    expect(thefts[0]?.nextCheckAt).toBe(now - 1 + 20 * 60 * 1000);
+  });
+
+  it('applies restore-count probability decay to due theft investigations', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-10T10:00:00.000Z'));
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const now = Date.now();
+    let thefts = [{
+      id: 'theft-1',
+      key: 'coin' as const,
+      originalUserId: 1001,
+      thiefUserId: 1002,
+      publicEntryId: 'public-1',
+      originalLotId: 'owner-lot-1',
+      thiefLotId: 'thief-lot-1',
+      stolenAt: now,
+      nextCheckAt: now - 1,
+      blackMarketAvailableAt: now + 24 * 60 * 60 * 1000,
+      caughtCountBeforeTheft: 1,
+      message: '拿走了',
+    }];
+
+    mockKvGet.mockImplementation(async (key: string) => (
+      key === 'eco:thefts' ? thefts : null
+    ));
+    mockKvSet.mockImplementation(async (key: string, value: unknown) => {
+      if (key === 'eco:thefts') thefts = value as typeof thefts;
+      return 'OK';
+    });
+
+    const result = await runEcoTheftInvestigations({ limit: 10 });
+
+    randomSpy.mockRestore();
+    expect(result).toMatchObject({
+      checked: 1,
+      caught: 0,
+      escaped: 0,
+      rescheduled: 1,
+      skipped: 0,
+      locked: true,
+    });
+    expect(thefts[0]).not.toHaveProperty('resolvedAt');
+    expect(thefts[0]).not.toHaveProperty('outcome');
+    expect(thefts[0]).toMatchObject({
+      nextCheckAt: now - 1 + 20 * 60 * 1000,
+      caughtCountBeforeTheft: 1,
+    });
   });
 
   it('restores stolen public prizes and forces thief achievement when caught', async () => {
@@ -983,6 +1135,8 @@ describe('eco service', () => {
     });
     expect(publicEntries[0]).toMatchObject({
       status: 'listed',
+      stealProtectedUntil: now + 24 * 60 * 60 * 1000,
+      theftCaughtCount: 1,
       thiefUserId: null,
       thiefName: null,
       theftMessage: null,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAdmin } from "@/lib/api-guards";
 import { createProject, getAllProjects, type Project } from "@/lib/kv";
+import { parseChinaDateTimeInput } from "@/lib/time";
 import { generateId } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +44,10 @@ export const POST = withAdmin(async (request: NextRequest, user) => {
     const newUserOnly = formData.get("newUserOnly") === "true";
     const directPointsRaw = formData.get("directPoints") as string | null;
     const directPoints = directPointsRaw ? Number.parseInt(directPointsRaw, 10) : NaN;
+    const autoPauseAtRaw = formData.get("autoPauseAt");
+    const autoPauseAt = typeof autoPauseAtRaw === "string" && autoPauseAtRaw.trim()
+      ? parseChinaDateTimeInput(autoPauseAtRaw)
+      : undefined;
 
     if (!name) {
       return NextResponse.json(
@@ -62,6 +67,12 @@ export const POST = withAdmin(async (request: NextRequest, user) => {
         { status: 400 }
       );
     }
+    if (autoPauseAtRaw && typeof autoPauseAtRaw === "string" && autoPauseAtRaw.trim() && autoPauseAt === null) {
+      return NextResponse.json(
+        { success: false, message: "暂停时间格式不正确，请按中国时间选择有效时间" },
+        { status: 400 }
+      );
+    }
 
     const projectId = generateId();
     const project: Project = {
@@ -77,6 +88,7 @@ export const POST = withAdmin(async (request: NextRequest, user) => {
       rewardType: "direct",
       directPoints,
       newUserOnly,
+      autoPauseAt: autoPauseAt ?? undefined,
     };
 
     await createProject(project);

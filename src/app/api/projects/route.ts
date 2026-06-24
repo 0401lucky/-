@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
-import { getAllProjects, toPublicProject } from "@/lib/kv";
+import { getAllProjects, isProjectAutoPauseDue, toPublicProject } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
     const projects = await getAllProjects();
+    const now = Date.now();
     
     // 只返回非暂停状态的项目给普通用户
-    const activeProjects = projects.filter(p => p.status !== "paused");
+    const activeProjects = projects.filter(p => p.status !== "paused" && !isProjectAutoPauseDue(p, now));
     const sortedProjects = [...activeProjects].sort((a, b) => {
       const aPinned = a.pinned ? 1 : 0;
       const bPinned = b.pinned ? 1 : 0;

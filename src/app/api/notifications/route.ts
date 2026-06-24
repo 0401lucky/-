@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
+import { listPublishedAnnouncements } from '@/lib/announcements';
 import {
+  ensureAnnouncementNotificationsForUser,
   listUserNotifications,
   type NotificationFilter,
   type NotificationType,
@@ -52,6 +54,11 @@ export const GET = withUserRateLimit(
       const limit = Number.isFinite(limitRaw) ? limitRaw : 20;
       const type = parseNotificationType(typeRaw);
       const filter = parseNotificationFilter(filterRaw);
+
+      if (!type || type === 'announcement' || filter === 'system' || filter === 'all' || filter === 'unread') {
+        const recentAnnouncements = await listPublishedAnnouncements({ page: 1, limit: 50 });
+        await ensureAnnouncementNotificationsForUser(user.id, recentAnnouncements.items);
+      }
 
       const result = await listUserNotifications(user.id, {
         page,

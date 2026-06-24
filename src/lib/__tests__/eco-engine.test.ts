@@ -6,6 +6,9 @@ import {
   ECO_PRIZE_TTL_MS,
   ECO_PRIZES,
   ECO_PRIZE_KEYS,
+  ECO_THEFT_CHECK_INTERVAL_MS,
+  ECO_THEFT_PROTECTION_MS,
+  calculateEcoTheftCaughtProbability,
   convertBuffer,
   createInitialEcoState,
   getEcoPrizePrice,
@@ -19,7 +22,7 @@ import {
   rollEcoPrizes,
   tickEco,
 } from '../eco-engine';
-import type { EcoState } from '../types/eco';
+import type { EcoPrizeKey, EcoState } from '../types/eco';
 
 describe('eco engine rules', () => {
   it('uses fixed upgrade costs from the economy plan', () => {
@@ -65,6 +68,30 @@ describe('eco engine rules', () => {
     expect(rollEcoGeneratedPrize(() => 0.00005)).toBe('coin');
     expect(rollEcoGeneratedPrize(() => 0.0007)).toBe('trophy');
     expect(rollEcoGeneratedPrize(() => 0.00097)).toBeNull();
+  });
+
+  it('uses admin prize rate overrides when rolling generated prizes', () => {
+    const rates: Record<EcoPrizeKey, number> = {
+      diamond: 0,
+      coin: 0,
+      necklace: 0,
+      trophy: 0,
+      photo: 1,
+    };
+
+    expect(rollEcoGeneratedPrize(() => 0.5, 1, rates)).toBe('photo');
+  });
+
+  it('can disable all generated prizes with zero rates', () => {
+    const rates: Record<EcoPrizeKey, number> = {
+      diamond: 0,
+      coin: 0,
+      necklace: 0,
+      trophy: 0,
+      photo: 0,
+    };
+
+    expect(rollEcoGeneratedPrize(() => 0, 1, rates)).toBeNull();
   });
 
   it('boosts generated prize rates by 5x for lucky flashlight', () => {
@@ -191,5 +218,17 @@ describe('eco engine rules', () => {
       batches: 3,
       newBuffer: 5,
     });
+  });
+
+  it('calculates theft investigation probability from the new police rules', () => {
+    const stolenAt = 1_700_000_000_000;
+
+    expect(ECO_THEFT_CHECK_INTERVAL_MS).toBe(20 * 60 * 1000);
+    expect(ECO_THEFT_PROTECTION_MS).toBe(24 * 60 * 60 * 1000);
+    expect(calculateEcoTheftCaughtProbability(stolenAt, stolenAt, 0)).toBe(0.1);
+    expect(calculateEcoTheftCaughtProbability(stolenAt, stolenAt + 59 * 60 * 1000, 0)).toBe(0.1);
+    expect(calculateEcoTheftCaughtProbability(stolenAt, stolenAt + 60 * 60 * 1000, 0)).toBeCloseTo(0.12);
+    expect(calculateEcoTheftCaughtProbability(stolenAt, stolenAt + 2 * 60 * 60 * 1000, 1)).toBeCloseTo(0.09);
+    expect(calculateEcoTheftCaughtProbability(stolenAt, stolenAt, 3)).toBe(0);
   });
 });

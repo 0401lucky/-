@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef } from 'react';
+import { requestGameFallback } from '../../_lib/fallback';
 import type {
   LinkGameDifficulty,
   LinkGameDifficultyConfig,
@@ -187,6 +188,24 @@ export function useGameSession() {
       const data = await res.json();
       
       if (!data.success) {
+        if (res.status >= 500) {
+          const fallback = await requestGameFallback<GameResult['record']>({
+            game: 'linkgame',
+            sessionId: session.sessionId,
+            moves,
+            completed,
+            outcome,
+            duration: 0,
+          });
+          if (fallback) {
+            setSession(null);
+            fetchStatus();
+            return {
+              record: fallback.record,
+              pointsEarned: fallback.pointsEarned,
+            };
+          }
+        }
         hasSubmittedRef.current = false;
         setError(data.message || '提交结果失败');
         return null;
@@ -198,6 +217,26 @@ export function useGameSession() {
 
       return data.data;
     } catch (err) {
+      try {
+        const fallback = await requestGameFallback<GameResult['record']>({
+          game: 'linkgame',
+          sessionId: session.sessionId,
+          moves,
+          completed,
+          outcome,
+          duration: 0,
+        });
+        if (fallback) {
+          setSession(null);
+          fetchStatus();
+          return {
+            record: fallback.record,
+            pointsEarned: fallback.pointsEarned,
+          };
+        }
+      } catch (fallbackError) {
+        console.error('Linkgame fallback settlement error:', fallbackError);
+      }
       hasSubmittedRef.current = false;
       setError(isAbortError(err) ? '结算请求超时，请检查网络后重试' : '网络错误，请稍后重试');
       return null;

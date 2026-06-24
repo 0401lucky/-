@@ -10,8 +10,9 @@ import { getWhackMoleRecords } from '@/lib/whack-mole';
 import { getWhackMoleDifficultyConfig, normalizeWhackMoleDifficulty } from '@/lib/whack-mole-engine';
 import { getRogueliteRecords } from '@/lib/roguelite';
 import { getLinkGameRecords } from '@/lib/linkgame-server';
+import { getGame2048Records } from '@/lib/game-2048';
 
-type GameKey = 'roguelite' | 'minesweeper' | 'whack-mole' | 'memory' | 'match3' | 'linkgame';
+type GameKey = 'roguelite' | 'minesweeper' | 'whack-mole' | 'memory' | 'match3' | 'linkgame' | '2048';
 
 interface GameProgress {
   totalPlays: number;
@@ -141,6 +142,19 @@ async function getWhackMoleProgress(userId: number): Promise<GameProgress> {
   };
 }
 
+async function getGame2048Progress(userId: number): Promise<GameProgress> {
+  const records = await getGame2048Records(userId, RECORD_FETCH_LIMIT);
+  const isWin = (r: (typeof records)[number]) => r.won;
+  return {
+    totalPlays: records.length,
+    bestScore: records.reduce((m, r) => Math.max(m, r.score), 0),
+    totalPointsEarned: records.reduce((s, r) => s + r.pointsEarned, 0),
+    hasWinFlag: true,
+    wins: records.filter(isWin).length,
+    bestWinStreak: computeBestStreak(records, isWin),
+  };
+}
+
 export const GET = withAuthenticatedUser(
   async (_request, user) => {
     try {
@@ -153,6 +167,7 @@ export const GET = withAuthenticatedUser(
         minesweeperP,
         rogueliteP,
         whackMoleP,
+        game2048P,
       ] = await Promise.all([
         getUserPoints(user.id),
         getDailyStats(user.id),
@@ -162,6 +177,7 @@ export const GET = withAuthenticatedUser(
         getMinesweeperProgress(user.id),
         getRogueliteProgress(user.id),
         getWhackMoleProgress(user.id),
+        getGame2048Progress(user.id),
       ]);
 
       const perGame: Record<GameKey, GameProgress> = {
@@ -171,6 +187,7 @@ export const GET = withAuthenticatedUser(
         minesweeper: minesweeperP,
         roguelite: rogueliteP,
         'whack-mole': whackMoleP,
+        '2048': game2048P,
       };
 
       let peakScore = 0;

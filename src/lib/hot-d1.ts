@@ -59,6 +59,7 @@ const GAME_RECORD_TABLE_TYPES = new Set<GameType>([
   "whack_mole",
   "roguelite",
   "minesweeper",
+  "game_2048",
 ]);
 
 let hotDb: D1DatabaseLike | null = null;
@@ -207,6 +208,8 @@ async function ensureHotSchema(): Promise<void> {
         )`,
         `CREATE INDEX IF NOT EXISTS idx_native_user_point_logs_user_created_at
           ON native_user_point_logs(user_id, created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_native_user_point_logs_created_at
+          ON native_user_point_logs(created_at DESC)`,
         `CREATE TABLE IF NOT EXISTS native_user_daily_game_points (
           user_id INTEGER NOT NULL,
           stat_date TEXT NOT NULL,
@@ -893,6 +896,28 @@ export async function getNativePointsLogs(
   userId: number,
   limit: number,
 ): Promise<PointsLog[]> {
+  return getNativePointsLogsPage(userId, 0, limit);
+}
+
+export async function countNativePointLogs(userId: number): Promise<number> {
+  await ensureHotSchema();
+  const row = await getHotDb()
+    .prepare(
+      `SELECT COUNT(*) AS total
+       FROM native_user_point_logs
+       WHERE user_id = ?`,
+    )
+    .bind(userId)
+    .first<{ total: number }>();
+
+  return row?.total ?? 0;
+}
+
+export async function getNativePointsLogsPage(
+  userId: number,
+  offset: number,
+  limit: number,
+): Promise<PointsLog[]> {
   await ensureHotSchema();
   const rows = await getHotDb()
     .prepare(
@@ -900,9 +925,9 @@ export async function getNativePointsLogs(
        FROM native_user_point_logs
        WHERE user_id = ?
        ORDER BY created_at DESC, id DESC
-       LIMIT ?`,
+       LIMIT ? OFFSET ?`,
     )
-    .bind(userId, limit)
+    .bind(userId, limit, offset)
     .all<{
       id: string;
       amount: number;
@@ -913,6 +938,42 @@ export async function getNativePointsLogs(
     }>();
 
   return rows.results.map((row) => ({
+    id: row.id,
+    amount: row.amount,
+    source: row.source,
+    description: row.description,
+    balance: row.balance,
+    createdAt: row.createdAt,
+  }));
+}
+
+export async function getNativePointLogsInRange(
+  startAt: number,
+  endAt: number,
+  limit: number,
+): Promise<Array<PointsLog & { userId: number }>> {
+  await ensureHotSchema();
+  const rows = await getHotDb()
+    .prepare(
+      `SELECT user_id AS userId, id, amount, source, description, balance, created_at AS createdAt
+       FROM native_user_point_logs
+       WHERE created_at >= ? AND created_at < ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+    )
+    .bind(Math.floor(startAt), Math.floor(endAt), Math.max(1, Math.floor(limit)))
+    .all<{
+      userId: number;
+      id: string;
+      amount: number;
+      source: PointsSource;
+      description: string;
+      balance: number;
+      createdAt: number;
+    }>();
+
+  return rows.results.map((row) => ({
+    userId: row.userId,
     id: row.id,
     amount: row.amount,
     source: row.source,

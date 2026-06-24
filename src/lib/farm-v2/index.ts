@@ -122,12 +122,9 @@ export async function getOrCreateFarmV2(userId: number): Promise<FarmStateV2> {
     createdAt: now,
     updatedAt: now,
   };
-  // 同步初始 points 到福利积分系统：使用 max(用户既有积分, 100)
-  const cur = await getUserPoints(userId);
-  initial.points = cur > 0 ? cur : INITIAL_POINTS;
-  if (cur === 0) {
-    try { await addPoints(userId, INITIAL_POINTS, 'game_play', '开心农场初始积分'); } catch {}
-  }
+  // 首次创建开心农场存档时，固定发放新手积分；发放失败则不保存存档，避免漏发后无法重试。
+  const grant = await addPoints(userId, INITIAL_POINTS, 'game_play', '开心农场初始积分');
+  initial.points = grant.balance;
   await kv.set(key, initial);
   return initial;
 }

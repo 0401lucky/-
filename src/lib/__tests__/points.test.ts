@@ -10,6 +10,7 @@ vi.mock('@/lib/d1-kv', () => ({
     lpush: vi.fn(),
     ltrim: vi.fn(),
     lrange: vi.fn(),
+    llen: vi.fn(),
   },
 }));
 
@@ -36,6 +37,7 @@ import {
   deductPoints,
   applyPointsDelta,
   getPointsLogs,
+  getPointsLogsPage,
 } from '../points';
 
 const mockGet = vi.mocked(kv.get);
@@ -45,6 +47,7 @@ const mockExpire = vi.mocked(kv.expire);
 const mockLpush = vi.mocked(kv.lpush);
 const mockLtrim = vi.mocked(kv.ltrim);
 const mockLrange = vi.mocked(kv.lrange);
+const mockLlen = vi.mocked(kv.llen);
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -83,7 +86,7 @@ describe('addPoints', () => {
       description: 'won a game',
       balance: 150,
     }));
-    expect(mockLtrim).toHaveBeenCalledWith('points_log:1', 0, 99);
+    expect(mockLtrim).not.toHaveBeenCalled();
   });
 
   it('throws when amount <= 0', async () => {
@@ -119,7 +122,7 @@ describe('addGamePointsWithLimit', () => {
       amount: 10,
       source: 'game_play',
     }));
-    expect(mockLtrim).toHaveBeenCalledTimes(1);
+    expect(mockLtrim).not.toHaveBeenCalled();
   });
 
   it('returns no points when daily limit is already reached', async () => {
@@ -203,7 +206,7 @@ describe('deductPoints', () => {
       description: 'bought item',
       balance: 50,
     }));
-    expect(mockLtrim).toHaveBeenCalledTimes(1);
+    expect(mockLtrim).not.toHaveBeenCalled();
   });
 
   it('returns failure when balance is insufficient', async () => {
@@ -309,5 +312,32 @@ describe('getPointsLogs', () => {
     const result = await getPointsLogs(1);
 
     expect(result).toEqual([]);
+  });
+});
+
+// ---------- getPointsLogsPage ----------
+describe('getPointsLogsPage', () => {
+  it('returns paginated log entries with total count', async () => {
+    const logs = [
+      { id: 'c', amount: 20, source: 'game_play', description: 'played', balance: 125, createdAt: 1700000002000 },
+      { id: 'd', amount: -10, source: 'exchange', description: 'bought', balance: 115, createdAt: 1700000003000 },
+    ];
+    mockLlen.mockResolvedValue(22);
+    mockLrange.mockResolvedValue(logs);
+
+    const result = await getPointsLogsPage(1, 2, 10);
+
+    expect(result).toEqual({
+      logs,
+      pagination: {
+        page: 2,
+        limit: 10,
+        total: 22,
+        totalPages: 3,
+        hasMore: true,
+      },
+    });
+    expect(mockLlen).toHaveBeenCalledWith('points_log:1');
+    expect(mockLrange).toHaveBeenCalledWith('points_log:1', 10, 19);
   });
 });

@@ -81,6 +81,36 @@ function normalizePositiveInteger(value: unknown, fieldName: string): number {
   return normalized;
 }
 
+function normalizeOptionalTimestamp(value: unknown, fieldName: string): number | undefined {
+  if (value == null || value === "") return undefined;
+
+  const normalized = Number(value);
+  if (!Number.isSafeInteger(normalized) || normalized <= 0) {
+    throw new Error(`${fieldName}不正确`);
+  }
+  return normalized;
+}
+
+function normalizeDrawTriggerType(value: unknown): "threshold" | "manual" | "scheduled" {
+  if (value === "manual" || value === "scheduled" || value === "threshold") {
+    return value;
+  }
+  return "threshold";
+}
+
+export function isRaffleScheduledDrawDue(
+  raffle: Pick<Raffle, "mode" | "status" | "triggerType" | "scheduledDrawAt">,
+  now = Date.now()
+): boolean {
+  return (
+    getRaffleMode(raffle) === "draw" &&
+    raffle.status === "active" &&
+    raffle.triggerType === "scheduled" &&
+    Number.isFinite(raffle.scheduledDrawAt) &&
+    (raffle.scheduledDrawAt ?? 0) <= now
+  );
+}
+
 export function normalizeRedPacketConfig(input: {
   redPacketTotalPoints?: unknown;
   redPacketTotalSlots?: unknown;
@@ -181,6 +211,14 @@ export async function createRaffle(
   const id = nanoid(12);
   const mode = input.mode === "red_packet" ? "red_packet" : "draw";
   const redPacketConfig = mode === "red_packet" ? normalizeRedPacketConfig(input) : null;
+  const triggerType = mode === "draw" ? normalizeDrawTriggerType(input.triggerType) : "manual";
+  const scheduledDrawAt = triggerType === "scheduled"
+    ? normalizeOptionalTimestamp(input.scheduledDrawAt, "开奖时间")
+    : undefined;
+
+  if (triggerType === "scheduled" && scheduledDrawAt === undefined) {
+    throw new Error("请选择到点开奖时间");
+  }
 
   // 为每个奖品生成ID，并把历史额度字段统一归一化为站内积分。
   const prizes: RafflePrize[] = mode === "draw" ? buildRafflePrizes(input.prizes) : [];
@@ -192,8 +230,9 @@ export async function createRaffle(
     description: input.description,
     coverImage: input.coverImage,
     prizes,
-    triggerType: mode === "draw" ? (input.triggerType ?? "threshold") : "manual",
-    threshold: mode === "draw" ? (input.threshold ?? 1) : redPacketConfig?.totalSlots ?? 1,
+    triggerType,
+    threshold: triggerType === "threshold" ? (input.threshold ?? 1) : redPacketConfig?.totalSlots ?? 1,
+    scheduledDrawAt,
     status: "draft",
     participantsCount: 0,
     winnersCount: 0,
@@ -237,6 +276,19 @@ export async function updateRaffle(
   const now = Date.now();
   const currentMode = getRaffleMode(raffle);
   const nextMode = input.mode === "red_packet" ? "red_packet" : input.mode === "draw" ? "draw" : currentMode;
+  const nextTriggerType = nextMode === "draw"
+    ? input.triggerType !== undefined
+      ? normalizeDrawTriggerType(input.triggerType)
+      : normalizeDrawTriggerType(raffle.triggerType)
+    : "manual";
+  const nextScheduledDrawAt = nextTriggerType === "scheduled"
+    ? normalizeOptionalTimestamp(input.scheduledDrawAt ?? raffle.scheduledDrawAt, "开奖时间")
+    : undefined;
+
+  if (nextTriggerType === "scheduled" && nextScheduledDrawAt === undefined) {
+    throw new Error("请选择到点开奖时间");
+  }
+
   const prizes = nextMode === "draw"
     ? input.prizes
       ? buildRafflePrizes(input.prizes)
@@ -259,8 +311,9 @@ export async function updateRaffle(
     description: input.description ?? raffle.description,
     coverImage: input.coverImage ?? raffle.coverImage,
     prizes,
-    triggerType: nextMode === "draw" ? (input.triggerType ?? raffle.triggerType ?? "threshold") : "manual",
-    threshold: nextMode === "draw" ? (input.threshold ?? raffle.threshold ?? 1) : nextRedPacketConfig?.totalSlots ?? 1,
+    triggerType: nextTriggerType,
+    threshold: nextTriggerType === "threshold" ? (input.threshold ?? raffle.threshold ?? 1) : nextRedPacketConfig?.totalSlots ?? 1,
+    scheduledDrawAt: nextScheduledDrawAt,
     redPacketTotalPoints: nextRedPacketConfig?.totalPoints,
     redPacketTotalSlots: nextRedPacketConfig?.totalSlots,
     redPacketRemainingPoints: nextRedPacketConfig?.totalPoints,
@@ -427,6 +480,7 @@ export async function getRaffleList(options?: {
     prizes: r.prizes,
     triggerType: r.triggerType,
     threshold: r.threshold,
+    scheduledDrawAt: r.scheduledDrawAt,
     status: r.status,
     participantsCount: r.participantsCount,
     winnersCount: r.winnersCount,
@@ -461,6 +515,7 @@ export async function getActiveRaffles(): Promise<RaffleListItem[]> {
       prizes: r.prizes,
       triggerType: r.triggerType,
       threshold: r.threshold,
+      scheduledDrawAt: r.scheduledDrawAt,
       status: r.status,
       participantsCount: r.participantsCount,
       winnersCount: r.winnersCount,
@@ -471,6 +526,62 @@ export async function getActiveRaffles(): Promise<RaffleListItem[]> {
       redPacketRemainingSlots: r.redPacketRemainingSlots,
       createdAt: r.createdAt,
     }));
+}
+
+export async function processDueScheduledRaffleDraws(
+  now = Date.now(),
+  limit = 20
+): Promise<{
+  checked: number;
+  due: number;
+  drawn: number;
+  skipped: number;
+  failed: number;
+  errors: Array<{ raffleId: string; message: string }>;
+}> {
+  const ids = await kv.smembers<string>(RAFFLE_ACTIVE_KEY);
+  if (!ids || ids.length === 0) {
+    return { checked: 0, due: 0, drawn: 0, skipped: 0, failed: 0, errors: [] };
+  }
+
+  const keys = ids.map((id) => `${RAFFLE_PREFIX}${id}`);
+  const raffles = await kv.mget<Raffle>(...keys);
+  const dueRaffles = (raffles ?? [])
+    .filter((raffle): raffle is Raffle => raffle !== null && isRaffleScheduledDrawDue(raffle, now))
+    .sort((a, b) => (a.scheduledDrawAt ?? 0) - (b.scheduledDrawAt ?? 0))
+    .slice(0, Math.max(1, Math.floor(limit)));
+
+  let drawn = 0;
+  let skipped = 0;
+  let failed = 0;
+  const errors: Array<{ raffleId: string; message: string }> = [];
+
+  for (const raffle of dueRaffles) {
+    try {
+      const result = await executeRaffleDraw(raffle.id, { waitForDelivery: false });
+      if (result.success) {
+        drawn += 1;
+      } else {
+        skipped += 1;
+        errors.push({ raffleId: raffle.id, message: result.message });
+      }
+    } catch (error) {
+      failed += 1;
+      errors.push({
+        raffleId: raffle.id,
+        message: error instanceof Error ? error.message : "到点开奖失败",
+      });
+    }
+  }
+
+  return {
+    checked: ids.length,
+    due: dueRaffles.length,
+    drawn,
+    skipped,
+    failed,
+    errors,
+  };
 }
 
 // ============ 参与抽奖 ============
@@ -509,6 +620,10 @@ export async function joinRaffle(
       if (raffle.status === "ended") return { success: false, message: "活动已结束" };
       if (raffle.status === "cancelled") return { success: false, message: "活动已取消" };
       return { success: false, message: "活动状态异常" };
+    }
+
+    if (isRaffleScheduledDrawDue(raffle, now)) {
+      return { success: false, message: "活动已到开奖时间，正在等待开奖，请稍后刷新" };
     }
 
     const alreadyJoined = await kv.sismember(participantsKey, userId);

@@ -28,7 +28,7 @@ const EXCLUDED_POSITIVE_POINT_SOURCES = new Set(['admin_adjust']);
 export type RankingPeriod = 'daily' | 'weekly' | 'monthly';
 export type PointsRankingPeriod = 'all' | 'monthly';
 export type CheckinRankingPeriod = 'all' | 'monthly';
-export type SupportedRankingGame = Extract<GameType, 'linkgame' | 'match3' | 'memory' | 'whack_mole' | 'roguelite' | 'minesweeper'>;
+export type SupportedRankingGame = Extract<GameType, 'linkgame' | 'match3' | 'memory' | 'whack_mole' | 'roguelite' | 'minesweeper' | 'game_2048'>;
 
 interface BaseRecord {
   score?: number;
@@ -140,6 +140,7 @@ const GAME_RECORD_KEY: Record<SupportedRankingGame, (userId: number) => string> 
   whack_mole: (userId) => `whack_mole:records:${userId}`,
   roguelite: (userId) => `roguelite:records:${userId}`,
   minesweeper: (userId) => `minesweeper:records:${userId}`,
+  game_2048: (userId) => `game_2048:records:${userId}`,
 };
 
 const ALL_DIFFICULTY_OPTION: GameDifficultyOption = { value: 'all', label: '全部难度' };
@@ -464,7 +465,7 @@ export async function getAllGamesLeaderboardByRange(
   const limitPerGame = Math.max(1, Math.min(100, Math.floor(options.limitPerGame ?? 20)));
   const overallLimit = Math.max(1, Math.min(100, Math.floor(options.overallLimit ?? 20)));
 
-  const gameTypes: SupportedRankingGame[] = ['linkgame', 'match3', 'memory', 'whack_mole', 'roguelite', 'minesweeper'];
+  const gameTypes: SupportedRankingGame[] = ['linkgame', 'match3', 'memory', 'whack_mole', 'roguelite', 'minesweeper', 'game_2048'];
 
   const allLeaderboards = await Promise.all(
     gameTypes.map((gameType) => getGameLeaderboardByRange(gameType, startAt, endAt, limitPerGame))

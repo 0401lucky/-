@@ -56,6 +56,7 @@ export async function GET(
         prizes: raffle.prizes,
         triggerType: raffle.triggerType,
         threshold: raffle.threshold,
+        scheduledDrawAt: raffle.scheduledDrawAt,
         status: raffle.status,
         participantsCount: raffle.participantsCount,
         winnersCount: raffle.winnersCount,

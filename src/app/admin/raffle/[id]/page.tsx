@@ -7,6 +7,7 @@ import {
   Gift, Loader2, Users, Trophy, Play, XCircle, Crown, Check,
   AlertTriangle, RefreshCw, Eye, Pencil, Plus, Trash2, Coins, Save, X
 } from 'lucide-react';
+import { formatChinaDateTime, formatChinaDateTimeInput } from '@/lib/time';
 
 interface RafflePrize {
   id: string;
@@ -58,8 +59,9 @@ interface Raffle {
   description: string;
   coverImage?: string;
   prizes: RafflePrize[];
-  triggerType: 'threshold' | 'manual';
+  triggerType: 'threshold' | 'manual' | 'scheduled';
   threshold: number;
+  scheduledDrawAt?: number;
   status: 'draft' | 'active' | 'ended' | 'cancelled';
   participantsCount: number;
   winnersCount: number;
@@ -116,8 +118,9 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
   const [editDescription, setEditDescription] = useState('');
   const [editCoverImage, setEditCoverImage] = useState('');
   const [editMode, setEditMode] = useState<'draw' | 'red_packet'>('draw');
-  const [editTriggerType, setEditTriggerType] = useState<'threshold' | 'manual'>('threshold');
+  const [editTriggerType, setEditTriggerType] = useState<'threshold' | 'manual' | 'scheduled'>('threshold');
   const [editThreshold, setEditThreshold] = useState(100);
+  const [editScheduledDrawAt, setEditScheduledDrawAt] = useState('');
   const [editRedPacketTotalPoints, setEditRedPacketTotalPoints] = useState(1000);
   const [editRedPacketTotalSlots, setEditRedPacketTotalSlots] = useState(20);
   const [editPrizes, setEditPrizes] = useState<PrizeInput[]>([]);
@@ -129,6 +132,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
     setEditMode(r.mode === 'red_packet' ? 'red_packet' : 'draw');
     setEditTriggerType(r.triggerType);
     setEditThreshold(r.threshold);
+    setEditScheduledDrawAt(formatChinaDateTimeInput(r.scheduledDrawAt));
     setEditRedPacketTotalPoints(r.redPacketTotalPoints ?? 1000);
     setEditRedPacketTotalSlots(r.redPacketTotalSlots ?? 20);
     setEditPrizes(
@@ -336,6 +340,10 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
         setError('人数阈值必须为正整数');
         return;
       }
+      if (editTriggerType === 'scheduled' && !editScheduledDrawAt.trim()) {
+        setError('请选择到点开奖时间');
+        return;
+      }
     } else {
       if (!Number.isSafeInteger(editRedPacketTotalPoints) || editRedPacketTotalPoints <= 0) {
         setError('红包总积分必须为正整数');
@@ -366,6 +374,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
             ? {
                 triggerType: editTriggerType,
                 threshold: editThreshold,
+                scheduledDrawAt: editTriggerType === 'scheduled' ? editScheduledDrawAt.trim() : undefined,
                 prizes: editPrizes.map(p => ({
                   name: p.name.trim(),
                   points: p.points,
@@ -437,6 +446,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
   if (!raffle) return null;
 
   const isRedPacket = raffle.mode === 'red_packet';
+  const isScheduledDraw = !isRedPacket && raffle.triggerType === 'scheduled' && !!raffle.scheduledDrawAt;
   const totalPool = isRedPacket
     ? raffle.redPacketTotalPoints ?? 0
     : getTotalPrizeValue(raffle.prizes);
@@ -596,7 +606,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
             </h2>
 
             <div className="space-y-4">
-              <div className="flex gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <label className={`flex-1 p-4 rounded-xl border-2 cursor-pointer transition-all ${
                   editTriggerType === 'threshold'
                     ? 'border-pink-500 bg-pink-50'
@@ -612,6 +622,23 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
                   />
                   <div className="font-bold text-stone-800 mb-1">人数阈值</div>
                   <div className="text-sm text-stone-500">满足指定人数后自动开奖</div>
+                </label>
+
+                <label className={`flex-1 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                  editTriggerType === 'scheduled'
+                    ? 'border-pink-500 bg-pink-50'
+                    : 'border-stone-200 hover:border-stone-300'
+                }`}>
+                  <input
+                    type="radio"
+                    name="triggerType"
+                    value="scheduled"
+                    checked={editTriggerType === 'scheduled'}
+                    onChange={() => setEditTriggerType('scheduled')}
+                    className="sr-only"
+                  />
+                  <div className="font-bold text-stone-800 mb-1">到点开奖</div>
+                  <div className="text-sm text-stone-500">按设置的北京时间自动开奖</div>
                 </label>
 
                 <label className={`flex-1 p-4 rounded-xl border-2 cursor-pointer transition-all ${
@@ -645,6 +672,21 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
                     className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 outline-none transition-all"
                   />
                   <p className="text-xs text-stone-400 mt-1">满足此人数后自动开奖</p>
+                </div>
+              )}
+
+              {editTriggerType === 'scheduled' && (
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-1">
+                    开奖时间（中国时间） <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={editScheduledDrawAt}
+                    onChange={(e) => setEditScheduledDrawAt(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 outline-none transition-all"
+                  />
+                  <p className="text-xs text-stone-400 mt-1">到点后服务器自动开奖，无需保持页面打开</p>
                 </div>
               )}
             </div>
@@ -903,7 +945,11 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
             <div className="text-lg font-bold text-stone-800">
               {isRedPacket
                 ? `红包 ${totalSlots} 人`
-                : raffle.triggerType === 'threshold' ? `满${raffle.threshold}人` : '手动'}
+                : raffle.triggerType === 'threshold'
+                  ? `满${raffle.threshold}人`
+                  : isScheduledDraw
+                    ? formatChinaDateTime(raffle.scheduledDrawAt)
+                    : '手动'}
             </div>
           </div>
         </div>

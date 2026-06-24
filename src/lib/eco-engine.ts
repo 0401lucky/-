@@ -20,6 +20,8 @@ export type EcoPrizeClaimStats = Partial<Record<EcoPrizeKey, number>> & {
   total?: number;
 };
 
+export type EcoPrizeSpawnRates = Partial<Record<EcoPrizeKey, number>>;
+
 // ───────────────────────── 基础常量 ─────────────────────────
 
 /** 每多少个垃圾兑换 1 袋（用户口径：10 个垃圾 = 1 积分起步） */
@@ -122,6 +124,11 @@ export const RECYCLE_GLOVE_USES = 50;
 export const CLEAR_TRUCK_TRASH = 80;
 export const MAX_VISIBLE_PRIZES = 12;
 export const ECO_PRIZE_TTL_MS = 10 * 60 * 1000;
+export const ECO_THEFT_CHECK_INTERVAL_MS = 20 * 60 * 1000;
+export const ECO_THEFT_PROTECTION_MS = 24 * 60 * 60 * 1000;
+export const ECO_THEFT_BASE_CAUGHT_RATE = 0.1;
+export const ECO_THEFT_HOURLY_CAUGHT_RATE = 0.02;
+export const ECO_THEFT_CAUGHT_RATE_DECAY_PER_RESTORE = 0.05;
 
 // ───────────────────────── 升级配置 ─────────────────────────
 
@@ -276,6 +283,25 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
+export function calculateEcoTheftCaughtProbability(
+  stolenAt: number,
+  checkedAt: number,
+  previousCaughtCount = 0,
+): number {
+  const elapsedMs = Math.max(0, checkedAt - stolenAt);
+  const fullHours = Math.floor(elapsedMs / (60 * 60 * 1000));
+  const decay = Math.max(0, Math.floor(previousCaughtCount)) * ECO_THEFT_CAUGHT_RATE_DECAY_PER_RESTORE;
+  return clamp01(ECO_THEFT_BASE_CAUGHT_RATE + fullHours * ECO_THEFT_HOURLY_CAUGHT_RATE - decay);
+}
+
+function resolvePrizeSpawnRate(key: EcoPrizeKey, overrides?: EcoPrizeSpawnRates): number {
+  const raw = overrides?.[key];
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return Math.max(0, raw);
+  }
+  return ECO_PRIZES[key].spawnRate;
+}
+
 function getClaimCount(stats: EcoPrizeClaimStats | undefined, key: EcoPrizeKey): number {
   const value = stats?.[key];
   return Number.isFinite(value) ? Math.max(0, Math.floor(value as number)) : 0;
@@ -305,18 +331,20 @@ export function getEcoPrizePrice(
 export function rollEcoPrize(
   rng: () => number = Math.random,
   totalRateMultiplier = 1,
+  prizeRates?: EcoPrizeSpawnRates,
 ): EcoPrizeKey | null {
-  return rollEcoPrizes(rng, totalRateMultiplier)[0] ?? null;
+  return rollEcoPrizes(rng, totalRateMultiplier, prizeRates)[0] ?? null;
 }
 
 export function rollEcoPrizes(
   rng: () => number = Math.random,
   totalRateMultiplier = 1,
+  prizeRates?: EcoPrizeSpawnRates,
 ): EcoPrizeKey[] {
   const multiplier = Math.max(0, Number.isFinite(totalRateMultiplier) ? totalRateMultiplier : 1);
   const prizes: EcoPrizeKey[] = [];
   for (const key of ECO_PRIZE_KEYS) {
-    const rate = Math.min(1, ECO_PRIZES[key].spawnRate * multiplier);
+    const rate = Math.min(1, resolvePrizeSpawnRate(key, prizeRates) * multiplier);
     if (rng() < rate) {
       prizes.push(key);
     }
@@ -328,12 +356,13 @@ export function rollEcoPrizes(
 export function rollEcoGeneratedPrize(
   rng: () => number = Math.random,
   totalRateMultiplier = 1,
+  prizeRates?: EcoPrizeSpawnRates,
 ): EcoPrizeKey | null {
   const multiplier = Math.max(0, Number.isFinite(totalRateMultiplier) ? totalRateMultiplier : 1);
   const roll = rng();
   let cursor = 0;
   for (const key of ECO_PRIZE_KEYS) {
-    cursor += Math.min(1, ECO_PRIZES[key].spawnRate * multiplier);
+    cursor += Math.min(1, resolvePrizeSpawnRate(key, prizeRates) * multiplier);
     if (roll < cursor) return key;
   }
   return null;

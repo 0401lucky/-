@@ -1,7 +1,7 @@
 // src/lib/types/game.ts
 
 /** 游戏类型 */
-export type GameType = 'memory' | 'match3' | 'linkgame' | 'farm' | 'whack_mole' | 'roguelite' | 'minesweeper';
+export type GameType = 'memory' | 'match3' | 'linkgame' | 'farm' | 'whack_mole' | 'roguelite' | 'minesweeper' | 'game_2048';
 
 /** 连连看难度 */
 export type LinkGameDifficulty = 'easy' | 'normal' | 'hard';

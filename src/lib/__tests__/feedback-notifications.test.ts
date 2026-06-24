@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { addFeedbackMessage, updateFeedbackStatus } from '../feedback';
+import { addFeedbackMessage, deleteFeedback, updateFeedbackStatus } from '../feedback';
 import { createUserNotification } from '../notifications';
 
 const mocks = vi.hoisted(() => ({
   kv: {
+    del: vi.fn(),
     get: vi.fn(),
+    lrem: vi.fn(),
     lpush: vi.fn(),
     set: vi.fn(),
     zadd: vi.fn(),
@@ -34,7 +36,9 @@ describe('feedback notifications', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.kv.lpush.mockResolvedValue(1);
+    mocks.kv.lrem.mockResolvedValue(1);
     mocks.kv.set.mockResolvedValue('OK');
+    mocks.kv.del.mockResolvedValue(3);
     mocks.kv.zadd.mockResolvedValue(1);
     mocks.kv.zrem.mockResolvedValue(1);
   });
@@ -140,6 +144,35 @@ describe('feedback notifications', () => {
           status: 'resolved',
         }),
       })
+    );
+  });
+
+  it('deletes feedback body, conversation, likes and all list indexes', async () => {
+    mocks.kv.get.mockResolvedValue({
+      id: 'fb-delete',
+      userId: 10,
+      username: 'owner',
+      status: 'closed',
+      createdAt: 1,
+      updatedAt: 2,
+      archivedAt: 3,
+    });
+
+    const deleted = await deleteFeedback('fb-delete');
+
+    expect(deleted).toBe(true);
+    expect(mocks.kv.del).toHaveBeenCalledWith(
+      'feedback:item:fb-delete',
+      'feedback:messages:fb-delete',
+      'feedback:likes:fb-delete'
+    );
+    expect(mocks.kv.lrem).toHaveBeenCalledWith('feedback:list', 0, 'fb-delete');
+    expect(mocks.kv.lrem).toHaveBeenCalledWith('feedback:user:10', 0, 'fb-delete');
+    expect(mocks.kv.zrem).toHaveBeenCalledWith('feedback:index:archived', 'fb-delete');
+    expect(mocks.kv.zrem).toHaveBeenCalledWith('feedback:index:status:closed', 'fb-delete');
+    expect(mocks.kv.zrem).toHaveBeenCalledWith(
+      'feedback:index:user:10:status:closed',
+      'fb-delete'
     );
   });
 });

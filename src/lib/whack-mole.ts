@@ -5,6 +5,10 @@ import { addGamePointsWithLimit } from './points';
 import { getDailyPointsLimit } from './config';
 import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
 import {
+  settleGameFallbackTransfer,
+  type GameFallbackTransferFailure,
+} from './game-fallback';
+import {
   createEmptyWhackMoleBoard,
   getWhackMoleBoard,
   getWhackMoleDifficultyConfig,
@@ -409,6 +413,22 @@ export async function getWhackMoleRecords(
   return await kv.lrange<WhackMoleGameRecord>(RECORDS_KEY(userId), 0, limit - 1) ?? [];
 }
 
+async function findSettledWhackMoleRecord(
+  userId: number,
+  sessionId: string,
+  useNativeHotStore: boolean,
+): Promise<WhackMoleGameRecord | null> {
+  const records = useNativeHotStore
+    ? await listNativeGameRecords<WhackMoleGameRecord>(userId, GAME_TYPE, MAX_RECORD_ENTRIES)
+    : ((await kv.lrange<WhackMoleGameRecord>(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)) ?? []);
+
+  return records.find((record) => record.sessionId === sessionId) ?? null;
+}
+
+function buildSettledWhackMoleResult(record: WhackMoleGameRecord) {
+  return { success: true as const, record, pointsEarned: record.pointsEarned };
+}
+
 export async function getActiveWhackMoleSession(userId: number): Promise<WhackMoleGameSession | null> {
   if (await isNativeHotStoreReady()) {
     return normalizeSession(await getNativeActiveGameSession<WhackMoleGameSession>(userId, GAME_TYPE));
@@ -697,4 +717,136 @@ export async function submitWhackMoleResult(
   }
 
   return { success: true, record, pointsEarned: pointsResult.pointsEarned };
+}
+
+export async function settleWhackMoleFallback(
+  userId: number,
+  payload: WhackMoleResultSubmit,
+): Promise<{
+  success: boolean;
+  record?: WhackMoleGameRecord;
+  pointsEarned?: number;
+  message?: string;
+  adminInsufficient?: boolean;
+}> {
+  const payloadCheck = validateSubmitPayload(payload);
+  if (!payloadCheck.ok) {
+    return { success: false, message: payloadCheck.message };
+  }
+
+  const useNativeHotStore = await isNativeHotStoreReady();
+  const settledBeforeLock = await findSettledWhackMoleRecord(userId, payload.sessionId, useNativeHotStore);
+  if (settledBeforeLock) {
+    return buildSettledWhackMoleResult(settledBeforeLock);
+  }
+
+  const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
+  const lockToken = await acquireGameLock(lockKey, SUBMIT_LOCK_TTL, useNativeHotStore);
+  if (!lockToken) {
+    const settledWhileLocked = await findSettledWhackMoleRecord(userId, payload.sessionId, useNativeHotStore);
+    if (settledWhileLocked) {
+      return buildSettledWhackMoleResult(settledWhileLocked);
+    }
+    return { success: false, message: '兜底结算正在处理，请稍后重试' };
+  }
+
+  try {
+    const session = await loadSessionById(payload.sessionId, useNativeHotStore);
+    if (!session) {
+      const settledRecord = await findSettledWhackMoleRecord(userId, payload.sessionId, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledWhackMoleResult(settledRecord);
+      }
+      return { success: false, message: '游戏会话不存在或已过期' };
+    }
+    if (session.userId !== userId) {
+      return { success: false, message: '会话不属于该用户' };
+    }
+    if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
+      const settledRecord = await findSettledWhackMoleRecord(userId, session.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledWhackMoleResult(settledRecord);
+      }
+      return { success: false, message: '游戏会话已不是当前活跃局' };
+    }
+    if (session.status !== 'playing') {
+      const settledRecord = await findSettledWhackMoleRecord(userId, session.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledWhackMoleResult(settledRecord);
+      }
+      return { success: false, message: '游戏会话已结束' };
+    }
+    if (Date.now() > session.expiresAt) {
+      return { success: false, message: '游戏会话已过期' };
+    }
+
+    const difficulty = normalizeWhackMoleDifficulty(session.difficulty);
+    const config = getWhackMoleDifficultyConfig(difficulty);
+    const candidateEvents = payload.events !== undefined
+      ? normalizeEvents(payload.events, difficulty)
+      : normalizeEvents(session.events, difficulty);
+    const rateCheck = validateEventsRate(candidateEvents);
+    if (!rateCheck.ok) {
+      return { success: false, message: rateCheck.message };
+    }
+
+    const serverDuration = Date.now() - session.startedAt;
+    const scored = scoreWhackMoleEvents(session.seed, candidateEvents, difficulty);
+    const pointReward = calculateWhackMolePointReward(scored.score, difficulty);
+    const transferResult = await settleGameFallbackTransfer({
+      gameKey: 'whack-mole',
+      sessionId: session.id,
+      userId,
+      score: scored.score,
+      pointReward,
+      gameName: '打地鼠',
+      resultLabel: `（${config.label}）`,
+    });
+    if (!transferResult.success) {
+      return transferResult as GameFallbackTransferFailure;
+    }
+
+    const stats: WhackMoleScoreStats = scored.stats;
+    const record: WhackMoleGameRecord = {
+      id: nanoid(),
+      userId,
+      sessionId: session.id,
+      gameType: GAME_TYPE,
+      difficulty,
+      score: scored.score,
+      pointsEarned: transferResult.pointsEarned,
+      hits: stats.hits,
+      goldenHits: stats.goldenHits,
+      misses: stats.misses,
+      bombs: stats.bombs,
+      maxCombo: stats.maxCombo,
+      duration: Math.min(Math.max(0, serverDuration), config.durationMs),
+      createdAt: Date.now(),
+    };
+
+    const currentStats = await getDailyStats(userId);
+    const cumulativePointsEarned = currentStats.pointsEarned + transferResult.pointsEarned;
+    if (useNativeHotStore) {
+      await incrementSharedDailyStats(userId, scored.score, cumulativePointsEarned);
+      await completeNativeGameSettlement(
+        record,
+        session.id,
+        scored.score,
+        cumulativePointsEarned,
+        COOLDOWN_TTL,
+      );
+    } else {
+      await incrementSharedDailyStats(userId, scored.score, cumulativePointsEarned);
+      await kv.lpush(RECORDS_KEY(userId), record);
+      await kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1);
+      await Promise.all([
+        clearLegacySession(session.id, userId),
+        kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
+      ]);
+    }
+
+    return { success: true, record, pointsEarned: transferResult.pointsEarned };
+  } finally {
+    await releaseGameLock(lockKey, lockToken, useNativeHotStore);
+  }
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import Link from 'next/link';
+import { requestGameFallback } from '../_lib/fallback';
 import {
   ArrowLeft,
   BookOpen,
@@ -377,6 +378,22 @@ export default function MinesweeperPage() {
       });
       const data = await parseJson<SubmitResponse>(res);
       if (!res.ok || !data?.success || !data.data) {
+        if (res.status >= 500) {
+          const fallback = await requestGameFallback<MinesweeperGameRecord>({
+            game: 'minesweeper',
+            sessionId: targetSession.sessionId,
+          });
+          if (fallback) {
+            clearStepQueue();
+            setResult(fallback.record);
+            sessionRef.current = null;
+            setSession(null);
+            setPhase('finished');
+            setMessage(`已启用兜底结算，本局获得 ${fallback.pointsEarned} 积分`);
+            void fetchStatus();
+            return;
+          }
+        }
         throw new Error(data?.message ?? `结算失败（HTTP ${res.status}）`);
       }
       clearStepQueue();
@@ -387,6 +404,24 @@ export default function MinesweeperPage() {
       setMessage(`本局获得 ${data.data.pointsEarned} 积分`);
       void fetchStatus();
     } catch (err) {
+      try {
+        const fallback = await requestGameFallback<MinesweeperGameRecord>({
+          game: 'minesweeper',
+          sessionId: targetSession.sessionId,
+        });
+        if (fallback) {
+          clearStepQueue();
+          setResult(fallback.record);
+          sessionRef.current = null;
+          setSession(null);
+          setPhase('finished');
+          setMessage(`已启用兜底结算，本局获得 ${fallback.pointsEarned} 积分`);
+          void fetchStatus();
+          return;
+        }
+      } catch (fallbackError) {
+        console.error('Minesweeper fallback settlement error:', fallbackError);
+      }
       setError(err instanceof Error ? err.message : '结算失败，请稍后重试');
     } finally {
       submittingRef.current = false;
@@ -458,14 +493,35 @@ export default function MinesweeperPage() {
         }
       }
     } catch (err) {
+      const fallbackSession = sessionRef.current;
       stepQueueRef.current = [];
       pendingCellActionsRef.current.clear();
+      if (fallbackSession) {
+        try {
+          const fallback = await requestGameFallback<MinesweeperGameRecord>({
+            game: 'minesweeper',
+            sessionId: fallbackSession.sessionId,
+          });
+          if (fallback) {
+            clearStepQueue();
+            setResult(fallback.record);
+            sessionRef.current = null;
+            setSession(null);
+            setPhase('finished');
+            setMessage(`已启用兜底结算，本局获得 ${fallback.pointsEarned} 积分`);
+            void fetchStatus();
+            return;
+          }
+        } catch (fallbackError) {
+          console.error('Minesweeper fallback after step error:', fallbackError);
+        }
+      }
       setError(err instanceof Error ? err.message : '操作失败，请稍后重试');
     } finally {
       processingStepRef.current = false;
       syncPendingStepState();
     }
-  }, [clearStepQueue, syncPendingStepState]);
+  }, [clearStepQueue, fetchStatus, syncPendingStepState]);
 
   const enqueueStep = useCallback((action: MinesweeperAction) => {
     const currentSession = sessionRef.current;

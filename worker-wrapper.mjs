@@ -7,12 +7,14 @@
 export { MinesweeperSessionDurableObject } from "./src/durable-objects/minesweeper-session.ts";
 
 const DELIVERY_PATH = "/api/internal/raffle/delivery";
+const SCHEDULED_MAINTENANCE_PATH = "/api/internal/scheduled-maintenance";
 const NUMBER_BOMB_SETTLE_PATH = "/api/internal/number-bomb/settle";
 const FARM_MATURITY_EMAIL_PATH = "/api/internal/farm/maturity-email";
 const ECO_THEFT_INVESTIGATION_PATH = "/api/internal/eco/theft-investigation";
 const DAILY_CRON = "0 16 * * *";
+const SCHEDULED_MAINTENANCE_CRON = "* * * * *";
 const FARM_MATURITY_EMAIL_CRON = "*/10 * * * *";
-const ECO_THEFT_INVESTIGATION_CRON = "*/10 * * * *";
+const ECO_THEFT_INVESTIGATION_CRON = "*/20 * * * *";
 const DEFAULT_MAX_JOBS = 20;
 const DEFAULT_FARM_MATURITY_EMAIL_MAX_USERS = 100;
 const DEFAULT_ECO_THEFT_INVESTIGATION_LIMIT = 50;
@@ -30,6 +32,15 @@ const IMAGE_MIME_TYPES = {
 
 function readSecret(env) {
   return String(env.RAFFLE_DELIVERY_CRON_SECRET || env.CRON_SECRET || "").trim();
+}
+
+function readScheduledMaintenanceSecret(env) {
+  return String(
+    env.SCHEDULED_MAINTENANCE_SECRET ||
+    env.RAFFLE_DELIVERY_CRON_SECRET ||
+    env.CRON_SECRET ||
+    ""
+  ).trim();
 }
 
 function parseMaxJobs(env) {
@@ -110,6 +121,35 @@ async function triggerDelivery(env) {
   if (!response.ok) {
     const detail = await response.text();
     console.error(`[cron] 发奖任务调用失败: ${response.status} ${detail}`);
+  }
+}
+
+async function triggerScheduledMaintenance(env) {
+  const secret = readScheduledMaintenanceSecret(env);
+  if (!secret) {
+    console.warn("[cron] 缺少 SCHEDULED_MAINTENANCE_SECRET/RAFFLE_DELIVERY_CRON_SECRET/CRON_SECRET，跳过定时维护");
+    return;
+  }
+
+  if (!env.WORKER_SELF_REFERENCE?.fetch) {
+    console.warn("[cron] 缺少 WORKER_SELF_REFERENCE 绑定，跳过定时维护");
+    return;
+  }
+
+  const response = await env.WORKER_SELF_REFERENCE.fetch(
+    `https://internal${SCHEDULED_MAINTENANCE_PATH}`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${secret}`,
+      },
+    },
+  );
+
+  if (!response.ok) {
+    const detail = await response.text();
+    console.error(`[cron] 定时维护调用失败: ${response.status} ${detail}`);
   }
 }
 
@@ -340,6 +380,9 @@ const workerWrapper = {
 
     if (!cron || cron === DAILY_CRON) {
       ctx.waitUntil(triggerDelivery(env));
+    }
+    if (!cron || cron === SCHEDULED_MAINTENANCE_CRON) {
+      ctx.waitUntil(triggerScheduledMaintenance(env));
     }
     if (!cron || cron === DAILY_CRON || cron === FARM_MATURITY_EMAIL_CRON) {
       ctx.waitUntil(triggerNumberBombSettle(env, numberBombSettleDate));

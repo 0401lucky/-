@@ -331,6 +331,10 @@ export interface Project {
   newUserOnly?: boolean;  // 仅限新人资格用户（独立资格，不受抽奖影响）
   pinned?: boolean; // 置顶项目
   pinnedAt?: number; // 置顶时间（用于排序）
+  /** 到点自动暂停时间。后台输入按中国时间解析后保存为 UTC 毫秒时间戳。 */
+  autoPauseAt?: number;
+  /** 最近一次自动暂停执行时间，用于避免管理员重新启用后被旧时间反复暂停。 */
+  autoPausedAt?: number;
 }
 
 // 用户接口
@@ -386,11 +390,27 @@ export function normalizeProjectDirectPoints(project: Pick<Project, "directPoint
   return normalizeDirectPointsFromValues(project.directPoints, project.directDollars);
 }
 
+export function isProjectAutoPauseDue(
+  project: Pick<Project, "status" | "autoPauseAt" | "autoPausedAt">,
+  now = Date.now()
+): boolean {
+  if (project.status !== "active") return false;
+  if (!Number.isFinite(project.autoPauseAt)) return false;
+  if ((project.autoPauseAt ?? 0) > now) return false;
+  return (project.autoPausedAt ?? 0) < (project.autoPauseAt ?? 0);
+}
+
+export function applyProjectRuntimeStatus(project: Project, now = Date.now()): Project {
+  if (!isProjectAutoPauseDue(project, now)) return project;
+  return { ...project, status: "paused" };
+}
+
 export function toPublicProject(project: Project): Project {
-  if (project.rewardType !== "direct") return project;
-  const points = normalizeProjectDirectPoints(project);
-  if (points == null) return project;
-  const publicProject: Project = { ...project, directPoints: points };
+  const runtimeProject = applyProjectRuntimeStatus(project);
+  if (runtimeProject.rewardType !== "direct") return runtimeProject;
+  const points = normalizeProjectDirectPoints(runtimeProject);
+  if (points == null) return runtimeProject;
+  const publicProject: Project = { ...runtimeProject, directPoints: points };
   delete publicProject.directDollars;
   return publicProject;
 }
@@ -473,6 +493,34 @@ export async function getAllProjects(): Promise<Project[]> {
   return (results ?? []).filter((p): p is Project => p !== null);
 }
 
+export async function pauseDueProjects(now = Date.now()): Promise<{
+  checked: number;
+  paused: number;
+  skipped: number;
+}> {
+  const projects = await getAllProjects();
+  let paused = 0;
+
+  for (const project of projects) {
+    if (!isProjectAutoPauseDue(project, now)) {
+      continue;
+    }
+
+    await kv.set(`projects:${project.id}`, {
+      ...project,
+      status: "paused",
+      autoPausedAt: now,
+    });
+    paused += 1;
+  }
+
+  return {
+    checked: projects.length,
+    paused,
+    skipped: projects.length - paused,
+  };
+}
+
 export async function deleteProject(projectId: string): Promise<void> {
   await kv.del(`projects:${projectId}`);
   await kv.del(`codes:available:${projectId}`);
@@ -535,6 +583,11 @@ export async function claimCode(projectId: string, userId: number, username: str
 
     const project = await kv.get<Project>(projectKey);
     if (!project) return { success: false, message: '项目不存在' };
+
+    if (isProjectAutoPauseDue(project, now)) {
+      await kv.set(projectKey, { ...project, status: 'paused', autoPausedAt: now });
+      return { success: false, message: '该项目已到暂停时间，已暂停领取' };
+    }
 
     if (project.status === 'paused') return { success: false, message: '该项目已暂停领取' };
 
@@ -640,6 +693,11 @@ export async function reserveDirectClaim(
 
     const project = await kv.get<Project>(projectKey);
     if (!project) return { success: false, message: '项目不存在' };
+
+    if (isProjectAutoPauseDue(project, now)) {
+      await kv.set(projectKey, { ...project, status: 'paused', autoPausedAt: now });
+      return { success: false, message: '该项目已到暂停时间，已暂停领取' };
+    }
 
     if (project.status === 'paused') return { success: false, message: '该项目已暂停领取' };
 

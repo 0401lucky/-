@@ -2,6 +2,7 @@
 import { withAdmin } from "@/lib/api-guards";
 import type { AuthUser } from "@/lib/auth";
 import {
+  deleteFeedback,
   getFeedbackById,
   getFeedbackMessages,
   updateFeedbackStatus,
@@ -91,4 +92,31 @@ export const PATCH = withAdmin(async (
   }
 });
 
+export const DELETE = withAdmin(async (
+  _request: NextRequest,
+  _user: AuthUser,
+  context: { params: Promise<{ id: string }> }
+) => {
+  try {
+    const { id } = await context.params;
+    const deleted = await deleteFeedback(id);
 
+    if (!deleted) {
+      return NextResponse.json(
+        { success: false, message: "反馈不存在" },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: "反馈已删除",
+    });
+  } catch (error) {
+    console.error("Delete admin feedback error:", error);
+    return NextResponse.json(
+      { success: false, message: "删除反馈失败" },
+      { status: 500 }
+    );
+  }
+});

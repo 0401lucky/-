@@ -8,6 +8,10 @@ import { getDailyPointsLimit } from './config';
 import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
 import { calculateMemoryPointReward } from './memory-points';
 import {
+  settleGameFallbackTransfer,
+  type GameFallbackTransferFailure,
+} from './game-fallback';
+import {
   cancelNativeGameSession,
   completeNativeGameSettlement,
   createNativeGameSession,
@@ -124,6 +128,22 @@ async function isCurrentActiveSession(
   }
 
   return (await kv.get<string>(ACTIVE_SESSION_KEY(userId))) === sessionId;
+}
+
+async function findSettledMemoryRecord(
+  userId: number,
+  sessionId: string,
+  useNativeHotStore: boolean,
+): Promise<MemoryGameRecord | null> {
+  const records = useNativeHotStore
+    ? await listNativeGameRecords<MemoryGameRecord>(userId, 'memory', MAX_RECORD_ENTRIES)
+    : ((await kv.lrange<MemoryGameRecord>(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)) ?? []);
+
+  return records.find((record) => record.sessionId === sessionId) ?? null;
+}
+
+function buildSettledMemoryResult(record: MemoryGameRecord) {
+  return { success: true as const, record, pointsEarned: record.pointsEarned };
 }
 
 export function maskCardLayout(layout: string[]): string[] {
@@ -663,6 +683,133 @@ export async function submitMemoryResult(
   }
 
   return { success: true, record, pointsEarned };
+}
+
+export async function settleMemoryFallback(
+  userId: number,
+  payload: Pick<MemoryGameResultSubmit, 'sessionId'>,
+): Promise<{
+  success: boolean;
+  record?: MemoryGameRecord;
+  pointsEarned?: number;
+  message?: string;
+  adminInsufficient?: boolean;
+}> {
+  if (!payload?.sessionId) {
+    return { success: false, message: '参数错误' };
+  }
+
+  const useNativeHotStore = await isNativeHotStoreReady();
+  const settledBeforeLock = await findSettledMemoryRecord(userId, payload.sessionId, useNativeHotStore);
+  if (settledBeforeLock) {
+    return buildSettledMemoryResult(settledBeforeLock);
+  }
+
+  const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
+  const lockToken = await acquireGameLock(lockKey, SUBMIT_LOCK_TTL, useNativeHotStore);
+  if (!lockToken) {
+    const settledWhileLocked = await findSettledMemoryRecord(userId, payload.sessionId, useNativeHotStore);
+    if (settledWhileLocked) {
+      return buildSettledMemoryResult(settledWhileLocked);
+    }
+    return { success: false, message: '兜底结算正在处理，请稍后重试' };
+  }
+
+  try {
+    const session = useNativeHotStore
+      ? await getNativeGameSession<MemoryGameSession>(payload.sessionId)
+      : await kv.get<MemoryGameSession>(SESSION_KEY(payload.sessionId));
+
+    if (!session) {
+      const settledRecord = await findSettledMemoryRecord(userId, payload.sessionId, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledMemoryResult(settledRecord);
+      }
+      return { success: false, message: '游戏会话不存在或已过期' };
+    }
+
+    const normalizedSession = normalizeSession(session);
+    if (normalizedSession.userId !== userId) {
+      return { success: false, message: '会话不属于该用户' };
+    }
+
+    if (!await isCurrentActiveSession(userId, normalizedSession.id, useNativeHotStore)) {
+      const settledRecord = await findSettledMemoryRecord(userId, normalizedSession.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledMemoryResult(settledRecord);
+      }
+      return { success: false, message: '游戏会话已不是当前活跃局' };
+    }
+
+    if (normalizedSession.status !== 'playing') {
+      const settledRecord = await findSettledMemoryRecord(userId, normalizedSession.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledMemoryResult(settledRecord);
+      }
+      return { success: false, message: '游戏会话已结束' };
+    }
+
+    const serverDuration = Date.now() - normalizedSession.startedAt;
+    const config = DIFFICULTY_CONFIG[normalizedSession.difficulty];
+    const authoritativeMoves = normalizedSession.moveLog ?? [];
+    const matchedCount = new Set(normalizedSession.matchedCards ?? []).size;
+    const completed = serverDuration <= config.timeLimit * 1000 && matchedCount >= config.pairs * 2;
+    const score = calculateScore(normalizedSession.difficulty, authoritativeMoves.length, completed);
+    const pointReward = calculateMemoryPointReward(score);
+
+    const transferResult = await settleGameFallbackTransfer({
+      gameKey: 'memory',
+      sessionId: normalizedSession.id,
+      userId,
+      score,
+      pointReward,
+      gameName: '记忆游戏',
+      resultLabel: '',
+    });
+    if (!transferResult.success) {
+      return transferResult as GameFallbackTransferFailure;
+    }
+
+    const record: MemoryGameRecord = {
+      id: nanoid(),
+      userId,
+      sessionId: normalizedSession.id,
+      gameType: 'memory',
+      difficulty: normalizedSession.difficulty,
+      moves: authoritativeMoves.length,
+      completed,
+      score,
+      pointsEarned: transferResult.pointsEarned,
+      duration: serverDuration,
+      createdAt: Date.now(),
+    };
+
+    const currentStats = await getDailyStats(userId);
+    const cumulativePointsEarned = currentStats.pointsEarned + transferResult.pointsEarned;
+    if (useNativeHotStore) {
+      await incrementSharedDailyStats(userId, score, cumulativePointsEarned);
+      await completeNativeGameSettlement(
+        record,
+        normalizedSession.id,
+        score,
+        cumulativePointsEarned,
+        COOLDOWN_TTL,
+      );
+    } else {
+      await incrementSharedDailyStats(userId, score, cumulativePointsEarned);
+      await kv.lpush(RECORDS_KEY(userId), record);
+      await kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1);
+      await Promise.all([
+        kv.del(SESSION_KEY(normalizedSession.id)),
+        kv.del(ACTIVE_SESSION_KEY(userId)),
+        kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
+      ]);
+    }
+
+    return { success: true, record, pointsEarned: transferResult.pointsEarned };
+  } finally {
+    await releaseGameLock(lockKey, lockToken, useNativeHotStore);
+  }
 }
 
 /**

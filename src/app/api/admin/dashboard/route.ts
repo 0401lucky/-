@@ -18,6 +18,10 @@ export const GET = withAdmin(
       const { searchParams } = new URL(request.url);
       const runDetect = searchParams.get('detect') === '1';
       const forceRefresh = searchParams.get('refresh') === '1' || runDetect;
+      const rawPointsPeriod = searchParams.get('pointsPeriod');
+      const pointsPeriod = rawPointsPeriod === 'week' || rawPointsPeriod === 'month'
+        ? rawPointsPeriod
+        : 'day';
 
       const detection = runDetect
         ? await runAnomalyDetection({
@@ -26,7 +30,7 @@ export const GET = withAdmin(
           })
         : null;
       const [dashboard, alerts] = await Promise.all([
-        getCachedDashboardOverview({ forceRefresh }),
+        getCachedDashboardOverview({ forceRefresh, pointsPeriod }),
         getCachedAlertsSnapshot({ historyLimit: 20, forceRefresh }),
       ]);
 

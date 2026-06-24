@@ -19,6 +19,7 @@ import {
   Trophy,
   X,
 } from 'lucide-react';
+import MarkdownPreview from '@/components/MarkdownPreview';
 import SiteSidebar from '@/components/SiteSidebar';
 
 interface NotificationData {
@@ -641,11 +642,17 @@ export default function NotificationsPage() {
               </button>
             </div>
             <h3 className="nc-modal-title">{selectedItem.title}</h3>
-            <p className="nc-modal-desc">{selectedItem.content}</p>
-            {selectedItem.type === 'reward' && (
-              <div className="nc-modal-actions">{renderClaimButton(selectedItem)}</div>
-            )}
-            <div className="nc-modal-meta">发布时间：{formatTime(selectedItem.createdAt)}</div>
+            <div className="nc-modal-scroll">
+              {selectedItem.type === 'announcement' || selectedItem.type === 'system' ? (
+                <MarkdownPreview content={selectedItem.content} className="nc-modal-markdown" />
+              ) : (
+                <p className="nc-modal-desc">{selectedItem.content}</p>
+              )}
+              {selectedItem.type === 'reward' && (
+                <div className="nc-modal-actions">{renderClaimButton(selectedItem)}</div>
+              )}
+              <div className="nc-modal-meta">发布时间：{formatTime(selectedItem.createdAt)}</div>
+            </div>
             <div className="nc-modal-foot">
               {!selectedItem.isRead && (
                 <button
@@ -1265,7 +1272,13 @@ export default function NotificationsPage() {
           font-size: 13.5px;
           color: var(--text-light);
           line-height: 1.55;
-          white-space: pre-wrap;
+          height: calc(1.55em * 2);
+          display: -webkit-box;
+          overflow: hidden;
+          -webkit-line-clamp: 2;
+          line-clamp: 2;
+          -webkit-box-orient: vertical;
+          white-space: normal;
           word-break: break-word;
         }
 
@@ -1578,11 +1591,15 @@ export default function NotificationsPage() {
           position: relative;
           width: 100%;
           max-width: 560px;
+          max-height: calc(100dvh - 32px);
           background: #fff;
           border-radius: 24px;
           padding: 24px;
           box-shadow: 0 30px 60px rgba(15, 23, 42, 0.2);
           z-index: 1;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
         }
 
         .lucky-notifications .nc-modal-head {
@@ -1591,6 +1608,7 @@ export default function NotificationsPage() {
           align-items: flex-start;
           gap: 12px;
           margin-bottom: 12px;
+          flex-shrink: 0;
         }
 
         .lucky-notifications .nc-modal-title {
@@ -1599,6 +1617,23 @@ export default function NotificationsPage() {
           color: var(--text-main);
           margin: 0 0 12px;
           letter-spacing: -0.3px;
+          flex-shrink: 0;
+        }
+
+        .lucky-notifications .nc-modal-scroll {
+          min-height: 0;
+          overflow-y: auto;
+          padding-right: 4px;
+          margin-bottom: 16px;
+        }
+
+        .lucky-notifications .nc-modal-scroll::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .lucky-notifications .nc-modal-scroll::-webkit-scrollbar-thumb {
+          background: rgba(249, 115, 22, 0.28);
+          border-radius: 999px;
         }
 
         .lucky-notifications .nc-modal-desc {
@@ -1608,6 +1643,10 @@ export default function NotificationsPage() {
           white-space: pre-wrap;
           word-break: break-word;
           margin: 0 0 16px;
+        }
+
+        .lucky-notifications .nc-modal-markdown {
+          color: var(--text-main);
         }
 
         .lucky-notifications .nc-modal-actions {
@@ -1624,6 +1663,7 @@ export default function NotificationsPage() {
           display: flex;
           justify-content: flex-end;
           gap: 8px;
+          flex-shrink: 0;
         }
 
         /* 响应式 */

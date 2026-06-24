@@ -7,6 +7,10 @@ import { addGamePointsWithLimit } from './points';
 import { getDailyPointsLimit } from './config';
 import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
 import {
+  settleGameFallbackTransfer,
+  type GameFallbackTransferFailure,
+} from './game-fallback';
+import {
   cancelNativeGameSession,
   completeNativeGameSettlement,
   createNativeGameSession,
@@ -98,6 +102,22 @@ export async function getMatch3Records(userId: number, limit: number = 20): Prom
   }
   const records = await kv.lrange<Match3GameRecord>(RECORDS_KEY(userId), 0, limit - 1);
   return records ?? [];
+}
+
+async function findSettledMatch3Record(
+  userId: number,
+  sessionId: string,
+  useNativeHotStore: boolean,
+): Promise<Match3GameRecord | null> {
+  const records = useNativeHotStore
+    ? await listNativeGameRecords<Match3GameRecord>(userId, GAME_TYPE, MAX_RECORD_ENTRIES)
+    : ((await kv.lrange<Match3GameRecord>(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1)) ?? []);
+
+  return records.find((record) => record.sessionId === sessionId) ?? null;
+}
+
+function buildSettledMatch3Result(record: Match3GameRecord) {
+  return { success: true as const, record, pointsEarned: record.pointsEarned };
 }
 
 export async function getActiveMatch3Session(userId: number): Promise<Match3GameSession | null> {
@@ -347,3 +367,130 @@ export async function submitMatch3Result(
   return { success: true, record, pointsEarned: pointsResult.pointsEarned };
 }
 
+export async function settleMatch3Fallback(
+  userId: number,
+  payload: Match3GameResultSubmit,
+): Promise<{
+  success: boolean;
+  record?: Match3GameRecord;
+  pointsEarned?: number;
+  message?: string;
+  adminInsufficient?: boolean;
+}> {
+  const payloadCheck = validateSubmitPayload(payload);
+  if (!payloadCheck.ok) return { success: false, message: payloadCheck.message };
+
+  const useNativeHotStore = await isNativeHotStoreReady();
+  const settledBeforeLock = await findSettledMatch3Record(userId, payload.sessionId, useNativeHotStore);
+  if (settledBeforeLock) {
+    return buildSettledMatch3Result(settledBeforeLock);
+  }
+
+  const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
+  const lockToken = await acquireGameLock(lockKey, SUBMIT_LOCK_TTL, useNativeHotStore);
+  if (!lockToken) {
+    const settledWhileLocked = await findSettledMatch3Record(userId, payload.sessionId, useNativeHotStore);
+    if (settledWhileLocked) {
+      return buildSettledMatch3Result(settledWhileLocked);
+    }
+    return { success: false, message: '兜底结算正在处理，请稍后重试' };
+  }
+
+  try {
+    const session = useNativeHotStore
+      ? await getNativeGameSession<Match3GameSession>(payload.sessionId)
+      : await kv.get<Match3GameSession>(SESSION_KEY(payload.sessionId));
+    if (!session) {
+      const settledRecord = await findSettledMatch3Record(userId, payload.sessionId, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledMatch3Result(settledRecord);
+      }
+      return { success: false, message: '游戏会话不存在或已过期' };
+    }
+    if (session.userId !== userId) {
+      return { success: false, message: '会话不属于该用户' };
+    }
+    if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
+      const settledRecord = await findSettledMatch3Record(userId, session.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledMatch3Result(settledRecord);
+      }
+      return { success: false, message: '游戏会话已不是当前活跃局' };
+    }
+    if (session.status !== 'playing') {
+      const settledRecord = await findSettledMatch3Record(userId, session.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledMatch3Result(settledRecord);
+      }
+      return { success: false, message: '游戏会话已结束' };
+    }
+    if (Date.now() > session.expiresAt) {
+      return { success: false, message: '游戏会话已过期' };
+    }
+
+    const serverDuration = Date.now() - session.startedAt;
+    if (serverDuration < MIN_GAME_DURATION) {
+      return { success: false, message: '游戏时长过短' };
+    }
+
+    const sim = simulateMatch3Game(session.seed, session.config, payload.moves, { maxMoves: MAX_MOVES_PER_GAME });
+    if (!sim.ok) {
+      return { success: false, message: sim.message };
+    }
+
+    const score = sim.score;
+    const pointReward = calculateMatch3PointReward(score);
+    const transferResult = await settleGameFallbackTransfer({
+      gameKey: 'match3',
+      sessionId: session.id,
+      userId,
+      score,
+      pointReward,
+      gameName: '消消乐',
+      resultLabel: '',
+    });
+    if (!transferResult.success) {
+      return transferResult as GameFallbackTransferFailure;
+    }
+
+    const record: Match3GameRecord = {
+      id: nanoid(),
+      userId,
+      sessionId: session.id,
+      gameType: GAME_TYPE,
+      score,
+      pointsEarned: transferResult.pointsEarned,
+      moves: sim.stats.movesApplied,
+      cascades: sim.stats.cascades,
+      tilesCleared: sim.stats.tilesCleared,
+      duration: Math.min(serverDuration, TIME_LIMIT_MS),
+      createdAt: Date.now(),
+    };
+
+    const currentStats = await getDailyStats(userId);
+    const cumulativePointsEarned = currentStats.pointsEarned + transferResult.pointsEarned;
+    if (useNativeHotStore) {
+      await incrementSharedDailyStats(userId, score, cumulativePointsEarned);
+      await completeNativeGameSettlement(
+        record,
+        session.id,
+        score,
+        cumulativePointsEarned,
+        COOLDOWN_TTL,
+      );
+    } else {
+      await incrementSharedDailyStats(userId, score, cumulativePointsEarned);
+      await kv.lpush(RECORDS_KEY(userId), record);
+      await kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1);
+      await Promise.all([
+        kv.del(SESSION_KEY(session.id)),
+        kv.del(ACTIVE_SESSION_KEY(userId)),
+        kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
+      ]);
+    }
+
+    return { success: true, record, pointsEarned: transferResult.pointsEarned };
+  } finally {
+    await releaseGameLock(lockKey, lockToken, useNativeHotStore);
+  }
+}

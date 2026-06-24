@@ -13,6 +13,7 @@ import { getWhackMoleRecords } from './whack-mole';
 import { getWhackMoleDifficultyConfig, normalizeWhackMoleDifficulty } from './whack-mole-engine';
 import { getRogueliteRecords } from './roguelite';
 import { getLinkGameRecords } from './linkgame-server';
+import { getGame2048Records } from './game-2048';
 import { getUserLotteryRecords } from './lottery';
 import { getEcoProgressSummary } from './eco';
 import { FARM_V2_STATE_KEY } from './farm-v2/steal';
@@ -24,7 +25,7 @@ import {
 } from './user-achievements';
 import type { ProfileAchievementStats } from './profile-achievements';
 
-type ProfileGameType = 'linkgame' | 'match3' | 'memory' | 'whack_mole' | 'roguelite' | 'minesweeper' | 'lottery';
+type ProfileGameType = 'linkgame' | 'match3' | 'memory' | 'whack_mole' | 'roguelite' | 'minesweeper' | 'game_2048' | 'lottery';
 
 export interface ProfileRecentRecord {
   gameType: ProfileGameType;
@@ -94,6 +95,7 @@ const GAME_RECORD_KEYS: Array<{ type: ProfileGameType; key: (userId: number) => 
   { type: 'whack_mole', key: (userId) => `whack_mole:records:${userId}` },
   { type: 'roguelite', key: (userId) => `roguelite:records:${userId}` },
   { type: 'minesweeper', key: (userId) => `minesweeper:records:${userId}` },
+  { type: 'game_2048', key: (userId) => `game_2048:records:${userId}` },
   { type: 'lottery', key: (userId) => `lottery:user:records:${userId}` },
 ];
 
@@ -152,6 +154,7 @@ async function getGameWinAchievementStats(userId: number): Promise<Pick<ProfileA
     minesweeperRecords,
     rogueliteRecords,
     whackMoleRecords,
+    game2048Records,
   ] = await Promise.all([
     getLinkGameRecords(userId, ACHIEVEMENT_GAME_RECORD_LIMIT),
     getMatch3Records(userId, ACHIEVEMENT_GAME_RECORD_LIMIT),
@@ -159,6 +162,7 @@ async function getGameWinAchievementStats(userId: number): Promise<Pick<ProfileA
     getMinesweeperRecords(userId, ACHIEVEMENT_GAME_RECORD_LIMIT),
     getRogueliteRecords(userId, ACHIEVEMENT_GAME_RECORD_LIMIT),
     getWhackMoleRecords(userId, ACHIEVEMENT_GAME_RECORD_LIMIT),
+    getGame2048Records(userId, ACHIEVEMENT_GAME_RECORD_LIMIT),
   ]);
 
   const plays =
@@ -167,7 +171,8 @@ async function getGameWinAchievementStats(userId: number): Promise<Pick<ProfileA
     memoryRecords.length +
     minesweeperRecords.length +
     rogueliteRecords.length +
-    whackMoleRecords.length;
+    whackMoleRecords.length +
+    game2048Records.length;
 
   const wins =
     linkgameRecords.filter((record) => record.completed).length +
@@ -178,7 +183,8 @@ async function getGameWinAchievementStats(userId: number): Promise<Pick<ProfileA
     whackMoleRecords.filter((record) => {
       const difficulty = normalizeWhackMoleDifficulty(record.difficulty);
       return record.score >= getWhackMoleDifficultyConfig(difficulty).winScore;
-    }).length;
+    }).length +
+    game2048Records.filter((record) => record.won).length;
 
   return {
     gameWinRate: plays > 0 ? wins / plays : 0,

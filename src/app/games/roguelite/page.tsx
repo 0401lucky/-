@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
+import { requestGameFallback } from '../_lib/fallback';
 import {
   ArrowLeft,
   BookOpen,
@@ -243,6 +244,21 @@ export default function RoguelitePage() {
       });
       const data = await parseJson<SubmitResponse>(res);
       if (!res.ok || !data?.success || !data.data) {
+        if (res.status >= 500) {
+          const fallback = await requestGameFallback<RogueliteGameRecord>({
+            game: 'roguelite',
+            sessionId: targetSession.sessionId,
+          });
+          if (fallback) {
+            setResult(fallback.record);
+            setSession(null);
+            setPhase('finished');
+            setLastOutcome(null);
+            setMessage(`已启用兜底结算，本局获得 ${fallback.pointsEarned} 福利积分`);
+            void fetchStatus();
+            return;
+          }
+        }
         throw new Error(data?.message ?? `结算失败（HTTP ${res.status}）`);
       }
 
@@ -253,6 +269,23 @@ export default function RoguelitePage() {
       setMessage(`本局获得 ${data.data.pointsEarned} 福利积分`);
       void fetchStatus();
     } catch (err) {
+      try {
+        const fallback = await requestGameFallback<RogueliteGameRecord>({
+          game: 'roguelite',
+          sessionId: targetSession.sessionId,
+        });
+        if (fallback) {
+          setResult(fallback.record);
+          setSession(null);
+          setPhase('finished');
+          setLastOutcome(null);
+          setMessage(`已启用兜底结算，本局获得 ${fallback.pointsEarned} 福利积分`);
+          void fetchStatus();
+          return;
+        }
+      } catch (fallbackError) {
+        console.error('Roguelite fallback settlement error:', fallbackError);
+      }
       setError(getRequestErrorMessage(err, '结算请求超时，请检查网络后重试', '结算失败，请稍后重试'));
     } finally {
       submittingRef.current = false;
@@ -339,6 +372,25 @@ export default function RoguelitePage() {
       setMessage(data.data.outcome.message);
     } catch (err) {
       const errorMessage = getRequestErrorMessage(err, '行动请求超时，请检查网络后重试', '行动失败，请稍后重试');
+      if (!syncedSessionFromError && session) {
+        try {
+          const fallback = await requestGameFallback<RogueliteGameRecord>({
+            game: 'roguelite',
+            sessionId: session.sessionId,
+          });
+          if (fallback) {
+            setResult(fallback.record);
+            setSession(null);
+            setPhase('finished');
+            setLastOutcome(null);
+            setMessage(`已启用兜底结算，本局获得 ${fallback.pointsEarned} 福利积分`);
+            void fetchStatus();
+            return;
+          }
+        } catch (fallbackError) {
+          console.error('Roguelite fallback after step error:', fallbackError);
+        }
+      }
       setError(errorMessage);
       if (!syncedSessionFromError && shouldRefreshRogueliteStatusAfterStepError(errorMessage)) {
         void fetchStatus();

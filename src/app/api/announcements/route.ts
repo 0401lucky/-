@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
 import { listPublishedAnnouncements } from '@/lib/announcements';
+import { ensureAnnouncementNotificationsForUser } from '@/lib/notifications';
 import { withUserRateLimit } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 export const GET = withUserRateLimit(
   'announcements:list',
-  async (request) => {
+  async (request, user) => {
     try {
       const { searchParams } = new URL(request.url);
       const pageRaw = Number(searchParams.get('page') ?? 1);
@@ -15,6 +16,7 @@ export const GET = withUserRateLimit(
       const limit = Number.isFinite(limitRaw) ? limitRaw : 20;
 
       const result = await listPublishedAnnouncements({ page, limit });
+      await ensureAnnouncementNotificationsForUser(user.id, result.items);
 
       return NextResponse.json({
         success: true,

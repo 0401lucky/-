@@ -8,11 +8,12 @@ import { withUserEconomyLock } from './economy-lock';
 import {
   addNativeGamePointsWithLimit,
   applyNativePointsDelta,
+  countNativePointLogs,
   getNativeDailyGamePoints,
   getNativePointsLogs,
+  getNativePointsLogsPage,
   getNativeUserPoints,
   isNativeHotStoreReady,
-  trimNativePointLogs,
 } from './hot-d1';
 
 // Key 格式
@@ -21,7 +22,6 @@ const POINTS_LOG_KEY = (userId: number) => `points_log:${userId}`;
 const DAILY_EARNED_KEY = (userId: number, date: string) => `game:daily_earned:${userId}:${date}`;
 
 // 常量
-const MAX_LOG_ENTRIES = 100;
 const DAILY_EARNED_TTL = 48 * 60 * 60; // 48小时
 
 /**
@@ -59,7 +59,6 @@ export async function addPointsInsideUserEconomyLock(
       description,
       logId,
     );
-    await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
     return { success: true, balance: result.balance };
   }
 
@@ -75,7 +74,6 @@ export async function addPointsInsideUserEconomyLock(
   };
 
   await kv.lpush(POINTS_LOG_KEY(userId), log);
-  await kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1);
 
   return { success: true, balance: newBalance };
 }
@@ -148,9 +146,6 @@ export async function addGamePointsWithLimit(
         description,
         nanoid(),
       );
-      if (result.pointsEarned > 0) {
-        await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
-      }
       return result;
     }
 
@@ -189,7 +184,6 @@ export async function addGamePointsWithLimit(
       kv.expire(dailyEarnedKey, DAILY_EARNED_TTL),
       kv.lpush(POINTS_LOG_KEY(userId), log),
     ]);
-    kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1).catch(() => {});
 
     return {
       success: true,
@@ -242,7 +236,6 @@ export async function deductPoints(
       if (!result.success) {
         return result;
       }
-      await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
       return { success: true, balance: result.balance };
     }
 
@@ -266,7 +259,6 @@ export async function deductPoints(
     };
 
     await kv.lpush(POINTS_LOG_KEY(userId), log);
-    await kv.ltrim(POINTS_LOG_KEY(userId), 0, MAX_LOG_ENTRIES - 1);
 
     return { success: true, balance: newBalance };
   });
@@ -311,7 +303,6 @@ export async function applyPointsDeltaInsideUserEconomyLock(
     if (!result.success) {
       return result;
     }
-    await trimNativePointLogs(userId, MAX_LOG_ENTRIES);
     return { success: true, balance: result.balance };
   }
 
@@ -335,7 +326,6 @@ export async function applyPointsDeltaInsideUserEconomyLock(
     createdAt: now,
   };
   await kv.lpush(logKey, log);
-  await kv.ltrim(logKey, 0, MAX_LOG_ENTRIES - 1);
 
   return { success: true, balance: newBalance };
 }
@@ -382,4 +372,60 @@ export async function getPointsLogs(
 
   const logs = await kv.lrange<PointsLog>(POINTS_LOG_KEY(userId), 0, limit - 1);
   return logs ?? [];
+}
+
+export interface PointsLogsPage {
+  logs: PointsLog[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasMore: boolean;
+  };
+}
+
+function normalizePositiveInteger(value: number, fallback: number, max: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(1, Math.floor(value)));
+}
+
+export async function getPointsLogsPage(
+  userId: number,
+  page: number = 1,
+  limit: number = 10,
+): Promise<PointsLogsPage> {
+  const normalizedPage = normalizePositiveInteger(page, 1, 100000);
+  const normalizedLimit = normalizePositiveInteger(limit, 10, 50);
+  const offset = (normalizedPage - 1) * normalizedLimit;
+
+  let total = 0;
+  let logs: PointsLog[] = [];
+
+  if (await isNativeHotStoreReady()) {
+    [total, logs] = await Promise.all([
+      countNativePointLogs(userId),
+      getNativePointsLogsPage(userId, offset, normalizedLimit),
+    ]);
+  } else {
+    total = await kv.llen(POINTS_LOG_KEY(userId));
+    logs = await kv.lrange<PointsLog>(
+      POINTS_LOG_KEY(userId),
+      offset,
+      offset + normalizedLimit - 1,
+    );
+  }
+
+  const totalPages = total > 0 ? Math.ceil(total / normalizedLimit) : 1;
+
+  return {
+    logs: logs ?? [],
+    pagination: {
+      page: normalizedPage,
+      limit: normalizedLimit,
+      total,
+      totalPages,
+      hasMore: normalizedPage < totalPages,
+    },
+  };
 }

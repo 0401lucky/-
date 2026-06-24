@@ -3,7 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { joinRaffle, executeRaffleDraw, getRaffle, getRaffleMode, grabRedPacket } from "@/lib/raffle";
+import { joinRaffle, executeRaffleDraw, getRaffle, getRaffleMode, grabRedPacket, isRaffleScheduledDrawDue } from "@/lib/raffle";
 import { withUserRateLimit } from "@/lib/rate-limit";
 
 export const POST = withUserRateLimit(
@@ -32,6 +32,19 @@ export const POST = withUserRateLimit(
       }
 
       const isRedPacket = getRaffleMode(raffle) === "red_packet";
+      if (!isRedPacket && isRaffleScheduledDrawDue(raffle)) {
+        const drawResult = await executeRaffleDraw(id, { waitForDelivery: false });
+        return NextResponse.json(
+          {
+            success: false,
+            message: drawResult.success
+              ? "活动已到开奖时间，已自动开奖，请刷新查看结果"
+              : "活动已到开奖时间，正在开奖，请稍后刷新",
+          },
+          { status: 400 }
+        );
+      }
+
       const result = isRedPacket
         ? await grabRedPacket(id, user.id, user.username)
         : await joinRaffle(id, user.id, user.username);

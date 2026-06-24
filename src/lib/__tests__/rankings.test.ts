@@ -173,8 +173,8 @@ describe('rankings', () => {
 
     const gameTypes = result.games.map((item) => item.gameType).sort();
 
-    expect(result.games).toHaveLength(6);
-    expect(gameTypes).toEqual(['linkgame', 'match3', 'memory', 'minesweeper', 'roguelite', 'whack_mole']);
+    expect(result.games).toHaveLength(7);
+    expect(gameTypes).toEqual(['game_2048', 'linkgame', 'match3', 'memory', 'minesweeper', 'roguelite', 'whack_mole']);
     expect(result.overall[0]).toMatchObject({
       userId: 1001,
     });
@@ -212,7 +212,7 @@ describe('rankings', () => {
       overallLimit: 10,
     });
 
-    expect(mockGetNativeGameLeaderboardRows).toHaveBeenCalledTimes(18);
+    expect(mockGetNativeGameLeaderboardRows).toHaveBeenCalledTimes(19);
     for (const call of mockGetNativeGameLeaderboardRows.mock.calls) {
       expect(Number.isFinite(call[2])).toBe(true);
       expect(call[2]).toBe(8_640_000_000_000_000);

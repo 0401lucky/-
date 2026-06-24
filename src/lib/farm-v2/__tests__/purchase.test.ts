@@ -114,6 +114,28 @@ describe('farm-v2 shop purchases', () => {
     expect(savedState.points).toBe(100297);
   });
 
+  it('首次进入开心农场时无论原有积分多少都固定发放 100 积分', async () => {
+    store.delete(stateKey);
+    mockAddPoints.mockResolvedValueOnce({ success: true, balance: 1100 });
+    mockGetUserPoints.mockResolvedValueOnce(1100);
+
+    const status = await getFarmStatus(userId);
+    const savedState = store.get(stateKey) as FarmStateV2;
+
+    expect(mockAddPoints).toHaveBeenCalledWith(userId, 100, 'game_play', '开心农场初始积分');
+    expect(status.state.points).toBe(1100);
+    expect(savedState.points).toBe(1100);
+  });
+
+  it('首次进入开心农场初始积分发放失败时不保存农场存档', async () => {
+    store.delete(stateKey);
+    mockAddPoints.mockRejectedValueOnce(new Error('grant failed'));
+
+    await expect(getFarmStatus(userId)).rejects.toThrow('grant failed');
+
+    expect(store.has(stateKey)).toBe(false);
+  });
+
   it('购买道具时直接返回最新农场状态', async () => {
     const result = await buyItemWithStatus(userId, 'pet_food_normal', 2);
     const savedState = store.get(stateKey) as FarmStateV2;

@@ -170,6 +170,13 @@ function getEffectProgressPercent(remaining: number, baseTotal: number): number 
   return Math.min(100, Math.round((remaining / baseTotal) * 100));
 }
 
+function formatProtectionRemaining(protectedUntil: number | null | undefined, serverNow: number | undefined): string | null {
+  if (!protectedUntil || !serverNow || protectedUntil <= serverNow) return null;
+  const minutes = Math.max(1, Math.ceil((protectedUntil - serverNow) / (60 * 1000)));
+  if (minutes >= 60) return `${Math.ceil(minutes / 60)}小时`;
+  return `${minutes}分钟`;
+}
+
 function PriceSparkline({
   history,
   selectedDate,
@@ -1039,6 +1046,7 @@ export default function EcoPage() {
               const ownerInitial = (ownerDisplayName?.[0] ?? '?').toUpperCase();
               const canSteal = entry.canSteal !== false && entry.status === 'listed';
               const stealButtonLabel = entry.stealDisabledReason || (isOwnPrize ? '自己的奖品' : '偷盗');
+              const protectionRemaining = formatProtectionRemaining(entry.stealProtectedUntil, status.serverNow);
               return (
                 <article key={entry.id} className={`public-entry ${entry.status}`}>
                   <div className="public-entry-main">
@@ -1054,6 +1062,12 @@ export default function EcoPage() {
                       <span>{ownerDisplayName} 持有</span>
                       {entry.status === 'stolen' && (
                         <span className="public-entry-thief">已被偷走，警察追查中</span>
+                      )}
+                      {entry.status === 'listed' && protectionRemaining && (
+                        <span className="public-entry-thief">抓回保护中，还剩 {protectionRemaining}</span>
+                      )}
+                      {entry.status === 'listed' && (entry.theftCaughtCount ?? 0) > 0 && (
+                        <span className="public-entry-thief">已被警察追回 {entry.theftCaughtCount} 次</span>
                       )}
                       {entry.theftMessage && <i>“{entry.theftMessage}”</i>}
                     </div>
@@ -1127,7 +1141,7 @@ export default function EcoPage() {
               <span><b>10</b> 个垃圾 = 基础 <b>1</b> 积分</span>
               <span>奖品次日早上 <b>6</b> 点后可售</span>
               <span>行情每日 <b>0</b> 点刷新</span>
-              <span>警察后台自动追查偷盗</span>
+              <span>警察每 <b>20</b> 分钟追查偷盗</span>
             </div>
 
             <div className="rules-grid">
@@ -1212,14 +1226,21 @@ export default function EcoPage() {
                 <span className="rule-icon">🚓</span>
                 <div>
                   <h3>警察追查</h3>
-                  <p>偷盗后警察会由系统后台自动追查，不需要玩家挂机。初始抓捕概率 10%，每过 1 小时增加 3%，每半小时检查一次。</p>
+                  <p>偷盗后警察会由系统后台自动追查，不需要玩家挂机。初始抓捕概率 10%，每过 1 小时增加 2%，每 20 分钟检查一次。</p>
                 </div>
               </article>
               <article className="rule-card">
                 <span className="rule-icon">⚖️</span>
                 <div>
                   <h3>抓捕结果</h3>
-                  <p>被抓后奖品物归原主，小偷扣除当天售价 10% 的积分并强制佩戴“小偷”成就 10 小时，原主获得扣分的一半。</p>
+                  <p>被抓后奖品原路回到公开栏，24 小时内不能再次被偷；如果原主没有卖出，保护期结束后可继续被偷。每被抓回一次，下次被抓概率降低 5%。</p>
+                </div>
+              </article>
+              <article className="rule-card">
+                <span className="rule-icon">⚖️</span>
+                <div>
+                  <h3>抓捕处罚</h3>
+                  <p>小偷会扣除当天售价 10% 的积分并强制佩戴“小偷”成就 10 小时，原主获得扣分的一半作为赔偿。</p>
                 </div>
               </article>
               <article className="rule-card">

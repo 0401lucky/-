@@ -5,6 +5,10 @@ import { addGamePointsWithLimit } from './points';
 import { getDailyPointsLimit } from './config';
 import { getDailyStats, incrementSharedDailyStats } from './daily-stats';
 import {
+  settleGameFallbackTransfer,
+  type GameFallbackTransferFailure,
+} from './game-fallback';
+import {
   cancelNativeGameSession,
   completeNativeGameSettlement,
   createNativeGameSession,
@@ -761,5 +765,138 @@ export async function submitMinesweeperResult(
     return { success: true, record, pointsEarned: pointsResult.pointsEarned };
   } finally {
     await releaseLock();
+  }
+}
+
+export async function settleMinesweeperFallback(
+  userId: number,
+  payload: MinesweeperGameResultSubmit,
+): Promise<{
+  success: boolean;
+  record?: MinesweeperGameRecord;
+  pointsEarned?: number;
+  message?: string;
+  adminInsufficient?: boolean;
+}> {
+  const payloadCheck = validateSubmitPayload(payload);
+  if (!payloadCheck.ok) {
+    return { success: false, message: payloadCheck.message };
+  }
+
+  const useNativeHotStore = await isNativeHotStoreReady();
+  const settledBeforeLock = await findSettledMinesweeperRecord(userId, payload.sessionId, useNativeHotStore);
+  if (settledBeforeLock) {
+    return buildSettledMinesweeperResult(settledBeforeLock);
+  }
+
+  const lockKey = SUBMIT_LOCK_KEY(payload.sessionId);
+  const lockToken = await acquireGameLock(lockKey, SUBMIT_LOCK_TTL, useNativeHotStore);
+  if (!lockToken) {
+    const settledWhileLocked = await findSettledMinesweeperRecord(userId, payload.sessionId, useNativeHotStore);
+    if (settledWhileLocked) {
+      return buildSettledMinesweeperResult(settledWhileLocked);
+    }
+    return { success: false, message: '兜底结算正在处理，请稍后重试' };
+  }
+
+  try {
+    const durableSession = await getMinesweeperDurableSessionSnapshot(userId, payload.sessionId);
+    if (durableSession) {
+      await saveSessionProgress(durableSession, useNativeHotStore);
+    }
+
+    const session = durableSession ?? await loadSessionById(payload.sessionId, useNativeHotStore);
+    if (!session) {
+      const settledRecord = await findSettledMinesweeperRecord(userId, payload.sessionId, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledMinesweeperResult(settledRecord);
+      }
+      return { success: false, message: '游戏会话不存在或已过期' };
+    }
+    if (session.userId !== userId) {
+      return { success: false, message: '会话不属于该用户' };
+    }
+    if (!await isCurrentActiveSession(userId, session.id, useNativeHotStore)) {
+      const settledRecord = await findSettledMinesweeperRecord(userId, session.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledMinesweeperResult(settledRecord);
+      }
+      return { success: false, message: '游戏会话已不是当前活跃局' };
+    }
+    if (session.status !== 'playing') {
+      const settledRecord = await findSettledMinesweeperRecord(userId, session.id, useNativeHotStore);
+      if (settledRecord) {
+        return buildSettledMinesweeperResult(settledRecord);
+      }
+      return { success: false, message: '游戏会话已结束' };
+    }
+    if (Date.now() > session.expiresAt) {
+      return { success: false, message: '游戏会话已过期' };
+    }
+
+    const duration = getSessionDuration(session);
+    const scoreBreakdown = calculateMinesweeperScore(session.state, duration);
+    const score = scoreBreakdown.total;
+    const pointReward = calculateMinesweeperPointReward(score);
+    const transferResult = await settleGameFallbackTransfer({
+      gameKey: 'minesweeper',
+      sessionId: session.id,
+      userId,
+      score,
+      pointReward,
+      gameName: '扫雷',
+      resultLabel: session.state.status === 'won'
+        ? '成功'
+        : session.state.status === 'lost'
+          ? '失败'
+          : '中断',
+    });
+    if (!transferResult.success) {
+      return transferResult as GameFallbackTransferFailure;
+    }
+
+    const record: MinesweeperGameRecord = {
+      id: nanoid(),
+      userId,
+      sessionId: session.id,
+      gameType: GAME_TYPE,
+      difficulty: session.difficulty,
+      won: session.state.status === 'won',
+      score,
+      pointsEarned: transferResult.pointsEarned,
+      duration,
+      moves: session.state.moves,
+      flagsUsed: session.state.flagsUsed,
+      revealedSafe: session.state.revealedSafe,
+      mines: session.state.mines,
+      scoreBreakdown,
+      createdAt: Date.now(),
+    };
+
+    const currentStats = await getDailyStats(userId);
+    const cumulativePointsEarned = currentStats.pointsEarned + transferResult.pointsEarned;
+    if (useNativeHotStore) {
+      await incrementSharedDailyStats(userId, score, cumulativePointsEarned);
+      await completeNativeGameSettlement(
+        record,
+        session.id,
+        score,
+        cumulativePointsEarned,
+        COOLDOWN_TTL,
+      );
+    } else {
+      await incrementSharedDailyStats(userId, score, cumulativePointsEarned);
+      await kv.lpush(RECORDS_KEY(userId), record);
+      await kv.ltrim(RECORDS_KEY(userId), 0, MAX_RECORD_ENTRIES - 1);
+      await Promise.all([
+        deleteSession(session.id, userId, false),
+        kv.set(COOLDOWN_KEY(userId), '1', { ex: COOLDOWN_TTL }),
+      ]);
+    }
+    await deleteMinesweeperDurableSession(userId, session.id);
+
+    return { success: true, record, pointsEarned: transferResult.pointsEarned };
+  } finally {
+    await releaseGameLock(lockKey, lockToken, useNativeHotStore);
   }
 }

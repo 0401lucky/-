@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Save, Trash2 } from 'lucide-react';
+import { Eye, FileText, Plus, Save, Trash2 } from 'lucide-react';
+import MarkdownPreview from '@/components/MarkdownPreview';
 
 type AnnouncementStatus = 'draft' | 'published' | 'archived';
 
@@ -150,9 +151,18 @@ export default function AdminAnnouncementsPage() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
       <section className="lg:col-span-2 bg-white border border-stone-200 rounded-2xl p-5">
-        <h2 className="text-base font-semibold text-stone-800 mb-4">
-          {isEditing ? '编辑公告' : '新建公告'}
-        </h2>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-stone-800">
+              {isEditing ? '编辑公告' : '新建公告'}
+            </h2>
+            <p className="mt-1 text-xs text-stone-400">正文按 Markdown 文件格式编辑和预览。</p>
+          </div>
+          <span className="inline-flex items-center gap-1 rounded-lg border border-cyan-100 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-700">
+            <FileText className="h-3.5 w-3.5" />
+            .md
+          </span>
+        </div>
 
         <form className="space-y-4" onSubmit={onSubmit}>
           <div>
@@ -167,14 +177,30 @@ export default function AdminAnnouncementsPage() {
           </div>
 
           <div>
-            <label className="block text-xs text-stone-500 mb-1">内容</label>
+            <div className="mb-1 flex items-center justify-between gap-3">
+              <label className="block text-xs text-stone-500">公告正文.md</label>
+              <span className="text-[11px] text-stone-400">{content.length}/5000</span>
+            </div>
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
               maxLength={5000}
-              rows={8}
-              className="w-full px-3 py-2 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-cyan-500 outline-none resize-y"
-              placeholder="请输入公告内容"
+              rows={12}
+              spellCheck={false}
+              className="w-full px-3 py-2 rounded-xl border border-stone-200 bg-stone-950 font-mono text-sm leading-6 text-stone-50 placeholder:text-stone-500 focus:border-cyan-500 outline-none resize-y"
+              placeholder={"# 公告标题\n\n这里输入公告正文，支持 **加粗**、列表、链接、引用和代码块。\n\n- 第一条说明\n- 第二条说明"}
+            />
+          </div>
+
+          <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-4">
+            <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-stone-500">
+              <Eye className="h-4 w-4" />
+              Markdown 预览
+            </div>
+            <MarkdownPreview
+              content={content}
+              emptyText="输入 Markdown 后会在这里预览"
+              className="max-h-[420px] overflow-y-auto rounded-xl bg-white p-4"
             />
           </div>
 
@@ -247,9 +273,10 @@ export default function AdminAnnouncementsPage() {
                       <span className="text-xs text-stone-400">更新于 {formatTime(item.updatedAt)}</span>
                     </div>
                     <h3 className="text-sm font-semibold text-stone-800">{item.title}</h3>
-                    <p className="mt-1 text-sm text-stone-600 whitespace-pre-wrap break-words">
-                      {item.content}
-                    </p>
+                    <MarkdownPreview
+                      content={item.content}
+                      className="mt-3 max-h-56 overflow-y-auto rounded-xl border border-stone-100 bg-stone-50/70 p-3"
+                    />
                     <p className="mt-2 text-xs text-stone-400">发布时间：{formatTime(item.publishedAt)}</p>
                   </div>
                   <div className="shrink-0 flex items-center gap-2">

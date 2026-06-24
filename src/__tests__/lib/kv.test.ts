@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { kv } from '@/lib/d1-kv';
-import { addCodesToProject, reserveDirectClaim, tryUseExtraSpin } from '@/lib/kv';
+import { addCodesToProject, pauseDueProjects, reserveDirectClaim, toPublicProject, tryUseExtraSpin } from '@/lib/kv';
 
 vi.mock('@/lib/d1-kv', () => ({
   kv: {
@@ -32,6 +32,8 @@ describe('kv D1 migration tests', () => {
   const mockKvLpush = vi.mocked(kv.lpush);
   const mockKvSadd = vi.mocked(kv.sadd);
   const mockKvDecrby = vi.mocked(kv.decrby);
+  const mockKvLrange = vi.mocked(kv.lrange);
+  const mockKvMget = vi.mocked(kv.mget);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -74,6 +76,65 @@ describe('kv D1 migration tests', () => {
     expect(mockKvLpush).not.toHaveBeenCalled();
     expect(mockKvGet).not.toHaveBeenCalled();
     expect(mockKvSet).not.toHaveBeenCalled();
+  });
+
+  it('pauseDueProjects pauses active projects whose China-time schedule is due', async () => {
+    mockKvLrange.mockResolvedValue(['project-1', 'project-2']);
+    mockKvMget.mockResolvedValue([
+      {
+        id: 'project-1',
+        name: 'Due',
+        description: '',
+        maxClaims: 10,
+        claimedCount: 0,
+        codesCount: 10,
+        status: 'active',
+        createdAt: 1,
+        createdBy: 'admin',
+        autoPauseAt: 1000,
+      },
+      {
+        id: 'project-2',
+        name: 'Future',
+        description: '',
+        maxClaims: 10,
+        claimedCount: 0,
+        codesCount: 10,
+        status: 'active',
+        createdAt: 1,
+        createdBy: 'admin',
+        autoPauseAt: 3000,
+      },
+    ]);
+    mockKvSet.mockResolvedValue('OK');
+
+    const result = await pauseDueProjects(2000);
+
+    expect(result).toEqual({ checked: 2, paused: 1, skipped: 1 });
+    expect(mockKvSet).toHaveBeenCalledWith('projects:project-1', expect.objectContaining({
+      status: 'paused',
+      autoPausedAt: 2000,
+    }));
+  });
+
+  it('toPublicProject exposes due auto-pause projects as paused before cron writes back', () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(2000);
+
+    const publicProject = toPublicProject({
+      id: 'project-1',
+      name: 'Due',
+      description: '',
+      maxClaims: 10,
+      claimedCount: 0,
+      codesCount: 10,
+      status: 'active',
+      createdAt: 1,
+      createdBy: 'admin',
+      autoPauseAt: 1000,
+    });
+
+    expect(publicProject.status).toBe('paused');
+    nowSpy.mockRestore();
   });
 
   it('reserveDirectClaim creates pending record and updates project', async () => {

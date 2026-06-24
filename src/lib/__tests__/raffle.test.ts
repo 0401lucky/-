@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kv } from '@/lib/d1-kv';
 import { nanoid } from 'nanoid';
 import { addPoints } from '../points';
-import { buildRedPacketPackets, executeRaffleDraw, grabRedPacket, joinRaffle, retryFailedRewards } from '../raffle';
+import { buildRedPacketPackets, executeRaffleDraw, grabRedPacket, joinRaffle, processDueScheduledRaffleDraws, retryFailedRewards } from '../raffle';
 import { getTodayDirectTotal, reserveDailyDirectQuota, rollbackDailyDirectQuota } from '../lottery';
 import { getTodayDateString } from '../time';
 
@@ -24,6 +24,8 @@ vi.mock('@/lib/d1-kv', () => ({
     incr: vi.fn(),
     sadd: vi.fn(),
     lrem: vi.fn(),
+    mget: vi.fn(),
+    smembers: vi.fn(),
   },
 }));
 
@@ -85,6 +87,8 @@ describe('raffle robustness', () => {
   const mockKvIncrby = vi.mocked(kv.incrby);
   const mockKvTtl = vi.mocked(kv.ttl);
   const mockKvExpire = vi.mocked(kv.expire);
+  const mockKvMget = vi.mocked(kv.mget);
+  const mockKvSmembers = vi.mocked(kv.smembers);
   const mockGetTodayDateString = vi.mocked(getTodayDateString);
   const mockNanoid = vi.mocked(nanoid);
   const mockAddPoints = vi.mocked(addPoints);
@@ -285,6 +289,59 @@ describe('raffle robustness', () => {
     expect(mockKvLpush).toHaveBeenCalledWith(
       'raffle:delivery:queue',
       expect.stringContaining('"raffleId":"raffle-4"')
+    );
+  });
+
+  it('draws due scheduled raffles from cron maintenance', async () => {
+    const dueRaffle = {
+      id: 'raffle-scheduled',
+      title: '到点开奖活动',
+      description: 'desc',
+      prizes: [
+        { id: 'prize-1', name: '一等奖', points: 1000, quantity: 1 },
+      ],
+      mode: 'draw' as const,
+      triggerType: 'scheduled' as const,
+      threshold: 1,
+      scheduledDrawAt: 1000,
+      status: 'active' as const,
+      participantsCount: 1,
+      winnersCount: 0,
+      createdBy: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+
+    mockKvSet.mockResolvedValue('OK');
+    mockKvSmembers.mockResolvedValue(['raffle-scheduled']);
+    mockKvMget.mockResolvedValue([dueRaffle]);
+    mockKvGet
+      .mockResolvedValueOnce(dueRaffle) // executeRaffleDraw: getRaffle
+      .mockResolvedValueOnce('mock-token'); // releaseDrawLock
+    mockKvLrange.mockResolvedValue([
+      {
+        id: 'entry-1',
+        raffleId: 'raffle-scheduled',
+        userId: 1001,
+        username: 'alice',
+        entryNumber: 1,
+        createdAt: 1,
+      },
+    ]);
+    mockKvSrem.mockResolvedValue(1);
+    mockKvLpush.mockResolvedValue(1);
+    mockKvDel.mockResolvedValue(1);
+
+    const result = await processDueScheduledRaffleDraws(2000);
+
+    expect(result).toMatchObject({ checked: 1, due: 1, drawn: 1, skipped: 0, failed: 0 });
+    expect(mockKvSet).toHaveBeenCalledWith('raffle:raffle-scheduled', expect.objectContaining({
+      status: 'ended',
+      winnersCount: 1,
+    }));
+    expect(mockKvLpush).toHaveBeenCalledWith(
+      'raffle:delivery:queue',
+      expect.stringContaining('"raffleId":"raffle-scheduled"')
     );
   });
 

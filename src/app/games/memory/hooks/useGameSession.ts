@@ -3,6 +3,7 @@
 'use client';
 
 import { useState, useCallback, useRef } from 'react';
+import { requestGameFallback } from '../../_lib/fallback';
 import type {
   MemoryDifficulty,
   MemoryDifficultyConfig,
@@ -93,9 +94,7 @@ export function useGameSession() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ difficulty }),
       });
-      
       const data = await res.json();
-      
       if (!data.success) {
         setError(data.message || '开始游戏失败');
         return false;
@@ -163,8 +162,22 @@ export function useGameSession() {
       });
       
       const data = await res.json();
-      
+
       if (!data.success) {
+        if (res.status >= 500) {
+          const fallback = await requestGameFallback<GameResult['record']>({
+            game: 'memory',
+            sessionId: session.sessionId,
+          });
+          if (fallback) {
+            setSession(null);
+            fetchStatus();
+            return {
+              record: fallback.record,
+              pointsEarned: fallback.pointsEarned,
+            };
+          }
+        }
         hasSubmittedRef.current = false;
         setError(data.message || '提交结果失败');
         return null;
@@ -175,9 +188,25 @@ export function useGameSession() {
       fetchStatus();
 
       return data.data;
-    } catch {
+    } catch (err) {
+      try {
+        const fallback = await requestGameFallback<GameResult['record']>({
+          game: 'memory',
+          sessionId: session.sessionId,
+        });
+        if (fallback) {
+          setSession(null);
+          fetchStatus();
+          return {
+            record: fallback.record,
+            pointsEarned: fallback.pointsEarned,
+          };
+        }
+      } catch (fallbackError) {
+        console.error('Memory fallback settlement error:', fallbackError);
+      }
       hasSubmittedRef.current = false;
-      setError('网络错误');
+      setError(err instanceof Error ? err.message : '网络错误');
       return null;
     } finally {
       setLoading(false);
@@ -242,10 +271,25 @@ export function useGameSession() {
 
       return flipResult;
     } catch {
-      setError('网络错误');
+      try {
+        const fallback = await requestGameFallback<GameResult['record']>({
+          game: 'memory',
+          sessionId,
+        });
+        if (fallback) {
+          setSession(null);
+          fetchStatus();
+          setError(`已启用兜底结算，本局获得 ${fallback.pointsEarned} 积分`);
+        } else {
+          setError('网络错误');
+        }
+      } catch (fallbackError) {
+        console.error('Memory fallback after flip error:', fallbackError);
+        setError('网络错误');
+      }
       return null;
     }
-  }, [setError]);
+  }, [fetchStatus, setError]);
 
   const syncSessionLayout = useCallback((sessionId: string, cardLayout: string[]) => {
     setSession((prev) => {

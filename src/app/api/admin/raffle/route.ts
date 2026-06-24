@@ -12,7 +12,16 @@ import {
   normalizeRaffleRewardPoints,
   normalizeRedPacketConfig,
 } from "@/lib/raffle";
+import { parseChinaDateTimeInput } from "@/lib/time";
 import type { CreateRaffleInput } from "@/lib/types/raffle";
+
+function normalizeChinaTimestamp(value: unknown): number | null | undefined {
+  if (value == null || value === "") return undefined;
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+  }
+  return parseChinaDateTimeInput(value);
+}
 
 export const GET = withAdmin(async (request: Request) => {
   try {
@@ -45,7 +54,12 @@ export const GET = withAdmin(async (request: Request) => {
 
 export const POST = withAdmin(async (request: Request, user) => {
   try {
-    const body = await request.json() as CreateRaffleInput;
+    const rawBody = await request.json() as CreateRaffleInput & { scheduledDrawAt?: unknown };
+    const scheduledDrawAt = normalizeChinaTimestamp(rawBody.scheduledDrawAt);
+    const body: CreateRaffleInput = {
+      ...rawBody,
+      scheduledDrawAt: scheduledDrawAt ?? undefined,
+    };
     const mode = body.mode === "red_packet" ? "red_packet" : "draw";
 
     // 验证必填字段
@@ -113,6 +127,21 @@ export const POST = withAdmin(async (request: Request, user) => {
         { success: false, message: "人数阈值必须为正整数" },
         { status: 400 }
       );
+    }
+
+    if (mode === "draw" && body.triggerType === "scheduled") {
+      if (scheduledDrawAt === null) {
+        return NextResponse.json(
+          { success: false, message: "开奖时间格式不正确，请按中国时间选择有效时间" },
+          { status: 400 }
+        );
+      }
+      if (scheduledDrawAt === undefined) {
+        return NextResponse.json(
+          { success: false, message: "请选择到点开奖时间" },
+          { status: 400 }
+        );
+      }
     }
 
     const raffle = await createRaffle(body, user.id);

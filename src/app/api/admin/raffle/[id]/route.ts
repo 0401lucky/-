@@ -17,7 +17,16 @@ import {
   getRaffleMode,
   normalizeRedPacketConfig,
 } from "@/lib/raffle";
+import { parseChinaDateTimeInput } from "@/lib/time";
 import type { UpdateRaffleInput } from "@/lib/types/raffle";
+
+function normalizeChinaTimestamp(value: unknown): number | null | undefined {
+  if (value == null || value === "") return undefined;
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+  }
+  return parseChinaDateTimeInput(value);
+}
 
 export const GET = withAdmin(async (
   _request: Request,
@@ -66,7 +75,15 @@ export const PUT = withAdmin(async (
 ) => {
   try {
     const { id } = await context.params;
-    const body = await request.json() as UpdateRaffleInput;
+    const rawBody = await request.json() as UpdateRaffleInput & { scheduledDrawAt?: unknown };
+    const hasScheduledDrawAtInput = Object.prototype.hasOwnProperty.call(rawBody, "scheduledDrawAt");
+    const scheduledDrawAt = hasScheduledDrawAtInput
+      ? normalizeChinaTimestamp(rawBody.scheduledDrawAt)
+      : undefined;
+    const body: UpdateRaffleInput = {
+      ...rawBody,
+      ...(hasScheduledDrawAtInput ? { scheduledDrawAt: scheduledDrawAt ?? undefined } : {}),
+    };
     const currentRaffle = await getRaffle(id);
     if (!currentRaffle) {
       return NextResponse.json(
@@ -128,6 +145,21 @@ export const PUT = withAdmin(async (
         { success: false, message: "人数阈值必须为正整数" },
         { status: 400 }
       );
+    }
+
+    if (nextMode === "draw" && body.triggerType === "scheduled") {
+      if (scheduledDrawAt === null) {
+        return NextResponse.json(
+          { success: false, message: "开奖时间格式不正确，请按中国时间选择有效时间" },
+          { status: 400 }
+        );
+      }
+      if (scheduledDrawAt === undefined && !currentRaffle.scheduledDrawAt) {
+        return NextResponse.json(
+          { success: false, message: "请选择到点开奖时间" },
+          { status: 400 }
+        );
+      }
     }
 
     const raffle = await updateRaffle(id, body);

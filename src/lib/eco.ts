@@ -31,6 +31,8 @@ import {
   ECO_PRIZE_TTL_MS,
   ECO_PRIZES,
   ECO_PRIZE_KEYS,
+  ECO_THEFT_CHECK_INTERVAL_MS,
+  ECO_THEFT_PROTECTION_MS,
   ECO_UPGRADES,
   ECO_UPGRADE_KEYS,
   LUCKY_FLASHLIGHT_GENERATIONS,
@@ -40,6 +42,7 @@ import {
   convertBuffer,
   createEmptyPrizeInventory,
   createInitialEcoState,
+  calculateEcoTheftCaughtProbability,
   getEcoPrizePrice,
   getEffectiveAutoPerMin,
   getEffectiveSpawnPerMin,
@@ -53,6 +56,7 @@ import {
   pruneExpiredVisiblePrizesDetailed,
   rollEcoGeneratedPrize,
   type EcoPrizeClaimStats,
+  type EcoPrizeSpawnRates,
   tickEco,
 } from '@/lib/eco-engine';
 import type {
@@ -77,6 +81,8 @@ const ECO_GLOBAL_PRIZE_STOCK_KEY = 'eco:global-prize-stock';
 const ECO_GLOBAL_PRIZE_LOCK_KEY = 'eco:global-prize-stock:lock';
 const ECO_PUBLIC_PRIZES_KEY = 'eco:public-prizes';
 const ECO_THEFTS_KEY = 'eco:thefts';
+const ECO_ADMIN_PRIZE_RATES_KEY = 'eco:admin:prize-rates';
+const ECO_MANUAL_TRASH_KEY = (dateKey: string) => `eco:manual-trash:${dateKey}`;
 const ECO_THEFT_INVESTIGATION_LOCK_KEY = 'eco:theft-investigation:lock';
 const LOCK_TTL_SECONDS = 6;
 const THEFT_INVESTIGATION_LOCK_TTL_SECONDS = 25;
@@ -84,9 +90,9 @@ const LOCK_RETRY_MS = 70;
 const LOCK_MAX_RETRIES = 20;
 const MAX_DRAGS_PER_REQUEST = 200;
 const ECO_PRIZE_CLAIMS_KEY = (dateKey: string) => `eco:prize-claims:${dateKey}`;
-const THEFT_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const THEFT_BLACK_MARKET_DELAY_MS = 24 * 60 * 60 * 1000;
 const THIEF_FORCED_ACHIEVEMENT_MS = 10 * 60 * 60 * 1000;
+const ECO_MANUAL_TRASH_TTL_SECONDS = 45 * 24 * 60 * 60;
 
 export type EcoTrashRankingPeriod = 'daily' | 'weekly' | 'monthly';
 
@@ -106,6 +112,87 @@ export interface EcoTrashLeaderboardResult {
   generatedAt: number;
   totalParticipants: number;
   leaderboard: EcoTrashLeaderboardEntry[];
+}
+
+export interface EcoAdminPrizeRateView {
+  key: EcoPrizeKey;
+  name: string;
+  emoji: string;
+  imageSrc: string;
+  defaultRate: number;
+  currentRate: number;
+  globalLimit: number;
+}
+
+export interface EcoAdminPrizeLotView {
+  id: string;
+  acquiredAt: number;
+  source: EcoPrizeLot['source'];
+  stolenFromUserId: number | null;
+  stolenAt: number | null;
+}
+
+export interface EcoAdminPrizeHolderView {
+  userId: number;
+  username: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  lifetimeCount: number;
+  currentCount: number;
+  stolenCount: number;
+  lots: EcoAdminPrizeLotView[];
+}
+
+export interface EcoAdminPrizeSummary extends EcoAdminPrizeRateView {
+  totalLifetimeClaims: number;
+  totalCurrentInventory: number;
+  holderCount: number;
+  holders: EcoAdminPrizeHolderView[];
+}
+
+export interface EcoAdminTheftView {
+  id: string;
+  key: EcoPrizeKey;
+  prizeName: string;
+  prizeEmoji: string;
+  originalUserId: number;
+  originalUsername: string;
+  originalDisplayName: string | null;
+  thiefUserId: number;
+  thiefUsername: string;
+  thiefDisplayName: string | null;
+  message: string;
+  stolenAt: number;
+  resolvedAt: number | null;
+  outcome: EcoTheftRecord['outcome'];
+}
+
+export interface EcoAdminManualTrashRow {
+  userId: number;
+  username: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  total: number;
+  days: Record<string, number>;
+}
+
+export interface EcoAdminManualTrashResult {
+  days: string[];
+  rows: EcoAdminManualTrashRow[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasMore: boolean;
+  };
+}
+
+export interface EcoAdminOverview {
+  generatedAt: number;
+  prizes: EcoAdminPrizeSummary[];
+  thefts: EcoAdminTheftView[];
+  manualTrash: EcoAdminManualTrashResult;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -147,6 +234,7 @@ interface EcoTheftRecord {
   stolenAt: number;
   nextCheckAt: number;
   blackMarketAvailableAt: number;
+  caughtCountBeforeTheft?: number;
   message: string;
   resolvedAt?: number | null;
   outcome?: 'caught' | 'escaped' | null;
@@ -388,6 +476,68 @@ function safeStatNumber(value: unknown): number {
   return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
 }
 
+function safeRateNumber(value: unknown, fallback: number): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(1, parsed));
+}
+
+async function loadEcoPrizeRatesConfig(): Promise<Record<EcoPrizeKey, number>> {
+  const raw = await kv.get<EcoPrizeSpawnRates>(ECO_ADMIN_PRIZE_RATES_KEY);
+  return ECO_PRIZE_KEYS.reduce((rates, key) => {
+    rates[key] = safeRateNumber(raw?.[key], ECO_PRIZES[key].spawnRate);
+    return rates;
+  }, {} as Record<EcoPrizeKey, number>);
+}
+
+function buildEcoPrizeRateViews(rates: Record<EcoPrizeKey, number>): EcoAdminPrizeRateView[] {
+  return ECO_PRIZE_KEYS.map((key) => {
+    const def = ECO_PRIZES[key];
+    return {
+      key,
+      name: def.name,
+      emoji: def.emoji,
+      imageSrc: def.imageSrc,
+      defaultRate: def.spawnRate,
+      currentRate: rates[key],
+      globalLimit: ECO_GLOBAL_PRIZE_LIMITS[key],
+    };
+  });
+}
+
+export async function getEcoPrizeRateSettings(): Promise<EcoAdminPrizeRateView[]> {
+  const rates = await loadEcoPrizeRatesConfig();
+  return buildEcoPrizeRateViews(rates);
+}
+
+export async function updateEcoPrizeRateSettings(input: unknown): Promise<EcoAdminPrizeRateView[]> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('请提交奖品概率配置');
+  }
+
+  const current = await loadEcoPrizeRatesConfig();
+  const next = { ...current };
+  const patch = input as Record<string, unknown>;
+
+  for (const key of ECO_PRIZE_KEYS) {
+    if (!(key in patch)) continue;
+    const value = patch[key];
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+      throw new Error(`${ECO_PRIZES[key].name}概率必须在 0% 到 100% 之间`);
+    }
+    next[key] = parsed;
+  }
+
+  const totalRate = ECO_PRIZE_KEYS.reduce((sum, key) => sum + next[key], 0);
+  if (totalRate > 1) {
+    throw new Error('5 个奖品概率合计不能超过 100%');
+  }
+
+  await kv.set(ECO_ADMIN_PRIZE_RATES_KEY, next);
+  return buildEcoPrizeRateViews(next);
+}
+
 function getNextChinaSixAt(timestamp: number): number {
   const china = new Date(timestamp + CHINA_TZ_OFFSET_MS);
   const target = new Date(china);
@@ -493,6 +643,31 @@ function hasActiveEcoTheft(records: EcoTheftRecord[], thiefUserId: number): bool
     record.thiefUserId === thiefUserId
     && !record.resolvedAt
   ));
+}
+
+function getPublicEntryTheftCaughtCount(entry: Pick<EcoPublicPrizeEntry, 'theftCaughtCount'>): number {
+  const count = entry.theftCaughtCount;
+  return Number.isFinite(count) ? Math.max(0, Math.floor(count as number)) : 0;
+}
+
+function getPublicEntryStealProtectedUntil(
+  entry: Pick<EcoPublicPrizeEntry, 'stealProtectedUntil'>,
+): number | null {
+  const protectedUntil = entry.stealProtectedUntil;
+  return Number.isFinite(protectedUntil) ? Math.max(0, Math.floor(protectedUntil as number)) : null;
+}
+
+function isPublicEntryStealProtected(entry: EcoPublicPrizeEntry, now: number): boolean {
+  const protectedUntil = getPublicEntryStealProtectedUntil(entry);
+  return protectedUntil !== null && protectedUntil > now;
+}
+
+function formatStealProtectionReason(protectedUntil: number, now: number): string {
+  const remainingMinutes = Math.max(1, Math.ceil((protectedUntil - now) / (60 * 1000)));
+  if (remainingMinutes >= 60) {
+    return `保护中 ${Math.ceil(remainingMinutes / 60)}小时`;
+  }
+  return `保护中 ${remainingMinutes}分钟`;
 }
 
 async function getEcoUsernames(userIds: number[]): Promise<Map<number, string>> {
@@ -622,6 +797,19 @@ async function recordEcoTrashRanking(userId: number, trash: number): Promise<voi
   }));
 }
 
+async function recordEcoManualTrash(userId: number, trash: number): Promise<void> {
+  const count = Math.max(0, Math.floor(trash));
+  if (count <= 0) return;
+  const dateKey = getTodayDateString();
+  const key = ECO_MANUAL_TRASH_KEY(dateKey);
+  try {
+    await kv.hincrby(key, String(userId), count);
+    await kv.expire(key, ECO_MANUAL_TRASH_TTL_SECONDS);
+  } catch (error) {
+    console.error('记录环保行动手捡垃圾统计失败:', error);
+  }
+}
+
 /** 把回收掉的垃圾转换为积分，同时累计经验与生涯统计。 */
 async function creditTrash(
   state: EcoState,
@@ -685,6 +873,7 @@ async function advanceEco(
     }
   }
   const hasExpiredLimitedPrizes = ECO_PRIZE_KEYS.some((key) => expiredLimitedCounts[key] > 0);
+  const prizeRates = options.allowOnlinePrizes ? await loadEcoPrizeRatesConfig() : null;
 
   let tick: ReturnType<typeof tickEco> | null = null;
   if (options.allowOnlinePrizes || hasExpiredLimitedPrizes) {
@@ -708,7 +897,7 @@ async function advanceEco(
                 state.luckyGenerationsRemaining = Math.max(0, state.luckyGenerationsRemaining - 1);
               }
               const multiplier = boosted ? ECO_LUCKY_PRIZE_RATE / ECO_NORMAL_SINGLE_PRIZE_RATE : 1;
-              const prizeKey = rollEcoGeneratedPrize(Math.random, multiplier);
+              const prizeKey = rollEcoGeneratedPrize(Math.random, multiplier, prizeRates ?? undefined);
               if (!prizeKey) return null;
               if ((stock[prizeKey] ?? 0) >= ECO_GLOBAL_PRIZE_LIMITS[prizeKey]) {
                 return null;
@@ -803,6 +992,7 @@ async function summarizePrizes(state: EcoState): Promise<EcoPrizeView[]> {
       await loadPrizeClaimStats(getPreviousDateString(date)),
     ] as const)),
   );
+  const prizeRates = await loadEcoPrizeRatesConfig();
   return ECO_PRIZE_KEYS.map((key) => {
     const def = ECO_PRIZES[key];
     const todayPrice = getEcoPrizePrice(key, today, priceStats.get(today));
@@ -842,12 +1032,13 @@ async function summarizePrizes(state: EcoState): Promise<EcoPrizeView[]> {
       priceHistory,
       minPrice: def.minPrice,
       maxPrice: def.maxPrice,
-      spawnRate: def.spawnRate,
+      spawnRate: prizeRates[key],
     };
   });
 }
 
 async function summarizePublicBoard(viewerUserId: number): Promise<EcoStatusResponse['publicBoard']> {
+  const now = Date.now();
   const [entries, stock, thefts] = await Promise.all([
     loadPublicPrizeEntries(),
     loadGlobalPrizeStock(),
@@ -901,14 +1092,19 @@ async function summarizePublicBoard(viewerUserId: number): Promise<EcoStatusResp
           || entry.ownerName;
         const isOwnPrize = entry.ownerUserId === viewerUserId;
         const viewerHasActiveTheft = hasActiveEcoTheft(thefts, viewerUserId);
-        const canSteal = entry.status === 'listed' && !isOwnPrize && !viewerHasActiveTheft;
+        const protectedUntil = getPublicEntryStealProtectedUntil(entry);
+        const stealProtected = protectedUntil !== null && protectedUntil > now;
+        const theftCaughtCount = getPublicEntryTheftCaughtCount(entry);
+        const canSteal = entry.status === 'listed' && !isOwnPrize && !viewerHasActiveTheft && !stealProtected;
         const stealDisabledReason = entry.status !== 'listed'
           ? '追查中'
           : isOwnPrize
             ? '自己的奖品'
             : viewerHasActiveTheft
               ? '已有偷盗'
-              : null;
+              : stealProtected
+                ? formatStealProtectionReason(protectedUntil, now)
+                : null;
         return {
           id: entry.id,
           key: entry.key,
@@ -924,6 +1120,8 @@ async function summarizePublicBoard(viewerUserId: number): Promise<EcoStatusResp
           status: entry.status,
           canSteal,
           stealDisabledReason,
+          stealProtectedUntil: protectedUntil,
+          theftCaughtCount,
           thiefUserId: null,
           thiefName: null,
           thiefAvatarUrl: null,
@@ -979,6 +1177,245 @@ async function buildEcoStatus(
   };
 }
 
+type EcoAdminUserRecord = Awaited<ReturnType<typeof getAllUsers>>[number];
+
+function getRecentChinaDateKeys(days = 7): string[] {
+  const now = Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+  return Array.from({ length: days }, (_, index) => (
+    formatChinaDateKey(new Date(now - (days - 1 - index) * dayMs))
+  ));
+}
+
+function getAdminUsername(usernames: Map<number, string>, userId: number): string {
+  return usernames.get(userId) ?? `#${userId}`;
+}
+
+async function loadAdminProfiles(
+  userIds: number[],
+): Promise<Map<number, Awaited<ReturnType<typeof getCustomUserProfile>>>> {
+  const uniqueIds = Array.from(new Set(
+    userIds.filter((userId) => Number.isSafeInteger(userId) && userId > 0),
+  ));
+  const profiles = new Map<number, Awaited<ReturnType<typeof getCustomUserProfile>>>();
+  await Promise.all(uniqueIds.map(async (userId) => {
+    try {
+      profiles.set(userId, await getCustomUserProfile(userId));
+    } catch {
+      profiles.set(userId, {});
+    }
+  }));
+  return profiles;
+}
+
+function buildAllUsernames(users: EcoAdminUserRecord[]): Map<number, string> {
+  return new Map(
+    users
+      .map((user) => ({ id: Number(user.id), username: user.username }))
+      .filter((user) => Number.isSafeInteger(user.id) && user.id > 0)
+      .map((user) => [user.id, user.username || `#${user.id}`] as const),
+  );
+}
+
+async function buildEcoAdminPrizeSummaries(users: EcoAdminUserRecord[]): Promise<EcoAdminPrizeSummary[]> {
+  const rates = await loadEcoPrizeRatesConfig();
+  const rateViews = buildEcoPrizeRateViews(rates);
+  const usernameById = buildAllUsernames(users);
+  const validUsers = users.filter((user) => Number.isSafeInteger(Number(user.id)) && Number(user.id) > 0);
+  const stateKeys = validUsers.map((user) => ECO_STATE_KEY(Number(user.id)));
+  const rawStates = stateKeys.length > 0 ? await kv.mget<EcoState>(...stateKeys) : [];
+  const now = Date.now();
+
+  type HolderDraft = Omit<EcoAdminPrizeHolderView, 'username' | 'displayName' | 'avatarUrl'>;
+  const holderDrafts = ECO_PRIZE_KEYS.reduce((acc, key) => {
+    acc[key] = [];
+    return acc;
+  }, {} as Record<EcoPrizeKey, HolderDraft[]>);
+
+  rawStates.forEach((raw, index) => {
+    if (!raw) return;
+    const userId = Number(validUsers[index]?.id);
+    if (!Number.isSafeInteger(userId) || userId <= 0) return;
+    const state = normalizeEcoState(raw, now);
+
+    for (const key of ECO_PRIZE_KEYS) {
+      const currentCount = safeStatNumber(state.inventory[key]);
+      const lifetimeCount = Math.max(
+        safeStatNumber(state.lifetimePrizeClaimCounts[key]),
+        currentCount,
+      );
+      const lots = state.prizeLots
+        .filter((lot) => lot.key === key)
+        .sort((a, b) => b.acquiredAt - a.acquiredAt)
+        .map((lot) => ({
+          id: lot.id,
+          acquiredAt: lot.acquiredAt,
+          source: lot.source,
+          stolenFromUserId: lot.stolenFromUserId ?? null,
+          stolenAt: lot.stolenAt ?? null,
+        }));
+      if (lifetimeCount <= 0 && currentCount <= 0 && lots.length === 0) continue;
+
+      holderDrafts[key].push({
+        userId,
+        lifetimeCount,
+        currentCount,
+        stolenCount: lots.filter((lot) => lot.source === 'stolen').length,
+        lots,
+      });
+    }
+  });
+
+  const holderUserIds = ECO_PRIZE_KEYS.flatMap((key) => holderDrafts[key].map((holder) => holder.userId));
+  const profiles = await loadAdminProfiles(holderUserIds);
+
+  return rateViews.map((rateView) => {
+    const holders = holderDrafts[rateView.key]
+      .sort((a, b) => {
+        if (b.lifetimeCount !== a.lifetimeCount) return b.lifetimeCount - a.lifetimeCount;
+        if (b.currentCount !== a.currentCount) return b.currentCount - a.currentCount;
+        return a.userId - b.userId;
+      })
+      .map((holder) => {
+        const profile = profiles.get(holder.userId);
+        return {
+          ...holder,
+          username: getAdminUsername(usernameById, holder.userId),
+          displayName: profile?.displayName ?? null,
+          avatarUrl: profile?.avatarUrl ?? null,
+        };
+      });
+
+    return {
+      ...rateView,
+      totalLifetimeClaims: holders.reduce((sum, holder) => sum + holder.lifetimeCount, 0),
+      totalCurrentInventory: holders.reduce((sum, holder) => sum + holder.currentCount, 0),
+      holderCount: holders.length,
+      holders,
+    };
+  });
+}
+
+async function buildEcoAdminTheftViews(): Promise<EcoAdminTheftView[]> {
+  const records = (await loadTheftRecords()).sort((a, b) => b.stolenAt - a.stolenAt);
+  const userIds = records.flatMap((record) => [record.originalUserId, record.thiefUserId]);
+  const [usernames, profiles] = await Promise.all([
+    getEcoUsernames(userIds),
+    loadAdminProfiles(userIds),
+  ]);
+
+  return records.map((record) => ({
+    id: record.id,
+    key: record.key,
+    prizeName: ECO_PRIZES[record.key].name,
+    prizeEmoji: ECO_PRIZES[record.key].emoji,
+    originalUserId: record.originalUserId,
+    originalUsername: getAdminUsername(usernames, record.originalUserId),
+    originalDisplayName: profiles.get(record.originalUserId)?.displayName ?? null,
+    thiefUserId: record.thiefUserId,
+    thiefUsername: getAdminUsername(usernames, record.thiefUserId),
+    thiefDisplayName: profiles.get(record.thiefUserId)?.displayName ?? null,
+    message: record.message,
+    stolenAt: record.stolenAt,
+    resolvedAt: record.resolvedAt ?? null,
+    outcome: record.outcome ?? null,
+  }));
+}
+
+async function buildEcoAdminManualTrash(
+  users: EcoAdminUserRecord[],
+  options: { page?: number; limit?: number } = {},
+): Promise<EcoAdminManualTrashResult> {
+  const days = getRecentChinaDateKeys(7);
+  const hashes = await Promise.all(
+    days.map((dateKey) => kv.hgetall<Record<string, unknown>>(ECO_MANUAL_TRASH_KEY(dateKey))),
+  );
+  const usernameById = buildAllUsernames(users);
+  const userIds = new Set<number>(
+    users
+      .map((user) => Number(user.id))
+      .filter((userId) => Number.isSafeInteger(userId) && userId > 0),
+  );
+
+  for (const hash of hashes) {
+    for (const field of Object.keys(hash ?? {})) {
+      const userId = Number(field);
+      if (Number.isSafeInteger(userId) && userId > 0) {
+        userIds.add(userId);
+      }
+    }
+  }
+
+  const allRows = Array.from(userIds).map((userId) => {
+    const dayCounts = days.reduce((acc, dateKey, index) => {
+      acc[dateKey] = safeStatNumber(hashes[index]?.[String(userId)]);
+      return acc;
+    }, {} as Record<string, number>);
+    return {
+      userId,
+      total: days.reduce((sum, dateKey) => sum + dayCounts[dateKey], 0),
+      days: dayCounts,
+    };
+  }).sort((a, b) => {
+    if (b.total !== a.total) return b.total - a.total;
+    const nameCompare = getAdminUsername(usernameById, a.userId).localeCompare(
+      getAdminUsername(usernameById, b.userId),
+      'zh-CN',
+    );
+    if (nameCompare !== 0) return nameCompare;
+    return a.userId - b.userId;
+  });
+
+  const limit = 10;
+  const total = allRows.length;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const requestedPage = Math.floor(options.page ?? 1);
+  const page = Math.min(totalPages, Math.max(1, Number.isFinite(requestedPage) ? requestedPage : 1));
+  const start = (page - 1) * limit;
+  const pageRows = allRows.slice(start, start + limit);
+  const profiles = await loadAdminProfiles(pageRows.map((row) => row.userId));
+
+  return {
+    days,
+    rows: pageRows.map((row) => {
+      const profile = profiles.get(row.userId);
+      return {
+        userId: row.userId,
+        username: getAdminUsername(usernameById, row.userId),
+        displayName: profile?.displayName ?? null,
+        avatarUrl: profile?.avatarUrl ?? null,
+        total: row.total,
+        days: row.days,
+      };
+    }),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasMore: page < totalPages,
+    },
+  };
+}
+
+export async function getEcoAdminOverview(
+  options: { trashPage?: number; trashLimit?: number } = {},
+): Promise<EcoAdminOverview> {
+  const users = await getAllUsers();
+  const [prizes, thefts, manualTrash] = await Promise.all([
+    buildEcoAdminPrizeSummaries(users),
+    buildEcoAdminTheftViews(),
+    buildEcoAdminManualTrash(users, { page: options.trashPage, limit: options.trashLimit }),
+  ]);
+
+  return {
+    generatedAt: Date.now(),
+    prizes,
+    thefts,
+    manualTrash,
+  };
+}
+
 // ───────────────────────── 对外接口 ─────────────────────────
 
 interface EcoStatusOptions {
@@ -1025,16 +1462,18 @@ export async function collectEcoTrash(userId: number, drags: number): Promise<Ec
     const boostedDrags = Math.min(boundedDrags, Math.max(0, Math.floor(state.gloveUsesRemaining)));
     const want = boundedDrags * BASE_GRAB_SIZE + boostedDrags;
     const collectable = Math.min(state.pending, want);
+    const manualTrash = Math.min(collectable, boundedDrags * BASE_GRAB_SIZE);
     state.pending = Math.max(0, state.pending - collectable);
     if (boostedDrags > 0) {
       state.gloveUsesRemaining = Math.max(0, state.gloveUsesRemaining - boostedDrags);
     }
     const credited = await creditTrash(state, collectable, '手动回收');
     const status = await buildEcoStatus(state, offline);
-    return { cleared: credited.cleared, points: credited.points, status };
+    return { cleared: credited.cleared, points: credited.points, status, manualTrash };
   });
 
   if (!result.ok) return { ok: false, message: result.message };
+  await recordEcoManualTrash(userId, result.value.manualTrash);
   return {
     ok: true,
     cleared: result.value.cleared,
@@ -1493,6 +1932,7 @@ export async function stealEcoPublicPrize(
   if (!publicEntryId || !cleanMessage) {
     return { ok: false, message: '请输入偷盗留言' };
   }
+  const now = Date.now();
 
   const targetEntry = await withEcoGlobalPrizeLock(async () => {
     const entries = await loadPublicPrizeEntries();
@@ -1500,6 +1940,7 @@ export async function stealEcoPublicPrize(
   });
   if (!targetEntry) return { ok: false, message: '这个奖品已经不能偷了' };
   if (targetEntry.ownerUserId === thiefUserId) return { ok: false, message: '不能偷自己的奖品' };
+  if (isPublicEntryStealProtected(targetEntry, now)) return { ok: false, message: '这个奖品还在保护期内' };
 
   const hasActiveTheft = await withEcoGlobalPrizeLock(async () => {
     const thefts = await loadTheftRecords();
@@ -1520,7 +1961,6 @@ export async function stealEcoPublicPrize(
       return { ok: false as const, message: '这个奖品已经不存在了' };
     }
 
-    const now = Date.now();
     const thiefLotId = nanoid();
     const theftId = nanoid();
     const thiefName = await getEcoUserName(thiefUserId);
@@ -1536,6 +1976,9 @@ export async function stealEcoPublicPrize(
         || currentEntry.ownerLotId !== lot.id
       ) {
         return { ok: false as const, message: '这个奖品已经不能偷了' };
+      }
+      if (isPublicEntryStealProtected(currentEntry, now)) {
+        return { ok: false as const, message: '这个奖品还在保护期内' };
       }
 
       const thefts = await loadTheftRecords();
@@ -1553,9 +1996,11 @@ export async function stealEcoPublicPrize(
               thiefName,
               theftMessage: cleanMessage,
               stolenAt: now,
+              stealProtectedUntil: null,
             }
           : entry
       ));
+      const caughtCountBeforeTheft = getPublicEntryTheftCaughtCount(currentEntry);
       thefts.push({
         id: theftId,
         key: lot.key,
@@ -1565,8 +2010,9 @@ export async function stealEcoPublicPrize(
         originalLotId: lot.id,
         thiefLotId,
         stolenAt: now,
-        nextCheckAt: now + THEFT_CHECK_INTERVAL_MS,
+        nextCheckAt: now + ECO_THEFT_CHECK_INTERVAL_MS,
         blackMarketAvailableAt: now + THEFT_BLACK_MARKET_DELAY_MS,
+        caughtCountBeforeTheft,
         message: cleanMessage,
       });
       await Promise.all([
@@ -1677,14 +2123,17 @@ async function processEcoTheftInvestigations(
       continue;
     }
 
-    const hours = Math.floor((now - record.stolenAt) / (60 * 60 * 1000));
-    const caughtProbability = Math.min(1, 0.1 + hours * 0.03);
+    const caughtProbability = calculateEcoTheftCaughtProbability(
+      record.stolenAt,
+      now,
+      record.caughtCountBeforeTheft ?? 0,
+    );
     if (Math.random() >= caughtProbability) {
       const rescheduled = await updateActiveTheftRecord(record.id, (current) => ({
         ...current,
         nextCheckAt: Math.min(
           current.blackMarketAvailableAt,
-          current.nextCheckAt + THEFT_CHECK_INTERVAL_MS,
+          current.nextCheckAt + ECO_THEFT_CHECK_INTERVAL_MS,
         ),
       }));
       if (rescheduled) stats.rescheduled += 1;
@@ -1757,20 +2206,25 @@ async function processEcoTheftInvestigations(
           resolvedAt: now,
           outcome: 'caught',
         };
-        const nextEntries = entries.map((entry) => (
-          entry.id === record.publicEntryId
-            ? {
-                ...entry,
-                ownerLotId: restoredLotId,
-                status: 'listed' as const,
-                merchantAvailableAt,
-                thiefUserId: null,
-                thiefName: null,
-                theftMessage: null,
-                stolenAt: null,
-              }
-            : entry
-        ));
+        const nextEntries = entries.map((entry) => {
+          if (entry.id !== record.publicEntryId) return entry;
+          const nextCaughtCount = Math.max(
+            getPublicEntryTheftCaughtCount(entry),
+            Math.max(0, Math.floor(record.caughtCountBeforeTheft ?? 0)),
+          ) + 1;
+          return {
+            ...entry,
+            ownerLotId: restoredLotId,
+            status: 'listed' as const,
+            merchantAvailableAt,
+            stealProtectedUntil: now + ECO_THEFT_PROTECTION_MS,
+            theftCaughtCount: nextCaughtCount,
+            thiefUserId: null,
+            thiefName: null,
+            theftMessage: null,
+            stolenAt: null,
+          };
+        });
         await Promise.all([
           savePublicPrizeEntries(nextEntries),
           saveTheftRecords(thefts),
@@ -1789,7 +2243,7 @@ async function processEcoTheftInvestigations(
         ...current,
         nextCheckAt: Math.min(
           current.blackMarketAvailableAt,
-          current.nextCheckAt + THEFT_CHECK_INTERVAL_MS,
+          current.nextCheckAt + ECO_THEFT_CHECK_INTERVAL_MS,
         ),
       }));
       if (rescheduled) stats.rescheduled += 1;

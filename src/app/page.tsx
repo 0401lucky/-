@@ -21,7 +21,9 @@ import {
   X,
 } from 'lucide-react';
 import SiteSidebar from '@/components/SiteSidebar';
+import MarkdownPreview from '@/components/MarkdownPreview';
 import TypewriterTitle from '@/components/TypewriterTitle';
+import { formatChinaDateTime } from '@/lib/time';
 
 interface Project {
   id: string;
@@ -78,8 +80,9 @@ interface RaffleItem {
   description: string;
   coverImage?: string;
   prizes: RafflePrize[];
-  triggerType: 'threshold' | 'manual';
+  triggerType: 'threshold' | 'manual' | 'scheduled';
   threshold: number;
+  scheduledDrawAt?: number;
   status: 'draft' | 'active' | 'ended' | 'cancelled';
   participantsCount: number;
   winnersCount: number;
@@ -296,6 +299,7 @@ function RaffleCard({
       : raffle.triggerType === 'threshold' && raffle.threshold > 0
       ? Math.min(100, Math.max(0, (raffle.participantsCount / raffle.threshold) * 100))
       : Math.min(100, raffle.participantsCount > 0 ? 60 : 8);
+  const isScheduled = raffle.triggerType === 'scheduled' && !!raffle.scheduledDrawAt;
 
   return (
     <button
@@ -314,6 +318,8 @@ function RaffleCard({
             ? `${remainingSlots} 个剩余`
             : raffle.triggerType === 'threshold'
             ? `${raffle.participantsCount}/${raffle.threshold}`
+            : isScheduled
+            ? '到点开奖'
             : `${raffle.participantsCount} 人`}
         </span>
       </div>
@@ -327,7 +333,7 @@ function RaffleCard({
             ? `总额 ${formatRafflePoints(totalPool)}`
             : topPrize ? `最高 ${formatRafflePoints(getRafflePrizePoints(topPrize))}` : '丰厚奖品'}
         </span>
-        <span>{isRedPacket ? `已抢 ${raffle.participantsCount}` : totalQuantity > 0 ? `${totalQuantity} 个名额` : '即将开奖'}</span>
+        <span>{isRedPacket ? `已抢 ${raffle.participantsCount}` : isScheduled ? formatChinaDateTime(raffle.scheduledDrawAt) : totalQuantity > 0 ? `${totalQuantity} 个名额` : '即将开奖'}</span>
       </div>
     </button>
   );
@@ -800,6 +806,8 @@ export default function HomePage() {
                           ? `${activeModal.data.participantsCount}/${activeModal.data.redPacketTotalSlots ?? 0} 人已抢`
                           : activeModal.data.triggerType === 'threshold'
                           ? `${activeModal.data.participantsCount}/${activeModal.data.threshold} 人`
+                          : activeModal.data.triggerType === 'scheduled' && activeModal.data.scheduledDrawAt
+                          ? `${formatChinaDateTime(activeModal.data.scheduledDrawAt)} 开奖`
                           : `${activeModal.data.participantsCount} 人参与`}
                         <span className="board-modal-divider">·</span>
                         <Calendar size={11} strokeWidth={2.4} />
@@ -820,7 +828,10 @@ export default function HomePage() {
             </div>
             <div className="board-modal-body">
               {activeModal.type === 'announcement' && (
-                <div className="board-modal-content">{activeModal.data.content}</div>
+                <MarkdownPreview
+                  content={activeModal.data.content}
+                  className="board-modal-content board-modal-markdown"
+                />
               )}
               {activeModal.type === 'reward' && (
                 <div className="board-modal-content">
@@ -848,6 +859,8 @@ export default function HomePage() {
                     {activeModal.data.description || (
                       activeModal.data.mode === 'red_packet'
                         ? '点击即可随机抢到整数积分，红包数量有限。'
+                        : activeModal.data.triggerType === 'scheduled' && activeModal.data.scheduledDrawAt
+                        ? `将于 ${formatChinaDateTime(activeModal.data.scheduledDrawAt)} 自动开奖。`
                         : '邀请好友免费参与，奖池满额即刻开奖。'
                     )}
                   </p>
@@ -1805,6 +1818,7 @@ export default function HomePage() {
           display: flex;
           flex-direction: column;
           position: relative;
+          min-height: 0;
           animation: board-pop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
         .board-modal.is-announcement {
@@ -1952,6 +1966,7 @@ export default function HomePage() {
           padding: 22px 26px 18px;
           overflow-y: auto;
           flex: 1;
+          min-height: 0;
           position: relative;
           z-index: 1;
         }
@@ -1974,6 +1989,9 @@ export default function HomePage() {
           color: #334155;
           white-space: pre-wrap;
           word-break: break-word;
+        }
+        .board-modal-content.board-modal-markdown {
+          white-space: normal;
         }
         .board-modal-desc {
           font-size: 14px;

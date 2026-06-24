@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
+import { requestGameFallback } from '../../_lib/fallback';
 import type { Match3Config, Match3Move } from '@/lib/match3-engine';
 
 interface Match3Session {
@@ -136,6 +137,21 @@ export function useGameSession() {
         });
         const data = await res.json();
         if (!data.success) {
+          if (res.status >= 500) {
+            const fallback = await requestGameFallback<Match3Record>({
+              game: 'match3',
+              sessionId: session.sessionId,
+              moves,
+            });
+            if (fallback) {
+              setSession(null);
+              fetchStatus();
+              return {
+                record: fallback.record,
+                pointsEarned: fallback.pointsEarned,
+              };
+            }
+          }
           hasSubmittedRef.current = false;
           setError(data.message || '提交结果失败');
           return null;
@@ -145,9 +161,26 @@ export function useGameSession() {
         // [Perf] 后台非阻塞刷新
         fetchStatus();
         return data.data;
-      } catch {
+      } catch (err) {
+        try {
+          const fallback = await requestGameFallback<Match3Record>({
+            game: 'match3',
+            sessionId: session.sessionId,
+            moves,
+          });
+          if (fallback) {
+            setSession(null);
+            fetchStatus();
+            return {
+              record: fallback.record,
+              pointsEarned: fallback.pointsEarned,
+            };
+          }
+        } catch (fallbackError) {
+          console.error('Match3 fallback settlement error:', fallbackError);
+        }
         hasSubmittedRef.current = false;
-        setError('网络错误');
+        setError(err instanceof Error ? err.message : '网络错误');
         return null;
       } finally {
         setLoading(false);

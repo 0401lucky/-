@@ -7,6 +7,7 @@ import {
   Loader2, AlertCircle, Package,
   X, Check, Gift, Pin,
 } from 'lucide-react';
+import { formatChinaDateTime } from '@/lib/time';
 
 interface Project {
   id: string;
@@ -24,6 +25,8 @@ interface Project {
   newUserOnly?: boolean;
   pinned?: boolean;
   pinnedAt?: number;
+  autoPauseAt?: number;
+  autoPausedAt?: number;
 }
 
 export default function AdminPage() {
@@ -39,6 +42,7 @@ export default function AdminPage() {
   const [description, setDescription] = useState('');
   const [maxClaims, setMaxClaims] = useState('100');
   const [directPoints, setDirectPoints] = useState('500');
+  const [autoPauseAt, setAutoPauseAt] = useState('');
   const [newUserOnly, setNewUserOnly] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -102,6 +106,9 @@ export default function AdminPage() {
       formData.append('newUserOnly', newUserOnly.toString());
       formData.append('rewardType', 'direct');
       formData.append('directPoints', directPoints);
+      if (autoPauseAt.trim()) {
+        formData.append('autoPauseAt', autoPauseAt.trim());
+      }
 
       const res = await fetch('/api/admin/projects', {
         method: 'POST',
@@ -118,6 +125,7 @@ export default function AdminPage() {
         setDescription('');
         setMaxClaims('100');
         setDirectPoints('500');
+        setAutoPauseAt('');
         setNewUserOnly(false);
         fetchData();
         scheduleSuccessClear();
@@ -320,6 +328,11 @@ export default function AdminPage() {
                       {/* Date */}
                       <div className="flex flex-col">
                         <span className="text-sm font-bold text-stone-600">{new Date(project.createdAt).toLocaleDateString()}</span>
+                        {project.autoPauseAt && (
+                          <span className="text-[10px] text-amber-500 font-bold mt-0.5">
+                            暂停 {formatChinaDateTime(project.autoPauseAt)}
+                          </span>
+                        )}
                       </div>
 
                       {/* Actions */}
@@ -361,6 +374,7 @@ export default function AdminPage() {
                             </div>
                             <div className="flex items-center gap-2 text-xs font-bold text-stone-400 mt-0.5">
                               <span>{new Date(project.createdAt).toLocaleDateString()}</span>
+                              {project.autoPauseAt && <span>暂停 {formatChinaDateTime(project.autoPauseAt)}</span>}
                               {project.newUserOnly && <span className="bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded text-[10px] border border-emerald-200">NEW USER</span>}
                             </div>
                           </div>
@@ -527,6 +541,21 @@ export default function AdminPage() {
                   />
                   <p className="mt-2 text-xs text-stone-400 font-bold pl-1">
                     用户领取后会直接增加站内积分余额，库存与限领人数一致。
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-stone-400 uppercase tracking-widest mb-2 pl-1">
+                    暂停时间（中国时间，可选）
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={autoPauseAt}
+                    onChange={(e) => setAutoPauseAt(e.target.value)}
+                    className="w-full px-5 py-3.5 bg-stone-50 border-2 border-stone-100 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 transition-all outline-none text-stone-800 placeholder-stone-400 font-bold"
+                  />
+                  <p className="mt-2 text-xs text-stone-400 font-bold pl-1">
+                    到点后服务器会自动暂停项目，无需保持后台页面打开。
                   </p>
                 </div>
 

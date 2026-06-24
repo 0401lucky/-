@@ -40,7 +40,7 @@ interface GamePageShellProps {
 }
 
 /**
- * 6 个游戏页公共外壳
+ * 游戏页公共外壳
  * - 浅色 mesh 背景 + sticky 玻璃 topbar + 居中 main
  * - 提供深绿 Hero 基础容器（内部 JSX 由各游戏自管）
  * - 各游戏可在 children 内追加自己的 <style jsx> 处理游戏专属 UI

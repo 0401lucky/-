@@ -4,12 +4,16 @@ import { GET as userListGET, POST as userCreatePOST } from '@/app/api/feedback/r
 import { GET as userDetailGET } from '@/app/api/feedback/[id]/route';
 import { POST as userMessagePOST } from '@/app/api/feedback/[id]/messages/route';
 import { GET as adminListGET } from '@/app/api/admin/feedback/route';
-import { PATCH as adminDetailPATCH } from '@/app/api/admin/feedback/[id]/route';
+import {
+  DELETE as adminDetailDELETE,
+  PATCH as adminDetailPATCH,
+} from '@/app/api/admin/feedback/[id]/route';
 import { POST as adminReplyPOST } from '@/app/api/admin/feedback/[id]/messages/route';
 import { getAuthUser, isAdmin } from '@/lib/auth';
 import {
   addFeedbackMessage,
   createFeedback,
+  deleteFeedback,
   getAllFeedbackMessages,
   getFeedbackById,
   getFeedbackFirstMessage,
@@ -38,6 +42,7 @@ vi.mock('@/lib/feedback', () => ({
   toggleFeedbackLike: vi.fn(),
   addFeedbackMessage: vi.fn(),
   updateFeedbackStatus: vi.fn(),
+  deleteFeedback: vi.fn(),
   listUserFeedback: vi.fn(),
   listAllFeedback: vi.fn(),
 }));
@@ -78,6 +83,7 @@ describe('Feedback API Permission & Flow', () => {
   const mockGetFeedbackLatestAdminReply = vi.mocked(getFeedbackLatestAdminReply);
   const mockGetFeedbackMessageCount = vi.mocked(getFeedbackMessageCount);
   const mockUpdateFeedbackStatus = vi.mocked(updateFeedbackStatus);
+  const mockDeleteFeedback = vi.mocked(deleteFeedback);
   const mockAddFeedbackMessage = vi.mocked(addFeedbackMessage);
   const mockCreateFeedback = vi.mocked(createFeedback);
   const mockCheckRateLimit = vi.mocked(checkRateLimit);
@@ -275,6 +281,69 @@ describe('Feedback API Permission & Flow', () => {
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.feedback.status).toBe('resolved');
+  });
+
+  it('管理员可以把已关闭反馈重新改为待处理', async () => {
+    mockGetAuthUser.mockResolvedValue({
+      id: 99,
+      username: 'admin',
+      displayName: 'Admin',
+      isAdmin: true,
+    });
+    mockIsAdmin.mockReturnValue(true);
+    mockUpdateFeedbackStatus.mockResolvedValue({
+      id: 'fb-closed',
+      userId: 10,
+      username: 'normal-user',
+      status: 'open',
+      createdAt: 1,
+      updatedAt: 3,
+    });
+
+    const response = await adminDetailPATCH(
+      new NextRequest('http://localhost/api/admin/feedback/fb-closed', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'sec-fetch-site': 'same-origin',
+        },
+        body: JSON.stringify({ status: 'open' }),
+      }),
+      { params: Promise.resolve({ id: 'fb-closed' }) }
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(mockUpdateFeedbackStatus).toHaveBeenCalledWith('fb-closed', 'open');
+    expect(data.feedback.status).toBe('open');
+  });
+
+  it('管理员可以删除反馈', async () => {
+    mockGetAuthUser.mockResolvedValue({
+      id: 99,
+      username: 'admin',
+      displayName: 'Admin',
+      isAdmin: true,
+    });
+    mockIsAdmin.mockReturnValue(true);
+    mockDeleteFeedback.mockResolvedValue(true);
+
+    const response = await adminDetailDELETE(
+      new NextRequest('http://localhost/api/admin/feedback/fb-delete', {
+        method: 'DELETE',
+        headers: {
+          'sec-fetch-site': 'same-origin',
+        },
+      }),
+      { params: Promise.resolve({ id: 'fb-delete' }) }
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.message).toBe('反馈已删除');
+    expect(mockDeleteFeedback).toHaveBeenCalledWith('fb-delete');
   });
 
   it('管理员可以回复反馈', async () => {

@@ -7,6 +7,8 @@ import { createUserNotification } from './notifications';
 export type FeedbackStatus = 'open' | 'processing' | 'resolved' | 'closed';
 export type FeedbackRole = 'user' | 'admin';
 
+const FEEDBACK_STATUSES: FeedbackStatus[] = ['open', 'processing', 'resolved', 'closed'];
+
 const FEEDBACK_STATUS_LABEL: Record<FeedbackStatus, string> = {
   open: '待处理',
   processing: '处理中',
@@ -517,6 +519,34 @@ export async function updateFeedbackStatus(
   ]);
   await notifyFeedbackOwnerOfStatusChange(updatedFeedback, feedback.status);
   return updatedFeedback;
+}
+
+export async function deleteFeedback(feedbackId: string): Promise<boolean> {
+  const feedback = await getFeedbackById(feedbackId);
+  if (!feedback) {
+    return false;
+  }
+
+  const statusIndexRemovals = FEEDBACK_STATUSES.flatMap((status) => [
+    kv.zrem(FEEDBACK_INDEX_STATUS_KEY(status), feedbackId),
+    kv.zrem(FEEDBACK_INDEX_USER_STATUS_KEY(feedback.userId, status), feedbackId),
+  ]);
+
+  await Promise.all([
+    kv.del(
+      FEEDBACK_ITEM_KEY(feedbackId),
+      FEEDBACK_MESSAGES_KEY(feedbackId),
+      FEEDBACK_LIKES_KEY(feedbackId)
+    ),
+    kv.lrem(FEEDBACK_LIST_KEY, 0, feedbackId),
+    kv.lrem(FEEDBACK_USER_LIST_KEY(feedback.userId), 0, feedbackId),
+    kv.zrem(FEEDBACK_INDEX_ALL_KEY, feedbackId),
+    kv.zrem(FEEDBACK_INDEX_USER_KEY(feedback.userId), feedbackId),
+    kv.zrem(FEEDBACK_INDEX_ARCHIVED_KEY, feedbackId),
+    ...statusIndexRemovals,
+  ]);
+
+  return true;
 }
 
 export interface ArchiveFeedbackOptions {
