@@ -9,6 +9,7 @@ const steps = [
   ['postgres migrations audit', 'node', ['scripts/audit-postgres-migrations.mjs'], 60000],
   ['postgres live schema audit', 'node', ['scripts/audit-postgres-live-schema.mjs'], 60000],
   ['zeabur service plan audit', 'node', ['scripts/audit-zeabur-service-plan.mjs'], 60000],
+  ['zeabur single plan audit', 'node', ['scripts/audit-zeabur-single-plan.mjs'], 60000],
   ['production cutover evidence template audit', 'node', ['scripts/audit-production-cutover-evidence.mjs'], 60000],
   ['production cutover preflight audit', 'node', ['scripts/audit-production-cutover-preflight.mjs'], 60000],
   ['production cutover guards test', 'node', ['scripts/test-production-cutover-guards.mjs'], 60000],

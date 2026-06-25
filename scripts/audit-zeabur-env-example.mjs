@@ -3,13 +3,13 @@ import { readFileSync } from 'node:fs';
 const envPath = process.env.ZEABUR_ENV_EXAMPLE || 'deploy/zeabur.env.example';
 
 const requiredGroups = {
-  gateway: [
-    'API_UPSTREAM',
-    'WEB_UPSTREAM',
+  singleContainer: [
+    'GATEWAY_PORT',
+    'WEB_PORT',
+    'API_PORT',
   ],
   web: [
     'NODE_ENV',
-    'PORT',
     'NEXT_PUBLIC_BASE_URL',
   ],
   sharedAuth: [

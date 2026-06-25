@@ -27,17 +27,18 @@ Remove-Item Env:\ZEABUR_ENV_EXAMPLE
 
 脚本会检查以下变量是否存在且非空：
 
-- Web：`NODE_ENV`、`PORT`、`NEXT_PUBLIC_BASE_URL`
-- Gateway：`API_UPSTREAM`、`WEB_UPSTREAM`
+- 单容器端口：`GATEWAY_PORT`、`WEB_PORT`、`API_PORT`
+- Web：`NODE_ENV`、`NEXT_PUBLIC_BASE_URL`
 - 共享认证：`SESSION_SECRET`、`ADMIN_USERNAMES`
 - Go 运行时：`APP_MODE`、`DATABASE_URL`、`REDIS_URL`、`INTERNAL_API_SECRET`
 - new-api：`NEW_API_URL`、`NEW_API_ADMIN_ACCESS_TOKEN`、`NEW_API_ADMIN_USER_ID`
 - Worker/Cron：`RAFFLE_DELIVERY_CRON_SECRET`、`CRON_SECRET`
 - 对象存储：`R2_PUBLIC_URL`、`S3_ENDPOINT`、`S3_ACCESS_KEY_ID`、`S3_SECRET_ACCESS_KEY`、`S3_BUCKET_FEEDBACK_IMAGES`、`S3_BUCKET_CARD_IMAGES`
 
-`API_UPSTREAM` 默认是 `api:8080`。
-`WEB_UPSTREAM` 默认是 `web:3000`。
-Zeabur 内网服务名或端口不同的时候，只覆盖这两个变量，不直接改 Gateway 切流清单。
+`GATEWAY_PORT` 默认是 `8080`。
+`WEB_PORT` 默认是 `3000`。
+`API_PORT` 默认是 `8081`。
+Gateway 的 `API_UPSTREAM` 和 `WEB_UPSTREAM` 由 `scripts/start-zeabur.sh` 在容器内注入，不需要写入 Zeabur 环境变量。
 
 对于密钥类变量，样例文件必须使用占位值。
 这能避免真实密钥被误写入仓库。

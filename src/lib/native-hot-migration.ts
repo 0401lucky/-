@@ -32,6 +32,7 @@ const GAME_RECORD_KEYS: Record<Exclude<GameType, "farm">, (userId: number) => st
   whack_mole: (userId) => `whack_mole:records:${userId}`,
   roguelite: (userId) => `roguelite:records:${userId}`,
   minesweeper: (userId) => `minesweeper:records:${userId}`,
+  game_2048: (userId) => `game_2048:records:${userId}`,
 };
 
 export interface NativeHotMigrationOptions {

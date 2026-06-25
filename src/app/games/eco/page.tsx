@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Recycle,
   Home,
@@ -278,6 +279,7 @@ function PriceSparkline({
 }
 
 export default function EcoPage() {
+  const router = useRouter();
   const [status, setStatus] = useState<EcoStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [board, setBoard] = useState<BoardItem[]>([]);
@@ -308,6 +310,14 @@ export default function EcoPage() {
   const flushingRef = useRef(false);
   const yardRef = useRef<HTMLDivElement>(null);
   const binRef = useRef<HTMLDivElement>(null);
+  const loginRequiredRef = useRef(false);
+
+  const redirectToLogin = useCallback(() => {
+    if (loginRequiredRef.current) return;
+    loginRequiredRef.current = true;
+    setError(null);
+    router.replace('/login?redirect=/games/eco');
+  }, [router]);
 
   const refreshOptimisticCounters = useCallback(() => {
     setOptimisticRevision((value) => (value + 1) % 1_000_000);
@@ -351,9 +361,14 @@ export default function EcoPage() {
   }, [syncBoard]);
 
   const loadStatus = useCallback(async (syncPending: boolean, allowPrizeSpawn = false) => {
+    if (loginRequiredRef.current) return;
     try {
       const url = allowPrizeSpawn ? '/api/games/eco/status?online=1' : '/api/games/eco/status';
       const res = await fetch(url, { cache: 'no-store' });
+      if (res.status === 401) {
+        redirectToLogin();
+        return;
+      }
       const json = (await res.json().catch(() => null)) as
         | { success?: boolean; data?: EcoStatusResponse; message?: string }
         | null;
@@ -368,7 +383,7 @@ export default function EcoPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : '网络错误');
     }
-  }, [applyStatus]);
+  }, [applyStatus, redirectToLogin]);
 
   // 顶栏用户信息
   useEffect(() => {
@@ -379,6 +394,10 @@ export default function EcoPage() {
           fetch('/api/auth/me', { cache: 'no-store' }),
           fetch('/api/profile/settings', { cache: 'no-store' }),
         ]);
+        if (meRes.status === 401) {
+          redirectToLogin();
+          return;
+        }
         const me = (await meRes.json().catch(() => null)) as
           | { success?: boolean; user?: AuthMeUser }
           | null;
@@ -437,7 +456,7 @@ export default function EcoPage() {
       cancelled = true;
       window.removeEventListener('lucky:profile-updated', handleProfileUpdated);
     };
-  }, [loadStatus]);
+  }, [loadStatus, redirectToLogin]);
 
   useEffect(() => {
     void loadStatus(true);
@@ -445,7 +464,7 @@ export default function EcoPage() {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      if (pendingDragsRef.current === 0 && !flushingRef.current && !drag) {
+      if (!loginRequiredRef.current && pendingDragsRef.current === 0 && !flushingRef.current && !drag) {
         void loadStatus(true, true);
       }
     }, SYNC_INTERVAL_MS);

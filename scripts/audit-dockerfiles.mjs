@@ -1,137 +1,93 @@
 import { existsSync, readFileSync } from 'node:fs';
 
-const files = {
-  web: 'Dockerfile',
-  zeaburWeb: 'Dockerfile.web',
-  zeaburApi: 'Dockerfile.api',
-  zeaburWorker: 'Dockerfile.worker',
-  zeaburGateway: 'Dockerfile.gateway',
-  backend: 'backend/Dockerfile',
-  gateway: 'gateway/Dockerfile',
-  dockerignore: '.dockerignore',
-};
+const rootDockerfile = 'Dockerfile';
+const startScript = 'scripts/start-zeabur.sh';
+const dockerignore = '.dockerignore';
+const caddyfile = 'gateway/Caddyfile';
+
+const forbiddenRootDockerfiles = [
+  'Dockerfile.app',
+  'Dockerfile.web',
+  'Dockerfile.api',
+  'Dockerfile.worker',
+  'Dockerfile.gateway',
+];
 
 const requiredSnippets = {
-  web: [
-    'FROM node:22-alpine AS deps',
-    'RUN npm ci',
-    'FROM node:22-alpine AS builder',
-    'ENV NEXT_TELEMETRY_DISABLED=1',
-    'ENV SKIP_OPENNEXT_DEV_INIT=1',
-    'RUN npm run build',
-    'FROM node:22-alpine AS runner',
-    'ENV NODE_ENV=production',
-    'ENV HOSTNAME=0.0.0.0',
-    'COPY --from=builder /app/public ./public',
-    'COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./',
-    'COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static',
-    'USER nextjs',
-    'EXPOSE 3000',
-    'CMD ["node", "server.js"]',
+  [rootDockerfile]: [
+    '# Zeabur single-container entry.',
+    'FROM node:22-alpine AS web-deps',
+    'FROM node:22-alpine AS web-builder',
+    'FROM golang:1.23-alpine AS go-builder',
+    'FROM node:22-alpine AS runtime',
+    'RUN apk add --no-cache caddy ca-certificates',
+    'COPY --from=web-builder /app/public ./public',
+    'COPY --from=web-builder --chown=app:app /app/.next/standalone ./',
+    'COPY --from=web-builder --chown=app:app /app/.next/static ./.next/static',
+    'COPY --from=go-builder /out/api /app/api',
+    'COPY --from=go-builder /out/worker /app/worker',
+    'COPY --from=go-builder /out/migrate /app/migrate',
+    'COPY --from=go-builder /out/migrate-d1 /app/migrate-d1',
+    'COPY --from=go-builder /src/migrations /app/migrations',
+    'COPY gateway/Caddyfile /app/gateway/Caddyfile',
+    'COPY scripts/start-zeabur.sh /app/start-zeabur.sh',
+    'CMD ["/app/start-zeabur.sh"]',
   ],
-  backend: [
-    'FROM golang:1.23-alpine AS builder',
-    'RUN go mod download',
-    'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build',
-    '-o /out/api ./cmd/api',
-    '-o /out/worker ./cmd/worker',
-    '-o /out/migrate ./cmd/migrate',
-    '-o /out/migrate-d1 ./cmd/migrate-d1',
-    'FROM alpine:3.20',
-    'RUN adduser -D -H appuser',
-    'COPY --from=builder /out/api /app/api',
-    'COPY --from=builder /out/worker /app/worker',
-    'COPY --from=builder /out/migrate /app/migrate',
-    'COPY --from=builder /out/migrate-d1 /app/migrate-d1',
-    'COPY migrations /app/migrations',
-    'USER appuser',
-    'EXPOSE 8080',
-    'CMD ["/app/api"]',
+  [startScript]: [
+    '#!/bin/sh',
+    'WEB_PORT="${WEB_PORT:-3000}"',
+    'API_PORT="${API_PORT:-8081}"',
+    'GATEWAY_PORT="${GATEWAY_PORT:-8080}"',
+    'APP_MODE=api PORT="$API_PORT" /app/api &',
+    'APP_MODE=worker /app/worker &',
+    'PORT="$WEB_PORT" node /app/server.js &',
+    'caddy run --config /app/gateway/Caddyfile --adapter caddyfile &',
   ],
-  gateway: [
-    'FROM caddy:2-alpine',
-    'COPY Caddyfile /etc/caddy/Caddyfile',
-    'EXPOSE 8080',
-  ],
-  zeaburWeb: [
-    'FROM node:22-alpine AS deps',
-    'RUN npm ci',
-    'FROM node:22-alpine AS builder',
-    'ENV NEXT_TELEMETRY_DISABLED=1',
-    'ENV SKIP_OPENNEXT_DEV_INIT=1',
-    'RUN npm run build',
-    'FROM node:22-alpine AS runner',
-    'ENV NODE_ENV=production',
-    'ENV HOSTNAME=0.0.0.0',
-    'COPY --from=builder /app/public ./public',
-    'COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./',
-    'COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static',
-    'USER nextjs',
-    'EXPOSE 3000',
-    'CMD ["node", "server.js"]',
-  ],
-  zeaburApi: [
-    'FROM golang:1.23-alpine AS builder',
-    'COPY backend/go.mod backend/go.sum ./',
-    'COPY backend/ ./',
-    'RUN go mod download',
-    '-o /out/api ./cmd/api',
-    '-o /out/worker ./cmd/worker',
-    '-o /out/migrate ./cmd/migrate',
-    '-o /out/migrate-d1 ./cmd/migrate-d1',
-    'FROM alpine:3.20',
-    'COPY --from=builder /src/migrations /app/migrations',
-    'EXPOSE 8080',
-    'CMD ["/app/api"]',
-  ],
-  zeaburWorker: [
-    'FROM golang:1.23-alpine AS builder',
-    'COPY backend/go.mod backend/go.sum ./',
-    'COPY backend/ ./',
-    'RUN go mod download',
-    '-o /out/worker ./cmd/worker',
-    'FROM alpine:3.20',
-    'COPY --from=builder /src/migrations /app/migrations',
-    'CMD ["/app/worker"]',
-  ],
-  zeaburGateway: [
-    'FROM caddy:2-alpine',
-    'COPY gateway/Caddyfile /etc/caddy/Caddyfile',
-    'EXPOSE 8080',
-  ],
-  dockerignore: [
+  [dockerignore]: [
     'node_modules',
     '.next',
     '.open-next',
     '.wrangler',
+    '.vercel',
     '.gocache',
     '.tmp',
+    '.git',
     '.env',
     '.env.*',
+    '.dev.vars',
     '/images',
     'backups',
   ],
+  [caddyfile]: [
+    ':{$PORT:8080} {',
+    'handle /healthz {',
+    'handle /readyz {',
+    'reverse_proxy {$API_UPSTREAM:api:8080}',
+    'reverse_proxy {$WEB_UPSTREAM:web:3000}',
+  ],
 };
 
-const missingFiles = Object.values(files).filter((file) => !existsSync(file));
+const missingFiles = [rootDockerfile, startScript, dockerignore, caddyfile].filter((file) => !existsSync(file));
+const forbiddenFiles = forbiddenRootDockerfiles.filter((file) => existsSync(file));
 const missingSnippets = [];
 
-for (const [name, file] of Object.entries(files)) {
+for (const file of [rootDockerfile, startScript, dockerignore, caddyfile]) {
   if (!existsSync(file)) {
     continue;
   }
   const content = readFileSync(file, 'utf8');
-  const missing = requiredSnippets[name].filter((snippet) => !content.includes(snippet));
+  const missing = (requiredSnippets[file] || []).filter((snippet) => !content.includes(snippet));
   if (missing.length > 0) {
     missingSnippets.push({ file, missing });
   }
 }
 
-if (missingFiles.length > 0 || missingSnippets.length > 0) {
+if (missingFiles.length > 0 || forbiddenFiles.length > 0 || missingSnippets.length > 0) {
   console.error(JSON.stringify({
     ok: false,
     mode: 'dockerfile-audit',
     missingFiles,
+    forbiddenFiles,
     missingSnippets,
   }, null, 2));
   process.exit(1);
@@ -140,6 +96,6 @@ if (missingFiles.length > 0 || missingSnippets.length > 0) {
 console.log(JSON.stringify({
   ok: true,
   mode: 'dockerfile-audit',
-  checkedFiles: Object.values(files),
+  checkedFiles: [rootDockerfile, startScript, dockerignore, caddyfile],
   checkedSnippets: Object.values(requiredSnippets).reduce((count, snippets) => count + snippets.length, 0),
 }, null, 2));

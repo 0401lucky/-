@@ -13,18 +13,16 @@ node scripts/audit-gateway-upstreams.mjs
 
 脚本会检查：
 
-- `gateway/Caddyfile` 的活跃 `reverse_proxy` 使用 `API_UPSTREAM` 和 `WEB_UPSTREAM`。
-- `compose.yml` 保留本地默认 `API_UPSTREAM=api:8080` 和 `WEB_UPSTREAM=web:3000`。
-- `deploy/zeabur.env.example` 声明这两个变量。
-- `deploy/zeabur-services.example.json` 的 `gateway` 服务声明这两个变量。
-- Zeabur env 文档、服务计划文档、Gateway 允许清单文档和部署运行手册都说明这两个变量。
+- `gateway/Caddyfile` 的活跃 `reverse_proxy` 继续使用 `API_UPSTREAM` 和 `WEB_UPSTREAM`。
+- `scripts/start-zeabur.sh` 会在单容器启动时把这两个变量默认注入为本机回环地址。
+- `docs/zeabur-deployment-runbook.md` 说明当前 Zeabur 只使用单容器 `app` 服务。
 
-默认值仍然是：
+单容器默认值现在是：
 
-- `API_UPSTREAM=api:8080`
-- `WEB_UPSTREAM=web:3000`
+- `API_UPSTREAM=127.0.0.1:8081`
+- `WEB_UPSTREAM=127.0.0.1:3000`
 
-Zeabur 内网服务名或端口不同的时候，只覆盖变量值。
+这些值由启动脚本注入，不需要手动写进 Zeabur 环境变量。
 不要直接改 `gateway/Caddyfile` 的路径切流清单。
 
 ## Review 命令

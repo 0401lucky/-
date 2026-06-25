@@ -19,6 +19,7 @@ import {
   Heart,
   Target,
   Home,
+  Hash,
   type LucideIcon,
 } from 'lucide-react';
 import type { PublicAchievement } from '@/lib/profile-achievements';
@@ -27,7 +28,7 @@ import type { PublicAchievement } from '@/lib/profile-achievements';
 // Game metadata
 // ──────────────────────────────────────────────────
 
-type GameKey = 'roguelite' | 'minesweeper' | 'whack-mole' | 'memory' | 'match3' | 'linkgame';
+type GameKey = 'roguelite' | 'minesweeper' | 'whack-mole' | 'memory' | 'match3' | 'linkgame' | '2048';
 
 interface GameMeta {
   key: GameKey;
@@ -97,6 +98,15 @@ const GAMES: readonly GameMeta[] = [
     image: `${GAME_CARD_IMAGE_BASE}/covers/linkgame.webp`,
     mascot: `${GAME_CARD_IMAGE_BASE}/mascots/linkgame.webp`,
     href: '/games/linkgame',
+  },
+  {
+    key: '2048',
+    name: '2048',
+    description: '5x5 数字合成棋盘，冲击 2048 里程碑。',
+    Icon: Hash,
+    image: `${GAME_CARD_IMAGE_BASE}/covers/2048.webp`,
+    mascot: `${GAME_CARD_IMAGE_BASE}/mascots/2048.webp`,
+    href: '/games/2048',
   },
 ] as const;
 
@@ -325,7 +335,7 @@ export default function GamesPage() {
             <div className="hero-text">
               <div className="hero-badge">
                 <Star size={12} fill="currentColor" strokeWidth={0} />
-                LUCKY 游戏中心 · 6 款挑战
+                LUCKY 游戏中心 · 7 款挑战
               </div>
               <h1 className="hero-title">
                 挑战小游戏<br />

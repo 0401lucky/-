@@ -39,6 +39,19 @@ func TestSummarizeGameRowsMatchesWinRules(t *testing.T) {
 	if whackProgress.Wins != 2 || whackProgress.BestWinStreak != 1 {
 		t.Fatalf("unexpected whack mole progress: %+v", whackProgress)
 	}
+
+	game2048Win, _ := json.Marshal(map[string]any{"won": true})
+	game2048Loss, _ := json.Marshal(map[string]any{"won": false})
+	game2048Progress := summarizeGameRows([]gameRecordRow{
+		{Score: 2048, PointsEarned: 96, Payload: game2048Win},
+		{Score: 512, PointsEarned: 40, Payload: game2048Loss},
+	}, "game_2048")
+	if game2048Progress.Wins != 1 || game2048Progress.BestWinStreak != 1 {
+		t.Fatalf("unexpected 2048 progress: %+v", game2048Progress)
+	}
+	if game2048Progress.BestScore != 2048 || game2048Progress.TotalPointsEarned != 136 {
+		t.Fatalf("unexpected 2048 score summary: %+v", game2048Progress)
+	}
 }
 
 func TestToAPIKeyNormalizesWhackMole(t *testing.T) {
@@ -47,5 +60,8 @@ func TestToAPIKeyNormalizesWhackMole(t *testing.T) {
 	}
 	if got := toAPIKey("memory"); got != "memory" {
 		t.Fatalf("expected memory, got %s", got)
+	}
+	if got := toAPIKey("game_2048"); got != "2048" {
+		t.Fatalf("expected 2048, got %s", got)
 	}
 }

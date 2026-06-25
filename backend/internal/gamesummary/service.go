@@ -25,6 +25,7 @@ var supportedGames = []string{
 	"memory",
 	"match3",
 	"linkgame",
+	"game_2048",
 }
 
 type Service struct {
@@ -173,7 +174,7 @@ func (service *Service) listRecentGameRows(ctx context.Context, userID int64) (m
 		          ROW_NUMBER() OVER (PARTITION BY game_type ORDER BY created_at DESC, id DESC) AS rn
 		     FROM game_records
 		    WHERE user_id = $1
-		      AND game_type IN ('roguelite', 'minesweeper', 'whack_mole', 'memory', 'match3', 'linkgame')
+		      AND game_type IN ('roguelite', 'minesweeper', 'whack_mole', 'memory', 'match3', 'linkgame', 'game_2048')
 		 )
 		 SELECT game_type, difficulty, score, points_earned, payload
 		   FROM recent
@@ -228,6 +229,8 @@ func rowWon(row gameRecordRow, gameType string) bool {
 		return boolField(data, "completed")
 	case "minesweeper", "roguelite":
 		return boolField(data, "won")
+	case "game_2048":
+		return boolField(data, "won")
 	case "match3":
 		return row.Score >= 1200
 	case "whack_mole":
@@ -256,6 +259,9 @@ func whackMoleWinScore(difficulty string) int64 {
 func toAPIKey(gameType string) string {
 	if gameType == "whack_mole" {
 		return "whack-mole"
+	}
+	if gameType == "game_2048" {
+		return "2048"
 	}
 	return gameType
 }
