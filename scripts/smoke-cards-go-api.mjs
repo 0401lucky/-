@@ -6,21 +6,31 @@ const baseURL = (process.env.CARDS_GO_API_BASE_URL || defaultBaseURL).replace(/\
 const origin = process.env.CARDS_GO_API_ORIGIN || defaultBaseURL;
 const cookie = process.env.CARDS_GO_API_COOKIE || '';
 const useDocker = process.env.CARDS_GO_API_USE_DOCKER !== '0' && !process.env.CARDS_GO_API_BASE_URL;
+const expectedGatewayCardRules = [
+  'handle /api/cards/inventory {',
+  'handle /api/cards/rules {',
+  'handle /api/cards/draw {',
+  'handle /api/cards/exchange {',
+  'handle /api/cards/claim-reward {',
+];
 
 function fail(message) {
   console.error(`cards Go API smoke failed: ${message}`);
   process.exit(1);
 }
 
-function assertGatewayCardRulesDisabled() {
+function assertGatewayCardRulesExact() {
   const caddyfile = readFileSync('gateway/Caddyfile', 'utf8');
   const activeCardRules = caddyfile
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'))
-    .filter((line) => line.includes('/api/cards') || line.includes('/api/admin/cards'));
-  if (activeCardRules.length > 0) {
-    fail(`gateway/Caddyfile contains card cutover rules: ${activeCardRules.join('; ')}`);
+    .filter((line) => line.includes('/api/cards'));
+  const actual = new Set(activeCardRules);
+  const missing = expectedGatewayCardRules.filter((line) => !actual.has(line));
+  const unexpected = activeCardRules.filter((line) => !expectedGatewayCardRules.includes(line));
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail(`gateway/Caddyfile card rules must be exact; missing=${missing.join('; ')} unexpected=${unexpected.join('; ')}`);
   }
 }
 
@@ -125,7 +135,7 @@ function assertInventoryPayload(payload, label) {
 }
 
 async function main() {
-  assertGatewayCardRulesDisabled();
+  assertGatewayCardRulesExact();
 
   const ready = await request('GET', '/readyz');
   assertStatus(ready.status, 200, 'GET /readyz', ready.raw);
@@ -176,7 +186,7 @@ async function main() {
     checkedUnauthenticatedWritePaths: 3,
     checkedPublicReadPaths: 1,
     checkedAuthenticatedReadPaths: cookie ? 1 : 0,
-    gatewayCardRules: 'none',
+    gatewayCardRules: expectedGatewayCardRules,
   }, null, 2));
 }
 

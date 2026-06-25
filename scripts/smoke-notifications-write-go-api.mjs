@@ -16,6 +16,13 @@ const ids = {
   batch: `notifications-write-batch-${testUserID}`,
   claim: `notifications-write-claim-${testUserID}`,
 };
+const expectedGatewayNotificationRules = [
+  'handle /api/notifications {',
+  'handle /api/notifications/unread-count {',
+  'handle /api/notifications/read {',
+  'handle /api/notifications/delete {',
+  'handle /api/notifications/claim {',
+];
 
 function fail(message) {
   throw new Error(`notifications write Go API smoke failed: ${message}`);
@@ -36,15 +43,18 @@ function makeSessionCookie(userID, username, displayName) {
   return `app_session=${payload}.${sig}`;
 }
 
-function assertGatewayNotificationRulesDisabled() {
+function assertGatewayNotificationRulesExact() {
   const caddyfile = readFileSync('gateway/Caddyfile', 'utf8');
   const activeNotificationRules = caddyfile
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'))
     .filter((line) => line.includes('/api/notifications'));
-  if (activeNotificationRules.length > 0) {
-    fail(`gateway/Caddyfile contains notification cutover rules: ${activeNotificationRules.join('; ')}`);
+  const actual = new Set(activeNotificationRules);
+  const missing = expectedGatewayNotificationRules.filter((line) => !actual.has(line));
+  const unexpected = activeNotificationRules.filter((line) => !expectedGatewayNotificationRules.includes(line));
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail(`gateway/Caddyfile notification rules must be exact; missing=${missing.join('; ')} unexpected=${unexpected.join('; ')}`);
   }
 }
 
@@ -91,6 +101,15 @@ function parseJSON(body, label) {
   try {
     return JSON.parse(body);
   } catch {
+    const start = body.indexOf('{');
+    const end = body.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(body.slice(start, end + 1));
+      } catch {
+        // Fall through to the original failure with the raw body snippet.
+      }
+    }
     fail(`${label} did not return JSON: ${body.slice(0, 300)}`);
   }
 }
@@ -214,7 +233,7 @@ function verifyCleanup() {
 }
 
 function main() {
-  assertGatewayNotificationRulesDisabled();
+  assertGatewayNotificationRulesExact();
 
   const ready = request('GET', '/readyz');
   assertStatus(ready, 200, 'GET /readyz');
@@ -274,7 +293,7 @@ function main() {
     ],
     verification,
     cleanup: cleanupResult,
-    gatewayNotificationRules: 'none',
+    gatewayNotificationRules: expectedGatewayNotificationRules,
   }, null, 2));
 }
 

@@ -9,6 +9,25 @@
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
 
+	# 认证核心路径由 Go 接管；只打开精确路径，避免 /api/auth* 通配误伤。
+	handle /api/auth/login {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/auth/me {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/auth/logout {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
+	# 签到已完成 Go 迁移；只打开状态、签到和补签实际使用的精确路径。
+	handle /api/checkin {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/checkin/makeup {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
 	# 第一批 Go 切流前缀在对应业务实现完成后再打开：
 	handle /api/points {
 		reverse_proxy {$API_UPSTREAM:api:8080}
@@ -18,6 +37,100 @@
 	}
 	# 游戏中心个人战绩已从 PostgreSQL 聚合迁移到 Go；只精确切前端实际调用路径。
 	handle /api/games/profile {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 个人主页与资料已完成 Go 迁移；只打开前端实际调用的三个精确路径，避免 profile 通配误伤。
+	handle /api/profile/overview {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/profile/settings {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/profile/achievements/equip {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 通知中心已完成 Go 迁移；只打开前端实际调用的五个精确路径。
+	handle /api/notifications {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/notifications/unread-count {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/notifications/read {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/notifications/delete {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/notifications/claim {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 公告已完成 Go 迁移；只打开公开列表和后台公告管理精确路径。
+	handle /api/announcements {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/announcements {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/announcements/* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 农场已覆盖当前前端全部状态、种植、浇水、收获、商店、宠物和偷菜路径；只打开精确路径，禁止 /api/farm* 通配。
+	handle /api/farm/status {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/plant {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/water {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/water-all {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/harvest {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/harvest-all {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/remove {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/buy-land {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/shop/buy {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/seeds/buy {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/shop/use {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/pet/adopt {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/pet/feed {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/pet/wash {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/pet/drink {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/pet/play {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/pet/dispatch {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/steal/list {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/steal/do {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
 	# 环保行动已覆盖的前端调用路径先精确切流；未知子路径仍留给 Next，避免通配误伤。
@@ -148,6 +261,48 @@
 
 	# 商城后台已完成 Go 内部迁移，仅精确切后台配置路径，不转发前台购买/钱包路径。
 	handle /api/store/admin {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
+	# 卡牌前台已完成 Go 迁移，只打开页面实际调用的库存、规则、抽卡、碎片兑换和领奖路径。
+	handle /api/cards/inventory {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/cards/rules {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/cards/draw {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/cards/exchange {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/cards/claim-reward {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
+	# 后台卡牌已完成 Go 迁移，只打开后台页面实际调用的精确路径，不开放 admin 通配。
+	handle /api/admin/cards/users {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/cards/user/* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/cards/reset {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/cards/albums {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/cards/rules {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
+	# 反馈墙公开路径已完成 Go 迁移，包含列表、新建、详情、留言、点赞和附件读取。
+	handle /api/feedback {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/feedback/* {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
 

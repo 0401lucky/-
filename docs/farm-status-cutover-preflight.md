@@ -1,7 +1,7 @@
 # Farm Status 精确切流前置审计
 
 本文记录 `/api/farm/status` 从 Next 切到 Go 前的前置审计结论。
-当前结论：已补 PostgreSQL farm runtime 基础表、D1/KV 导入器、Go store、Go 内部 status 服务层、当前前端使用的农场接口、偷菜内部结算、直连 API 未登录/只读冒烟和 Docker 测试库写路径自动冒烟；Go 已注册当前全部前端 `/api/farm` 路径的 method-level 精确内部路由，但暂时不切 Gateway，也不打开 `/api/farm*` 通配。
+当前结论：已补 PostgreSQL farm runtime 基础表、D1/KV 导入器、Go store、Go 内部 status 服务层、当前前端使用的农场接口、偷菜内部结算、直连 API 未登录/只读冒烟和 Docker 测试库写路径自动冒烟；Gateway 已精确切流当前全部前端 `/api/farm` 路径，但仍禁止 `/api/farm*` 通配。
 
 ## 当前前端依赖
 
@@ -131,7 +131,7 @@ D1 导入分析器和 `migrate-d1 -scope farm-v2` 当前已支持：
 `/api/farm/pet/dispatch` 已按旧 Next 路由兼容 `{ task }` 请求体和 `{ success, data, message }` 响应形状，只允许 `water`、`guard`、`chase_crow`、`harvest`、`plant`；内部完成宠物技能状态校验、任务持续时间和冷却时间写回，`harvest` 分支会批量收获成熟作物并入账，`plant` 分支会按当前季节最多自动播种 3 块土地。
 `/api/farm/steal/list` 已按旧 Next 路由兼容 `{ success, data: { candidates } }` 响应形状，内部扫描 PostgreSQL `farm_states`，排除自己、今天已偷过的目标、被偷次数达上限的目标和没有成熟作物的目标，并从 `users` / `user_profiles` 生成昵称与头像。
 `/api/farm/steal/do` 已按旧 Next 路由兼容 `{ targetUserId }` 请求体和 `{ success, data, steal }` 响应形状，内部执行 `ExecuteSteal` 后再调用 `GetStatus` 返回完整农场状态。
-这些目前只是 Go 内部能力，Gateway 仍没有任何 `/api/farm` 规则。
+这些路径已按当前前端依赖精确切到 Go，Gateway 仍不允许 `/api/farm*` 或 `/api/farm/*` 通配。
 
 HTTP 层已补 PostgreSQL integration 覆盖：
 
@@ -159,7 +159,7 @@ HTTP 层已补 PostgreSQL integration 覆盖：
 node scripts/smoke-farm-go-api.mjs
 ```
 
-默认模式通过 `docker compose exec -T api` 直连 Go API 容器，不经过 Gateway；会验证 `/readyz`、当前全部前端 `/api/farm` 路径的未登录边界，并确认 `gateway/Caddyfile` 没有 `/api/farm` 规则。
+默认模式通过 `docker compose exec -T api` 直连 Go API 容器，不经过 Gateway；会验证 `/readyz`、当前全部前端 `/api/farm` 路径的未登录边界，并确认 `gateway/Caddyfile` 只包含已审精确规则。
 真实导入数据和登录 Cookie 可用后，可以传入 `FARM_GO_API_COOKIE`，脚本会额外验证登录态 `GET /api/farm/status` 与 `GET /api/farm/steal/list` 的旧兼容响应。
 
 当前已补 Docker 测试库写路径自动冒烟脚本：
@@ -227,7 +227,7 @@ Go 当前也已补内部 status 服务层骨架：
 - 推导当前季节 `plantableCrops`。
 - 从 `farm_daily_shop_purchases` 读取当日商店限购计数。
 
-该服务层当前仍只开放为 Go 内部精确路由能力，Gateway 仍没有任何 `/api/farm` 规则。
+该服务层当前已通过 Gateway 精确路径对外承接，仍不开放 `/api/farm*` 通配。
 
 即使只迁移 `/api/farm/status`，也必须先完整覆盖旧 `FarmStatusResponse`：
 
@@ -257,7 +257,7 @@ Go 当前也已补内部 status 服务层骨架：
 
 1. 用真实 D1 导出执行 `migrate-d1 -apply -scope farm-v2`，并核对导入数量。
 2. 使用真实导入数据做直连 API 冒烟：
-   - 先跑 `node scripts/smoke-farm-go-api.mjs`，确认 Gateway 仍未切流且全部 Go 内部农场路径可达。
+   - 先跑 `node scripts/smoke-farm-go-api.mjs`，确认 Gateway 只保留精确农场规则且全部 Go 内部农场路径可达。
    - 带真实登录 Cookie 设置 `FARM_GO_API_COOKIE` 后复跑脚本，确认登录态只读响应兼容。
    - `GET/POST /api/farm/status`。
    - 已迁移的单用户写接口、`GET /api/farm/steal/list` 和 `POST /api/farm/steal/do`。
@@ -266,9 +266,9 @@ Go 当前也已补内部 status 服务层骨架：
    - 桌宠页面。
    - `/farm` 农场页完整渲染。
    - 打开农场后懒结算写回可复验。
-4. 最后再评估是否按精确路径逐步切流，仍不建议打开 `/api/farm*` 通配。
+4. 若后续新增农场接口，必须先更新审计、smoke 和允许清单，再评估新增精确路径；仍不建议打开 `/api/farm*` 通配。
 
-写接口迁移要在 status 稳定后分批处理，不建议一次性打开 `/api/farm*`。
+写接口已按当前前端依赖精确切流；后续仍不建议一次性打开 `/api/farm*`。
 
 ## Gateway 原则
 

@@ -14,6 +14,33 @@ import { updatePublicSessionUserProfile } from "@/lib/user-profile";
 
 const TRUSTED_IP_HEADERS = ["cf-connecting-ip", "true-client-ip", "x-real-ip"] as const;
 
+function getGoApiInternalUrl(): string | null {
+  const explicit = process.env.GO_API_INTERNAL_URL || process.env.API_INTERNAL_URL;
+  const fallback = process.env.API_PORT ? `http://127.0.0.1:${process.env.API_PORT}` : "";
+  const raw = (explicit || fallback).trim().replace(/\/+$/, "");
+  return raw || null;
+}
+
+async function syncGoAuthenticatedUser(sessionToken: string): Promise<void> {
+  const baseUrl = getGoApiInternalUrl();
+  if (!baseUrl) {
+    return;
+  }
+
+  const syncUrl = `${baseUrl}/api/auth/me`;
+  const response = await fetch(syncUrl, {
+    method: "GET",
+    headers: {
+      Cookie: `app_session=${sessionToken}`,
+    },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Go auth sync failed with HTTP ${response.status} at ${syncUrl}: ${body.slice(0, 300)}`);
+  }
+}
+
 function normalizeIp(rawValue: string): string | null {
   const trimmed = rawValue.trim().replace(/^"(.+)"$/, "$1");
   if (!trimmed || trimmed.toLowerCase() === "unknown") {
@@ -176,6 +203,16 @@ export async function POST(request: NextRequest) {
 
     // 使用 HMAC 签名创建安全的 session token
     const sessionToken = createSessionToken(sessionData);
+
+    try {
+      await syncGoAuthenticatedUser(sessionToken);
+    } catch (error) {
+      console.error("Go authenticated user sync error:", error);
+      return NextResponse.json(
+        { success: false, message: "登录成功但用户数据同步失败，请稍后重试" },
+        { status: 503 }
+      );
+    }
 
     const response = NextResponse.json({
       success: true,

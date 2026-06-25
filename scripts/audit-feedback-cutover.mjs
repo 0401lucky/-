@@ -282,6 +282,8 @@ const activeFeedbackGatewayRules = gatewaySource
   .filter((entry) => entry.line !== '' && !entry.line.startsWith('#'))
   .filter((entry) => entry.line.includes('/api/feedback') || entry.line.includes('/api/admin/feedback'));
 const expectedFeedbackGatewayRules = [
+  'handle /api/feedback {',
+  'handle /api/feedback/* {',
   'handle /api/admin/feedback {',
   'handle /api/admin/feedback/* {',
 ];
@@ -291,7 +293,7 @@ const unexpectedFeedbackGatewayRules = activeFeedbackGatewayRules
   .filter((entry) => !expectedFeedbackGatewayRules.includes(entry.line));
 if (missingFeedbackGatewayRules.length > 0 || unexpectedFeedbackGatewayRules.length > 0) {
   fail(
-    'Gateway feedback rules must stay on the reviewed exact admin feedback cutover set',
+    'Gateway feedback rules must stay on the reviewed public/admin feedback cutover set',
     [
       ...missingFeedbackGatewayRules.map((line) => `missing gateway exact rule: ${line}`),
       ...unexpectedFeedbackGatewayRules.map((entry) => `${normalizeSlash(path.relative(repoRoot, gatewayPath))}:${entry.lineNumber} ${entry.line}`),
@@ -310,8 +312,8 @@ console.log(JSON.stringify({
   goRoutes: requiredGoRouteSnippets,
   gatewayFeedbackRules: activeFeedbackGatewayRules.map((entry) => entry.line),
   remainingBeforeCutover: [
-    'decide whether production uses mounted local volume or S3/R2 implementation',
+    'ensure Zeabur mounts /data/feedback-media if attachment persistence is required',
     'fresh Zeabur deployment smoke with sample user/admin cookies',
-    'page-level smoke for /feedback public wall before public Gateway cutover',
+    'page-level smoke for /feedback public wall after public Gateway cutover',
   ],
 }, null, 2));

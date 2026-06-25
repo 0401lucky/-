@@ -21,6 +21,12 @@ const requiredProfileSmokeFiles = [
   'scripts/smoke-profile-write-go-api.mjs',
 ];
 
+const expectedGatewayProfileRules = [
+  'handle /api/profile/overview {',
+  'handle /api/profile/settings {',
+  'handle /api/profile/achievements/equip {',
+];
+
 const requiredProfileSmokeSnippets = [
   'PROFILE_GO_API_COOKIE',
   'PROFILE_WRITE_SMOKE_USER_ID',
@@ -211,10 +217,19 @@ const activeGatewayProfileRules = gatewaySource
   .map((line, index) => ({ line: line.trim(), lineNumber: index + 1 }))
   .filter((entry) => entry.line.includes('/api/profile') && !entry.line.startsWith('#'));
 
-if (activeGatewayProfileRules.length > 0) {
+const activeGatewayProfileRuleSet = new Set(activeGatewayProfileRules.map((entry) => entry.line));
+const missingGatewayProfileRules = expectedGatewayProfileRules.filter((line) => !activeGatewayProfileRuleSet.has(line));
+const unexpectedGatewayProfileRules = activeGatewayProfileRules
+  .filter((entry) => !expectedGatewayProfileRules.includes(entry.line))
+  .map((entry) => `${gatewayPath}:${entry.lineNumber} ${entry.line}`);
+
+if (missingGatewayProfileRules.length > 0 || unexpectedGatewayProfileRules.length > 0) {
   fail(
-    'Gateway already contains active profile routing rules; review before declaring this a pre-cutover state',
-    activeGatewayProfileRules.map((entry) => `${gatewayPath}:${entry.lineNumber} ${entry.line}`),
+    'Gateway profile routing rules must stay limited to the approved exact cutover paths',
+    [
+      ...missingGatewayProfileRules.map((line) => `missing ${line}`),
+      ...unexpectedGatewayProfileRules.map((line) => `unexpected ${line}`),
+    ],
   );
 }
 
@@ -236,7 +251,7 @@ const summary = {
   goRoutes: requiredGoRouteSnippets,
   goJSONFieldGroups: requiredGoJSONFields,
   profileSmokeFiles: requiredProfileSmokeFiles,
-  gatewayProfileRules: 'none',
+  gatewayProfileRules: expectedGatewayProfileRules,
 };
 
 console.log(JSON.stringify(summary, null, 2));

@@ -22,6 +22,14 @@ const steps = [
   ['gateway guard', 'node', ['scripts/audit-gateway-cutover-guard.mjs'], 60000],
   ['gateway allowed cutovers audit', 'node', ['scripts/audit-gateway-allowed-cutovers.mjs'], 60000],
   ['zeabur runtime smoke', 'node', ['scripts/smoke-zeabur-runtime.mjs'], 120000],
+  ['auth/login cutover smoke', 'node', ['scripts/smoke-auth-login-go-api.mjs'], 180000],
+  ['auth/me sync smoke', 'node', ['scripts/smoke-auth-me-go-api.mjs'], 180000],
+  ['auth/logout revocation smoke', 'node', ['scripts/smoke-auth-logout-go-api.mjs'], 180000],
+  ['checkin audit', 'node', ['scripts/audit-checkin-cutover.mjs'], 60000],
+  ['checkin smoke', 'node', ['scripts/smoke-checkin-go-api.mjs'], 180000],
+  ['announcements audit', 'node', ['scripts/audit-announcements-cutover.mjs'], 60000],
+  ['announcements smoke', 'node', ['scripts/smoke-announcements-go-api.mjs'], 180000],
+  ['lottery cutover audit', 'node', ['scripts/audit-lottery-cutover.mjs'], 60000],
   ['points/rankings audit', 'node', ['scripts/audit-points-rankings-cutover.mjs'], 60000],
   ['points/rankings smoke', 'node', ['scripts/smoke-points-rankings-go-api.mjs'], 180000],
   ['store audit', 'node', ['scripts/audit-store-cutover.mjs'], 60000],
@@ -50,6 +58,8 @@ const steps = [
   ['wallet missing-newapi safety smoke', 'node', ['scripts/smoke-wallet-write-missing-newapi-go-api.mjs'], 180000],
   ['feedback audit', 'node', ['scripts/audit-feedback-cutover.mjs'], 60000],
   ['feedback smoke', 'node', ['scripts/smoke-feedback-go-api.mjs'], 180000],
+  ['farm audit', 'node', ['scripts/audit-farm-status-cutover.mjs'], 60000],
+  ['farm write smoke', 'node', ['scripts/smoke-farm-write-go-api.mjs'], 240000],
 ];
 
 const internalSteps = [
@@ -61,8 +71,6 @@ const internalSteps = [
   ['cards write smoke', 'node', ['scripts/smoke-cards-write-go-api.mjs'], 180000],
   ['admin cards audit', 'node', ['scripts/audit-admin-cards-cutover.mjs'], 60000],
   ['admin cards write smoke', 'node', ['scripts/smoke-admin-cards-write-go-api.mjs'], 180000],
-  ['farm audit', 'node', ['scripts/audit-farm-status-cutover.mjs'], 60000],
-  ['farm write smoke', 'node', ['scripts/smoke-farm-write-go-api.mjs'], 240000],
 ];
 
 if (includeInternal) {
@@ -108,8 +116,8 @@ console.log(JSON.stringify({
   steps: results,
   guardedForbiddenPrefixes: [
     '/api/farm*',
-    '/api/profile*',
-    '/api/notifications*',
+    '/api/profile* 通配',
+    '/api/notifications* 通配',
     '/api/store/topup',
     '/api/store/withdraw',
     '/api/cards*',

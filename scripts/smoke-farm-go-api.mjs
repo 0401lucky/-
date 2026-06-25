@@ -38,15 +38,25 @@ const authenticatedReadPaths = [
   '/api/farm/steal/list',
 ];
 
+const expectedGatewayFarmRules = [...getPaths, ...postPaths.map(([path]) => path)]
+  .map((path) => `handle ${path} {`);
+
 function fail(message) {
   console.error(`farm Go API smoke failed: ${message}`);
   process.exit(1);
 }
 
-function assertGatewayFarmRulesDisabled() {
+function assertGatewayFarmRulesExact() {
   const caddyfile = readFileSync('gateway/Caddyfile', 'utf8');
-  if (caddyfile.includes('/api/farm')) {
-    fail('gateway/Caddyfile contains /api/farm; farm Gateway cutover must stay disabled for this smoke');
+  const activeFarmRules = caddyfile
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'))
+    .filter((line) => line.includes('/api/farm'));
+  const missing = expectedGatewayFarmRules.filter((line) => !activeFarmRules.includes(line));
+  const unexpected = activeFarmRules.filter((line) => !expectedGatewayFarmRules.includes(line));
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail(`gateway/Caddyfile farm rules must be exact; missing=${missing.join('; ')} unexpected=${unexpected.join('; ')}`);
   }
 }
 
@@ -111,7 +121,7 @@ function assertStatus(actual, expected, label, raw = '') {
 }
 
 async function main() {
-  assertGatewayFarmRulesDisabled();
+  assertGatewayFarmRulesExact();
 
   const ready = await request('GET', '/readyz');
   assertStatus(ready.status, 200, 'GET /readyz', ready.raw);
@@ -150,7 +160,7 @@ async function main() {
     baseURL,
     checkedUnauthenticatedPaths: getPaths.length + postPaths.length,
     checkedAuthenticatedReadPaths: cookie ? authenticatedReadPaths.length : 0,
-    gatewayFarmRules: 'none',
+    gatewayFarmRules: 'enabled-exact',
   }, null, 2));
 }
 

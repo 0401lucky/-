@@ -15,7 +15,7 @@ node scripts/audit-compose-topology.mjs
 
 - `gateway`、`web`、`api`、`worker`、`postgres`、`redis` 六个服务存在。
 - `gateway` 构建自 `gateway/Dockerfile`。
-- `web` 构建自主 `Dockerfile`。
+- `web` 构建自主 `Dockerfile` 的 `web-runtime` 阶段，只启动 Next，不启动单容器里的 Go API/Worker/Caddy。
 - `api` 和 `worker` 构建自 `backend/Dockerfile`。
 - `gateway` 暴露 `8080:8080`。
 - `web` 暴露内部 `3000`。

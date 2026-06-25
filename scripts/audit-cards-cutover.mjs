@@ -193,7 +193,7 @@ const requiredStoreSnippets = [
   'TestCardExchangeHTTPRejectsInsufficientFragments',
   'TestCardClaimRewardHTTPGrantsPoints',
   'TestCardClaimRewardHTTPRejectsIncompleteAlbum',
-  'assertGatewayCardRulesDisabled',
+  'assertGatewayCardRulesExact',
   'CARDS_GO_API_COOKIE',
   'CARDS_WRITE_SMOKE_USER_ID',
   'docker-compose-exec-api-and-postgres',
@@ -205,6 +205,7 @@ const requiredStoreSnippets = [
   '/api/cards/exchange',
   '/api/cards/claim-reward',
   'TestStoreReadsAndWritesCardTables',
+  'gatewayCardRules',
 ];
 
 const allowedGoCardRoutes = [
@@ -213,6 +214,14 @@ const allowedGoCardRoutes = [
   'api.Post("/cards/draw", cardHandlers.draw)',
   'api.Post("/cards/exchange", cardHandlers.exchange)',
   'api.Post("/cards/claim-reward", cardHandlers.claimReward)',
+];
+
+const expectedGatewayCardRules = [
+  'handle /api/cards/inventory {',
+  'handle /api/cards/rules {',
+  'handle /api/cards/draw {',
+  'handle /api/cards/exchange {',
+  'handle /api/cards/claim-reward {',
 ];
 
 const frontendRoots = [
@@ -369,12 +378,20 @@ const activeGatewayCardRules = gatewaySource
   .split(/\r?\n/)
   .map((line, index) => ({ line: line.trim(), lineNumber: index + 1 }))
   .filter((entry) => entry.line !== '' && !entry.line.startsWith('#'))
-  .filter((entry) => entry.line.includes('/api/cards') || entry.line.includes('/api/admin/cards'));
+  .filter((entry) => entry.line.includes('/api/cards'));
 
-if (activeGatewayCardRules.length > 0) {
+const activeGatewayCardRuleSet = new Set(activeGatewayCardRules.map((entry) => entry.line));
+const missingGatewayCardRules = expectedGatewayCardRules
+  .filter((line) => !activeGatewayCardRuleSet.has(line));
+const unexpectedGatewayCardRules = activeGatewayCardRules
+  .filter((entry) => !expectedGatewayCardRules.includes(entry.line));
+if (missingGatewayCardRules.length > 0 || unexpectedGatewayCardRules.length > 0) {
   fail(
-    'Gateway already contains active card routing rules; cards must stay on Next until Go implementation and import are complete',
-    activeGatewayCardRules.map((entry) => `${normalizeSlash(path.relative(repoRoot, gatewayPath))}:${entry.lineNumber} ${entry.line}`),
+    'Gateway card routing rules must stay limited to the approved exact cutover paths',
+    [
+      ...missingGatewayCardRules.map((line) => `missing ${line}`),
+      ...unexpectedGatewayCardRules.map((entry) => `${normalizeSlash(path.relative(repoRoot, gatewayPath))}:${entry.lineNumber} ${entry.line}`),
+    ],
   );
 }
 
@@ -390,7 +407,7 @@ const summary = {
   importScopes: ['cards'],
   store: requiredStoreFiles,
   goCardRoutes: allowedGoCardRoutes,
-  gatewayCardRules: 'none',
+  gatewayCardRules: expectedGatewayCardRules,
 };
 
 console.log(JSON.stringify(summary, null, 2));

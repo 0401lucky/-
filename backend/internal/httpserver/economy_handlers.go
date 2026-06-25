@@ -289,19 +289,7 @@ func (handlers economyHandlers) withdrawWallet(writer http.ResponseWriter, reque
 }
 
 func (handlers economyHandlers) requireUser(writer http.ResponseWriter, request *http.Request) (*auth.User, bool) {
-	user, ok := auth.UserFromRequest(
-		request,
-		handlers.deps.Config.SessionSecret,
-		handlers.deps.Config.AdminUsernames,
-	)
-	if !ok {
-		writeJSON(writer, http.StatusUnauthorized, map[string]any{
-			"success": false,
-			"message": "未登录",
-		})
-		return nil, false
-	}
-	return user, true
+	return userFromRequestWithRevocation(handlers.deps, writer, request)
 }
 
 func (handlers economyHandlers) currentPointsBalance(request *http.Request, user auth.User, fallback int64) int64 {

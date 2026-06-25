@@ -44,6 +44,12 @@ Remove-Item Env:\ZEABUR_PREFLIGHT_INCLUDE_INTERNAL
 - Gateway 禁切守卫：`scripts/audit-gateway-cutover-guard.mjs`
 - Gateway 允许切流清单审计：`scripts/audit-gateway-allowed-cutovers.mjs`
 - Zeabur 运行时基础冒烟：`scripts/smoke-zeabur-runtime.mjs`
+- 登录接口切流冒烟：`scripts/smoke-auth-login-go-api.mjs`
+- 登录态用户同步冒烟：`scripts/smoke-auth-me-go-api.mjs`
+- 登出撤销会话冒烟：`scripts/smoke-auth-logout-go-api.mjs`
+- 签到审计和写路径冒烟：`scripts/audit-checkin-cutover.mjs`、`scripts/smoke-checkin-go-api.mjs`
+- 公告审计和写路径冒烟：`scripts/audit-announcements-cutover.mjs`、`scripts/smoke-announcements-go-api.mjs`
+- 彩票/数字炸弹禁切审计：`scripts/audit-lottery-cutover.mjs`
 - 积分查询与环保排行榜审计和直连冒烟
 - 商城核心审计和直连冒烟
 - 环保行动审计和直连写路径冒烟
@@ -52,6 +58,7 @@ Remove-Item Env:\ZEABUR_PREFLIGHT_INCLUDE_INTERNAL
 - 游戏中心聚合审计和直连冒烟
 - 普通游戏一键门禁套件
 - 钱包缺少 new-api 配置时的写路径安全冒烟
+- 农场审计和写路径冒烟
 
 ## 扩展覆盖范围
 
@@ -61,10 +68,9 @@ Remove-Item Env:\ZEABUR_PREFLIGHT_INCLUDE_INTERNAL
 - 通知审计和写路径冒烟
 - 前台卡牌审计和写路径冒烟
 - 后台卡牌审计和写路径冒烟
-- 农场审计和写路径冒烟
 
-这些模块仍不代表可以直接切流。
-它们只证明 Go 内部路由、PostgreSQL 写入、测试数据清理和 Gateway 禁切约束在本地可复核。
+这些是更重的写路径复核。
+它们只证明 Go 路由、PostgreSQL 写入、测试数据清理和 Gateway 约束在本地可复核；是否已切流以 Gateway 允许清单为准。
 
 ## 前置条件
 
@@ -77,9 +83,12 @@ Remove-Item Env:\ZEABUR_PREFLIGHT_INCLUDE_INTERNAL
 
 总预检会通过 Gateway 禁切守卫持续确认以下路径没有被误开：
 
-- `/api/farm*`
+- `/api/farm` 根路径或通配
 - `/api/profile*`
 - `/api/notifications*`
+- `/api/announcements*`
+- `/api/lottery*`
+- `/api/admin/lottery*`
 - `/api/store/topup`
 - `/api/store/withdraw`
 - `/api/cards*`

@@ -1,7 +1,7 @@
 # Cards 精确切流前置审计
 
 本文记录前台卡牌系统从 Next 切到 Go 前必须复核的证据。
-当前结论：已完成前台卡牌依赖、旧数据形状审计、PostgreSQL schema、D1/KV 导入器、Go PostgreSQL store、Go 静态卡牌 catalog、抽卡纯算法、抽卡 PostgreSQL 事务服务层、碎片兑换服务层、卡册奖励服务层、Go 库存/规则/抽卡/兑换/奖励领取 HTTP handler、商城 `card_draw` 奖励同步、只读直连 API 冒烟门禁和测试库写路径自动冒烟门禁；缺少真实导入验证和登录态页面冒烟前不做生产切流结论。
+当前结论：已完成前台卡牌依赖、旧数据形状审计、PostgreSQL schema、D1/KV 导入器、Go PostgreSQL store、Go 静态卡牌 catalog、抽卡纯算法、抽卡 PostgreSQL 事务服务层、碎片兑换服务层、卡册奖励服务层、Go 库存/规则/抽卡/兑换/奖励领取 HTTP handler、商城 `card_draw` 奖励同步、只读直连 API 冒烟门禁和测试库写路径自动冒烟门禁；Gateway 已精确切流到 Go，不打开 `/api/cards*` 通配。
 
 ## 当前前端依赖
 
@@ -98,7 +98,7 @@ node scripts/audit-cards-cutover.mjs
 
 ## 精确 Gateway 草案
 
-只允许在 Go 实现、真实导入和页面冒烟全部完成后评估以下精确规则，不打开 `/api/cards*` 通配：
+当前 Gateway 只允许以下精确规则，不打开 `/api/cards*` 通配：
 
 ```caddyfile
 handle /api/cards/inventory {
@@ -132,11 +132,11 @@ handle /api/cards/exchange {
 
 ## 当前不切流原因
 
-- 后台自定义卡册/稀有度奖励配置键尚未纳入 PostgreSQL 导入，本轮奖励领取先按静态卡册默认值对齐。
-- 只读直连 Go API 冒烟脚本和测试库写路径自动冒烟脚本已完成，但还未用真实样本账号 Cookie 做登录态库存与写路径复验。
-- 旧卡牌状态仍混合 `cards:user:*`、native hot store 读穿和 D1-KV 回写语义，直接切流容易导致卡牌库存或抽卡次数分叉。
-- 抽卡、兑换和奖励领取都是写路径；Go 内部 handler 与测试库自动冒烟已完成，但还未做真实导入后的登录态接口和页面级冒烟。
-- Gateway 当前没有活跃 `/api/cards*` 或 `/api/admin/cards*` 规则，保持 Next 回落更稳妥。
+本节历史阻塞已解除，本轮已执行精确切流。仍需注意：
+
+- `POST /api/cards/purchase` 当前无前台直接入口，继续不切。
+- Gateway 只能保留 5 条精确路径，仍禁止 `/api/cards` 根路径和 `/api/cards*` 通配。
+- Zeabur 新部署采用 fresh PostgreSQL，不再等待 Cloudflare D1 历史数据导入；如后续要迁历史数据，再按下方导入顺序单独执行。
 
 ## 数据导入顺序
 

@@ -26,7 +26,7 @@ node scripts/audit-feedback-cutover.mjs
 - `DELETE /api/admin/feedback/{id}`
 - `POST /api/admin/feedback/{id}/messages`
 
-图片读取仍走 `/api/feedback/images/*`，当前仍属于 Next/Cloudflare 侧逻辑，后续必须单独迁移或替换为 Zeabur 可用的对象存储方案。
+图片读取走 Go `GET/HEAD /api/feedback/images/*`，由 `FEEDBACK_MEDIA_DIR` 指向的本地目录提供。Zeabur 上如需附件持久化，必须挂载 `/data/feedback-media` 卷。
 
 ## 旧数据来源
 
@@ -114,12 +114,20 @@ PostgreSQL 会用表索引重建列表能力，不依赖旧 KV 索引。
 go run ./cmd/migrate-d1 -input "$D1_EXPORT_SQL" -apply -scope feedback
 ```
 
-## 当前不切流原因
+## Gateway 切流状态
 
-当前已精确打开 `/api/admin/feedback` 与 `/api/admin/feedback/*`，用于后台反馈部署测试；暂不打开公开 `/api/feedback*` Gateway 规则，原因是：
+当前已精确打开公开反馈与后台反馈路径：
 
-- 生产侧仍需决定反馈附件使用 Zeabur 挂载卷，还是继续补 S3/R2 实现。
-- 尚未用真实用户 Cookie 做公开 `/feedback` 页面级冒烟。
+- `/api/feedback`
+- `/api/feedback/*`
+- `/api/admin/feedback`
+- `/api/admin/feedback/*`
+
+Zeabur 部署后仍需确认：
+
+- 如需附件持久化，`FEEDBACK_MEDIA_DIR=/data/feedback-media` 对应目录已挂载卷。
+- 使用真实用户 Cookie 做公开 `/feedback` 页面级冒烟。
+- 使用管理员 Cookie 做 `/admin/feedback` 页面级冒烟。
 
 ## Review 命令
 
@@ -142,8 +150,8 @@ go test -tags integration ./internal/httpserver -run Feedback -count=1
 
 ## 下一步
 
-1. 决定生产反馈附件使用 Zeabur 挂载卷，还是继续补 S3/R2 实现。
-2. 使用真实导入和真实登录态完成 API 与页面冒烟后，再评估精确 Gateway 切流。
+1. Zeabur 上确认反馈媒体卷挂载。
+2. 使用真实登录态完成 `/feedback` 和 `/admin/feedback` 页面冒烟。
 
 ## Docker 直连冒烟
 

@@ -52,6 +52,7 @@ const requiredFiles = [
   'scripts/preflight-production-cutover.mjs',
   'scripts/audit-deploy-secret-hygiene.mjs',
   'scripts/smoke-zeabur-runtime.mjs',
+  'scripts/smoke-auth-me-go-api.mjs',
   'scripts/smoke-game-cutovers-go-api.mjs',
 ];
 
@@ -102,6 +103,7 @@ const requiredPreflightReferences = [
   'scripts/audit-gateway-allowed-cutovers.mjs',
   'scripts/audit-gateway-upstreams.mjs',
   'scripts/smoke-zeabur-runtime.mjs',
+  'scripts/smoke-auth-me-go-api.mjs',
   'scripts/smoke-game-cutovers-go-api.mjs',
   'scripts/audit-game-2048-cutover.mjs',
   'scripts/smoke-game-2048-go-api.mjs',
@@ -117,6 +119,8 @@ const requiredPreflightReferences = [
   'scripts/smoke-admin-dashboard-go-api.mjs',
   'scripts/audit-admin-projects-cutover.mjs',
   'scripts/smoke-admin-projects-go-api.mjs',
+  'scripts/audit-farm-status-cutover.mjs',
+  'scripts/smoke-farm-write-go-api.mjs',
 ];
 
 const requiredPlanPhrases = [
@@ -130,6 +134,7 @@ const requiredPlanPhrases = [
   'Zeabur 真实环境变量审计',
   'D1 导入 scope 一致性审计',
   'Zeabur 运行时基础冒烟',
+  '登录态用户同步 review',
   'Gateway 上游可配置化',
   'PostgreSQL 冒烟测试残留审计',
   '生产最终预检漂移审计',

@@ -8,6 +8,13 @@ const testUserID = Number(process.env.ADMIN_CARDS_WRITE_SMOKE_USER_ID || 999901)
 const testUsername = `admin_cards_write_smoke_${testUserID}`;
 const sessionSecret = 'local-development-session-secret-at-least-32-chars';
 const adminCookie = process.env.ADMIN_CARDS_GO_API_COOKIE || makeSessionCookie('admin', 'Admin');
+const expectedGatewayAdminCardRules = [
+  'handle /api/admin/cards/users {',
+  'handle /api/admin/cards/user/* {',
+  'handle /api/admin/cards/reset {',
+  'handle /api/admin/cards/albums {',
+  'handle /api/admin/cards/rules {',
+];
 
 function fail(message) {
   console.error(`admin cards write Go API smoke failed: ${message}`);
@@ -29,15 +36,18 @@ function makeSessionCookie(username, displayName) {
   return `app_session=${payload}.${sig}`;
 }
 
-function assertGatewayCardRulesDisabled() {
+function assertGatewayCardRulesExact() {
   const caddyfile = readFileSync('gateway/Caddyfile', 'utf8');
   const activeCardRules = caddyfile
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'))
-    .filter((line) => line.includes('/api/cards') || line.includes('/api/admin/cards'));
-  if (activeCardRules.length > 0) {
-    fail(`gateway/Caddyfile contains card cutover rules: ${activeCardRules.join('; ')}`);
+    .filter((line) => line.includes('/api/admin/cards'));
+  const actual = new Set(activeCardRules);
+  const missing = expectedGatewayAdminCardRules.filter((line) => !actual.has(line));
+  const unexpected = activeCardRules.filter((line) => !expectedGatewayAdminCardRules.includes(line));
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail(`gateway/Caddyfile admin card rules must be exact; missing=${missing.join('; ')} unexpected=${unexpected.join('; ')}`);
   }
 }
 
@@ -101,7 +111,7 @@ function request(method, path, body = '', headers = {}) {
   const raw = `${result.stdout}\n${result.stderr}`;
   return {
     status: parseStatus(raw),
-    body: responseBody(raw),
+    body: responseBody(result.stdout),
     raw,
   };
 }
@@ -329,7 +339,7 @@ function verifyWrites(expectedCardDrawPrice) {
 }
 
 function main() {
-  assertGatewayCardRulesDisabled();
+  assertGatewayCardRulesExact();
 
   const ready = request('GET', '/readyz');
   assertStatus(ready, 200, 'GET /readyz');
@@ -368,7 +378,7 @@ function main() {
     ],
     verification,
     cleanup: cleanupResult,
-    gatewayCardRules: 'none',
+    gatewayCardRules: expectedGatewayAdminCardRules,
   }, null, 2));
 }
 

@@ -24,6 +24,14 @@ const requiredNotificationsSmokeFiles = [
   'scripts/smoke-notifications-write-go-api.mjs',
 ];
 
+const expectedGatewayNotificationRules = [
+  'handle /api/notifications {',
+  'handle /api/notifications/unread-count {',
+  'handle /api/notifications/read {',
+  'handle /api/notifications/delete {',
+  'handle /api/notifications/claim {',
+];
+
 const requiredNotificationsSmokeSnippets = [
   'NOTIFICATIONS_GO_API_COOKIE',
   'NOTIFICATIONS_WRITE_SMOKE_USER_ID',
@@ -217,10 +225,19 @@ const activeGatewayNotificationRules = gatewaySource
   .map((line, index) => ({ line: line.trim(), lineNumber: index + 1 }))
   .filter((entry) => entry.line.includes('/api/notifications') && !entry.line.startsWith('#'));
 
-if (activeGatewayNotificationRules.length > 0) {
+const activeGatewayNotificationRuleSet = new Set(activeGatewayNotificationRules.map((entry) => entry.line));
+const missingGatewayNotificationRules = expectedGatewayNotificationRules.filter((line) => !activeGatewayNotificationRuleSet.has(line));
+const unexpectedGatewayNotificationRules = activeGatewayNotificationRules
+  .filter((entry) => !expectedGatewayNotificationRules.includes(entry.line))
+  .map((entry) => `${normalizeSlash(path.relative(repoRoot, gatewayPath))}:${entry.lineNumber} ${entry.line}`);
+
+if (missingGatewayNotificationRules.length > 0 || unexpectedGatewayNotificationRules.length > 0) {
   fail(
-    'Gateway already contains active notification routing rules; review before declaring this a pre-cutover state',
-    activeGatewayNotificationRules.map((entry) => `${normalizeSlash(path.relative(repoRoot, gatewayPath))}:${entry.lineNumber} ${entry.line}`),
+    'Gateway notification routing rules must stay limited to the approved exact cutover paths',
+    [
+      ...missingGatewayNotificationRules.map((line) => `missing ${line}`),
+      ...unexpectedGatewayNotificationRules.map((line) => `unexpected ${line}`),
+    ],
   );
 }
 
@@ -245,7 +262,7 @@ const summary = {
   importScopes: requiredImportScopes,
   migrations: requiredMigrationFiles,
   notificationsSmokeFiles: requiredNotificationsSmokeFiles,
-  gatewayNotificationRules: 'none',
+  gatewayNotificationRules: expectedGatewayNotificationRules,
 };
 
 console.log(JSON.stringify(summary, null, 2));

@@ -28,6 +28,26 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o
 	&& CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate \
 	&& CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/migrate-d1 ./cmd/migrate-d1
 
+FROM node:22-alpine AS web-runtime
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+
+RUN addgroup -S app && adduser -S app -G app
+
+COPY --from=web-builder /app/public ./public
+COPY --from=web-builder --chown=app:app /app/.next/standalone ./
+COPY --from=web-builder --chown=app:app /app/.next/static ./.next/static
+
+USER app
+
+EXPOSE 3000
+
+CMD ["node", "/app/server.js"]
+
 FROM node:22-alpine AS runtime
 WORKDIR /app
 

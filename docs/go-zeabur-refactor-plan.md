@@ -864,6 +864,38 @@ D1 导入工具保留为可选归档迁移能力。
 | 2026-06-24 | PR #9 后台仪表盘 Go 迁移 | 接入 `GET /api/admin/dashboard` Go 内部只读路由；用户活跃、兑换量、抽奖次数、积分流转和游戏参与率均从 PostgreSQL 聚合，告警存储和异常检测写路径暂不伪迁移，`detect=1` 返回扫描用户数与 0 触发告警；新增 admin dashboard 审计、Docker 直连 smoke 和前置文档，Gateway 仍禁止 `/api/admin/dashboard` 与 `/api/admin/*` 通配 | 已完成 |
 | 2026-06-24 | PR #9 后台项目管理 Go 迁移 | 接入 `GET/POST /api/admin/projects`、`GET/PATCH/DELETE/POST /api/admin/projects/{id}` Go 内部路由；后台项目列表、直充积分项目创建、详情记录、状态/置顶/名额更新、删除和追加名额均写 PostgreSQL，历史 code 项目保持只读追加保护；新增 admin projects 审计、Docker 直连 smoke 和前置文档，Gateway 仍禁止 `/api/admin/projects*` 与 `/api/admin/*` 通配 | 已完成 |
 | 2026-06-24 | PR #9 部署测试精确切流 | Gateway 精确打开 `/api/games/2048/status/start/checkpoint/submit/cancel`、`/api/admin/eco`、`/api/admin/points`、`/api/admin/users{,/*}`、`/api/admin/dashboard`、`/api/admin/projects{,/*}`、`/api/admin/feedback{,/*}`；同步允许清单、模块审计和 smoke 门禁，继续禁止 `/api/admin/*`、`/api/games/*`、`/api/projects/*`、公开 `/api/feedback*` 通配 | 已完成 |
+| 2026-06-25 | 阶段 5 A1 个人主页与资料 Gateway 精确切流 | 按第 14 节 A1 打开 `GET /api/profile/overview`、`GET/PUT /api/profile/settings`、`PUT /api/profile/achievements/equip` 三个精确 Gateway 规则；同步 profile cutover 审计、Gateway 禁切守卫、Gateway 允许清单、profile smoke 和预检文档，仍禁止 `/api/profile*` 通配 | 已完成 |
+| 2026-06-25 | 阶段 5 A1 个人主页与资料 review | `npm run audit:profile-cutover`、Gateway 禁切守卫、Gateway 允许清单、`go test ./internal/profile ./internal/httpserver`、`docker compose config --quiet`、`node scripts/smoke-profile-go-api.mjs`、`node scripts/smoke-profile-write-go-api.mjs` 均通过；写路径 smoke 覆盖资料更新、成就佩戴、overview 回读、PostgreSQL 验证和清理零残留；Zeabur 重新部署新镜像后 `/profile` 应不再落回旧 Next/KV | 已完成 |
+| 2026-06-25 | 阶段 5 PR #9 补接清单 | 新增 `docs/pr-9-go-reconciliation.md`，确认 PR #9 仍为 open、不能直接 merge 到当前 Go/Zeabur 主线；按后台页面、API/运行时、游戏业务库和组件拆出补接清单，要求每块按 Go/PostgreSQL/Redis 路线移植并单独 review | 已完成 |
+| 2026-06-25 | 阶段 5 A2 通知中心 Gateway 精确切流 | 按第 14 节 A2 打开 `GET /api/notifications`、`GET /api/notifications/unread-count`、`POST /api/notifications/read`、`POST /api/notifications/delete`、`POST /api/notifications/claim` 五个精确 Gateway 规则；同步通知 cutover 审计、Gateway 禁切守卫、Gateway 允许清单、通知 smoke 和预检文档，仍禁止 `/api/notifications*` 通配 | 已完成 |
+| 2026-06-25 | 阶段 5 A2 通知中心 review | `npm run audit:notifications-cutover`、Gateway 禁切守卫、Gateway 允许清单、`go test ./internal/notifications ./internal/rewards ./internal/httpserver`、`docker compose config --quiet`、`node scripts/smoke-notifications-go-api.mjs`、`node scripts/smoke-notifications-write-go-api.mjs` 均通过；写路径 smoke 覆盖列表、未读数、标记已读、删除已读、points 奖励领取、重复领取幂等、PostgreSQL 验证和清理零残留；Zeabur 重新部署新镜像后通知中心不再落回旧 Next/KV | 已完成 |
+| 2026-06-25 | 阶段 5 A3 反馈墙公开路径 Gateway 精确切流 | 按第 14 节 A3 打开 `/api/feedback` 与 `/api/feedback/*` 到 Go，覆盖公开墙列表、新建、详情、留言、点赞和附件读取；后台 `/api/admin/feedback{,/*}` 保持已切流；同步 feedback cutover 审计、Gateway 允许清单、反馈 smoke 和预检文档 | 已完成 |
+| 2026-06-25 | 阶段 5 A3 反馈墙公开路径 review | `node scripts/audit-feedback-cutover.mjs`、Gateway 禁切守卫、Gateway 允许清单、`go test ./internal/feedback ./internal/httpserver -run Feedback -count=1`、`docker compose config --quiet`、`node scripts/smoke-feedback-go-api.mjs` 均通过；smoke 覆盖公开反馈新建、公开墙列表、详情、点赞、用户评论、后台回复、后台状态更新、后台删除、PostgreSQL 验证和清理零残留；Zeabur 附件持久化仍需确认 `/data/feedback-media` 卷挂载 | 已完成 |
+| 2026-06-25 | 阶段 5 登录态用户同步修复 | 新增 Go `GET /api/auth/me` 精确切流，接口解析现有 `app_session`/`session` cookie 后 upsert `users` 与 `point_accounts`；Next 登录成功后调用 Go 内部 `/api/auth/me` 同步新用户，修复新用户登录后后台用户管理查不到、2048 等 Go 游戏无法稳定识别新账号的问题 | 已完成 |
+| 2026-06-25 | 阶段 5 登录态用户同步 review | `go test ./internal/httpserver`、`TEST_DATABASE_URL=... go test -tags=integration ./internal/httpserver -run TestAuthMeSyncsAuthenticatedUserToPostgres -count=1`、`node scripts/smoke-auth-me-go-api.mjs` 均通过；Docker smoke 覆盖未登录 401、登录 200、首次创建 `users`/`point_accounts`、二次更新展示名和清理零残留；总预检已接入 auth/me 同步冒烟 | 已完成 |
+| 2026-06-25 | 阶段 5 登录同步生产回归修复 | 根据 Zeabur 实测反馈，“朋友能登录但 2048 不能玩、后台用户管理看不到该账号”说明 best-effort 同步会掩盖 Go/PostgreSQL 写入失败；已改为配置了 Go 内部地址时同步失败直接返回 503，并在日志中输出内部同步 URL、HTTP 状态和响应片段，避免继续产生只存在于 Next session、未进入 Go 数据源的半登录用户 | 已完成 |
+| 2026-06-25 | 阶段 5 登录同步生产回归 review | `go test ./internal/auth ./internal/httpserver ./internal/game2048 ./internal/adminusers`、`npx tsc --noEmit --pretty false`、`node --check scripts/smoke-auth-me-go-api.mjs`、`node scripts/smoke-auth-me-go-api.mjs` 均通过；Docker smoke 再次确认新登录态用户会写入 `users` 和 `point_accounts`，后台用户管理与 2048 共用该数据源 | 已完成 |
+| 2026-06-25 | 阶段 5 B1 登出与 session revocation | Go 端 `auth.User` 保留 `iat/exp/jti`，`requireUser` 统一检查 Redis `auth:session:blacklist:{jti}` 与 `auth:session:revoked-after:{userId}`；新增 `POST /api/auth/logout`，通过同源校验后写 Redis 黑名单并清理 `app_session`、`session`、`new_api_session`，Gateway 只精确打开 `/api/auth/logout`，仍不切 `/api/auth/login` 或 `/api/auth*` 通配 | 已完成 |
+| 2026-06-25 | 阶段 5 B1 登出与 session revocation review | `go test ./internal/auth ./internal/httpserver ./internal/game2048 ./internal/adminusers`、`TEST_REDIS_URL=redis://127.0.0.1:6379/0 go test -tags=integration ./internal/httpserver -run TestLogoutRevokesSessionInRedis -count=1`、Gateway 双门禁、`npx tsc --noEmit --pretty false`、Docker Caddy validate、`node scripts/smoke-auth-me-go-api.mjs`、`node scripts/smoke-auth-logout-go-api.mjs` 均通过；logout smoke 覆盖旧 cookie 登出后再访问 `/api/auth/me` 返回 401 | 已完成 |
+| 2026-06-25 | 阶段 5 本地 Compose web 目标修复 | 根目录 `Dockerfile` 保持 Zeabur 单容器最终产物，同时新增 `web-runtime` 构建阶段；`compose.yml` 的 `web` 服务改为构建该阶段，只启动 Next，避免多服务 Compose 中误启动单容器的 Go API/Worker/Caddy 并因缺少 `DATABASE_URL` 退出 | 已完成 |
+| 2026-06-25 | 阶段 5 本地 Compose web 目标 review | `node scripts/audit-compose-topology.mjs`、`node scripts/audit-dockerfiles.mjs`、`docker compose config --quiet`、`docker compose up -d --build web gateway`、强制重建 gateway 端口绑定、`http://127.0.0.1:8080/healthz`、`node scripts/smoke-zeabur-runtime.mjs` 均通过；本地 `api`、`web`、`gateway`、PostgreSQL、Redis 已恢复运行 | 已完成 |
+| 2026-06-25 | 阶段 5 A4 卡牌前台与后台 Gateway 精确切流 | 按第 14 节 A4 打开 `/api/cards/inventory`、`/api/cards/rules`、`/api/cards/draw`、`/api/cards/exchange`、`/api/cards/claim-reward` 与后台 `/api/admin/cards/users`、`/api/admin/cards/user/*`、`/api/admin/cards/reset`、`/api/admin/cards/albums`、`/api/admin/cards/rules`；继续禁止 `/api/cards*` 和 `/api/admin/cards*` 通配 | 已完成 |
+| 2026-06-25 | 阶段 5 A4 卡牌前台与后台 review | `node scripts/audit-cards-cutover.mjs`、`node scripts/audit-admin-cards-cutover.mjs`、Gateway 双门禁、`go test ./internal/cards ./internal/httpserver ./internal/game2048 ./internal/adminusers`、`npx tsc --noEmit --pretty false`、`node scripts/smoke-cards-go-api.mjs`、`node scripts/smoke-cards-write-go-api.mjs`、`node scripts/smoke-admin-cards-go-api.mjs`、`node scripts/smoke-admin-cards-write-go-api.mjs` 均通过；写路径 smoke 覆盖抽卡、碎片兑换、领奖、后台重置、后台奖励配置、后台规则更新、PostgreSQL 验证和清理零残留 | 已完成 |
+| 2026-06-25 | 阶段 5 A5 农场全路径 Gateway 精确切流 | 按第 14 节 A5 打开当前前端使用的 19 条 `/api/farm` 精确路径，覆盖 status、种植、浇水、收获、清除、买地、商店、种子、宠物和偷菜；同步农场 cutover 审计、Gateway 允许清单、Gateway 禁切守卫和农场预检文档，继续禁止 `/api/farm` 根路径、`/api/farm*` 和 `/api/farm/*` 通配 | 已完成 |
+| 2026-06-25 | 阶段 5 A5 农场全路径 review | `node scripts/audit-farm-status-cutover.mjs`、Gateway 双门禁、`go test ./internal/farm ./internal/httpserver`、`TEST_DATABASE_URL=... go test -tags=integration ./internal/httpserver -run Farm -count=1`、`docker compose config --quiet`、`node scripts/smoke-farm-go-api.mjs`、`node scripts/smoke-farm-write-go-api.mjs`、Docker Caddy `validate` 均通过；写路径 smoke 覆盖状态、买种子、种植、浇水、收获、买/用道具、宠物、偷菜、PostgreSQL 验证和清理零残留 | 已完成 |
+| 2026-06-25 | 阶段 5 A6 钱包充值与提现本地 review | `node scripts/audit-wallet-cutover.mjs`、`node scripts/smoke-wallet-go-api.mjs`、`node scripts/smoke-wallet-write-missing-newapi-go-api.mjs`、`go test ./internal/economy ./internal/httpserver` 均通过；缺少 `NEW_API_URL`、`NEW_API_ADMIN_ACCESS_TOKEN`、`NEW_API_ADMIN_USER_ID` 的本地环境下，认证余额/充值/提现均返回 `NEW_API_NOT_CONFIGURED`，且不写 `wallet_transactions`、不写积分流水、不改变余额；A6 Gateway 切流等待 Zeabur 配置真实 new-api 后再做登录态只读余额、小额充值和小额提现冒烟 | 待外部配置 |
+| 2026-06-25 | 阶段 5 B1 登录内部 Go API | 新增 Go `POST /api/auth/login` 内部实现：同源校验、Redis 登录失败计数与限流、调用 `NEW_API_URL /api/user/login`、生成兼容 `app_session`/`session` 的 HMAC 会话 token、同步 `users` 与 `point_accounts`，并设置 `new_api_session`；Gateway 仍未切 `/api/auth/login` | 内部完成 |
+| 2026-06-25 | 阶段 5 B1 登录内部 Go API review | `go test ./internal/auth ./internal/platform/newapi ./internal/httpserver ./internal/game2048 ./internal/adminusers`、`TEST_DATABASE_URL=... TEST_REDIS_URL=... go test -tags=integration ./internal/httpserver -run 'TestAuthLoginCreatesSessionAndSyncsUser|TestLogoutRevokesSessionInRedis' -count=1`、Gateway 双门禁、`node --check scripts/smoke-auth-login-go-api.mjs`、`node scripts/smoke-auth-login-go-api.mjs` 均通过；smoke 使用 fake new-api 验证登录成功后 PostgreSQL 创建用户和积分账户，修复新用户只存在旧会话、不进入后台用户管理与 2048 数据源的问题；本轮还修复 Windows 下 smoke 结束后临时 `go run` 子进程残留导致超时的问题 | 已完成 |
+| 2026-06-25 | 阶段 5 B1 登录 Gateway 精确切流 | Gateway 新增 `handle /api/auth/login` 到 Go API，认证三条核心路径变为 `login/me/logout` 精确切流；同步 Gateway 允许清单、禁切守卫摘要、auth 三个 smoke 的规则预期，并把 `scripts/smoke-auth-login-go-api.mjs` 加入默认 Zeabur 总预检 | 已完成 |
+| 2026-06-25 | 阶段 5 B1 登录 Gateway 精确切流 review | `node --check` 覆盖 auth 三个 smoke 与总预检、Gateway 双门禁、`go test ./internal/auth ./internal/platform/newapi ./internal/httpserver ./internal/game2048 ./internal/adminusers`、真实 PostgreSQL/Redis auth integration、`node scripts/smoke-auth-login-go-api.mjs`、`node scripts/smoke-auth-me-go-api.mjs`、`node scripts/smoke-auth-logout-go-api.mjs`、`docker compose up -d --build gateway`、Caddy validate、`node scripts/smoke-zeabur-runtime.mjs` 均通过；本地 gateway `POST /api/auth/login` 探针返回 Go 的 `new-api 登录服务未配置` 503，确认已落到 Go 而不是旧 Next；生产重新构建 GHCR 镜像并配置 `NEW_API_URL` 后，新用户登录会直接写入 PostgreSQL，后台用户管理与 2048 读取同一用户源 | 已完成 |
+| 2026-06-25 | 阶段 5 B1 登录新用户资产同步补强 | 根据 Zeabur 测试反馈“朋友能登录但后台用户管理没有账号、2048 玩不了”，将 Go 登录和 `/api/auth/me` 同步用户扩展为同时 upsert `users`、`point_accounts` 与 `user_assets`，避免新用户缺基础资产行导致后续资料、卡牌、签到等链路分叉 | 已完成 |
+| 2026-06-25 | 阶段 5 B1 登录新用户资产同步 review | `go test ./internal/httpserver -run 'Auth|AdminUser|Game2048|Checkin' -count=1`、`go test ./internal/checkin -count=1`、真实 PostgreSQL/Redis auth 与 2048 integration、`node --check scripts/smoke-auth-login-go-api.mjs`、`node scripts/smoke-auth-login-go-api.mjs` 均通过；auth/login smoke 已验证 `users=1`、`accounts=1`、`assets=1`，该修复需要重新构建并部署 GHCR 镜像后才会在 Zeabur 生效 | 已完成 |
+| 2026-06-25 | 阶段 5 B2 签到 Go 迁移与 Gateway 精确切流 | 新增 PostgreSQL `checkin_records`、Go `internal/checkin` 服务和 `GET/POST /api/checkin`、`POST /api/checkin/makeup` handler；Gateway 精确打开 `/api/checkin` 与 `/api/checkin/makeup`，同步允许清单、禁切守卫、`scripts/audit-checkin-cutover.mjs`、`scripts/smoke-checkin-go-api.mjs`、`docs/checkin-cutover-preflight.md` 和 Zeabur 总预检 | 已完成 |
+| 2026-06-25 | 阶段 5 B2 签到 review | `node --check` 覆盖签到 audit/smoke/总预检、`node scripts/audit-checkin-cutover.mjs`、Gateway 双门禁、`go test ./internal/checkin ./internal/httpserver -run Checkin -count=1`、真实 PostgreSQL checkin integration、Docker API/Gateway build、容器内 `/app/migrate`、Caddy validate、`/readyz`、`node scripts/smoke-checkin-go-api.mjs` 均通过；smoke 覆盖未登录边界、每日签到、重复签到 400、补签成功、PostgreSQL `checkin_records`/`point_ledger`/`user_assets` 验证和清理零残留；review 期间修复补签成功时 `makeupCards=0` 被 `omitempty` 省略的兼容问题 | 已完成 |
+| 2026-06-25 | 阶段 5 B3 公告 Go 迁移与 Gateway 精确切流 | 新增 PostgreSQL `announcements` 与 `announcement_notifications`、Go `internal/announcements` 服务和 `GET /api/announcements`、`GET/POST /api/admin/announcements`、`PATCH/DELETE /api/admin/announcements/{id}` handler；发布时 fanout 写入 `notifications`，通过 `(announcement_id,user_id)` 保证重复发布不重复通知；Gateway 精确打开公告 3 条规则，继续禁止 `/api/announcements*` 公开通配和完整 `/api/admin/*` 通配 | 已完成 |
+| 2026-06-25 | 阶段 5 B3 公告 review | `go test ./internal/announcements ./internal/httpserver -run Announcement -count=1`、真实 PostgreSQL `go test -tags=integration ./internal/announcements -run Announcement -count=1`、`node --check` 覆盖公告 audit/smoke/总预检、`node scripts/audit-announcements-cutover.mjs`、Gateway 双门禁、Docker API/Gateway build、容器内 `/app/migrate`、Caddy validate、`/readyz`、`node scripts/smoke-announcements-go-api.mjs` 均通过；smoke 覆盖未登录、非管理员 403、创建草稿、后台列表、发布 fanout、重复发布幂等、公开列表、归档和 PostgreSQL 清理零残留；Zeabur 重新部署新镜像后首页公告与后台公告管理不再落回旧 Next/KV | 已完成 |
+| 2026-06-25 | 阶段 5 B4-0 彩票与数字炸弹切流审计 | 新增 `docs/lottery-cutover-preflight.md` 与 `scripts/audit-lottery-cutover.mjs`，确认当前前台彩票路径为 `/api/lottery`、`/api/lottery/spin`、`/api/lottery/number-bomb{,/bet,/cancel}`，后台页面路径为 `/api/admin/lottery`、`/api/admin/lottery/config`、`/api/admin/lottery/number-bomb`，排行榜依赖 `/api/rankings/lottery`；Gateway 禁切守卫新增 `/api/lottery*` 和 `/api/admin/lottery*`，总预检纳入彩票禁切审计 | 已完成 |
+| 2026-06-25 | 阶段 5 B4-0 review | `node --check scripts/audit-lottery-cutover.mjs`、`node scripts/audit-lottery-cutover.mjs`、Gateway 双门禁、`node --check scripts/preflight-zeabur-go-api.mjs` 均通过；审计确认旧实现仍依赖 `lottery:config`、`lottery:records`、`lottery:user:records:*`、`lottery:daily_spin:*`、`number-bomb:draw:*`、`number-bomb:bet:*`、`number-bomb:settlement:*`，因此彩票/数字炸弹仍未切 Gateway；下一小块 B4-1 建 PostgreSQL 表并先迁 `GET /api/lottery` 与 `GET /api/admin/lottery` 只读 | 已完成 |
 
 ## 13. 下一轮执行清单
 
@@ -879,3 +911,350 @@ D1 导入工具保留为可选归档迁移能力。
 8. 游戏中心 `GET /api/games/profile` 已精确切到 Go，并通过本地 Gateway 页面冒烟和直连 Go API 聚合冒烟；兼容的 `GET /api/games/overview` 已完成 Go 内部迁移且纳入直连冒烟，但当前无前端直接调用，暂不切。
 9. 农场 `/api/farm/status` 已完成前置审计、`0015_farm_runtime.sql`、`migrate-d1 -apply -scope farm-v2`、Go PostgreSQL store、内部 status 服务层、缺失状态 get-or-create、已有状态积分余额同步、新用户初始积分入账、基础作物 tick、雨天自动浇水、乌鸦窗口推进、周五随机事件、宠物基础懒结算、宠物自动浇水、宠物被动收菜、宠物被动播种、种植、浇水、一键浇水、手动收获、一键收获、清除枯萎作物、购买土地、购买道具、使用道具、购买种子、宠物领养、宠物喂养、宠物保养/喂水/互动、宠物派遣、偷菜候选列表、偷菜纯算法、偷菜双用户事务结算，并已给当前前端使用的全部 `/api/farm` 路径补 Go 内部精确 handler、真实 PostgreSQL HTTP integration、直连 Go API 冒烟脚本和 Docker 测试库写路径自动冒烟门禁；但仍不适合切流：尚未做真实导入数据后的登录态直连 API 和页面级冒烟。继续禁止 `/api/farm/status` 和 `/api/farm*` Gateway 切流，下一步农场应进入真实导入数据冒烟与页面级 review。
 10. 卡牌前台切流前置审计、PostgreSQL schema、`migrate-d1 -apply -scope cards`、`internal/cards` PostgreSQL store、静态 catalog、抽卡纯算法、抽卡 PostgreSQL 事务服务层、碎片兑换服务层、卡册奖励服务层、库存/规则/抽卡/兑换/奖励领取 HTTP handler、商城 `card_draw` 奖励同步、直连 API 冒烟门禁和 Docker 测试库写路径自动冒烟门禁已完成，当前确认 `/cards`、`/cards/draw`、`/cards/[albumId]` 依赖 5 个 `/api/cards/*` 路径，旧状态来自 `native_user_cards`、`cards:user:{userId}` 与 `cards:rules:config`；直接 `POST /api/cards/purchase` 当前无前台入口，继续禁止 `/api/cards*` 与 `/api/admin/cards*` Gateway 切流。后台 `/api/admin/cards/*` 已完成前置审计、自定义奖励 schema、自定义奖励 D1 导入器、Go admin 读写 service、读写 HTTP handler 方法、Go 内部精确路由、直连未登录冒烟门禁、本地管理员 Cookie 只读冒烟、`/admin/cards` 页面只读冒烟和本地夹具页面写路径冒烟；下一步是用真实导入数据或生产等价样本账号完成最终后台页面复核，最后才评估 Gateway 精确切流。
+
+## 14. Zeabur 全量 Go 收口计划
+
+### 14.1 当前线上问题判断
+
+Zeabur 当前已经是单容器多进程部署：Caddy 对外、Next.js 承载前端、Go API 承载已切流接口、Go Worker 承载后台任务。
+因此当前不是“没有 Go 后端”，而是“部分接口还没有切到 Go，或者还没有完成 Go 迁移”。
+
+当前个人主页出现“个人主页数据服务暂时不可用”，优先判断为：
+
+1. `/api/profile/overview` 已有 Go 内部实现，但 `gateway/Caddyfile` 仍未切到 Go。
+2. 请求落回 Next 旧 API 后，旧链路继续调用 `d1-kv.ts`。
+3. Zeabur 没有 Cloudflare `KV_DB` 绑定，也没有 `KV_REST_API_URL` / `KV_REST_API_TOKEN`，所以旧 KV 报错。
+
+修复方向不是继续补 Cloudflare KV，而是按下面计划把旧 Next API 全部收口到 Go/PostgreSQL/Redis。
+
+### 14.2 全量完成标准
+
+完成标准必须同时满足：
+
+1. Zeabur 生产入口只需要 `ghcr.io/0401lucky/redemption-zeabur:latest` 单容器镜像。
+2. Caddy 可以把全部业务 `/api/*` 流量转发到 Go，Next.js 只保留页面渲染和静态资源。
+3. 线上日志不再出现 `KV backend not configured`。
+4. 运行时不再需要 `KV_DB`、`KV_REST_API_URL`、`KV_REST_API_TOKEN`。
+5. `src/lib/d1-kv.ts` 和旧 Cloudflare/OpenNext 专用运行依赖进入删除清单。
+6. PostgreSQL 是唯一业务写入源，Redis 只负责锁、限流、幂等和缓存。
+7. `/readyz`、登录、个人主页、通知、农场、卡牌、反馈、抽奖、商城、游戏和后台核心页面均完成 Zeabur 登录态冒烟。
+
+### 14.3 阶段 A：先切已完成 Go 实现，止住旧 KV 报错
+
+目标：优先处理“Go 已经写好，但 Gateway 没切”的接口。
+这一阶段不做大重构，只做精确切流、验证和 review。
+
+小块 A1：个人主页与资料
+
+- 切流路径：
+  - `GET /api/profile/overview`
+  - `GET /api/profile/settings`
+  - `PUT /api/profile/settings`
+  - `PUT /api/profile/achievements/equip`
+- 完成标准：
+  - `/profile` 不再显示“个人主页数据服务暂时不可用”。
+  - 修改昵称、头像、QQ 邮箱和佩戴成就可正常写入 PostgreSQL。
+  - Zeabur 日志不再因个人主页触发 `KV backend not configured`。
+- review：
+  - 复跑 `audit:profile-cutover`。
+  - 用真实登录 Cookie 冒烟 `/profile` 页面。
+
+小块 A2：通知中心
+
+- 切流路径：
+  - `GET /api/notifications`
+  - `GET /api/notifications/unread-count`
+  - `POST /api/notifications/read`
+  - `POST /api/notifications/delete`
+  - `POST /api/notifications/claim`
+- 完成标准：
+  - 侧边栏未读数正常。
+  - 通知页列表、已读、删除和领取奖励正常。
+  - 奖励领取重复提交不重复发积分或额度。
+- review：
+  - 复跑 `audit:notifications-cutover`。
+  - 用真实登录 Cookie 冒烟 `/notifications` 页面。
+
+小块 A3：反馈墙公开路径
+
+- 当前后台反馈路径已经精确切流，公开反馈路径仍需补齐切流。
+- 切流路径：
+  - `GET /api/feedback`
+  - `POST /api/feedback`
+  - `GET /api/feedback/{id}`
+  - `POST /api/feedback/{id}/messages`
+  - `POST /api/feedback/{id}/like`
+  - `GET/HEAD /api/feedback/images/*`
+- 完成标准：
+  - `/feedback` 页面列表、详情、新建、评论、点赞和附件显示正常。
+  - 附件写入 `FEEDBACK_MEDIA_DIR`。
+  - 需要持久化附件时 Zeabur 必须挂载 `/data/feedback-media` 卷。
+- review：
+  - 复跑 feedback Go API smoke。
+  - 页面级检查新建文本反馈和带图反馈。
+
+小块 A4：卡牌前台与后台
+
+- 切流路径：
+  - `GET /api/cards/inventory`
+  - `GET /api/cards/rules`
+  - `POST /api/cards/draw`
+  - `POST /api/cards/exchange`
+  - `POST /api/cards/claim-reward`
+  - `GET /api/admin/cards/users`
+  - `GET /api/admin/cards/user/{userId}`
+  - `POST /api/admin/cards/reset`
+  - `GET/POST /api/admin/cards/albums`
+  - `GET/PATCH /api/admin/cards/rules`
+- 完成标准：
+  - 抽卡次数、碎片、库存、图鉴奖励和后台规则全部写 PostgreSQL。
+  - 商城购买卡抽次数后，卡牌页能立即看到次数。
+- review：
+  - 复跑 cards cutover 审计。
+  - 冒烟 `/cards`、`/cards/draw`、`/admin/cards`。
+
+小块 A5：农场全路径
+
+- 切流路径：
+  - `/api/farm/status`
+  - `/api/farm/plant`
+  - `/api/farm/water`
+  - `/api/farm/water-all`
+  - `/api/farm/harvest`
+  - `/api/farm/harvest-all`
+  - `/api/farm/remove`
+  - `/api/farm/buy-land`
+  - `/api/farm/shop/buy`
+  - `/api/farm/shop/use`
+  - `/api/farm/seeds/buy`
+  - `/api/farm/pet/adopt`
+  - `/api/farm/pet/feed`
+  - `/api/farm/pet/wash`
+  - `/api/farm/pet/drink`
+  - `/api/farm/pet/play`
+  - `/api/farm/pet/dispatch`
+  - `/api/farm/steal/list`
+  - `/api/farm/steal/do`
+- 完成标准：
+  - 农场页面状态、种植、浇水、收获、购买、宠物、偷菜均正常。
+  - 高频操作不会落回 Next 旧 KV。
+- review：
+  - 复跑 farm Go API smoke。
+  - 页面级检查至少一个完整种植到收获闭环。
+
+小块 A6：钱包充值与提现
+
+- 切流路径：
+  - `GET /api/store/topup`
+  - `POST /api/store/topup`
+  - `POST /api/store/withdraw`
+- 前置条件：
+  - `NEW_API_URL`
+  - `NEW_API_ADMIN_ACCESS_TOKEN`
+  - `NEW_API_ADMIN_USER_ID`
+- 完成标准：
+  - new-api 配置缺失时返回明确 503，不产生半写入。
+  - 配置正确时充值和提现写 PostgreSQL 流水，并和外部额度一致。
+- review：
+  - 复跑 wallet smoke。
+  - 用小额真实账号做一次只读余额检查，写路径按风险单独确认。
+
+### 14.4 阶段 B：迁移仍依赖 Next/KV 的核心业务
+
+目标：把还没有 Go 实现、但页面仍会调用的旧 API 迁掉。
+每个小块都必须先做前端依赖审计，再实现 Go，再加 smoke，最后才切 Gateway。
+
+小块 B1：认证与会话
+
+- 迁移范围：
+  - `POST /api/auth/login`
+  - `POST /api/auth/logout`
+  - `GET /api/auth/me`
+  - 登录失败计数
+  - session revocation
+  - public session profile
+- 目标设计：
+  - 用户主表继续使用 PostgreSQL `users`。
+  - session 签名继续兼容现有 `SESSION_SECRET`。
+  - 撤销、失败计数和临时登录状态放 Redis。
+- 完成标准：
+  - 登录、登出、刷新页面保持登录态均不再访问 `d1-kv.ts`。
+  - Zeabur 多副本时不会因为内存 fallback 导致登录状态不一致。
+
+小块 B2：签到
+
+- 迁移范围：
+  - `GET/POST /api/checkin`
+  - `POST /api/checkin/makeup`
+- 目标设计：
+  - 新增或复用 PostgreSQL 签到表。
+  - 签到奖励通过 Go economy 事务入账。
+  - 补签消耗和奖励幂等处理。
+- 完成标准：
+  - 每日重复签到不重复发奖励。
+  - 补签并发不会重复扣分或重复奖励。
+
+小块 B3：公告
+
+- 迁移范围：
+  - 公开公告列表。
+  - `/api/admin/announcements`
+  - `/api/admin/announcements/{id}`
+  - 公告通知 fanout 去重。
+- 目标设计：
+  - PostgreSQL 保存公告主体。
+  - Redis 或 PostgreSQL 唯一约束做 fanout 幂等。
+- 完成标准：
+  - 首页公告、后台公告管理和公告通知都不再访问 KV。
+
+小块 B4：彩票与数字炸弹
+
+- 迁移范围：
+  - `/api/lottery`
+  - `/api/lottery/spin`
+  - `/api/lottery/records`
+  - `/api/lottery/ranking`
+  - `/api/lottery/number-bomb`
+  - `/api/lottery/number-bomb/bet`
+  - `/api/lottery/number-bomb/cancel`
+  - `/api/admin/lottery/*`
+- 目标设计：
+  - 奖池、奖品码、投注、记录、排行榜全部结构化入 PostgreSQL。
+  - 数字炸弹结算由 Go Worker 幂等处理。
+- 完成标准：
+  - 抽奖码不会重复发放。
+  - 投注、取消、结算和排行榜一致。
+
+小块 B5：排行榜与历史奖励
+
+- 迁移范围：
+  - `/api/rankings/points`
+  - `/api/rankings/games`
+  - `/api/rankings/lottery`
+  - `/api/rankings/checkin-streak`
+  - `/api/rankings/history`
+  - `/api/admin/rankings/settle`
+- 目标设计：
+  - 从 PostgreSQL 事实表实时聚合或定时写入快照。
+  - 历史奖励走 `reward_claims` 幂等发放。
+- 完成标准：
+  - 排行榜页面不再读 KV。
+  - 后台结算可重复执行但不重复发奖。
+
+小块 B6：剩余后台工具
+
+- 迁移范围：
+  - `/api/admin/config`
+  - `/api/admin/alerts`
+  - `/api/admin/alerts/{id}/resolve`
+  - `/api/admin/sync-users`
+  - `/api/admin/fix-codes-count`
+  - `/api/admin/migrate-*`
+- 处理原则：
+  - 有生产价值的迁到 Go。
+  - 只为旧 Cloudflare/D1 服务的迁移工具改为 CLI 或删除。
+- 完成标准：
+  - 后台管理页不再触发旧 KV。
+  - 生产环境不暴露一次性迁移 API。
+
+### 14.5 阶段 C：Gateway 全量切流与删除旧链路
+
+小块 C1：Gateway 从精确规则切到 Go 优先
+
+- 先把所有已迁路径精确切到 Go。
+- 再评估是否打开 `/api/* -> Go`。
+- 保留明确例外：
+  - `/_next/*`
+  - 静态资源
+  - 普通页面路由
+
+完成标准：
+
+- 访问任何业务 API 时，Go 日志都能看到请求。
+- Next 日志不再出现旧 API 的业务错误。
+
+小块 C2：删除 Next 旧 API
+
+- 删除或归档 `src/app/api/*` 中已经被 Go 接管的 route。
+- 保留必要的前端页面代码。
+- 删除未使用的旧 `src/lib/*` 业务 KV 模块。
+
+完成标准：
+
+- `rg "d1-kv|KV_REST_API|KV_DB" src` 不再命中生产代码。
+- `npm run typecheck` 通过。
+- Go 全量测试通过。
+
+小块 C3：删除 Cloudflare 专用部署链路
+
+- 删除或归档 OpenNext / Workers 专用配置。
+- 文档统一为 Zeabur GHCR 镜像部署。
+- 环境变量样例移除 Cloudflare D1/KV 相关项。
+
+完成标准：
+
+- 新人只看 Zeabur 文档即可部署。
+- 生产环境不再要求任何 Cloudflare binding。
+
+### 14.6 每小块 review 模板
+
+每完成一个小块必须记录：
+
+1. 改动范围：列出 Go 服务、Gateway、前端和 migration 文件。
+2. 路由清单：列出新增或切流的全部 API。
+3. 数据源：确认写入 PostgreSQL，临时状态写入 Redis。
+4. 幂等性：说明重复提交、重复发奖、并发扣分如何处理。
+5. 验证命令：列出实际运行过的测试、审计和 smoke。
+6. 页面冒烟：列出实际打开的页面和核心操作。
+7. Zeabur 影响：说明是否需要新环境变量、卷、重启或重新构建镜像。
+8. 回滚方式：说明可以回滚到上一镜像，或关掉对应 Gateway 精确规则。
+
+### 14.7 推荐执行顺序
+
+优先级按“当前线上报错影响”和“Go 已完成程度”排序：
+
+1. A1 个人主页与资料：直接修复当前截图中的个人主页报错。
+2. A2 通知中心：消除侧边栏和通知页 KV 报错。
+3. A3 反馈墙公开路径：后台已切，公开路径应一起收口。
+4. A4 卡牌前台与后台：避免卡牌页面继续触发旧 KV。
+5. A5 农场全路径：代码已完成度高，但页面复杂，单独 review。
+6. A6 钱包充值与提现：依赖 new-api，放在已确认环境变量后。
+7. B1 认证与会话：这是彻底移除旧 KV 的关键路径。
+8. B2 签到。
+9. B3 公告。
+10. B4 彩票与数字炸弹。
+11. B5 排行榜与历史奖励。
+12. B6 剩余后台工具。
+13. C1-C3 全量 Gateway 切流、删除旧 API 和删除 Cloudflare 专用链路。
+
+### 14.8 Zeabur 环境变量收口目标
+
+全量迁完后，生产应保留：
+
+- `PORT=8080`
+- `GATEWAY_PORT=8080`
+- `WEB_PORT=3000`
+- `API_PORT=8081`
+- `DATABASE_URL`
+- `REDIS_URL`
+- `SESSION_SECRET`
+- `INTERNAL_API_SECRET`
+- `ADMIN_USERNAMES`
+- `CRON_SECRET`
+- `RAFFLE_DELIVERY_CRON_SECRET`
+- `NEW_API_URL`
+- `NEW_API_ADMIN_ACCESS_TOKEN`
+- `NEW_API_ADMIN_USER_ID`
+- `FEEDBACK_MEDIA_DIR=/data/feedback-media`
+- `FEEDBACK_MEDIA_PUBLIC_URL`，可选
+- `NEXT_PUBLIC_BASE_URL`
+- `NODE_ENV=production`
+
+全量迁完后，应删除或不再需要：
+
+- `KV_DB`
+- `KV_REST_API_URL`
+- `KV_REST_API_TOKEN`
+- Cloudflare D1 binding
+- Cloudflare R2 binding，除非后续明确改为 S3/R2 兼容对象存储
+- OpenNext/Workers 生产部署变量

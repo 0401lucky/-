@@ -155,6 +155,14 @@ const expectedGoAdminCardRoutes = [
   'api.Patch("/admin/cards/rules", adminCardHandlers.updateRules)',
 ];
 
+const expectedGatewayAdminCardRules = [
+  'handle /api/admin/cards/users {',
+  'handle /api/admin/cards/user/* {',
+  'handle /api/admin/cards/reset {',
+  'handle /api/admin/cards/albums {',
+  'handle /api/admin/cards/rules {',
+];
+
 const requiredGoAdminCardSmokeFiles = [
   'scripts/smoke-admin-cards-go-api.mjs',
   'scripts/smoke-admin-cards-write-go-api.mjs',
@@ -166,7 +174,7 @@ const requiredGoAdminCardSmokeSnippets = [
   'ADMIN_CARDS_GO_API_NON_ADMIN_COOKIE',
   'ADMIN_CARDS_GO_API_PROXY_PORT',
   'ADMIN_CARDS_WRITE_SMOKE_USER_ID',
-  'assertGatewayCardRulesDisabled',
+  'assertGatewayCardRulesExact',
   '/api/admin/cards/users',
   '/api/admin/cards/user/1',
   '/api/admin/cards/reset',
@@ -364,11 +372,19 @@ const activeGatewayAdminCardRules = gatewaySource
   .split(/\r?\n/)
   .map((line, index) => ({ line: line.trim(), lineNumber: index + 1 }))
   .filter((entry) => entry.line !== '' && !entry.line.startsWith('#'))
-  .filter((entry) => entry.line.includes('/api/admin/cards') || entry.line.includes('/api/cards'));
-if (activeGatewayAdminCardRules.length > 0) {
+  .filter((entry) => entry.line.includes('/api/admin/cards'));
+const activeGatewayAdminCardRuleSet = new Set(activeGatewayAdminCardRules.map((entry) => entry.line));
+const missingGatewayAdminCardRules = expectedGatewayAdminCardRules
+  .filter((line) => !activeGatewayAdminCardRuleSet.has(line));
+const unexpectedGatewayAdminCardRules = activeGatewayAdminCardRules
+  .filter((entry) => !expectedGatewayAdminCardRules.includes(entry.line));
+if (missingGatewayAdminCardRules.length > 0 || unexpectedGatewayAdminCardRules.length > 0) {
   fail(
-    'Gateway already contains active card/admin-card routing rules; admin cards must stay on Next until Go implementation and import are complete',
-    activeGatewayAdminCardRules.map((entry) => `${normalizeSlash(path.relative(repoRoot, gatewayPath))}:${entry.lineNumber} ${entry.line}`),
+    'Gateway admin card routing rules must stay limited to the approved exact cutover paths',
+    [
+      ...missingGatewayAdminCardRules.map((line) => `missing ${line}`),
+      ...unexpectedGatewayAdminCardRules.map((entry) => `${normalizeSlash(path.relative(repoRoot, gatewayPath))}:${entry.lineNumber} ${entry.line}`),
+    ],
   );
 }
 
@@ -387,7 +403,7 @@ const summary = {
   goAdminReadOnlyHandlers: requiredGoAdminReadOnlyHandlerFiles,
   goAdminCardSmoke: requiredGoAdminCardSmokeFiles,
   goAdminCardRoutes: expectedGoAdminCardRoutes,
-  gatewayCardRules: 'none',
+  gatewayCardRules: expectedGatewayAdminCardRules,
 };
 
 console.log(JSON.stringify(summary, null, 2));

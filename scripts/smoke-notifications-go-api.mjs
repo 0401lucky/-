@@ -23,15 +23,31 @@ const authenticatedReadPaths = [
   '/api/notifications/unread-count',
 ];
 
+const expectedGatewayNotificationRules = [
+  'handle /api/notifications {',
+  'handle /api/notifications/unread-count {',
+  'handle /api/notifications/read {',
+  'handle /api/notifications/delete {',
+  'handle /api/notifications/claim {',
+];
+
 function fail(message) {
   console.error(`notifications Go API smoke failed: ${message}`);
   process.exit(1);
 }
 
-function assertGatewayNotificationRulesDisabled() {
+function assertGatewayNotificationRulesExact() {
   const caddyfile = readFileSync('gateway/Caddyfile', 'utf8');
-  if (caddyfile.includes('/api/notifications')) {
-    fail('gateway/Caddyfile contains /api/notifications; notifications Gateway cutover must stay disabled for this smoke');
+  const activeNotificationRules = caddyfile
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'))
+    .filter((line) => line.includes('/api/notifications'));
+  const actual = new Set(activeNotificationRules);
+  const missing = expectedGatewayNotificationRules.filter((line) => !actual.has(line));
+  const unexpected = activeNotificationRules.filter((line) => !expectedGatewayNotificationRules.includes(line));
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail(`gateway/Caddyfile notification rules must be exact; missing=${missing.join('; ')} unexpected=${unexpected.join('; ')}`);
   }
 }
 
@@ -96,7 +112,7 @@ function assertStatus(actual, expected, label, raw = '') {
 }
 
 async function main() {
-  assertGatewayNotificationRulesDisabled();
+  assertGatewayNotificationRulesExact();
 
   const ready = await request('GET', '/readyz');
   assertStatus(ready.status, 200, 'GET /readyz', ready.raw);
@@ -135,7 +151,7 @@ async function main() {
     baseURL,
     checkedUnauthenticatedPaths: getPaths.length + postPaths.length,
     checkedAuthenticatedReadPaths: cookie ? authenticatedReadPaths.length : 0,
-    gatewayNotificationRules: 'none',
+    gatewayNotificationRules: expectedGatewayNotificationRules,
   }, null, 2));
 }
 

@@ -10,6 +10,13 @@ const sessionSecret = 'local-development-session-secret-at-least-32-chars';
 const cookie = makeSessionCookie(testUserID, testUsername, 'Cards Write Smoke');
 const commonCardIDs = animalS1CommonCardIDs();
 const exchangeCardID = commonCardIDs[0];
+const expectedGatewayCardRules = [
+  'handle /api/cards/inventory {',
+  'handle /api/cards/rules {',
+  'handle /api/cards/draw {',
+  'handle /api/cards/exchange {',
+  'handle /api/cards/claim-reward {',
+];
 
 function fail(message) {
   throw new Error(`cards write Go API smoke failed: ${message}`);
@@ -43,15 +50,18 @@ function animalS1CommonCardIDs() {
   return names.map((name) => `animal-s1-common-${name}`);
 }
 
-function assertGatewayCardRulesDisabled() {
+function assertGatewayCardRulesExact() {
   const caddyfile = readFileSync('gateway/Caddyfile', 'utf8');
   const activeCardRules = caddyfile
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'))
-    .filter((line) => line.includes('/api/cards') || line.includes('/api/admin/cards'));
-  if (activeCardRules.length > 0) {
-    fail(`gateway/Caddyfile contains card cutover rules: ${activeCardRules.join('; ')}`);
+    .filter((line) => line.includes('/api/cards'));
+  const actual = new Set(activeCardRules);
+  const missing = expectedGatewayCardRules.filter((line) => !actual.has(line));
+  const unexpected = activeCardRules.filter((line) => !expectedGatewayCardRules.includes(line));
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail(`gateway/Caddyfile card rules must be exact; missing=${missing.join('; ')} unexpected=${unexpected.join('; ')}`);
   }
 }
 
@@ -227,7 +237,7 @@ function verifyCleanup() {
 }
 
 function main() {
-  assertGatewayCardRulesDisabled();
+  assertGatewayCardRulesExact();
 
   const ready = request('GET', '/readyz');
   assertStatus(ready, 200, 'GET /readyz');
@@ -282,7 +292,7 @@ function main() {
       claim,
     },
     cleanup: cleanupResult,
-    gatewayCardRules: 'none',
+    gatewayCardRules: expectedGatewayCardRules,
   }, null, 2));
 }
 

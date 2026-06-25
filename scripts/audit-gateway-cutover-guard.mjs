@@ -6,7 +6,15 @@ const gatewayPath = path.join(repoRoot, 'gateway', 'Caddyfile');
 
 const forbiddenRules = [
   {
-    reason: '农场需要真实导入数据后的登录态直连 API 和页面级冒烟，暂不切 Gateway',
+    reason: '签到只允许 /api/checkin 与 /api/checkin/makeup 两个精确路径，禁止通配或路径改写',
+    patterns: [
+      /^handle\s+\/api\/checkin\*/ ,
+      /^handle\s+\/api\/checkin\/\*/ ,
+      /^handle_path\s+\/api\/checkin/,
+    ],
+  },
+  {
+    reason: '农场只允许已审精确路径，禁止根路径、通配或路径改写',
     patterns: [
       /^handle\s+\/api\/farm(?:\s|\{|$)/,
       /^handle\s+\/api\/farm\*/ ,
@@ -15,21 +23,28 @@ const forbiddenRules = [
     ],
   },
   {
-    reason: '个人资料需要真实资料/成就导入验证和页面冒烟，暂不切 Gateway',
+    reason: '个人资料只允许 overview/settings/achievements/equip 三个精确路径，禁止 profile 通配',
     patterns: [
-      /^handle\s+\/api\/profile(?:\s|\{|$)/,
       /^handle\s+\/api\/profile\*/ ,
       /^handle\s+\/api\/profile\/\*/ ,
       /^handle_path\s+\/api\/profile/,
     ],
   },
   {
-    reason: '通知需要真实 D1 导出导入和真实样本账号复跑，暂不切 Gateway',
+    reason: '通知中心只允许列表、未读、已读、删除、领取五个精确路径，禁止 notifications 通配',
     patterns: [
-      /^handle\s+\/api\/notifications(?:\s|\{|$)/,
       /^handle\s+\/api\/notifications\*/ ,
       /^handle\s+\/api\/notifications\/\*/ ,
       /^handle_path\s+\/api\/notifications/,
+    ],
+  },
+  {
+    reason: '公告只允许公开列表和后台公告管理路径，禁止公开公告通配或路径改写',
+    patterns: [
+      /^handle\s+\/api\/announcements\*/ ,
+      /^handle\s+\/api\/announcements\/\*/ ,
+      /^handle_path\s+\/api\/announcements/,
+      /^handle_path\s+\/api\/admin\/announcements/,
     ],
   },
   {
@@ -42,7 +57,16 @@ const forbiddenRules = [
     ],
   },
   {
-    reason: '卡牌前台需要真实导入数据/样本账号最终复核，暂不切 Gateway',
+    reason: '彩票和数字炸弹仍依赖旧 KV，必须完成 Go/PostgreSQL 迁移和 smoke 后再精确切流',
+    patterns: [
+      /^handle\s+\/api\/lottery(?:\s|\/|\*|\{|$)/,
+      /^handle\s+\/api\/admin\/lottery(?:\s|\/|\*|\{|$)/,
+      /^handle_path\s+\/api\/lottery/,
+      /^handle_path\s+\/api\/admin\/lottery/,
+    ],
+  },
+  {
+    reason: '卡牌前台只允许已审精确路径，禁止根路径或通配切流',
     patterns: [
       /^handle\s+\/api\/cards(?:\s|\{|$)/,
       /^handle\s+\/api\/cards\*/ ,
@@ -51,7 +75,7 @@ const forbiddenRules = [
     ],
   },
   {
-    reason: '后台卡牌需要真实导入数据或生产等价样本账号最终复核，暂不切 Gateway',
+    reason: '后台卡牌只允许已审精确路径，禁止根路径或通配切流',
     patterns: [
       /^handle\s+\/api\/admin\/cards(?:\s|\{|$)/,
       /^handle\s+\/api\/admin\/cards\*/ ,
@@ -122,8 +146,23 @@ const summary = {
   checkedActiveHandleLines: activeLines.filter((entry) => /^handle(?:_path)?\s+/.test(entry.line)).length,
   allowedExistingCutovers: [
     '/api/points',
+    '/api/auth/login',
+    '/api/auth/me',
+    '/api/auth/logout',
+    '/api/checkin{,/makeup}',
     '/api/rankings/eco',
     '/api/games/profile',
+    '/api/profile/overview',
+    '/api/profile/settings',
+    '/api/profile/achievements/equip',
+    '/api/notifications',
+    '/api/notifications/unread-count',
+    '/api/notifications/read',
+    '/api/notifications/delete',
+    '/api/notifications/claim',
+    '/api/announcements',
+    '/api/admin/announcements{,/*}',
+    '/api/farm/{19 exact paths}',
     '/api/games/eco/{8 exact paths}',
     '/api/games/memory/{5 exact paths}',
     '/api/games/match3/{4 exact paths}',
@@ -135,6 +174,9 @@ const summary = {
     '/api/store',
     '/api/store/exchange',
     '/api/store/admin',
+    '/api/cards/{inventory,rules,draw,exchange,claim-reward}',
+    '/api/admin/cards/{users,user/*,reset,albums,rules}',
+    '/api/feedback{,/*}',
     '/api/projects',
     '/api/raffle',
     '/api/raffle/*',
@@ -148,17 +190,21 @@ const summary = {
     '/api/admin/feedback{,/*}',
   ],
   forbiddenStillClosed: [
-    '/api/farm*',
-    '/api/profile*',
-    '/api/notifications*',
+    '/api/farm 根路径或通配',
+    '/api/profile* 通配',
+    '/api/notifications* 通配',
+    '/api/announcements* 通配',
+    '/api/lottery*',
+    '/api/admin/lottery*',
     '/api/store/topup',
     '/api/store/withdraw',
-    '/api/cards*',
-    '/api/admin/cards*',
+    '/api/cards 根路径或通配',
+    '/api/admin/cards 根路径或通配',
     '/api/games/overview',
     '/api/games/*',
     '/api/projects/*',
     '/api/admin/*',
+    '/api/checkin* 通配',
   ],
 };
 

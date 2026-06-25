@@ -25,6 +25,8 @@ const expectedFarmApiPaths = [
   '/api/farm/steal/do',
 ];
 
+const expectedGatewayFarmRules = expectedFarmApiPaths.map((apiPath) => `handle ${apiPath} {`);
+
 const requiredStatusFields = [
   'state',
   'computedLands',
@@ -496,10 +498,19 @@ const activeGatewayFarmRules = gatewaySource
   .filter((entry) => entry.line !== '' && !entry.line.startsWith('#'))
   .filter((entry) => entry.line.includes('/api/farm'));
 
-if (activeGatewayFarmRules.length > 0) {
+const activeGatewayFarmRuleLines = activeGatewayFarmRules.map((entry) => entry.line);
+const missingGatewayFarmRules = expectedGatewayFarmRules.filter((line) => !activeGatewayFarmRuleLines.includes(line));
+const unexpectedGatewayFarmRules = activeGatewayFarmRules
+  .filter((entry) => !expectedGatewayFarmRules.includes(entry.line))
+  .map((entry) => `${normalizeSlash(path.relative(repoRoot, gatewayPath))}:${entry.lineNumber} ${entry.line}`);
+
+if (missingGatewayFarmRules.length > 0 || unexpectedGatewayFarmRules.length > 0) {
   fail(
-    'Gateway contains active farm routing rules; do not cut farm before full state migration',
-    activeGatewayFarmRules.map((entry) => `${normalizeSlash(path.relative(repoRoot, gatewayPath))}:${entry.lineNumber} ${entry.line}`),
+    'Gateway farm routing rules must stay exact on reviewed frontend paths',
+    [
+      ...missingGatewayFarmRules.map((line) => `missing ${line}`),
+      ...unexpectedGatewayFarmRules.map((line) => `unexpected ${line}`),
+    ],
   );
 }
 
@@ -517,8 +528,8 @@ const summary = {
   farmHTTPFiles: requiredFarmHTTPFiles,
   farmSmokeFiles: requiredFarmSmokeFiles,
   goFarmRoutes: allowedGoFarmRoutes,
-  gatewayFarmRules: 'none',
-  cutoverRecommendation: 'Go has exact internal farm handlers for every current frontend /api/farm path plus PostgreSQL HTTP integration coverage; do not cut Gateway /api/farm* before imported-data and page smoke review',
+  gatewayFarmRules: expectedGatewayFarmRules,
+  cutoverRecommendation: 'Go has exact internal farm handlers for every current frontend /api/farm path plus PostgreSQL HTTP integration coverage; Gateway may cut only these exact paths and must keep /api/farm* wildcard closed',
 };
 
 console.log(JSON.stringify(summary, null, 2));

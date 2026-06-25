@@ -28,6 +28,7 @@ const requiredSnippets = [
   'context: .',
   'context: ./backend',
   'dockerfile: Dockerfile',
+  'target: web-runtime',
   'entrypoint: ["/app/worker"]',
   'API_UPSTREAM: api:8080',
   'WEB_UPSTREAM: web:3000',

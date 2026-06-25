@@ -22,15 +22,29 @@ const authenticatedReadPaths = [
   '/api/profile/settings',
 ];
 
+const expectedGatewayProfileRules = [
+  'handle /api/profile/overview {',
+  'handle /api/profile/settings {',
+  'handle /api/profile/achievements/equip {',
+];
+
 function fail(message) {
   console.error(`profile Go API smoke failed: ${message}`);
   process.exit(1);
 }
 
-function assertGatewayProfileRulesDisabled() {
+function assertGatewayProfileRulesExact() {
   const caddyfile = readFileSync('gateway/Caddyfile', 'utf8');
-  if (caddyfile.includes('/api/profile')) {
-    fail('gateway/Caddyfile contains /api/profile; profile Gateway cutover must stay disabled for this smoke');
+  const activeProfileRules = caddyfile
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'))
+    .filter((line) => line.includes('/api/profile'));
+  const actual = new Set(activeProfileRules);
+  const missing = expectedGatewayProfileRules.filter((line) => !actual.has(line));
+  const unexpected = activeProfileRules.filter((line) => !expectedGatewayProfileRules.includes(line));
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail(`gateway/Caddyfile profile rules must be exact; missing=${missing.join('; ')} unexpected=${unexpected.join('; ')}`);
   }
 }
 
@@ -123,7 +137,7 @@ function assertStatus(actual, expected, label, raw = '') {
 }
 
 async function main() {
-  assertGatewayProfileRulesDisabled();
+  assertGatewayProfileRulesExact();
 
   const ready = await request('GET', '/readyz');
   assertStatus(ready.status, 200, 'GET /readyz', ready.raw);
@@ -162,7 +176,7 @@ async function main() {
     baseURL,
     checkedUnauthenticatedPaths: getPaths.length + putPaths.length,
     checkedAuthenticatedReadPaths: cookie ? authenticatedReadPaths.length : 0,
-    gatewayProfileRules: 'none',
+    gatewayProfileRules: expectedGatewayProfileRules,
   }, null, 2));
 }
 

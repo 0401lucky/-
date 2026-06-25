@@ -8,6 +8,11 @@ const testUserID = Number(process.env.PROFILE_WRITE_SMOKE_USER_ID || 999902);
 const testUsername = `profile_write_smoke_${testUserID}`;
 const sessionSecret = 'local-development-session-secret-at-least-32-chars';
 const cookie = makeSessionCookie(testUserID, testUsername, 'Profile Write Smoke');
+const expectedGatewayProfileRules = [
+  'handle /api/profile/overview {',
+  'handle /api/profile/settings {',
+  'handle /api/profile/achievements/equip {',
+];
 
 function fail(message) {
   throw new Error(`profile write Go API smoke failed: ${message}`);
@@ -28,15 +33,18 @@ function makeSessionCookie(userID, username, displayName) {
   return `app_session=${payload}.${sig}`;
 }
 
-function assertGatewayProfileRulesDisabled() {
+function assertGatewayProfileRulesExact() {
   const caddyfile = readFileSync('gateway/Caddyfile', 'utf8');
   const activeProfileRules = caddyfile
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'))
     .filter((line) => line.includes('/api/profile'));
-  if (activeProfileRules.length > 0) {
-    fail(`gateway/Caddyfile contains profile cutover rules: ${activeProfileRules.join('; ')}`);
+  const actual = new Set(activeProfileRules);
+  const missing = expectedGatewayProfileRules.filter((line) => !actual.has(line));
+  const unexpected = activeProfileRules.filter((line) => !expectedGatewayProfileRules.includes(line));
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail(`gateway/Caddyfile profile rules must be exact; missing=${missing.join('; ')} unexpected=${unexpected.join('; ')}`);
   }
 }
 
@@ -155,6 +163,15 @@ function parseJSON(body, label) {
   try {
     return JSON.parse(body);
   } catch {
+    const start = body.indexOf('{');
+    const end = body.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(body.slice(start, end + 1));
+      } catch {
+        // Fall through to the original failure with the raw body snippet.
+      }
+    }
     fail(`${label} did not return JSON: ${body.slice(0, 300)}`);
   }
 }
@@ -265,7 +282,7 @@ function verifyCleanup() {
 }
 
 function main() {
-  assertGatewayProfileRulesDisabled();
+  assertGatewayProfileRulesExact();
 
   const ready = request('GET', '/readyz');
   assertStatus(ready, 200, 'GET /readyz');
@@ -317,7 +334,7 @@ function main() {
     ],
     verification,
     cleanup: cleanupResult,
-    gatewayProfileRules: 'none',
+    gatewayProfileRules: expectedGatewayProfileRules,
   }, null, 2));
 }
 

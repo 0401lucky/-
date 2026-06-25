@@ -11,6 +11,27 @@ const targetUsername = `farm_write_target_${targetUserID}`;
 const sessionSecret = 'local-development-session-secret-at-least-32-chars';
 const cookie = makeSessionCookie(testUserID, testUsername, 'Farm Write Smoke');
 const targetCookie = makeSessionCookie(targetUserID, targetUsername, 'Farm Write Target');
+const expectedGatewayFarmRules = [
+  '/api/farm/status',
+  '/api/farm/plant',
+  '/api/farm/water',
+  '/api/farm/water-all',
+  '/api/farm/harvest',
+  '/api/farm/harvest-all',
+  '/api/farm/remove',
+  '/api/farm/buy-land',
+  '/api/farm/shop/buy',
+  '/api/farm/seeds/buy',
+  '/api/farm/shop/use',
+  '/api/farm/pet/adopt',
+  '/api/farm/pet/feed',
+  '/api/farm/pet/wash',
+  '/api/farm/pet/drink',
+  '/api/farm/pet/play',
+  '/api/farm/pet/dispatch',
+  '/api/farm/steal/list',
+  '/api/farm/steal/do',
+].map((path) => `handle ${path} {`);
 
 function fail(message) {
   throw new Error(`farm write Go API smoke failed: ${message}`);
@@ -31,15 +52,17 @@ function makeSessionCookie(userID, username, displayName) {
   return `app_session=${payload}.${sig}`;
 }
 
-function assertGatewayFarmRulesDisabled() {
+function assertGatewayFarmRulesExact() {
   const caddyfile = readFileSync('gateway/Caddyfile', 'utf8');
   const activeFarmRules = caddyfile
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'))
     .filter((line) => line.includes('/api/farm'));
-  if (activeFarmRules.length > 0) {
-    fail(`gateway/Caddyfile contains farm cutover rules: ${activeFarmRules.join('; ')}`);
+  const missing = expectedGatewayFarmRules.filter((line) => !activeFarmRules.includes(line));
+  const unexpected = activeFarmRules.filter((line) => !expectedGatewayFarmRules.includes(line));
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail(`gateway/Caddyfile farm rules must be exact; missing=${missing.join('; ')} unexpected=${unexpected.join('; ')}`);
   }
 }
 
@@ -262,7 +285,7 @@ function assertStatusShape(payload, label) {
 }
 
 function main() {
-  assertGatewayFarmRulesDisabled();
+  assertGatewayFarmRulesExact();
 
   const ready = request('GET', '/readyz');
   assertStatus(ready, 200, 'GET /readyz');
@@ -336,7 +359,7 @@ function main() {
     ],
     verification,
     cleanup: cleanupResult,
-    gatewayFarmRules: 'none',
+    gatewayFarmRules: 'enabled-exact',
   }, null, 2));
 }
 

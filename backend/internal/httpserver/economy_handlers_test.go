@@ -152,6 +152,10 @@ func testSessionCookie() *http.Cookie {
 }
 
 func testSessionCookieFor(userID int64, username string, displayName string) *http.Cookie {
+	return testSessionCookieForWithJTI(userID, username, displayName, "test-session")
+}
+
+func testSessionCookieForWithJTI(userID int64, username string, displayName string, jti string) *http.Cookie {
 	now := time.Now().UnixMilli()
 	raw, _ := json.Marshal(auth.SessionData{
 		ID:          userID,
@@ -159,7 +163,7 @@ func testSessionCookieFor(userID int64, username string, displayName string) *ht
 		DisplayName: displayName,
 		Iat:         now,
 		Exp:         now + int64(time.Hour/time.Millisecond),
-		JTI:         "test-session",
+		JTI:         jti,
 	})
 	payload := base64.StdEncoding.EncodeToString(raw)
 	mac := hmac.New(sha256.New, []byte(testSessionSecret))

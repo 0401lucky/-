@@ -18,6 +18,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: web-runtime
     environment:
       PORT: "3000"
       NODE_ENV: production

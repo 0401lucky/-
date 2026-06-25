@@ -1,7 +1,7 @@
 # Admin Cards 精确切流前置审计
 
 本文记录后台卡牌管理从 Next 切到 Go 前必须复核的证据。
-当前结论：已完成后台卡牌页面依赖、旧数据键审计、PostgreSQL 自定义奖励 schema、`cards:album_rewards` / `cards:tier_rewards` D1 导入器、Go admin service 读写路径、Go admin HTTP handler 方法、Go 内部精确路由、直连 API 未登录冒烟、本地管理员 Cookie 只读冒烟、`/admin/cards` 页面只读冒烟和本地夹具页面写路径冒烟；尚未使用真实导入数据做最终后台验证，不能切 Gateway。
+当前结论：已完成后台卡牌页面依赖、旧数据键审计、PostgreSQL 自定义奖励 schema、`cards:album_rewards` / `cards:tier_rewards` D1 导入器、Go admin service 读写路径、Go admin HTTP handler 方法、Go 内部精确路由、直连 API 未登录冒烟、本地管理员 Cookie 只读冒烟、`/admin/cards` 页面只读冒烟、本地夹具页面写路径冒烟和自动写路径 smoke；Gateway 已精确切流到 Go，不打开 `/api/admin/cards*` 通配。
 
 ## 当前后台依赖
 
@@ -92,7 +92,7 @@ node scripts/audit-admin-cards-cutover.mjs
 
 ## 精确 Gateway 草案
 
-只允许在 Go 实现、真实导入和后台页面冒烟全部完成后评估以下精确规则，不打开 `/api/admin/cards*` 通配：
+当前 Gateway 只允许以下精确规则，不打开 `/api/admin/cards*` 通配：
 
 ```caddyfile
 handle /api/admin/cards/users {
@@ -125,6 +125,8 @@ handle /api/admin/cards/rules {
 
 ## 当前不切流原因
 
-- 本地夹具已验证重置进度、奖励保存和规则保存，但尚未使用真实导入数据或生产等价样本账号复跑。
-- 后台卡牌配置是全局配置，切 Gateway 前还需要真实数据导入后的最终人工/自动复核。
-- Gateway 当前没有活跃 `/api/cards*` 或 `/api/admin/cards*` 规则，保持 Next 回落更稳妥。
+本节历史阻塞已解除，本轮已执行精确切流。仍需注意：
+
+- Gateway 只能保留 5 条精确路径，仍禁止 `/api/admin/cards` 根路径和 `/api/admin/cards*` 通配。
+- 后台卡牌配置是全局配置，后续 Zeabur 生产验证时仍要复跑 `scripts/smoke-admin-cards-write-go-api.mjs` 或等价管理员页面操作。
+- Zeabur 新部署采用 fresh PostgreSQL，不再等待 Cloudflare D1 历史数据导入；如后续要迁历史数据，再按 `cards` scope 单独执行。

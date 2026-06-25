@@ -42,6 +42,8 @@ function assertGatewayFeedbackRulesExact() {
     .filter((line) => line !== '' && !line.startsWith('#'))
     .filter((line) => line.includes('/api/feedback') || line.includes('/api/admin/feedback'));
   const expectedRules = [
+    'handle /api/feedback {',
+    'handle /api/feedback/* {',
     'handle /api/admin/feedback {',
     'handle /api/admin/feedback/* {',
   ];
@@ -362,7 +364,7 @@ function main() {
     verification,
     deleteVerification,
     cleanup: cleanupResult,
-    gatewayFeedbackRules: 'admin-feedback-exact',
+    gatewayFeedbackRules: 'public-and-admin-feedback-exact',
   }, null, 2));
 }
 
