@@ -6,7 +6,7 @@
     "app": {
       "type": "docker",
       "context": ".",
-      "dockerfile": "Dockerfile",
+      "dockerfile": "Dockerfile.dachely",
       "port": 8080,
       "public": true,
       "dependsOn": [

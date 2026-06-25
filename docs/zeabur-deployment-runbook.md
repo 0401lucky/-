@@ -34,14 +34,14 @@ Zeabur 当前只走单容器部署，生产入口是 `app 服务`。
 
 1. 创建托管 PostgreSQL，并记录 `DATABASE_URL`。
 2. 创建托管 Redis，并记录 `REDIS_URL`。
-3. 创建 `app` 服务，根目录 `/`，使用根目录 `Dockerfile`。
+3. 创建 `app` 服务，根目录 `/`，使用根目录 `Dockerfile.dachely`。
 4. 把 `app` 设为唯一公网入口，绑定域名。
 5. 在 `app` 服务里先执行 `/app/migrate` 初始化数据库。
 
 如果 Zeabur 没有命中根目录 `Dockerfile`，就在 `app` 服务里显式设置：
 
 ```bash
-ZBPACK_DOCKERFILE_PATH=Dockerfile
+ZBPACK_DOCKERFILE_PATH=Dockerfile.dachely
 ```
 
 `app` 容器内部同时启动：

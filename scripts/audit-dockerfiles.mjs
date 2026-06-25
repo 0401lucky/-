@@ -1,12 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 const rootDockerfile = 'Dockerfile';
+const zeaburDockerfile = 'Dockerfile.app';
+const dachelyDockerfile = 'Dockerfile.dachely';
 const startScript = 'scripts/start-zeabur.sh';
 const dockerignore = '.dockerignore';
 const caddyfile = 'gateway/Caddyfile';
 
 const forbiddenRootDockerfiles = [
-  'Dockerfile.app',
   'Dockerfile.web',
   'Dockerfile.api',
   'Dockerfile.worker',
@@ -16,6 +17,44 @@ const forbiddenRootDockerfiles = [
 const requiredSnippets = {
   [rootDockerfile]: [
     '# Zeabur single-container entry.',
+    'FROM node:22-alpine AS web-deps',
+    'FROM node:22-alpine AS web-builder',
+    'FROM golang:1.23-alpine AS go-builder',
+    'FROM node:22-alpine AS runtime',
+    'RUN apk add --no-cache caddy ca-certificates',
+    'COPY --from=web-builder /app/public ./public',
+    'COPY --from=web-builder --chown=app:app /app/.next/standalone ./',
+    'COPY --from=web-builder --chown=app:app /app/.next/static ./.next/static',
+    'COPY --from=go-builder /out/api /app/api',
+    'COPY --from=go-builder /out/worker /app/worker',
+    'COPY --from=go-builder /out/migrate /app/migrate',
+    'COPY --from=go-builder /out/migrate-d1 /app/migrate-d1',
+    'COPY --from=go-builder /src/migrations /app/migrations',
+    'COPY gateway/Caddyfile /app/gateway/Caddyfile',
+    'COPY scripts/start-zeabur.sh /app/start-zeabur.sh',
+    'CMD ["/app/start-zeabur.sh"]',
+  ],
+  [zeaburDockerfile]: [
+    '# Zeabur app service entry.',
+    'FROM node:22-alpine AS web-deps',
+    'FROM node:22-alpine AS web-builder',
+    'FROM golang:1.23-alpine AS go-builder',
+    'FROM node:22-alpine AS runtime',
+    'RUN apk add --no-cache caddy ca-certificates',
+    'COPY --from=web-builder /app/public ./public',
+    'COPY --from=web-builder --chown=app:app /app/.next/standalone ./',
+    'COPY --from=web-builder --chown=app:app /app/.next/static ./.next/static',
+    'COPY --from=go-builder /out/api /app/api',
+    'COPY --from=go-builder /out/worker /app/worker',
+    'COPY --from=go-builder /out/migrate /app/migrate',
+    'COPY --from=go-builder /out/migrate-d1 /app/migrate-d1',
+    'COPY --from=go-builder /src/migrations /app/migrations',
+    'COPY gateway/Caddyfile /app/gateway/Caddyfile',
+    'COPY scripts/start-zeabur.sh /app/start-zeabur.sh',
+    'CMD ["/app/start-zeabur.sh"]',
+  ],
+  [dachelyDockerfile]: [
+    '# Zeabur dachely service entry.',
     'FROM node:22-alpine AS web-deps',
     'FROM node:22-alpine AS web-builder',
     'FROM golang:1.23-alpine AS go-builder',
@@ -67,11 +106,11 @@ const requiredSnippets = {
   ],
 };
 
-const missingFiles = [rootDockerfile, startScript, dockerignore, caddyfile].filter((file) => !existsSync(file));
+const missingFiles = [rootDockerfile, zeaburDockerfile, dachelyDockerfile, startScript, dockerignore, caddyfile].filter((file) => !existsSync(file));
 const forbiddenFiles = forbiddenRootDockerfiles.filter((file) => existsSync(file));
 const missingSnippets = [];
 
-for (const file of [rootDockerfile, startScript, dockerignore, caddyfile]) {
+for (const file of [rootDockerfile, zeaburDockerfile, dachelyDockerfile, startScript, dockerignore, caddyfile]) {
   if (!existsSync(file)) {
     continue;
   }
@@ -96,6 +135,6 @@ if (missingFiles.length > 0 || forbiddenFiles.length > 0 || missingSnippets.leng
 console.log(JSON.stringify({
   ok: true,
   mode: 'dockerfile-audit',
-  checkedFiles: [rootDockerfile, startScript, dockerignore, caddyfile],
+  checkedFiles: [rootDockerfile, zeaburDockerfile, dachelyDockerfile, startScript, dockerignore, caddyfile],
   checkedSnippets: Object.values(requiredSnippets).reduce((count, snippets) => count + snippets.length, 0),
 }, null, 2));

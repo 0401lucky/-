@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 
 const planPath = process.env.ZEABUR_SINGLE_PLAN || 'deploy/zeabur-single-service.example.json';
 const envExamplePath = process.env.ZEABUR_ENV_EXAMPLE || 'deploy/zeabur.env.example';
+const expectedDockerfile = 'Dockerfile.dachely';
 
 function readJson(file) {
   if (!existsSync(file)) {
@@ -80,8 +81,8 @@ for (const service of requiredServiceKeys) {
     missing.push(`services.${service}`);
   }
 }
-if (plan.services?.app?.dockerfile !== 'Dockerfile') {
-  missing.push('services.app.dockerfile must be Dockerfile');
+if (plan.services?.app?.dockerfile !== expectedDockerfile) {
+  missing.push(`services.app.dockerfile must be ${expectedDockerfile}`);
 }
 if (plan.services?.app?.context !== '.') {
   missing.push('services.app.context must be .');

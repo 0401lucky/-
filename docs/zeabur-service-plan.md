@@ -32,7 +32,7 @@ deploy/zeabur-single-service.example.json
 
 Zeabur 上现在只保留 3 个服务：
 
-- `app`：唯一公网入口，使用根目录 `Dockerfile`，公开 8080。
+- `app`：唯一公网入口，使用根目录 `Dockerfile.dachely`，公开 8080。
 - `postgres`：Zeabur 托管 PostgreSQL，提供 `DATABASE_URL`。
 - `redis`：Zeabur 托管 Redis，提供 `REDIS_URL`。
 
