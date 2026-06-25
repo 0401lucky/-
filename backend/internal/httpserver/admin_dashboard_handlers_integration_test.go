@@ -44,8 +44,9 @@ func TestAdminDashboardRouteAggregatesPostgresData(t *testing.T) {
 	otherUserID := userID + 1
 	inactiveUserID := userID + 2
 	raffleID := "admin-dashboard-raffle-" + strconv.FormatInt(suffix, 10)
-	cleanupAdminDashboardHTTPTest(t, ctx, db, userID, otherUserID, inactiveUserID, raffleID)
-	defer cleanupAdminDashboardHTTPTest(t, ctx, db, userID, otherUserID, inactiveUserID, raffleID)
+	alertID := "admin-dashboard-alert-" + strconv.FormatInt(suffix, 10)
+	cleanupAdminDashboardHTTPTest(t, ctx, db, userID, otherUserID, inactiveUserID, raffleID, alertID)
+	defer cleanupAdminDashboardHTTPTest(t, ctx, db, userID, otherUserID, inactiveUserID, raffleID, alertID)
 
 	baseline, err := admindashboard.NewService(db).Get(ctx, true, time.Now())
 	if err != nil {
@@ -112,6 +113,15 @@ func TestAdminDashboardRouteAggregatesPostgresData(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed game record failed: %v", err)
 	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO admin_alerts (id, level, name, message, tags, source_key, occurred_at_ms)
+		 VALUES ($1, 'warning', 'dashboard_warning', 'Dashboard 测试告警', '{"scope":"integration"}'::jsonb, $2, $3)`,
+		alertID,
+		alertID,
+		time.Now().UnixMilli(),
+	); err != nil {
+		t.Fatalf("seed admin alert failed: %v", err)
+	}
 
 	handler := New(Dependencies{
 		Config: config.Config{
@@ -158,8 +168,15 @@ func TestAdminDashboardRouteAggregatesPostgresData(t *testing.T) {
 				} `json:"alerts"`
 			} `json:"dashboard"`
 			Alerts struct {
-				Active  []any `json:"active"`
-				History []any `json:"history"`
+				Active []struct {
+					ID    string `json:"id"`
+					Level string `json:"level"`
+					Name  string `json:"name"`
+				} `json:"active"`
+				History []struct {
+					ID       string `json:"id"`
+					Resolved bool   `json:"resolved"`
+				} `json:"history"`
 			} `json:"alerts"`
 			Detection *struct {
 				ScannedUsers    int64 `json:"scannedUsers"`
@@ -197,16 +214,44 @@ func TestAdminDashboardRouteAggregatesPostgresData(t *testing.T) {
 	if dashboard.Games.Participants != expectedParticipants || dashboard.Games.ParticipationRate != expectedRate {
 		t.Fatalf("unexpected games overview: %+v", dashboard.Games)
 	}
-	if dashboard.Alerts.Active != 0 || dashboard.Alerts.Warning != 0 || dashboard.Alerts.Critical != 0 || len(payload.Data.Alerts.Active) != 0 || len(payload.Data.Alerts.History) != 0 {
-		t.Fatalf("alerts should be empty until Go alert storage is migrated: %+v", payload.Data.Alerts)
+	if dashboard.Alerts.Active != 1 || dashboard.Alerts.Warning != 1 || dashboard.Alerts.Critical != 0 {
+		t.Fatalf("unexpected alert overview: %+v", dashboard.Alerts)
 	}
-	if payload.Data.Detection == nil || payload.Data.Detection.ScannedUsers != baseline.Dashboard.Users.Total+3 || payload.Data.Detection.TriggeredAlerts != 0 {
+	if len(payload.Data.Alerts.Active) == 0 || payload.Data.Alerts.Active[0].ID != alertID || payload.Data.Alerts.Active[0].Level != "warning" {
+		t.Fatalf("expected active alert in dashboard response: %+v", payload.Data.Alerts.Active)
+	}
+	if len(payload.Data.Alerts.History) == 0 || payload.Data.Alerts.History[0].ID != alertID {
+		t.Fatalf("expected alert history in dashboard response: %+v", payload.Data.Alerts.History)
+	}
+	expectedScannedUsers := dashboard.Users.Total
+	if expectedScannedUsers > 300 {
+		expectedScannedUsers = 300
+	}
+	if payload.Data.Detection == nil || payload.Data.Detection.ScannedUsers != expectedScannedUsers || payload.Data.Detection.TriggeredAlerts != 0 {
 		t.Fatalf("unexpected detection summary: %+v", payload.Data.Detection)
+	}
+
+	resolveRequest := httptest.NewRequest(http.MethodPost, "/api/admin/alerts/"+alertID+"/resolve", nil)
+	resolveRequest.Header.Set("Origin", "http://example.com")
+	resolveRequest.AddCookie(testSessionCookieFor(1, "admin", "Admin"))
+	resolveResponse := performRequest(handler, resolveRequest)
+	if resolveResponse.Code != http.StatusOK {
+		t.Fatalf("expected resolve 200, got %d body=%s", resolveResponse.Code, resolveResponse.Body.String())
+	}
+	var resolved bool
+	var resolvedBy *string
+	if err := db.QueryRow(ctx, `SELECT resolved, resolved_by FROM admin_alerts WHERE id = $1`, alertID).Scan(&resolved, &resolvedBy); err != nil {
+		t.Fatalf("query resolved alert failed: %v", err)
+	}
+	if !resolved || resolvedBy == nil || *resolvedBy != "admin" {
+		t.Fatalf("alert should be resolved by admin, resolved=%v resolvedBy=%v", resolved, resolvedBy)
 	}
 }
 
-func cleanupAdminDashboardHTTPTest(t *testing.T, ctx context.Context, db *pgxpool.Pool, userID int64, otherUserID int64, inactiveUserID int64, raffleID string) {
+func cleanupAdminDashboardHTTPTest(t *testing.T, ctx context.Context, db *pgxpool.Pool, userID int64, otherUserID int64, inactiveUserID int64, raffleID string, alertID string) {
 	t.Helper()
+	_, _ = db.Exec(ctx, `DELETE FROM admin_alerts WHERE id = $1 OR source_key = $1`, alertID)
+	_, _ = db.Exec(ctx, `DELETE FROM admin_alert_point_baselines WHERE user_id IN ($1, $2, $3)`, userID, otherUserID, inactiveUserID)
 	_, _ = db.Exec(ctx, `DELETE FROM game_records WHERE user_id IN ($1, $2, $3)`, userID, otherUserID, inactiveUserID)
 	_, _ = db.Exec(ctx, `DELETE FROM point_ledger WHERE user_id IN ($1, $2, $3)`, userID, otherUserID, inactiveUserID)
 	_, _ = db.Exec(ctx, `DELETE FROM exchange_logs WHERE user_id IN ($1, $2, $3)`, userID, otherUserID, inactiveUserID)

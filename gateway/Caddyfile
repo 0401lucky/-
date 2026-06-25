@@ -9,6 +9,20 @@
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
 
+	# 旧 Cloudflare internal cron 入口已由 Go Worker 接管；在 Zeabur 入口显式停用，避免继续落回 Next。
+	handle /api/internal/eco/theft-investigation {
+		respond "Go Worker 已接管环保偷盗追查调度" 410
+	}
+	handle /api/internal/number-bomb/settle {
+		respond "Go Worker 已接管数字炸弹结算调度" 410
+	}
+	handle /api/internal/raffle/delivery {
+		respond "Go Worker 已接管抽奖发奖队列调度" 410
+	}
+	handle /api/internal/farm/maturity-email {
+		respond "Go Worker 已接管农场成熟与浇水邮件提醒调度" 410
+	}
+
 	# 认证核心路径由 Go 接管；只打开精确路径，避免 /api/auth* 通配误伤。
 	handle /api/auth/login {
 		reverse_proxy {$API_UPSTREAM:api:8080}
@@ -35,7 +49,26 @@
 	handle /api/rankings/eco {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
-	# 游戏中心个人战绩已从 PostgreSQL 聚合迁移到 Go；只精确切前端实际调用路径。
+	# B5 排行榜与后台结算已迁到 Go；只打开已审精确路径，禁止 /api/rankings/* 和 /api/admin/* 通配。
+	handle /api/rankings/points {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/rankings/games {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/rankings/checkin-streak {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/rankings/history {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/rankings/settle {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	# 游戏中心汇总已从 PostgreSQL 聚合迁移到 Go；只精确切已审路径，继续禁止 /api/games/* 通配。
+	handle /api/games/overview {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
 	handle /api/games/profile {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
@@ -75,8 +108,57 @@
 	handle /api/admin/announcements/* {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
+	# 彩票与数字炸弹已完成 Go 内部迁移；只打开已审精确路径和旧后台工具墓碑路径，不开放 /api/lottery* 通配。
+	handle /api/lottery {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/lottery/spin {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/lottery/records {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/lottery/ranking {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/lottery/number-bomb {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/lottery/number-bomb/bet {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/lottery/number-bomb/cancel {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/rankings/lottery {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/lottery {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/lottery/config {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/lottery/number-bomb {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/lottery/debug {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/lottery/recalculate {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/lottery/reset {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/lottery/tiers/* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
 	# 农场已覆盖当前前端全部状态、种植、浇水、收获、商店、宠物和偷菜路径；只打开精确路径，禁止 /api/farm* 通配。
 	handle /api/farm/status {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/farm/shop {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
 	handle /api/farm/plant {
@@ -263,6 +345,9 @@
 	handle /api/store/admin {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
+	handle /api/admin/store/reset {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
 
 	# 卡牌前台已完成 Go 迁移，只打开页面实际调用的库存、规则、抽卡、碎片兑换和领奖路径。
 	handle /api/cards/inventory {
@@ -272,6 +357,9 @@
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
 	handle /api/cards/draw {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/cards/purchase {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
 	handle /api/cards/exchange {
@@ -327,7 +415,34 @@
 	handle /api/admin/users/* {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
+	handle /api/admin/sync-users {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/fix-codes-count {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/migrate-native-hot-data {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/migrate-new-user-eligibility {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
 	handle /api/admin/dashboard {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/alerts {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/alerts/* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/config {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/rewards {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/rewards/* {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
 	handle /api/admin/projects {
@@ -360,6 +475,12 @@
 
 	# 公开抽奖列表、详情与参与已迁移到 Go。
 	handle /api/projects {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/projects/my-claims {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/projects/* {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
 	handle /api/raffle {

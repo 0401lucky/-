@@ -75,7 +75,6 @@ const forbiddenPaths = [
   '/api/store/withdraw',
   '/api/cards*',
   '/api/admin/cards*',
-  '/api/games/overview',
   '/api/games/*',
   '/api/projects/*',
   '/api/admin/*',

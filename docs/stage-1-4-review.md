@@ -77,7 +77,7 @@
 
 保留风险：
 
-- 不要打开 `/api/games/overview`。
+- `/api/games/overview` 已在阶段 C 精确打开到 Go；仍不要打开 `/api/games/*` 通配。
 - 不要打开任意游戏通配路径。
 - 后续新增游戏或新增动作接口时，必须先补 Go handler、审计脚本和 smoke，再评估 Gateway 精确规则。
 

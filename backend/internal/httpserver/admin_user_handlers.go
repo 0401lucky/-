@@ -183,6 +183,21 @@ func (handlers adminUserHandlers) updateAchievement(writer http.ResponseWriter, 
 	})
 }
 
+func (handlers adminUserHandlers) legacyToolDisabled(writer http.ResponseWriter, request *http.Request) {
+	shared := economyHandlers{deps: handlers.deps}
+	if shared.rejectUntrustedUnsafeRequest(writer, request) {
+		return
+	}
+	if _, ok := shared.requireAdmin(writer, request); !ok {
+		return
+	}
+	writeJSON(writer, http.StatusGone, map[string]any{
+		"success": false,
+		"code":    "ADMIN_LEGACY_TOOL_DISABLED",
+		"message": "该后台迁移工具已下线。Zeabur 生产环境不再执行旧 Cloudflare/KV 迁移接口，请使用离线迁移命令或重新登录同步用户数据。",
+	})
+}
+
 func parsePositiveInt64Path(writer http.ResponseWriter, raw string) (int64, bool) {
 	return parsePositiveInt64Query(writer, raw, "无效的用户ID", "无效的用户ID")
 }

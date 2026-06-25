@@ -56,6 +56,27 @@ func TestFarmStatusReturnsUnavailableWithoutDatabase(t *testing.T) {
 	}
 }
 
+func TestFarmShopRequiresLogin(t *testing.T) {
+	handler := New(testDependencies())
+
+	response := performJSONRequest(handler, http.MethodGet, "/api/farm/shop", "", false)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "未登录") {
+		t.Fatalf("expected unauthenticated response, got %s", response.Body.String())
+	}
+}
+
+func TestFarmShopReturnsUnavailableWithoutDatabase(t *testing.T) {
+	handler := New(testDependencies())
+
+	response := performJSONRequest(handler, http.MethodGet, "/api/farm/shop", "", true)
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "农场数据库未配置") {
+		t.Fatalf("unexpected unavailable response: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestFarmStealDoValidatesPayload(t *testing.T) {
 	handler := New(testDependencies())
 

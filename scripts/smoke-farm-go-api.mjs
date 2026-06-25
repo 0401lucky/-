@@ -9,6 +9,7 @@ const useDocker = process.env.FARM_GO_API_USE_DOCKER !== '0' && !process.env.FAR
 
 const getPaths = [
   '/api/farm/status',
+  '/api/farm/shop',
   '/api/farm/steal/list',
 ];
 
@@ -35,6 +36,7 @@ const postPaths = [
 
 const authenticatedReadPaths = [
   '/api/farm/status',
+  '/api/farm/shop',
   '/api/farm/steal/list',
 ];
 

@@ -25,7 +25,12 @@ const expectedFarmApiPaths = [
   '/api/farm/steal/do',
 ];
 
-const expectedGatewayFarmRules = expectedFarmApiPaths.map((apiPath) => `handle ${apiPath} {`);
+const expectedGatewayFarmApiPaths = [
+  '/api/farm/shop',
+  ...expectedFarmApiPaths,
+];
+
+const expectedGatewayFarmRules = expectedGatewayFarmApiPaths.map((apiPath) => `handle ${apiPath} {`);
 
 const requiredStatusFields = [
   'state',
@@ -107,7 +112,9 @@ const requiredFarmStatusServiceFiles = [
 
 const requiredFarmStatusServiceSnippets = [
   'func (service *Service) GetStatus',
+  'func (service *Service) ListShopItems',
   'type StatusResponse struct',
+  'type ShopItem struct',
   'func getWeatherForDate',
   'func buildComputedLands',
   'func getPlantableCrops',
@@ -187,6 +194,7 @@ const requiredFarmStatusServiceSnippets = [
   'func applyDispatchPetAction',
   'func isAllowedDispatchPetTask',
   'func (store *Store) getEffectiveShopItemDefTx',
+  'func (store *Store) ListEffectiveShopItems',
   'func (store *Store) getDailyPurchaseCountForUpdateTx',
   'func (store *Store) incrementDailyPurchaseTx',
   'func validatePetSkillReady',
@@ -220,6 +228,7 @@ const requiredFarmSmokeSnippets = [
   'checkedAuthenticatedPaths',
   'verifyCleanup',
   '/api/farm/seeds/buy',
+  '/api/farm/shop',
   '/api/farm/plant',
   '/api/farm/water',
   '/api/farm/harvest',
@@ -236,6 +245,7 @@ const requiredFarmSmokeSnippets = [
 const allowedGoFarmRoutes = [
   'api.Get("/farm/status", farmHandlers.status)',
   'api.Post("/farm/status", farmHandlers.status)',
+  'api.Get("/farm/shop", farmHandlers.shop)',
   'api.Post("/farm/plant", farmHandlers.plant)',
   'api.Post("/farm/water", farmHandlers.water)',
   'api.Post("/farm/water-all", farmHandlers.waterAll)',
@@ -259,6 +269,7 @@ const allowedGoFarmRoutes = [
 const requiredFarmHTTPSnippets = [
   'func newFarmHandlers',
   'func (handlers farmHandlers) status',
+  'func (handlers farmHandlers) shop',
   'func (handlers farmHandlers) plant',
   'func (handlers farmHandlers) water',
   'func (handlers farmHandlers) waterAll',
@@ -298,6 +309,7 @@ const requiredFarmHTTPSnippets = [
   'handlers.service.ExecuteDispatchPet',
   'handlers.service.ListStealCandidates',
   'handlers.service.GetStatus',
+  'handlers.service.ListShopItems',
 ];
 
 const frontendRoots = [

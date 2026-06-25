@@ -1,7 +1,7 @@
 # Farm Status 精确切流前置审计
 
 本文记录 `/api/farm/status` 从 Next 切到 Go 前的前置审计结论。
-当前结论：已补 PostgreSQL farm runtime 基础表、D1/KV 导入器、Go store、Go 内部 status 服务层、当前前端使用的农场接口、偷菜内部结算、直连 API 未登录/只读冒烟和 Docker 测试库写路径自动冒烟；Gateway 已精确切流当前全部前端 `/api/farm` 路径，但仍禁止 `/api/farm*` 通配。
+当前结论：已补 PostgreSQL farm runtime 基础表、D1/KV 导入器、Go store、Go 内部 status 服务层、当前前端使用的农场接口、旧商店只读兼容接口、偷菜内部结算、直连 API 未登录/只读冒烟和 Docker 测试库写路径自动冒烟；Gateway 已精确切流当前全部前端 `/api/farm` 路径和 `/api/farm/shop` 旧只读入口，但仍禁止 `/api/farm*` 通配。
 
 ## 当前前端依赖
 
@@ -89,10 +89,11 @@ D1 导入分析器和 `migrate-d1 -scope farm-v2` 当前已支持：
 
 ## Go 覆盖状态
 
-当前 Go 侧只注册了二十个 method-level 精确农场路由，覆盖当前十九个前端路径：
+当前 Go 侧只注册了二十一个 method-level 精确农场路由，覆盖当前十九个前端路径和一个旧只读商店入口：
 
 - `GET /api/farm/status`
 - `POST /api/farm/status`
+- `GET /api/farm/shop`
 - `POST /api/farm/plant`
 - `POST /api/farm/water`
 - `POST /api/farm/water-all`
@@ -113,6 +114,7 @@ D1 导入分析器和 `migrate-d1 -scope farm-v2` 当前已支持：
 - `POST /api/farm/steal/do`
 
 `/api/farm/status` 已按旧 Next 路由兼容 `{ success, data }` 响应形状，内部调用 `GetStatus` 执行懒结算和写回。
+`/api/farm/shop` 已按旧 Next 只读路由兼容 `{ success, data: { items, inventory, balance, scarecrowUntil, bellUntil } }` 响应形状，商品列表读取 Go 静态配置并套用 PostgreSQL `farm_shop_overrides` 覆盖。
 `/api/farm/plant` 已按旧 Next 路由兼容 `{ plotIndex, cropId }` 请求体和 `{ success, data, balance }` 响应形状，内部完成土地、季节、作物解锁和种子库存校验，写回播种状态后再返回完整农场状态。
 `/api/farm/water` 已按旧 Next 路由兼容 `{ plotIndex }` 请求体和 `{ success, data, bonus }` 响应形状，内部完成单块作物浇水、首次浇水奖励入账和状态写回。
 `/api/farm/water-all` 已按旧 Next 路由兼容无请求体和 `{ success, data, count }` 响应形状，内部批量给可浇水作物刷新浇水时间并写回状态。

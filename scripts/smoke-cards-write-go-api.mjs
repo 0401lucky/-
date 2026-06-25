@@ -14,6 +14,7 @@ const expectedGatewayCardRules = [
   'handle /api/cards/inventory {',
   'handle /api/cards/rules {',
   'handle /api/cards/draw {',
+  'handle /api/cards/purchase {',
   'handle /api/cards/exchange {',
   'handle /api/cards/claim-reward {',
 ];
@@ -104,6 +105,37 @@ function request(method, path, payload) {
   };
 }
 
+function fetchRequest(baseURL, method, path, payload) {
+  const body = payload ? JSON.stringify(payload) : '';
+  const fetchOrigin = new URL(baseURL).origin;
+  const code = `
+    const response = await fetch('${baseURL}${path}', {
+      method: '${method}',
+      headers: {
+        'Cookie': ${JSON.stringify(cookie)},
+        'Origin': ${JSON.stringify(fetchOrigin)},
+        'Content-Type': 'application/json'
+      },
+      body: ${method === 'POST' ? JSON.stringify(body) : 'undefined'}
+    });
+    const text = await response.text();
+    console.log(JSON.stringify({ status: response.status, body: text }));
+  `;
+  const result = spawnSync('docker', ['compose', 'exec', '-T', 'web', 'node', '-e', code], {
+    encoding: 'utf8',
+    timeout: 60000,
+    maxBuffer: 1024 * 1024 * 4,
+  });
+  if (result.status !== 0) {
+    fail(`fetch request failed: ${result.stderr || result.stdout}`);
+  }
+  try {
+    return JSON.parse(result.stdout.trim());
+  } catch {
+    fail(`fetch request returned non-json wrapper: ${result.stdout}`);
+  }
+}
+
 function parseJSON(body, label) {
   try {
     return JSON.parse(body);
@@ -126,6 +158,19 @@ function apiRequest(method, path, payload) {
     fail(`${method} ${path} returned success=false: ${response.body.slice(0, 500)}`);
   }
   return parsed;
+}
+
+function assertCardPurchaseTombstone() {
+  for (const [label, base] of [
+    ['direct Go', 'http://api:8080'],
+    ['gateway', 'http://gateway:8080'],
+  ]) {
+    const response = fetchRequest(base, 'POST', '/api/cards/purchase', {});
+    assertStatus(response, 410, `${label} POST /api/cards/purchase`);
+    if (!response.body.includes('CARD_PURCHASE_DISABLED')) {
+      fail(`${label} POST /api/cards/purchase should return CARD_PURCHASE_DISABLED; body=${response.body.slice(0, 500)}`);
+    }
+  }
 }
 
 function seedTestUser() {
@@ -253,6 +298,7 @@ function main() {
       fail(`unexpected initial inventory: ${JSON.stringify(inventoryBefore.data)}`);
     }
 
+    assertCardPurchaseTombstone();
     apiRequest('POST', '/api/cards/exchange', { cardId: exchangeCardID });
     const draw = apiRequest('POST', '/api/cards/draw', { count: 1 });
     if (!draw.data || draw.data.drawsAvailable !== 1) {
@@ -281,6 +327,8 @@ function main() {
     testUserID,
     checkedAuthenticatedPaths: [
       'GET /api/cards/inventory',
+      'POST /api/cards/purchase tombstone direct Go',
+      'POST /api/cards/purchase tombstone through Gateway',
       'POST /api/cards/exchange',
       'POST /api/cards/draw',
       'POST /api/cards/claim-reward',

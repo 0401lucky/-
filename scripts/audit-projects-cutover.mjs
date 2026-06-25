@@ -3,23 +3,34 @@ import path from 'node:path';
 
 const repoRoot = process.cwd();
 
-const expectedFrontendProjectListPaths = [
+const expectedFrontendProjectPaths = [
   '/api/projects',
+  '/api/projects/my-claims',
+  '/api/projects/${id}',
 ];
 
 const forbiddenProjectGatewaySnippets = [
-  '/api/projects/*',
-  '/api/projects/my-claims',
+  '/api/projects*',
 ];
 
 const requiredGoRouteSnippets = [
   'api.Get("/projects", welfareHandlers.listProjects)',
+  'api.Get("/projects/my-claims", welfareHandlers.listMyProjectClaims)',
+  'api.Get("/projects/{id}", welfareHandlers.getProjectDetail)',
+  'api.Post("/projects/{id}", welfareHandlers.claimProject)',
 ];
 
 const requiredHandlerSnippets = [
   'func (handlers welfareHandlers) listProjects',
+  'func (handlers welfareHandlers) getProjectDetail',
+  'func (handlers welfareHandlers) claimProject',
+  'func (handlers welfareHandlers) listMyProjectClaims',
   'ListProjects',
+  'GetPublicProjectDetail',
+  'ClaimPublicProject',
+  'ListUserProjectClaimIDs',
   '"projects"',
+  '"projectIds"',
 ];
 
 const requiredJSONFields = [
@@ -41,6 +52,7 @@ const requiredJSONFields = [
 
 const requiredMigrationFiles = [
   'backend/migrations/0003_welfare_lists.sql',
+  'backend/migrations/0027_project_claims.sql',
 ];
 
 const requiredSmokeFiles = [
@@ -52,6 +64,8 @@ const requiredSmokeSnippets = [
   'docker-compose-exec-api-and-postgres',
   'checkedPublicPaths',
   '/api/projects',
+  '/api/projects/my-claims',
+  '/api/projects/',
   'verifyCleanup',
   'gatewayProjectsRules',
 ];
@@ -60,6 +74,7 @@ const frontendRoots = [
   path.join(repoRoot, 'src', 'app', 'page.tsx'),
   path.join(repoRoot, 'src', 'app', 'store'),
   path.join(repoRoot, 'src', 'app', 'projects'),
+  path.join(repoRoot, 'src', 'app', 'project'),
 ];
 
 function walkFiles(root, files = []) {
@@ -102,12 +117,12 @@ function read(relativePath) {
 }
 
 const frontendFiles = frontendRoots.flatMap((root) => walkFiles(root));
-const projectListPattern = /['"`](\/api\/projects)(?:[?#][^'"`]*)?['"`]/g;
+const projectApiPattern = /['"`](\/api\/projects(?:\/my-claims|\/\$\{id\})?)(?:[?#][^'"`]*)?['"`]/g;
 const discovered = new Map();
 
 for (const file of frontendFiles) {
   const source = readFileSync(file, 'utf8');
-  for (const match of source.matchAll(projectListPattern)) {
+  for (const match of source.matchAll(projectApiPattern)) {
     const apiPath = match[1];
     if (!discovered.has(apiPath)) {
       discovered.set(apiPath, []);
@@ -116,12 +131,12 @@ for (const file of frontendFiles) {
   }
 }
 
-const expectedSet = new Set(expectedFrontendProjectListPaths);
+const expectedSet = new Set(expectedFrontendProjectPaths);
 const discoveredSet = new Set(discovered.keys());
-const missingFrontendPaths = expectedFrontendProjectListPaths.filter((apiPath) => !discoveredSet.has(apiPath));
+const missingFrontendPaths = expectedFrontendProjectPaths.filter((apiPath) => !discoveredSet.has(apiPath));
 const unexpectedFrontendPaths = [...discoveredSet].filter((apiPath) => !expectedSet.has(apiPath));
 if (missingFrontendPaths.length > 0 || unexpectedFrontendPaths.length > 0) {
-  fail('frontend project list API dependencies changed', [
+  fail('frontend project API dependencies changed', [
     ...missingFrontendPaths.map((apiPath) => `missing expected frontend path ${apiPath}`),
     ...unexpectedFrontendPaths.map((apiPath) => `unexpected frontend path ${apiPath}`),
   ]);
@@ -130,11 +145,11 @@ if (missingFrontendPaths.length > 0 || unexpectedFrontendPaths.length > 0) {
 const serverSource = read('backend/internal/httpserver/server.go');
 const missingGoRoutes = requiredGoRouteSnippets.filter((snippet) => !serverSource.includes(snippet));
 if (missingGoRoutes.length > 0) {
-  fail('Go project list routes are incomplete', missingGoRoutes);
+  fail('Go project routes are incomplete', missingGoRoutes);
 }
 
 const handlerSource = read('backend/internal/httpserver/welfare_handlers.go');
-const serviceSource = read('backend/internal/welfare/service.go');
+const serviceSource = `${read('backend/internal/welfare/service.go')}\n${read('backend/internal/welfare/admin_project.go')}`;
 const missingHandlerSnippets = requiredHandlerSnippets.filter((snippet) => !`${handlerSource}\n${serviceSource}`.includes(snippet));
 if (missingHandlerSnippets.length > 0) {
   fail('Go project list handler/service snippets are missing', missingHandlerSnippets);
@@ -172,6 +187,8 @@ const activeGatewayProjectRules = gatewaySource
 
 const expectedGatewayRules = [
   'handle /api/projects {',
+  'handle /api/projects/my-claims {',
+  'handle /api/projects/* {',
   'handle /api/admin/projects {',
   'handle /api/admin/projects/* {',
 ];
@@ -189,7 +206,7 @@ if (missingGatewayRules.length > 0 || unexpectedGatewayRules.length > 0 || forbi
 }
 
 const summary = {
-  frontendProjectListApiPaths: expectedFrontendProjectListPaths,
+  frontendProjectApiPaths: expectedFrontendProjectPaths,
   frontendLocations: Object.fromEntries([...discovered.entries()]),
   goRoutes: requiredGoRouteSnippets,
   migrations: requiredMigrationFiles,

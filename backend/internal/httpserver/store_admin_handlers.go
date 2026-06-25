@@ -261,6 +261,20 @@ func (handlers economyHandlers) deleteStoreAdminItem(writer http.ResponseWriter,
 	})
 }
 
+func (handlers economyHandlers) adminStoreResetDisabled(writer http.ResponseWriter, request *http.Request) {
+	if handlers.rejectUntrustedUnsafeRequest(writer, request) {
+		return
+	}
+	if _, ok := handlers.requireAdmin(writer, request); !ok {
+		return
+	}
+	writeJSON(writer, http.StatusGone, map[string]any{
+		"success": false,
+		"code":    "ADMIN_STORE_RESET_DISABLED",
+		"message": "旧商店重置接口已下线。Zeabur 生产环境使用 PostgreSQL 商品表，请通过后台商品管理逐项编辑或使用受控迁移脚本处理。",
+	})
+}
+
 func (handlers economyHandlers) requireAdmin(writer http.ResponseWriter, request *http.Request) (*auth.User, bool) {
 	user, ok := handlers.requireUser(writer, request)
 	if !ok {

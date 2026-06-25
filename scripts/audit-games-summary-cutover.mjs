@@ -172,7 +172,10 @@ const activeGatewaySummaryLines = gatewaySource
   .filter((entry) => entry.line !== '' && !entry.line.startsWith('#'))
   .filter((entry) => entry.line.includes('/api/games/profile') || entry.line.includes('/api/games/overview') || entry.line.includes('/api/games/*'));
 
-const allowedGatewaySummaryRules = new Set(['handle /api/games/profile {']);
+const allowedGatewaySummaryRules = new Set([
+  'handle /api/games/overview {',
+  'handle /api/games/profile {',
+]);
 const unexpectedGatewaySummaryRules = activeGatewaySummaryLines.filter((entry) => !allowedGatewaySummaryRules.has(entry.line));
 
 if (unexpectedGatewaySummaryRules.length > 0) {

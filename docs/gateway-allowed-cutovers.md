@@ -32,6 +32,7 @@ Zeabur 内网服务名不同的时候，只覆盖变量值，不能借机扩大 
 - `/api/checkin/makeup`
 - `/api/points`
 - `/api/rankings/eco`
+- `/api/games/overview`
 - `/api/games/profile`
 - `/api/profile/overview`
 - `/api/profile/settings`
@@ -45,6 +46,7 @@ Zeabur 内网服务名不同的时候，只覆盖变量值，不能借机扩大 
 - `/api/admin/announcements`
 - `/api/admin/announcements/*`
 - `/api/farm/status`
+- `/api/farm/shop`
 - `/api/farm/plant`
 - `/api/farm/water`
 - `/api/farm/water-all`
@@ -105,6 +107,7 @@ Zeabur 内网服务名不同的时候，只覆盖变量值，不能借机扩大 
 - `/api/cards/inventory`
 - `/api/cards/rules`
 - `/api/cards/draw`
+- `/api/cards/purchase`
 - `/api/cards/exchange`
 - `/api/cards/claim-reward`
 - `/api/admin/cards/users`

@@ -42,6 +42,100 @@ func (handlers welfareHandlers) listProjects(writer http.ResponseWriter, request
 	})
 }
 
+func (handlers welfareHandlers) getProjectDetail(writer http.ResponseWriter, request *http.Request) {
+	id := chi.URLParam(request, "id")
+
+	var userID *int64
+	if user, ok := auth.UserFromRequest(
+		request,
+		handlers.deps.Config.SessionSecret,
+		handlers.deps.Config.AdminUsernames,
+	); ok {
+		userID = &user.ID
+	}
+
+	detail, err := handlers.service.GetPublicProjectDetail(request.Context(), id, userID)
+	if errors.Is(err, welfare.ErrProjectNotFound) {
+		writeJSON(writer, http.StatusNotFound, map[string]any{
+			"success": false,
+			"message": "项目不存在",
+		})
+		return
+	}
+	if err != nil {
+		handlers.deps.Logger.Error("查询福利项目详情失败", "projectID", id, "error", err)
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "获取项目失败",
+		})
+		return
+	}
+
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"success": true,
+		"project": detail.Project,
+		"claimed": detail.Claimed,
+	})
+}
+
+func (handlers welfareHandlers) claimProject(writer http.ResponseWriter, request *http.Request) {
+	if handlers.rejectUntrustedUnsafeRequest(writer, request) {
+		return
+	}
+	user, ok := economyHandlers{deps: handlers.deps}.requireUser(writer, request)
+	if !ok {
+		return
+	}
+
+	id := chi.URLParam(request, "id")
+	result, err := handlers.service.ClaimPublicProject(request.Context(), id, *user)
+	if errors.Is(err, welfare.ErrProjectNotFound) {
+		writeJSON(writer, http.StatusNotFound, map[string]any{
+			"success": false,
+			"message": "项目不存在",
+		})
+		return
+	}
+	if err != nil {
+		handlers.deps.Logger.Error("领取福利项目失败", "projectID", id, "userID", user.ID, "error", err)
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "领取失败",
+		})
+		return
+	}
+
+	status := http.StatusOK
+	if !result.Success {
+		status = http.StatusBadRequest
+	}
+	writeJSON(writer, status, result)
+}
+
+func (handlers welfareHandlers) listMyProjectClaims(writer http.ResponseWriter, request *http.Request) {
+	user, ok := economyHandlers{deps: handlers.deps}.requireUser(writer, request)
+	if !ok {
+		return
+	}
+
+	projectIDs, err := handlers.service.ListUserProjectClaimIDs(request.Context(), user.ID)
+	if err != nil {
+		handlers.deps.Logger.Error("查询我的福利领取记录失败", "userID", user.ID, "error", err)
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "获取领取记录失败",
+		})
+		return
+	}
+
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"success": true,
+		"data": map[string]any{
+			"projectIds": projectIDs,
+		},
+	})
+}
+
 func (handlers welfareHandlers) listAdminProjects(writer http.ResponseWriter, request *http.Request) {
 	if _, ok := handlers.requireAdmin(writer, request); !ok {
 		return

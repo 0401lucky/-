@@ -49,6 +49,13 @@ var (
 	cardsClaimRewardRateLimit    = userRateLimitRule{prefix: "ratelimit:cards:claim-reward", windowSeconds: 60, maxRequests: 10}
 	checkinRateLimit             = userRateLimitRule{prefix: "ratelimit:checkin", windowSeconds: 60, maxRequests: 5}
 	checkinMakeupRateLimit       = userRateLimitRule{prefix: "ratelimit:checkin:makeup", windowSeconds: 60, maxRequests: 10}
+	lotterySpinRateLimit         = userRateLimitRule{prefix: "ratelimit:lottery:spin", windowSeconds: 60, maxRequests: 20}
+	lotteryAdminRateLimit        = userRateLimitRule{prefix: "ratelimit:lottery:admin", windowSeconds: 60, maxRequests: 30}
+	numberBombReadRateLimit      = userRateLimitRule{prefix: "ratelimit:lottery:number-bomb:read", windowSeconds: 60, maxRequests: 60}
+	numberBombWriteRateLimit     = userRateLimitRule{prefix: "ratelimit:lottery:number-bomb:write", windowSeconds: 60, maxRequests: 20}
+	rankingsSettleRateLimit      = userRateLimitRule{prefix: "ratelimit:rankings:settle", windowSeconds: 60, maxRequests: 20}
+	adminAlertsRateLimit         = userRateLimitRule{prefix: "ratelimit:admin:alerts", windowSeconds: 60, maxRequests: 60}
+	adminRewardsRateLimit        = userRateLimitRule{prefix: "ratelimit:admin:rewards", windowSeconds: 60, maxRequests: 30}
 
 	inMemoryRateLimits = struct {
 		sync.Mutex

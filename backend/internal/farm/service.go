@@ -15,6 +15,13 @@ func NewService(store *Store) *Service {
 	return &Service{store: store}
 }
 
+func (service *Service) ListShopItems(ctx context.Context) ([]ShopItem, error) {
+	if service == nil || service.store == nil {
+		return nil, ErrUnavailable
+	}
+	return service.store.ListEffectiveShopItems(ctx)
+}
+
 func (service *Service) GetStatus(ctx context.Context, userID int64, nowMs int64) (StatusResponse, error) {
 	if service == nil || service.store == nil {
 		return StatusResponse{}, ErrUnavailable

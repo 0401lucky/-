@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"redemption/backend/internal/auth"
-	"redemption/backend/internal/economy"
+	"redemption/backend/internal/systemconfig"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -151,12 +151,16 @@ func (service *Service) Status(ctx context.Context, user auth.User) (StatusData,
 			view := BuildSessionView(*active)
 			activeView = &view
 		}
+		dailyLimit, err := systemconfig.DailyPointsLimit(ctx, tx)
+		if err != nil {
+			return err
+		}
 		output = StatusData{
 			Balance:            balance,
 			DailyStats:         dailyStats,
 			InCooldown:         remaining > 0,
 			CooldownRemaining:  remaining,
-			DailyLimit:         economy.DailyPointsLimit,
+			DailyLimit:         dailyLimit,
 			PointsLimitReached: false,
 			ActiveSession:      activeView,
 		}
@@ -392,7 +396,11 @@ func (service *Service) Submit(ctx context.Context, user auth.User, input Submit
 
 		score := CalculateScore(session.Difficulty, len(session.MoveLog), effectiveCompleted)
 		pointReward := score / memoryPointRewardDivisor
-		pointsEarned, dailyEarned, err := addGamePointsWithLimit(ctx, tx, user, pointReward, economy.DailyPointsLimit, fmt.Sprintf("记忆游戏得分 %d，福利积分 %d", score, pointReward))
+		dailyLimit, err := systemconfig.DailyPointsLimit(ctx, tx)
+		if err != nil {
+			return err
+		}
+		pointsEarned, dailyEarned, err := addGamePointsWithLimit(ctx, tx, user, pointReward, dailyLimit, fmt.Sprintf("记忆游戏得分 %d，福利积分 %d", score, pointReward))
 		if err != nil {
 			return err
 		}

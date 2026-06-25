@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"redemption/backend/internal/auth"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -103,6 +105,197 @@ func (service *Service) GetAdminProjectDetail(ctx context.Context, id string) (A
 		return AdminProjectDetail{}, err
 	}
 	return AdminProjectDetail{Project: project, Records: records}, nil
+}
+
+func (service *Service) GetPublicProjectDetail(ctx context.Context, id string, userID *int64) (PublicProjectDetail, error) {
+	project, err := service.getProject(ctx, strings.TrimSpace(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PublicProjectDetail{}, ErrProjectNotFound
+	}
+	if err != nil {
+		return PublicProjectDetail{}, err
+	}
+
+	var claimed *ProjectClaim
+	if userID != nil && *userID > 0 {
+		record, err := service.getProjectClaim(ctx, project.ID, *userID)
+		if err == nil {
+			claimed = &record
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return PublicProjectDetail{}, err
+		}
+	}
+
+	return PublicProjectDetail{Project: project, Claimed: claimed}, nil
+}
+
+func (service *Service) ListUserProjectClaimIDs(ctx context.Context, userID int64) ([]string, error) {
+	rows, err := service.db.Query(ctx,
+		`SELECT DISTINCT e.item_id
+		   FROM exchange_logs e
+		   JOIN projects p ON p.id = e.item_id
+		  WHERE e.user_id = $1
+		    AND e.type = 'project_direct'
+		  ORDER BY e.item_id ASC`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	projectIDs := make([]string, 0)
+	for rows.Next() {
+		var projectID string
+		if err := rows.Scan(&projectID); err != nil {
+			return nil, err
+		}
+		projectIDs = append(projectIDs, projectID)
+	}
+	return projectIDs, rows.Err()
+}
+
+func (service *Service) ClaimPublicProject(ctx context.Context, id string, user auth.User) (ClaimProjectResult, error) {
+	id = strings.TrimSpace(id)
+	if id == "" || user.ID <= 0 {
+		return ClaimProjectResult{Success: false, Message: "参数错误"}, nil
+	}
+
+	tx, err := service.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return ClaimProjectResult{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := ensureProjectClaimUser(ctx, tx, user); err != nil {
+		return ClaimProjectResult{}, err
+	}
+	lockKey := fmt.Sprintf("%s:%d", id, user.ID)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, lockKey); err != nil {
+		return ClaimProjectResult{}, err
+	}
+
+	row := tx.QueryRow(ctx,
+		`SELECT id, name, description, max_claims, claimed_count, codes_count,
+		        status, created_at_ms, created_by, reward_type, direct_points,
+		        new_user_only, pinned, pinned_at_ms
+		   FROM projects
+		  WHERE id = $1
+		  FOR UPDATE`,
+		id,
+	)
+	project, err := scanProject(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ClaimProjectResult{}, ErrProjectNotFound
+	}
+	if err != nil {
+		return ClaimProjectResult{}, err
+	}
+
+	existing, err := service.getProjectClaimTx(ctx, tx, project.ID, user.ID)
+	if err == nil {
+		return projectClaimResult("您已经领取过了", existing), tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return ClaimProjectResult{}, err
+	}
+
+	if project.Status != "active" {
+		return ClaimProjectResult{Success: false, Message: "项目当前不可领取"}, tx.Commit(ctx)
+	}
+	if project.RewardType != "direct" || project.DirectPoints == nil || *project.DirectPoints <= 0 {
+		return ClaimProjectResult{Success: false, Message: "历史兑换码项目暂不支持在 Zeabur 新后端领取"}, tx.Commit(ctx)
+	}
+	if project.ClaimedCount >= project.MaxClaims {
+		if _, err := tx.Exec(ctx, `UPDATE projects SET status = 'exhausted', updated_at = now() WHERE id = $1 AND status = 'active'`, project.ID); err != nil {
+			return ClaimProjectResult{}, err
+		}
+		return ClaimProjectResult{Success: false, Message: "名额已领完"}, tx.Commit(ctx)
+	}
+	if project.NewUserOnly {
+		eligible, err := service.isNewUserForProjectClaims(ctx, tx, user.ID)
+		if err != nil {
+			return ClaimProjectResult{}, err
+		}
+		if !eligible {
+			return ClaimProjectResult{Success: false, Message: "该福利仅限新人领取"}, tx.Commit(ctx)
+		}
+	}
+
+	balance, err := lockProjectClaimBalance(ctx, tx, user.ID)
+	if err != nil {
+		return ClaimProjectResult{}, err
+	}
+	points := *project.DirectPoints
+	nextBalance := balance + points
+	if nextBalance < balance {
+		return ClaimProjectResult{Success: false, Message: "积分发放失败，请稍后重试"}, tx.Commit(ctx)
+	}
+
+	now := time.Now()
+	if _, err := tx.Exec(ctx,
+		`UPDATE point_accounts SET balance = $1, updated_at = now() WHERE user_id = $2`,
+		nextBalance,
+		user.ID,
+	); err != nil {
+		return ClaimProjectResult{}, err
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO point_ledger (id, user_id, amount, source, description, balance_after, created_at)
+		 VALUES ($1, $2, $3, 'project_claim', $4, $5, $6)`,
+		newProjectClaimID("ledger", now),
+		user.ID,
+		points,
+		"福利项目领取: "+project.Name,
+		nextBalance,
+		now,
+	); err != nil {
+		return ClaimProjectResult{}, err
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO exchange_logs
+		   (id, user_id, item_id, item_name, points_cost, value, type, quantity, created_at)
+		 VALUES ($1, $2, $3, $4, 0, $5, 'project_direct', 1, $6)`,
+		newProjectClaimID("project_claim", now),
+		user.ID,
+		project.ID,
+		project.Name,
+		points,
+		now,
+	); err != nil {
+		return ClaimProjectResult{}, err
+	}
+
+	nextClaimedCount := project.ClaimedCount + 1
+	nextStatus := project.Status
+	if nextClaimedCount >= project.MaxClaims {
+		nextStatus = "exhausted"
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE projects
+		    SET claimed_count = $2,
+		        status = $3,
+		        updated_at = now()
+		  WHERE id = $1`,
+		project.ID,
+		nextClaimedCount,
+		nextStatus,
+	); err != nil {
+		return ClaimProjectResult{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return ClaimProjectResult{}, err
+	}
+
+	return ClaimProjectResult{
+		Success:         true,
+		Message:         "领取成功，积分已到账",
+		DirectCredit:    true,
+		CreditedPoints:  &points,
+		CreditedDollars: &points,
+		CreditStatus:    "success",
+	}, nil
 }
 
 func (service *Service) UpdateAdminProject(ctx context.Context, id string, input UpdateAdminProjectInput) (Project, error) {
@@ -295,6 +488,106 @@ func (service *Service) listProjectRecords(ctx context.Context, projectID string
 	return records, rows.Err()
 }
 
+func (service *Service) getProjectClaim(ctx context.Context, projectID string, userID int64) (ProjectClaim, error) {
+	return service.getProjectClaimTx(ctx, service.db, projectID, userID)
+}
+
+func (service *Service) getProjectClaimTx(ctx context.Context, querier pgxQuerier, projectID string, userID int64) (ProjectClaim, error) {
+	var claim ProjectClaim
+	var value int64
+	var createdAt time.Time
+	err := querier.QueryRow(ctx,
+		`SELECT value, created_at
+		   FROM exchange_logs
+		  WHERE item_id = $1
+		    AND user_id = $2
+		    AND type = 'project_direct'
+		  ORDER BY created_at ASC, id ASC
+		  LIMIT 1`,
+		projectID,
+		userID,
+	).Scan(&value, &createdAt)
+	if err != nil {
+		return ProjectClaim{}, err
+	}
+	claim.Code = ""
+	claim.ClaimedAt = millis(createdAt)
+	claim.DirectCredit = true
+	claim.CreditedPoints = &value
+	claim.CreditedDollars = &value
+	claim.CreditStatus = "success"
+	claim.CreditMessage = "积分已到账"
+	return claim, nil
+}
+
+func (service *Service) isNewUserForProjectClaims(ctx context.Context, querier pgxQuerier, userID int64) (bool, error) {
+	var hasClaim bool
+	err := querier.QueryRow(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM exchange_logs
+		    WHERE user_id = $1
+		      AND type = 'project_direct'
+		 )`,
+		userID,
+	).Scan(&hasClaim)
+	if err != nil {
+		return false, err
+	}
+	return !hasClaim, nil
+}
+
+func projectClaimResult(message string, claim ProjectClaim) ClaimProjectResult {
+	return ClaimProjectResult{
+		Success:         true,
+		Message:         message,
+		Code:            claim.Code,
+		DirectCredit:    claim.DirectCredit,
+		CreditedPoints:  claim.CreditedPoints,
+		CreditedDollars: claim.CreditedDollars,
+		CreditStatus:    claim.CreditStatus,
+	}
+}
+
+func ensureProjectClaimUser(ctx context.Context, tx pgx.Tx, user auth.User) error {
+	username := strings.TrimSpace(user.Username)
+	if username == "" {
+		username = fmt.Sprintf("user-%d", user.ID)
+	}
+	displayName := strings.TrimSpace(user.DisplayName)
+	if displayName == "" {
+		displayName = username
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO users (id, username, display_name, first_seen_at, updated_at)
+		 VALUES ($1, $2, $3, now(), now())
+		 ON CONFLICT (id) DO UPDATE SET
+		   username = excluded.username,
+		   display_name = CASE
+		     WHEN excluded.display_name <> '' THEN excluded.display_name
+		     ELSE users.display_name
+		   END,
+		   updated_at = now()`,
+		user.ID,
+		username,
+		displayName,
+	); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx,
+		`INSERT INTO point_accounts (user_id, balance, updated_at)
+		 VALUES ($1, 0, now())
+		 ON CONFLICT (user_id) DO NOTHING`,
+		user.ID,
+	)
+	return err
+}
+
+func lockProjectClaimBalance(ctx context.Context, tx pgx.Tx, userID int64) (int64, error) {
+	var balance int64
+	err := tx.QueryRow(ctx, `SELECT balance FROM point_accounts WHERE user_id = $1 FOR UPDATE`, userID).Scan(&balance)
+	return balance, err
+}
+
 func scanProject(row pgxScanner) (Project, error) {
 	var project Project
 	var rewardType sql.NullString
@@ -364,4 +657,12 @@ func newProjectID(now time.Time) string {
 		return fmt.Sprintf("project_%d", now.UnixNano())
 	}
 	return fmt.Sprintf("project_%d_%s", millis(now), hex.EncodeToString(buffer[:]))
+}
+
+func newProjectClaimID(prefix string, now time.Time) string {
+	var buffer [8]byte
+	if _, err := rand.Read(buffer[:]); err != nil {
+		return fmt.Sprintf("%s_%d", prefix, now.UnixNano())
+	}
+	return fmt.Sprintf("%s_%d_%s", prefix, millis(now), hex.EncodeToString(buffer[:]))
 }

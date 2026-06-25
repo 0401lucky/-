@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"redemption/backend/internal/auth"
-	"redemption/backend/internal/economy"
+	"redemption/backend/internal/systemconfig"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -48,10 +48,14 @@ func (service *Service) GetOverview(ctx context.Context, user auth.User) (Overvi
 	if err != nil {
 		return OverviewData{}, err
 	}
+	dailyLimit, err := systemconfig.DailyPointsLimit(ctx, service.db)
+	if err != nil {
+		return OverviewData{}, err
+	}
 	return OverviewData{
 		Balance:            balance,
 		DailyStats:         stats,
-		DailyLimit:         economy.DailyPointsLimit,
+		DailyLimit:         dailyLimit,
 		PointsLimitReached: false,
 	}, nil
 }

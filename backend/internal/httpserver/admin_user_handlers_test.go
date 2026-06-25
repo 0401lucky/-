@@ -73,3 +73,70 @@ func TestAdminUsersReturnUnavailableWithoutDatabase(t *testing.T) {
 		t.Fatalf("expected unavailable achievement response, got status=%d body=%s", achievementResponse.Code, achievementResponse.Body.String())
 	}
 }
+
+func TestAdminLegacyToolsAreDisabled(t *testing.T) {
+	handler := New(testDependenciesWithAdmin())
+	paths := []string{
+		"/api/admin/sync-users",
+		"/api/admin/fix-codes-count",
+		"/api/admin/migrate-native-hot-data",
+		"/api/admin/migrate-new-user-eligibility",
+	}
+
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			unauthenticated := httptest.NewRequest(http.MethodPost, path, nil)
+			unauthenticated.Header.Set("Origin", "http://example.com")
+			unauthenticatedResponse := performRequest(handler, unauthenticated)
+			if unauthenticatedResponse.Code != http.StatusUnauthorized || !strings.Contains(unauthenticatedResponse.Body.String(), "未登录") {
+				t.Fatalf("expected unauthenticated legacy tool response, got status=%d body=%s", unauthenticatedResponse.Code, unauthenticatedResponse.Body.String())
+			}
+
+			crossSite := httptest.NewRequest(http.MethodPost, path, nil)
+			crossSite.Header.Set("Origin", "https://evil.example")
+			crossSite.AddCookie(testSessionCookieFor(1, "admin", "Admin"))
+			crossSiteResponse := performRequest(handler, crossSite)
+			if crossSiteResponse.Code != http.StatusForbidden || !strings.Contains(crossSiteResponse.Body.String(), "请求来源不合法") {
+				t.Fatalf("expected cross-site legacy tool response, got status=%d body=%s", crossSiteResponse.Code, crossSiteResponse.Body.String())
+			}
+
+			request := httptest.NewRequest(http.MethodPost, path, nil)
+			request.Host = "example.com"
+			request.Header.Set("Origin", "http://example.com")
+			request.AddCookie(testSessionCookieFor(1, "admin", "Admin"))
+			response := performRequest(handler, request)
+			if response.Code != http.StatusGone || !strings.Contains(response.Body.String(), "ADMIN_LEGACY_TOOL_DISABLED") {
+				t.Fatalf("expected disabled legacy tool response, got status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestAdminStoreResetIsDisabled(t *testing.T) {
+	handler := New(testDependenciesWithAdmin())
+	path := "/api/admin/store/reset"
+
+	unauthenticated := httptest.NewRequest(http.MethodPost, path, nil)
+	unauthenticated.Header.Set("Origin", "http://example.com")
+	unauthenticatedResponse := performRequest(handler, unauthenticated)
+	if unauthenticatedResponse.Code != http.StatusUnauthorized || !strings.Contains(unauthenticatedResponse.Body.String(), "未登录") {
+		t.Fatalf("expected unauthenticated store reset response, got status=%d body=%s", unauthenticatedResponse.Code, unauthenticatedResponse.Body.String())
+	}
+
+	crossSite := httptest.NewRequest(http.MethodPost, path, nil)
+	crossSite.Header.Set("Origin", "https://evil.example")
+	crossSite.AddCookie(testSessionCookieFor(1, "admin", "Admin"))
+	crossSiteResponse := performRequest(handler, crossSite)
+	if crossSiteResponse.Code != http.StatusForbidden || !strings.Contains(crossSiteResponse.Body.String(), "请求来源不合法") {
+		t.Fatalf("expected cross-site store reset response, got status=%d body=%s", crossSiteResponse.Code, crossSiteResponse.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodPost, path, nil)
+	request.Host = "example.com"
+	request.Header.Set("Origin", "http://example.com")
+	request.AddCookie(testSessionCookieFor(1, "admin", "Admin"))
+	response := performRequest(handler, request)
+	if response.Code != http.StatusGone || !strings.Contains(response.Body.String(), "ADMIN_STORE_RESET_DISABLED") {
+		t.Fatalf("expected disabled store reset response, got status=%d body=%s", response.Code, response.Body.String())
+	}
+}

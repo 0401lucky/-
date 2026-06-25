@@ -23,9 +23,11 @@ import (
 var (
 	ErrUnavailable          = errors.New("rewards database unavailable")
 	ErrNotificationNotFound = errors.New("notification not found")
+	ErrRewardBatchNotFound  = errors.New("reward batch not found")
 	ErrForbidden            = errors.New("notification belongs to another user")
 	ErrNotReward            = errors.New("notification is not reward")
 	ErrInvalidRewardData    = errors.New("invalid reward data")
+	ErrInvalidAdminInput    = errors.New("invalid admin reward input")
 	ErrQuotaUnavailable     = errors.New("quota client unavailable")
 )
 
@@ -43,6 +45,41 @@ type ClaimResult struct {
 	Success     bool   `json:"success"`
 	Message     string `json:"message"`
 	ClaimStatus string `json:"claimStatus"`
+}
+
+type CreateRewardBatchInput struct {
+	Type          string
+	Amount        int64
+	TargetMode    string
+	TargetUserIDs []int64
+	Title         string
+	Message       string
+	CreatedBy     string
+}
+
+type RewardBatch struct {
+	ID               string  `json:"id"`
+	Type             string  `json:"type"`
+	Amount           float64 `json:"amount"`
+	TargetMode       string  `json:"targetMode"`
+	TargetUserIDs    []int64 `json:"targetUserIds"`
+	Title            string  `json:"title"`
+	Message          string  `json:"message"`
+	CreatedBy        string  `json:"createdBy"`
+	CreatedAt        int64   `json:"createdAt"`
+	Status           string  `json:"status"`
+	TotalTargets     int64   `json:"totalTargets"`
+	DistributedCount int64   `json:"distributedCount"`
+	ClaimedCount     int64   `json:"claimedCount"`
+	FailedClaimCount int64   `json:"failedClaimCount"`
+}
+
+type RewardBatchList struct {
+	Items      []RewardBatch `json:"items"`
+	Total      int64         `json:"total"`
+	Page       int64         `json:"page"`
+	Limit      int64         `json:"limit"`
+	TotalPages int64         `json:"totalPages"`
 }
 
 type rewardNotificationData struct {
@@ -65,6 +102,185 @@ type claimRecord struct {
 
 func NewService(db *pgxpool.Pool, pointService *economy.Service, quotaClient QuotaClient) *Service {
 	return &Service{db: db, pointService: pointService, quotaClient: quotaClient}
+}
+
+func (service *Service) ListRewardBatches(ctx context.Context, page int64, limit int64) (RewardBatchList, error) {
+	if service.db == nil {
+		return RewardBatchList{}, ErrUnavailable
+	}
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	var total int64
+	if err := service.db.QueryRow(ctx, `SELECT COUNT(*) FROM reward_batches`).Scan(&total); err != nil {
+		return RewardBatchList{}, err
+	}
+
+	rows, err := service.db.Query(ctx,
+		`SELECT id, type, amount::text, target_mode, target_user_ids, title, message, created_by,
+		        created_at_ms, status, total_targets, distributed_count, claimed_count, failed_claim_count
+		   FROM reward_batches
+		  ORDER BY created_at_ms DESC, created_at DESC
+		  LIMIT $1 OFFSET $2`,
+		limit,
+		(page-1)*limit,
+	)
+	if err != nil {
+		return RewardBatchList{}, err
+	}
+	defer rows.Close()
+
+	items := make([]RewardBatch, 0)
+	for rows.Next() {
+		batch, err := scanRewardBatch(rows)
+		if err != nil {
+			return RewardBatchList{}, err
+		}
+		items = append(items, batch)
+	}
+	if err := rows.Err(); err != nil {
+		return RewardBatchList{}, err
+	}
+
+	totalPages := int64(1)
+	if total > 0 {
+		totalPages = (total + limit - 1) / limit
+	}
+	return RewardBatchList{
+		Items:      items,
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+	}, nil
+}
+
+func (service *Service) GetRewardBatch(ctx context.Context, batchID string) (RewardBatch, error) {
+	if service.db == nil {
+		return RewardBatch{}, ErrUnavailable
+	}
+	batchID = strings.TrimSpace(batchID)
+	if batchID == "" {
+		return RewardBatch{}, fmt.Errorf("%w: 缺少批次 ID", ErrInvalidAdminInput)
+	}
+
+	batch, err := scanRewardBatchRow(service.db.QueryRow(ctx,
+		`SELECT id, type, amount::text, target_mode, target_user_ids, title, message, created_by,
+		        created_at_ms, status, total_targets, distributed_count, claimed_count, failed_claim_count
+		   FROM reward_batches
+		  WHERE id = $1`,
+		batchID,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RewardBatch{}, ErrRewardBatchNotFound
+	}
+	return batch, err
+}
+
+func (service *Service) CreateAndDistributeRewardBatch(ctx context.Context, input CreateRewardBatchInput) (RewardBatch, error) {
+	if service.db == nil {
+		return RewardBatch{}, ErrUnavailable
+	}
+	normalized, err := normalizeCreateRewardBatchInput(input)
+	if err != nil {
+		return RewardBatch{}, err
+	}
+
+	tx, err := service.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return RewardBatch{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	targetIDs, err := loadRewardTargetUserIDs(ctx, tx, normalized)
+	if err != nil {
+		return RewardBatch{}, err
+	}
+	if len(targetIDs) == 0 {
+		return RewardBatch{}, fmt.Errorf("%w: 没有可分发的目标用户", ErrInvalidAdminInput)
+	}
+
+	batchID := randomID()
+	nowMs := time.Now().UnixMilli()
+	targetUserIDsForBatch := []int64{}
+	if normalized.TargetMode == "selected" {
+		targetUserIDsForBatch = targetIDs
+	}
+	targetUserIDsJSON, err := json.Marshal(targetUserIDsForBatch)
+	if err != nil {
+		return RewardBatch{}, err
+	}
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO reward_batches (
+		   id, type, amount, target_mode, target_user_ids, title, message, created_by,
+		   created_at_ms, status, total_targets, distributed_count, claimed_count, failed_claim_count,
+		   created_at, updated_at
+		 ) VALUES ($1, $2, $3::numeric, $4, $5::jsonb, $6, $7, $8, $9, 'completed',
+		           $10, $10, 0, 0, now(), now())`,
+		batchID,
+		normalized.Type,
+		normalized.Amount,
+		normalized.TargetMode,
+		string(targetUserIDsJSON),
+		normalized.Title,
+		normalized.Message,
+		normalized.CreatedBy,
+		nowMs,
+		int64(len(targetIDs)),
+	); err != nil {
+		return RewardBatch{}, err
+	}
+
+	for _, targetID := range targetIDs {
+		notificationID := randomID()
+		data, err := json.Marshal(map[string]any{
+			"rewardBatchId": batchID,
+			"rewardType":    normalized.Type,
+			"rewardAmount":  normalized.Amount,
+			"claimStatus":   "pending",
+		})
+		if err != nil {
+			return RewardBatch{}, err
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO notifications (id, user_id, type, title, content, data, created_at_ms, created_at, updated_at)
+			 VALUES ($1, $2, 'reward', $3, $4, $5::jsonb, $6, now(), now())`,
+			notificationID,
+			targetID,
+			normalized.Title,
+			normalized.Message,
+			string(data),
+			nowMs,
+		); err != nil {
+			return RewardBatch{}, err
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO reward_claims (
+			   id, batch_id, user_id, notification_id, type, amount, status, retry_count, created_at, updated_at
+			 ) VALUES ($1, $2, $3, $4, $5, $6::numeric, 'pending', 0, now(), now())`,
+			randomID(),
+			batchID,
+			targetID,
+			notificationID,
+			normalized.Type,
+			normalized.Amount,
+		); err != nil {
+			return RewardBatch{}, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return RewardBatch{}, err
+	}
+	return service.GetRewardBatch(ctx, batchID)
 }
 
 func (service *Service) Claim(ctx context.Context, user auth.User, notificationID string) (ClaimResult, error) {
@@ -473,6 +689,132 @@ func nullableString(value string) any {
 		return nil
 	}
 	return value
+}
+
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+func normalizeCreateRewardBatchInput(input CreateRewardBatchInput) (CreateRewardBatchInput, error) {
+	input.Type = strings.TrimSpace(input.Type)
+	input.TargetMode = strings.TrimSpace(input.TargetMode)
+	input.Title = strings.TrimSpace(input.Title)
+	input.Message = strings.TrimSpace(input.Message)
+	input.CreatedBy = strings.TrimSpace(input.CreatedBy)
+	if input.CreatedBy == "" {
+		input.CreatedBy = "admin"
+	}
+
+	if input.Type != "points" {
+		return CreateRewardBatchInput{}, fmt.Errorf("%w: 奖励类型无效，当前仅支持 points", ErrInvalidAdminInput)
+	}
+	if input.Amount <= 0 {
+		return CreateRewardBatchInput{}, fmt.Errorf("%w: 奖励数量必须为正数", ErrInvalidAdminInput)
+	}
+	if input.Amount > 1_000_000 {
+		return CreateRewardBatchInput{}, fmt.Errorf("%w: 单次积分不能超过 1,000,000", ErrInvalidAdminInput)
+	}
+	if input.TargetMode != "all" && input.TargetMode != "selected" {
+		return CreateRewardBatchInput{}, fmt.Errorf("%w: 发放范围无效", ErrInvalidAdminInput)
+	}
+	if input.TargetMode == "selected" {
+		input.TargetUserIDs = normalizeUniqueInt64s(input.TargetUserIDs)
+		if len(input.TargetUserIDs) == 0 {
+			return CreateRewardBatchInput{}, fmt.Errorf("%w: 指定用户模式必须提供目标用户列表", ErrInvalidAdminInput)
+		}
+	}
+	if input.Title == "" {
+		return CreateRewardBatchInput{}, fmt.Errorf("%w: 通知标题不能为空", ErrInvalidAdminInput)
+	}
+	if input.Message == "" {
+		return CreateRewardBatchInput{}, fmt.Errorf("%w: 通知内容不能为空", ErrInvalidAdminInput)
+	}
+	return input, nil
+}
+
+func normalizeUniqueInt64s(values []int64) []int64 {
+	seen := make(map[int64]struct{}, len(values))
+	normalized := make([]int64, 0, len(values))
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	return normalized
+}
+
+func loadRewardTargetUserIDs(ctx context.Context, tx pgx.Tx, input CreateRewardBatchInput) ([]int64, error) {
+	var rows pgx.Rows
+	var err error
+	if input.TargetMode == "all" {
+		rows, err = tx.Query(ctx, `SELECT id FROM users ORDER BY id`)
+	} else {
+		rows, err = tx.Query(ctx, `SELECT id FROM users WHERE id = ANY($1::bigint[]) ORDER BY id`, input.TargetUserIDs)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func scanRewardBatch(rows pgx.Rows) (RewardBatch, error) {
+	return scanRewardBatchRow(rows)
+}
+
+func scanRewardBatchRow(row scanner) (RewardBatch, error) {
+	var batch RewardBatch
+	var amountRaw string
+	var targetUserIDsRaw []byte
+	if err := row.Scan(
+		&batch.ID,
+		&batch.Type,
+		&amountRaw,
+		&batch.TargetMode,
+		&targetUserIDsRaw,
+		&batch.Title,
+		&batch.Message,
+		&batch.CreatedBy,
+		&batch.CreatedAt,
+		&batch.Status,
+		&batch.TotalTargets,
+		&batch.DistributedCount,
+		&batch.ClaimedCount,
+		&batch.FailedClaimCount,
+	); err != nil {
+		return RewardBatch{}, err
+	}
+	amount, ok := floatAmount(amountRaw)
+	if !ok {
+		return RewardBatch{}, ErrInvalidRewardData
+	}
+	batch.Amount = amount
+	if len(targetUserIDsRaw) > 0 {
+		if err := json.Unmarshal(targetUserIDsRaw, &batch.TargetUserIDs); err != nil {
+			return RewardBatch{}, err
+		}
+	}
+	if batch.TargetUserIDs == nil {
+		batch.TargetUserIDs = []int64{}
+	}
+	return batch, nil
 }
 
 func millisToTime(millis int64) time.Time {

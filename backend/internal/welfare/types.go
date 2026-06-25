@@ -38,6 +38,31 @@ type AdminProjectDetail struct {
 	Records []AdminProjectRecord `json:"records"`
 }
 
+type ProjectClaim struct {
+	Code            string `json:"code"`
+	ClaimedAt       int64  `json:"claimedAt"`
+	DirectCredit    bool   `json:"directCredit,omitempty"`
+	CreditedPoints  *int64 `json:"creditedPoints,omitempty"`
+	CreditedDollars *int64 `json:"creditedDollars,omitempty"`
+	CreditStatus    string `json:"creditStatus,omitempty"`
+	CreditMessage   string `json:"creditMessage,omitempty"`
+}
+
+type PublicProjectDetail struct {
+	Project Project       `json:"project"`
+	Claimed *ProjectClaim `json:"claimed"`
+}
+
+type ClaimProjectResult struct {
+	Success         bool   `json:"success"`
+	Message         string `json:"message"`
+	Code            string `json:"code,omitempty"`
+	DirectCredit    bool   `json:"directCredit,omitempty"`
+	CreditedPoints  *int64 `json:"creditedPoints,omitempty"`
+	CreditedDollars *int64 `json:"creditedDollars,omitempty"`
+	CreditStatus    string `json:"creditStatus,omitempty"`
+}
+
 type CreateAdminProjectInput struct {
 	Name         string
 	Description  string

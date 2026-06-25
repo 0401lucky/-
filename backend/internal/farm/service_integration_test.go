@@ -149,6 +149,111 @@ func TestServiceBuildsStatusFromPostgresState(t *testing.T) {
 	}
 }
 
+func TestServiceProcessMaturityEmailsSendsAndDedupes(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL 未设置，跳过 PostgreSQL 集成测试")
+	}
+
+	db, err := dbpostgres.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open postgres failed: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := pgmigration.NewRunner(db, migrationsDir(t)).Apply(ctx, false); err != nil {
+		t.Fatalf("apply migrations failed: %v", err)
+	}
+
+	userID := int64(99512)
+	cleanupFarmStoreUser(t, ctx, db, userID)
+	defer cleanupFarmStoreUser(t, ctx, db, userID)
+
+	if _, err := db.Exec(ctx,
+		`INSERT INTO users (id, username, display_name, first_seen_at, updated_at)
+		 VALUES ($1, 'farm_email_99512', 'farm_email_99512', now(), now())`,
+		userID,
+	); err != nil {
+		t.Fatalf("insert user failed: %v", err)
+	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO user_profiles (user_id, qq_email, updated_at_ms)
+		 VALUES ($1, '123456@qq.com', $2)`,
+		userID,
+		time.Now().UnixMilli(),
+	); err != nil {
+		t.Fatalf("insert user profile failed: %v", err)
+	}
+
+	nowMs := time.Date(2026, 6, 25, 8, 0, 0, 0, time.UTC).UnixMilli()
+	matureAt := nowMs - 60_000
+	stateJSON := []byte(fmt.Sprintf(`{
+		"userId":%d,
+		"points":100,
+		"lands":[
+			{"index":1,"status":"mature","crop":{"cropId":"wheat","plantedAt":%d,"matureAt":%d,"lastWaterAt":%d,"nextWaterDueAt":%d,"waterMissCount":0,"fertilizer":null,"plantedSeason":"spring","weatherAtPlant":"sunny","birdNetUntil":null,"stolenAmount":0,"stolenCount":0,"speedUsed":0,"speedReducedMinutes":0}},
+			{"index":2,"status":"empty","crop":null},
+			{"index":3,"status":"empty","crop":null},
+			{"index":4,"status":"empty","crop":null}
+		],
+		"scarecrowUntil":null,
+		"bellUntil":null,
+		"pet":{"type":"rabbit","name":"团子","stage":"adult","growth":180,"hunger":80,"cleanliness":80,"mood":70,"thirst":80,"hydrationVersion":2,"health":90,"learnedSkills":[],"currentTask":null,"taskStartAt":null,"taskEndAt":null,"cooldownEndAt":null,"stealTarget":null,"feedToday":{"normal":0,"premium":0},"washToday":0,"waterToday":0,"playToday":0,"toyToday":0,"dailyResetAt":%d},
+		"stolenTodayCount":0,
+		"stolenByMap":{},
+		"myStealMap":{},
+		"inventory":{},
+		"purchasedSkillBooks":{},
+		"seedInventory":{},
+		"events":[{"id":"event-mature-99512","ts":%d,"type":"mature","text":"小麦 成熟了，快去收获","cropId":"wheat","landIndex":1}],
+		"lastDailyResetAt":0,
+		"lastSeasonProcessedAt":%d,
+		"lastTickAt":%d,
+		"bonuses":{"firstWater":false,"firstHarvest":false,"firstAdopt":false},
+		"createdAt":%d,
+		"updatedAt":%d
+	}`, userID, nowMs-30*60*1000, matureAt, nowMs-30*60*1000, nowMs-15*60*1000, nowMs, matureAt, nowMs, nowMs, nowMs-30*60*1000, nowMs))
+
+	store := NewStore(db)
+	if err := store.SaveState(ctx, StateRecord{UserID: userID, StateJSON: stateJSON, LastTickAtMs: nowMs, UpdatedAtMs: nowMs}); err != nil {
+		t.Fatalf("save state failed: %v", err)
+	}
+
+	sender := &recordingFarmEmailSender{configured: true}
+	first, err := NewService(store).ProcessMaturityEmails(ctx, MaturityEmailScanInput{
+		MaxUsers: 1,
+		Cursor:   userID - 1,
+		Sender:   sender,
+		NowMs:    nowMs,
+	})
+	if err != nil {
+		t.Fatalf("process maturity emails failed: %v", err)
+	}
+	if first.CheckedEvents != 1 || first.Sent != 1 || first.Skipped != 0 || first.Failed != 0 {
+		t.Fatalf("unexpected first result: %+v", first)
+	}
+	if len(sender.maturityInputs) != 1 || sender.maturityInputs[0].To != "123456@qq.com" || sender.maturityInputs[0].CropName != "小麦" {
+		t.Fatalf("unexpected maturity email inputs: %+v", sender.maturityInputs)
+	}
+
+	second, err := NewService(store).ProcessMaturityEmails(ctx, MaturityEmailScanInput{
+		MaxUsers: 1,
+		Cursor:   userID - 1,
+		Sender:   sender,
+		NowMs:    nowMs,
+	})
+	if err != nil {
+		t.Fatalf("process maturity emails second pass failed: %v", err)
+	}
+	if second.CheckedEvents != 1 || second.Sent != 0 || second.Skipped != 1 || second.Failed != 0 {
+		t.Fatalf("unexpected second result: %+v", second)
+	}
+	if len(sender.maturityInputs) != 1 {
+		t.Fatalf("second pass should be deduped, got sends=%d", len(sender.maturityInputs))
+	}
+}
+
 func TestServiceCreatesInitialStateWhenMissing(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
@@ -1936,4 +2041,24 @@ func readFarmStateFixture(t *testing.T, ctx context.Context, store *Store, userI
 		t.Fatalf("decode farm state fixture %d failed: %v", userID, err)
 	}
 	return state
+}
+
+type recordingFarmEmailSender struct {
+	configured       bool
+	maturityInputs   []FarmMaturityEmailInput
+	waterReminderIns []FarmWaterReminderEmailInput
+}
+
+func (sender *recordingFarmEmailSender) IsConfigured() bool {
+	return sender.configured
+}
+
+func (sender *recordingFarmEmailSender) SendMaturityEmail(_ context.Context, input FarmMaturityEmailInput) (FarmEmailSendResult, error) {
+	sender.maturityInputs = append(sender.maturityInputs, input)
+	return FarmEmailSendResult{Sent: true}, nil
+}
+
+func (sender *recordingFarmEmailSender) SendWaterReminderEmail(_ context.Context, input FarmWaterReminderEmailInput) (FarmEmailSendResult, error) {
+	sender.waterReminderIns = append(sender.waterReminderIns, input)
+	return FarmEmailSendResult{Sent: true}, nil
 }

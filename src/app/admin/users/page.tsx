@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import {
   Loader2, Search, Users,
   User as UserIcon, X,
-  ChevronRight, Gift, Sparkles, Clock, CheckCircle2, Star, RefreshCw, Coins
+  ChevronRight, Gift, Sparkles, Clock, CheckCircle2, Star, Coins
 } from 'lucide-react';
 import type { AchievementId, AchievementUnlockMode } from '@/lib/profile-achievements';
 
@@ -89,8 +89,6 @@ export default function UsersPage() {
   const [userClaims, setUserClaims] = useState<ClaimRecord[]>([]);
   const [userLotteryRecords, setUserLotteryRecords] = useState<LotteryRecord[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [migratingEligibility, setMigratingEligibility] = useState(false);
   const [userAchievements, setUserAchievements] = useState<AdminAchievementItem[]>([]);
   const [achievementUpdating, setAchievementUpdating] = useState(false);
 
@@ -344,58 +342,6 @@ export default function UsersPage() {
     return labels[source] || source;
   };
 
-  const handleSyncUsers = async () => {
-    if (syncing) return;
-    setSyncing(true);
-    try {
-      const res = await fetch('/api/admin/sync-users', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        // 刷新用户列表
-        await fetchData({ resetPage: true, search: searchQuery });
-        alert(data.message);
-      } else {
-        alert(data.message || '同步失败');
-      }
-    } catch (error) {
-      console.error('Sync error:', error);
-      alert('同步失败');
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const handleMigrateNewUserEligibility = async () => {
-    if (migratingEligibility) return;
-
-    const confirmed = window.confirm(
-      '将执行一次性迁移：把历史上已领取过“仅限新用户”项目的用户标记为“已使用新人资格”。是否继续？'
-    );
-    if (!confirmed) return;
-
-    setMigratingEligibility(true);
-    try {
-      const res = await fetch('/api/admin/migrate-new-user-eligibility', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dryRun: false }),
-      });
-      const data = await res.json();
-
-      if (data.success) {
-        await fetchData({ resetPage: true, search: searchQuery });
-        alert(data.message || '迁移完成');
-      } else {
-        alert(data.message || '迁移失败');
-      }
-    } catch (error) {
-      console.error('Migrate new user eligibility error:', error);
-      alert('迁移失败');
-    } finally {
-      setMigratingEligibility(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-32">
@@ -412,29 +358,6 @@ export default function UsersPage() {
 
   return (
     <>
-      {/* 操作栏 */}
-      <div className="flex justify-end mb-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={handleMigrateNewUserEligibility}
-            disabled={migratingEligibility}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-orange-500 border border-orange-500 rounded-xl hover:bg-orange-600 hover:border-orange-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Star className={`w-4 h-4 ${migratingEligibility ? 'animate-pulse' : ''}`} />
-            {migratingEligibility ? '迁移中...' : '迁移新人资格'}
-          </button>
-
-          <button
-            onClick={handleSyncUsers}
-            disabled={syncing}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-stone-600 bg-white border border-stone-200 rounded-xl hover:bg-stone-50 hover:border-stone-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-            {syncing ? '同步中...' : '同步历史用户'}
-          </button>
-        </div>
-      </div>
-
       {/* 统计卡片 */}
       <div className="grid grid-cols-3 gap-4 mb-8">
         <div className="glass-card rounded-2xl p-5 border border-white/60 hover:scale-105 transition-all duration-300">

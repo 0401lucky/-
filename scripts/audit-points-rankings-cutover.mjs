@@ -199,6 +199,11 @@ const activeGatewayRules = gatewaySource
 const allowedGatewayRules = new Set([
   'handle /api/points {',
   'handle /api/rankings/eco {',
+  'handle /api/rankings/points {',
+  'handle /api/rankings/games {',
+  'handle /api/rankings/checkin-streak {',
+  'handle /api/rankings/history {',
+  'handle /api/rankings/lottery {',
 ]);
 const missingGatewayRules = [...allowedGatewayRules].filter((line) =>
   !activeGatewayRules.some((entry) => entry.line === line)

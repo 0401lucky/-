@@ -138,10 +138,12 @@ const requiredStoreSnippets = [
   'func (handlers cardHandlers) inventory',
   'func (handlers cardHandlers) rules',
   'func (handlers cardHandlers) draw',
+  'func (handlers cardHandlers) purchaseDisabled',
   'func (handlers cardHandlers) exchange',
   'func (handlers cardHandlers) claimReward',
   'cardsExchangeRateLimit',
   'cardsClaimRewardRateLimit',
+  'CARD_PURCHASE_DISABLED',
   'parseCardRewardType',
   'normalizeCardDrawCount',
   'drawResultsResponse',
@@ -212,6 +214,7 @@ const allowedGoCardRoutes = [
   'api.Get("/cards/inventory", cardHandlers.inventory)',
   'api.Get("/cards/rules", cardHandlers.rules)',
   'api.Post("/cards/draw", cardHandlers.draw)',
+  'api.Post("/cards/purchase", cardHandlers.purchaseDisabled)',
   'api.Post("/cards/exchange", cardHandlers.exchange)',
   'api.Post("/cards/claim-reward", cardHandlers.claimReward)',
 ];
@@ -220,6 +223,7 @@ const expectedGatewayCardRules = [
   'handle /api/cards/inventory {',
   'handle /api/cards/rules {',
   'handle /api/cards/draw {',
+  'handle /api/cards/purchase {',
   'handle /api/cards/exchange {',
   'handle /api/cards/claim-reward {',
 ];

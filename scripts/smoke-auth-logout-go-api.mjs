@@ -102,6 +102,9 @@ function assertStatus(response, expected, label) {
 
 function cleanup() {
   psql(`
+    DELETE FROM user_assets WHERE user_id = ${testUserID};
+    DELETE FROM user_profiles WHERE user_id = ${testUserID};
+    DELETE FROM admin_alert_point_baselines WHERE user_id = ${testUserID};
     DELETE FROM point_accounts WHERE user_id = ${testUserID};
     DELETE FROM users WHERE id = ${testUserID};
   `);

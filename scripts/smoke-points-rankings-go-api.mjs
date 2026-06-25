@@ -39,6 +39,11 @@ function assertGatewayRulesExact() {
   const allowed = new Set([
     'handle /api/points {',
     'handle /api/rankings/eco {',
+    'handle /api/rankings/points {',
+    'handle /api/rankings/games {',
+    'handle /api/rankings/checkin-streak {',
+    'handle /api/rankings/history {',
+    'handle /api/rankings/lottery {',
   ]);
   const unexpected = activeRules.filter((line) => !allowed.has(line));
   if (unexpected.length > 0) {
@@ -116,6 +121,9 @@ function cleanup() {
     DELETE FROM user_forced_achievements WHERE user_id IN (${testUserID}, ${rivalUserID});
     DELETE FROM user_equipped_achievements WHERE user_id IN (${testUserID}, ${rivalUserID});
     DELETE FROM user_achievement_grants WHERE user_id IN (${testUserID}, ${rivalUserID});
+    DELETE FROM user_profiles WHERE user_id IN (${testUserID}, ${rivalUserID});
+    DELETE FROM user_assets WHERE user_id IN (${testUserID}, ${rivalUserID});
+    DELETE FROM admin_alert_point_baselines WHERE user_id IN (${testUserID}, ${rivalUserID});
     DELETE FROM eco_trash_rankings WHERE user_id IN (${testUserID}, ${rivalUserID});
     DELETE FROM point_ledger WHERE user_id IN (${testUserID}, ${rivalUserID});
     DELETE FROM point_accounts WHERE user_id IN (${testUserID}, ${rivalUserID});
@@ -189,7 +197,10 @@ function verifyCleanup() {
       'rankings', (SELECT count(*) FROM eco_trash_rankings WHERE user_id IN (${testUserID}, ${rivalUserID})),
       'grants', (SELECT count(*) FROM user_achievement_grants WHERE user_id IN (${testUserID}, ${rivalUserID})),
       'equipped', (SELECT count(*) FROM user_equipped_achievements WHERE user_id IN (${testUserID}, ${rivalUserID})),
-      'forced', (SELECT count(*) FROM user_forced_achievements WHERE user_id IN (${testUserID}, ${rivalUserID}))
+      'forced', (SELECT count(*) FROM user_forced_achievements WHERE user_id IN (${testUserID}, ${rivalUserID})),
+      'profiles', (SELECT count(*) FROM user_profiles WHERE user_id IN (${testUserID}, ${rivalUserID})),
+      'assets', (SELECT count(*) FROM user_assets WHERE user_id IN (${testUserID}, ${rivalUserID})),
+      'alert_baselines', (SELECT count(*) FROM admin_alert_point_baselines WHERE user_id IN (${testUserID}, ${rivalUserID}))
     )::text;
   `), 'points/rankings cleanup verification');
   if (
@@ -199,7 +210,10 @@ function verifyCleanup() {
     result.rankings !== 0 ||
     result.grants !== 0 ||
     result.equipped !== 0 ||
-    result.forced !== 0
+    result.forced !== 0 ||
+    result.profiles !== 0 ||
+    result.assets !== 0 ||
+    result.alert_baselines !== 0
   ) {
     fail(`points/rankings cleanup verification failed: ${JSON.stringify(result)}`);
   }

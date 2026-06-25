@@ -26,6 +26,9 @@ type Config struct {
 	S3CardImagesName     string
 	FeedbackMediaDir     string
 	FeedbackMediaURL     string
+	ResendAPIKey         string
+	ResendAPIURL         string
+	FarmMailFrom         string
 }
 
 func Load() (Config, error) {
@@ -47,6 +50,9 @@ func Load() (Config, error) {
 		S3CardImagesName:       valueOrDefault("S3_BUCKET_CARD_IMAGES", "card-images"),
 		FeedbackMediaDir:       valueOrDefault("FEEDBACK_MEDIA_DIR", "/data/feedback-media"),
 		FeedbackMediaURL:       strings.TrimRight(strings.TrimSpace(os.Getenv("FEEDBACK_MEDIA_PUBLIC_URL")), "/"),
+		ResendAPIKey:           strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
+		ResendAPIURL:           valueOrDefault("RESEND_API_URL", "https://api.resend.com/emails"),
+		FarmMailFrom:           strings.TrimSpace(os.Getenv("FARM_MAIL_FROM")),
 		AdminUsernames:         parseAdminUsernames(os.Getenv("ADMIN_USERNAMES")),
 	}
 

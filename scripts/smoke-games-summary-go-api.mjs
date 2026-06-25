@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
 
 const baseURL = 'http://127.0.0.1:8080';
+const gatewayURL = 'http://gateway:8080';
 const testUserID = Number(process.env.GAMES_SUMMARY_SMOKE_USER_ID || 999908);
 const testUsername = `games_summary_smoke_${testUserID}`;
 const sessionSecret = 'local-development-session-secret-at-least-32-chars';
@@ -38,7 +39,11 @@ function assertGatewayGamesSummaryRulesSafe() {
       line.includes('/api/games/overview') ||
       line.includes('/api/games/*')
     );
-  const unexpected = activeRules.filter((line) => line !== 'handle /api/games/profile {');
+  const allowedRules = new Set([
+    'handle /api/games/overview {',
+    'handle /api/games/profile {',
+  ]);
+  const unexpected = activeRules.filter((line) => !allowedRules.has(line));
   if (unexpected.length > 0) {
     fail(`gateway/Caddyfile contains unexpected games summary rules: ${unexpected.join('; ')}`);
   }
@@ -66,12 +71,12 @@ function parseStatus(output) {
   return matches.length ? Number(matches[matches.length - 1][1]) : 0;
 }
 
-function request(path, includeCookie = true) {
+function request(path, includeCookie = true, origin = baseURL) {
   const args = ['compose', 'exec', '-T', 'api', 'wget', '-S', '-O', '-'];
   if (includeCookie) {
     args.push('--header', `Cookie: ${cookie}`);
   }
-  args.push(`${baseURL}${path}`);
+  args.push(`${origin}${path}`);
   const result = spawnSync('docker', args, { encoding: 'utf8' });
   return {
     status: parseStatus(`${result.stderr}\n${result.stdout}`),
@@ -195,6 +200,15 @@ function main() {
     seedData();
     verifyProfile(apiGet('/api/games/profile'));
     verifyOverview(apiGet('/api/games/overview'));
+    const gatewayOverview = request('/api/games/overview', true, gatewayURL);
+    if (gatewayOverview.status !== 200) {
+      fail(`GET /api/games/overview through Gateway expected HTTP 200, got ${gatewayOverview.status}; raw=${gatewayOverview.raw.slice(0, 500)}`);
+    }
+    const gatewayPayload = parseJSON(gatewayOverview.body, 'GET /api/games/overview through Gateway');
+    if (!gatewayPayload.success || !gatewayPayload.data) {
+      fail(`GET /api/games/overview through Gateway returned incompatible payload: ${gatewayOverview.body.slice(0, 500)}`);
+    }
+    verifyOverview(gatewayPayload.data);
   } finally {
     cleanup();
     cleanupResult = verifyCleanup();
@@ -204,6 +218,7 @@ function main() {
     ok: true,
     mode: 'docker-compose-exec-api-and-postgres',
     baseURL,
+    gatewayURL,
     testUserID,
     checkedUnauthenticatedPaths: [
       'GET /api/games/profile',
@@ -212,6 +227,7 @@ function main() {
     checkedAuthenticatedPaths: [
       'GET /api/games/profile',
       'GET /api/games/overview',
+      'GET /api/games/overview through Gateway',
     ],
     cleanup: cleanupResult,
     gatewayGamesSummaryRules: gatewayRules.length === 0 ? 'none' : gatewayRules,

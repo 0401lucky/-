@@ -93,7 +93,6 @@ Remove-Item Env:\ZEABUR_PREFLIGHT_INCLUDE_INTERNAL
 - `/api/store/withdraw`
 - `/api/cards*`
 - `/api/admin/cards*`
-- `/api/games/overview`
 - `/api/games/*`
 - `/api/projects/*`
 - `/api/admin/*`

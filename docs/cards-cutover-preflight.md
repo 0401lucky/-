@@ -1,7 +1,7 @@
 # Cards 精确切流前置审计
 
 本文记录前台卡牌系统从 Next 切到 Go 前必须复核的证据。
-当前结论：已完成前台卡牌依赖、旧数据形状审计、PostgreSQL schema、D1/KV 导入器、Go PostgreSQL store、Go 静态卡牌 catalog、抽卡纯算法、抽卡 PostgreSQL 事务服务层、碎片兑换服务层、卡册奖励服务层、Go 库存/规则/抽卡/兑换/奖励领取 HTTP handler、商城 `card_draw` 奖励同步、只读直连 API 冒烟门禁和测试库写路径自动冒烟门禁；Gateway 已精确切流到 Go，不打开 `/api/cards*` 通配。
+当前结论：已完成前台卡牌依赖、旧数据形状审计、PostgreSQL schema、D1/KV 导入器、Go PostgreSQL store、Go 静态卡牌 catalog、抽卡纯算法、抽卡 PostgreSQL 事务服务层、碎片兑换服务层、卡册奖励服务层、Go 库存/规则/抽卡/兑换/奖励领取 HTTP handler、商城 `card_draw` 奖励同步、旧直购抽卡接口墓碑化、只读直连 API 冒烟门禁和测试库写路径自动冒烟门禁；Gateway 已精确切流到 Go，不打开 `/api/cards*` 通配。
 
 ## 当前前端依赖
 
@@ -25,7 +25,7 @@ node scripts/audit-cards-cutover.mjs
 - `/cards/draw`：读取库存、读取规则、提交抽卡。
 - `/cards/[albumId]`：读取库存、领取卡册奖励、用碎片兑换卡牌。
 
-旧 Next 还保留 `POST /api/cards/purchase`，当前前台页面未直接调用；当前实际购买抽卡次数入口是商城 `card_draw` 商品，经 `/api/store/exchange` 兑换。
+旧 Next 还保留 `POST /api/cards/purchase`，当前前台页面未直接调用；当前实际购买抽卡次数入口是商城 `card_draw` 商品，经 `/api/store/exchange` 兑换。阶段 C 已将该旧直购接口精确转发到 Go，并返回 410 `CARD_PURCHASE_DISABLED`，避免继续落回旧 KV。
 
 后台卡牌管理路径 `/api/admin/cards/*` 不属于本文前台卡牌切流范围，已拆到 `docs/admin-cards-cutover-preflight.md` 单独审计。
 
@@ -86,7 +86,7 @@ node scripts/audit-cards-cutover.mjs
    - `POST /api/cards/draw`，Go 内部路由已完成。
    - `POST /api/cards/exchange`，Go 内部路由已完成。
    - `POST /api/cards/claim-reward`，Go 内部路由已完成。
-   - `POST /api/cards/purchase` 当前无前台直接入口，暂不接 Go。
+   - `POST /api/cards/purchase` 当前无前台直接入口，Go 侧返回 410 墓碑响应。
 5. 新增直连 Go API 冒烟脚本：
    - 未登录库存和抽卡边界，已完成。
    - 未登录兑换边界，已完成。
@@ -118,7 +118,7 @@ handle /api/cards/exchange {
 }
 ```
 
-`POST /api/cards/purchase` 当前无前台直接入口，不加入本轮 Gateway 草案；若后续恢复直接购买入口，再单独增加精确规则，不能用通配兜底。
+`POST /api/cards/purchase` 当前无前台直接入口，已作为旧直购接口墓碑化接入 Go；若后续恢复直接购买入口，应改为复用商城 `card_draw` 兑换链路或重新设计 Go 事务，不应恢复旧 KV 行为。
 
 ## 切流前置条件
 
@@ -134,7 +134,7 @@ handle /api/cards/exchange {
 
 本节历史阻塞已解除，本轮已执行精确切流。仍需注意：
 
-- `POST /api/cards/purchase` 当前无前台直接入口，继续不切。
+- `POST /api/cards/purchase` 已精确切到 Go 墓碑，返回 410 `CARD_PURCHASE_DISABLED`。
 - Gateway 只能保留 5 条精确路径，仍禁止 `/api/cards` 根路径和 `/api/cards*` 通配。
 - Zeabur 新部署采用 fresh PostgreSQL，不再等待 Cloudflare D1 历史数据导入；如后续要迁历史数据，再按下方导入顺序单独执行。
 

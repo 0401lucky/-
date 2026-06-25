@@ -4,6 +4,7 @@ package rewards
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -15,6 +16,111 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestAdminCreateListDetailAndClaimPointsReward(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL 未设置，跳过 PostgreSQL 集成测试")
+	}
+
+	db, err := dbpostgres.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open postgres failed: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := pgmigration.NewRunner(db, migrationsDir(t)).Apply(ctx, false); err != nil {
+		t.Fatalf("apply migrations failed: %v", err)
+	}
+
+	userA := auth.User{ID: 99301, Username: "reward_admin_a", DisplayName: "Reward Admin A"}
+	userB := auth.User{ID: 99302, Username: "reward_admin_b", DisplayName: "Reward Admin B"}
+	createdBy := "reward_admin_integration"
+	cleanupAdminRewardBatchTestData(t, ctx, db, createdBy, []int64{userA.ID, userB.ID})
+	defer cleanupAdminRewardBatchTestData(t, ctx, db, createdBy, []int64{userA.ID, userB.ID})
+
+	if _, err := db.Exec(ctx,
+		`INSERT INTO users (id, username, display_name)
+		 VALUES ($1, $2, $3), ($4, $5, $6)
+		 ON CONFLICT (id) DO UPDATE SET username = excluded.username, display_name = excluded.display_name`,
+		userA.ID,
+		userA.Username,
+		userA.DisplayName,
+		userB.ID,
+		userB.Username,
+		userB.DisplayName,
+	); err != nil {
+		t.Fatalf("seed users failed: %v", err)
+	}
+
+	service := NewService(db, economy.NewService(db), nil)
+	batch, err := service.CreateAndDistributeRewardBatch(ctx, CreateRewardBatchInput{
+		Type:          "points",
+		Amount:        37,
+		TargetMode:    "selected",
+		TargetUserIDs: []int64{userA.ID, 999999999, userB.ID, userA.ID},
+		Title:         "后台奖励",
+		Message:       "领取测试积分",
+		CreatedBy:     createdBy,
+	})
+	if err != nil {
+		t.Fatalf("create reward batch failed: %v", err)
+	}
+	if batch.Status != "completed" || batch.TotalTargets != 2 || batch.DistributedCount != 2 || len(batch.TargetUserIDs) != 2 {
+		t.Fatalf("unexpected created batch: %+v", batch)
+	}
+
+	list, err := service.ListRewardBatches(ctx, 1, 10)
+	if err != nil {
+		t.Fatalf("list reward batches failed: %v", err)
+	}
+	if list.Total < 1 || !containsRewardBatch(list.Items, batch.ID) {
+		t.Fatalf("created batch not found in list: batch=%s list=%+v", batch.ID, list)
+	}
+
+	detail, err := service.GetRewardBatch(ctx, batch.ID)
+	if err != nil {
+		t.Fatalf("get reward batch failed: %v", err)
+	}
+	if detail.ID != batch.ID || detail.Amount != 37 || detail.CreatedBy != createdBy {
+		t.Fatalf("unexpected detail: %+v", detail)
+	}
+	if _, err := service.GetRewardBatch(ctx, "missing-admin-reward-batch"); !errors.Is(err, ErrRewardBatchNotFound) {
+		t.Fatalf("expected missing batch error, got %v", err)
+	}
+
+	var notificationID string
+	if err := db.QueryRow(ctx,
+		`SELECT notification_id FROM reward_claims WHERE batch_id = $1 AND user_id = $2`,
+		batch.ID,
+		userA.ID,
+	).Scan(&notificationID); err != nil {
+		t.Fatalf("query reward claim notification failed: %v", err)
+	}
+	claim, err := service.Claim(ctx, userA, notificationID)
+	if err != nil {
+		t.Fatalf("claim created reward failed: %v", err)
+	}
+	if !claim.Success || claim.ClaimStatus != "claimed" {
+		t.Fatalf("unexpected claim result: %+v", claim)
+	}
+
+	var balance int64
+	var claimedCount int64
+	if err := db.QueryRow(ctx,
+		`SELECT
+		    (SELECT balance FROM point_accounts WHERE user_id = $1),
+		    (SELECT claimed_count FROM reward_batches WHERE id = $2)`,
+		userA.ID,
+		batch.ID,
+	).Scan(&balance, &claimedCount); err != nil {
+		t.Fatalf("query claimed reward state failed: %v", err)
+	}
+	if balance != 37 || claimedCount != 1 {
+		t.Fatalf("unexpected claimed state balance=%d claimedCount=%d", balance, claimedCount)
+	}
+}
 
 func TestClaimPointsRewardIsIdempotent(t *testing.T) {
 	ctx := context.Background()
@@ -220,6 +326,31 @@ func cleanupRewardClaimTestData(t *testing.T, ctx context.Context, db *pgxpool.P
 	_, _ = db.Exec(ctx, `DELETE FROM notifications WHERE user_id = $1 OR id = $2`, userID, notificationID)
 	_, _ = db.Exec(ctx, `DELETE FROM point_accounts WHERE user_id = $1`, userID)
 	_, _ = db.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+}
+
+func cleanupAdminRewardBatchTestData(t *testing.T, ctx context.Context, db *pgxpool.Pool, createdBy string, userIDs []int64) {
+	t.Helper()
+	_, _ = db.Exec(ctx, `DELETE FROM point_ledger WHERE user_id = ANY($1::bigint[])`, userIDs)
+	_, _ = db.Exec(ctx,
+		`DELETE FROM reward_claims
+		  WHERE user_id = ANY($1::bigint[])
+		     OR batch_id IN (SELECT id FROM reward_batches WHERE created_by = $2)`,
+		userIDs,
+		createdBy,
+	)
+	_, _ = db.Exec(ctx, `DELETE FROM reward_batches WHERE created_by = $1`, createdBy)
+	_, _ = db.Exec(ctx, `DELETE FROM notifications WHERE user_id = ANY($1::bigint[])`, userIDs)
+	_, _ = db.Exec(ctx, `DELETE FROM point_accounts WHERE user_id = ANY($1::bigint[])`, userIDs)
+	_, _ = db.Exec(ctx, `DELETE FROM users WHERE id = ANY($1::bigint[])`, userIDs)
+}
+
+func containsRewardBatch(items []RewardBatch, id string) bool {
+	for _, item := range items {
+		if item.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func migrationsDir(t *testing.T) string {

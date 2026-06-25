@@ -58,6 +58,39 @@ func TestCardDrawReturnsUnavailableWithoutDatabase(t *testing.T) {
 	}
 }
 
+func TestCardPurchaseDisabledRequiresLogin(t *testing.T) {
+	handler := New(testDependencies())
+
+	response := performJSONRequest(handler, http.MethodPost, "/api/cards/purchase", `{}`, false)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "未登录") {
+		t.Fatalf("expected unauthenticated response, got status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestCardPurchaseDisabledRequiresTrustedOrigin(t *testing.T) {
+	handler := New(testDependencies())
+
+	request := httptest.NewRequest(http.MethodPost, "/api/cards/purchase", strings.NewReader(`{}`))
+	request.Host = "example.com"
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "https://evil.example")
+	request.AddCookie(testSessionCookie())
+
+	response := performRequest(handler, request)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "请求来源不合法") {
+		t.Fatalf("expected cross-site request rejection, got status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestCardPurchaseDisabledReturnsGone(t *testing.T) {
+	handler := New(testDependencies())
+
+	response := performJSONRequest(handler, http.MethodPost, "/api/cards/purchase", `{}`, true)
+	if response.Code != http.StatusGone || !strings.Contains(response.Body.String(), "CARD_PURCHASE_DISABLED") {
+		t.Fatalf("expected disabled purchase response, got status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestCardExchangeRequiresLogin(t *testing.T) {
 	handler := New(testDependencies())
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"redemption/backend/internal/auth"
+	"redemption/backend/internal/systemconfig"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -258,6 +259,10 @@ func (service *Service) GetStoreHome(ctx context.Context, user auth.User) (Store
 	if err != nil {
 		return StoreHomeData{}, err
 	}
+	dailyLimit, err := systemconfig.DailyPointsLimit(ctx, tx)
+	if err != nil {
+		return StoreHomeData{}, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return StoreHomeData{}, err
@@ -268,7 +273,7 @@ func (service *Service) GetStoreHome(ctx context.Context, user auth.User) (Store
 		Categories:      categories,
 		Balance:         balance,
 		RecentExchanges: exchanges,
-		DailyLimit:      DailyPointsLimit,
+		DailyLimit:      dailyLimit,
 		DailyEarned:     dailyEarned,
 	}, nil
 }

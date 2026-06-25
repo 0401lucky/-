@@ -122,7 +122,6 @@ Remove-Item Env:\ZEABUR_ENV_FILE
 - `/api/store/withdraw`
 - `/api/cards*`
 - `/api/admin/cards*`
-- `/api/games/overview`
 - `/api/games/*`
 - `/api/projects/*`
 - `/api/admin/*`

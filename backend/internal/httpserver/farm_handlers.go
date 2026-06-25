@@ -42,6 +42,39 @@ func (handlers farmHandlers) status(writer http.ResponseWriter, request *http.Re
 	})
 }
 
+func (handlers farmHandlers) shop(writer http.ResponseWriter, request *http.Request) {
+	shared := economyHandlers{deps: handlers.deps}
+	user, ok := shared.requireUser(writer, request)
+	if !ok {
+		return
+	}
+	if shared.rejectRateLimited(writer, request, *user, farmActionRateLimit) {
+		return
+	}
+
+	items, err := handlers.service.ListShopItems(request.Context())
+	if err != nil {
+		handlers.writeFarmServiceError(writer, "查询农场商店列表失败", err)
+		return
+	}
+	status, err := handlers.service.GetStatus(request.Context(), user.ID, 0)
+	if err != nil {
+		handlers.writeFarmServiceError(writer, "查询农场商店状态失败", err)
+		return
+	}
+
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"success": true,
+		"data": map[string]any{
+			"items":          items,
+			"inventory":      status.State.Inventory,
+			"balance":        status.State.Points,
+			"scarecrowUntil": status.State.ScarecrowUntil,
+			"bellUntil":      status.State.BellUntil,
+		},
+	})
+}
+
 func (handlers farmHandlers) stealDo(writer http.ResponseWriter, request *http.Request) {
 	shared := economyHandlers{deps: handlers.deps}
 	if shared.rejectUntrustedUnsafeRequest(writer, request) {

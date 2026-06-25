@@ -121,6 +121,21 @@ func (handlers cardHandlers) draw(writer http.ResponseWriter, request *http.Requ
 	})
 }
 
+func (handlers cardHandlers) purchaseDisabled(writer http.ResponseWriter, request *http.Request) {
+	shared := economyHandlers{deps: handlers.deps}
+	if shared.rejectUntrustedUnsafeRequest(writer, request) {
+		return
+	}
+	if _, ok := shared.requireUser(writer, request); !ok {
+		return
+	}
+	writeJSON(writer, http.StatusGone, map[string]any{
+		"success": false,
+		"code":    "CARD_PURCHASE_DISABLED",
+		"message": "旧卡牌直购抽卡次数接口已下线。请通过商城卡牌抽卡商品兑换。",
+	})
+}
+
 func (handlers cardHandlers) exchange(writer http.ResponseWriter, request *http.Request) {
 	shared := economyHandlers{deps: handlers.deps}
 	if shared.rejectUntrustedUnsafeRequest(writer, request) {

@@ -162,7 +162,7 @@ func TestRaffleJoinRouteGrabsRedPacket(t *testing.T) {
 
 	handler := New(Dependencies{
 		Config: config.Config{SessionSecret: testSessionSecret},
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger: slog.New(slog.NewTextHandler(os.Stderr, nil)),
 		DB:     db,
 	})
 	request := httptest.NewRequest(http.MethodPost, "/api/raffle/"+raffleID+"/join", nil)
@@ -1071,6 +1071,118 @@ func TestAdminProjectRoutesManageDirectProjects(t *testing.T) {
 	}
 }
 
+func TestPublicProjectRoutesClaimDirectProject(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL 未设置，跳过 PostgreSQL 集成测试")
+	}
+
+	db, err := dbpostgres.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open postgres failed: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := pgmigration.NewRunner(db, httpMigrationsDir(t)).Apply(ctx, false); err != nil {
+		t.Fatalf("apply migrations failed: %v", err)
+	}
+
+	suffix := time.Now().UnixNano()
+	projectID := "http-public-project-" + stringID(suffix)
+	userID := int64(22001 + suffix%1_000_000_000)
+	defer func() {
+		_, _ = db.Exec(ctx, `DELETE FROM exchange_logs WHERE user_id = $1 OR item_id = $2`, userID, projectID)
+		_, _ = db.Exec(ctx, `DELETE FROM point_ledger WHERE user_id = $1`, userID)
+		_, _ = db.Exec(ctx, `DELETE FROM point_accounts WHERE user_id = $1`, userID)
+		_, _ = db.Exec(ctx, `DELETE FROM user_assets WHERE user_id = $1`, userID)
+		_, _ = db.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+		_, _ = db.Exec(ctx, `DELETE FROM projects WHERE id = $1`, projectID)
+	}()
+
+	if _, err := db.Exec(ctx,
+		`INSERT INTO projects (
+		   id, name, description, max_claims, claimed_count, codes_count,
+		   status, created_at_ms, created_by, reward_type, direct_points, new_user_only
+		 ) VALUES ($1, '公开直充项目', '公开项目说明', 2, 0, 2, 'active', $2, 'admin', 'direct', 12, false)`,
+		projectID,
+		time.Now().UnixMilli(),
+	); err != nil {
+		t.Fatalf("seed public project failed: %v", err)
+	}
+
+	handler := New(Dependencies{
+		Config: config.Config{SessionSecret: testSessionSecret},
+		Logger: slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		DB:     db,
+	})
+
+	anonymousDetail := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID, nil)
+	anonymousResponse := httptest.NewRecorder()
+	handler.ServeHTTP(anonymousResponse, anonymousDetail)
+	if anonymousResponse.Code != http.StatusOK || !strings.Contains(anonymousResponse.Body.String(), `"claimed":null`) {
+		t.Fatalf("expected anonymous detail with null claim, got %d body=%s", anonymousResponse.Code, anonymousResponse.Body.String())
+	}
+
+	unauthenticatedClaims := httptest.NewRequest(http.MethodGet, "/api/projects/my-claims", nil)
+	unauthenticatedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticatedResponse, unauthenticatedClaims)
+	if unauthenticatedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("expected my-claims unauthorized, got %d body=%s", unauthenticatedResponse.Code, unauthenticatedResponse.Body.String())
+	}
+
+	claimResponse := performUserProjectRequest(handler, http.MethodPost, "/api/projects/"+projectID, userID)
+	if claimResponse.Code != http.StatusOK {
+		t.Fatalf("expected claim 200, got %d body=%s", claimResponse.Code, claimResponse.Body.String())
+	}
+	var claimPayload struct {
+		Success        bool   `json:"success"`
+		DirectCredit   bool   `json:"directCredit"`
+		CreditedPoints int64  `json:"creditedPoints"`
+		CreditStatus   string `json:"creditStatus"`
+	}
+	if err := json.Unmarshal(claimResponse.Body.Bytes(), &claimPayload); err != nil {
+		t.Fatalf("decode claim response failed: %v", err)
+	}
+	if !claimPayload.Success || !claimPayload.DirectCredit || claimPayload.CreditedPoints != 12 || claimPayload.CreditStatus != "success" {
+		t.Fatalf("unexpected claim response: %+v", claimPayload)
+	}
+
+	duplicateResponse := performUserProjectRequest(handler, http.MethodPost, "/api/projects/"+projectID, userID)
+	if duplicateResponse.Code != http.StatusOK {
+		t.Fatalf("expected duplicate claim 200, got %d body=%s", duplicateResponse.Code, duplicateResponse.Body.String())
+	}
+
+	myClaimsResponse := performUserProjectRequest(handler, http.MethodGet, "/api/projects/my-claims", userID)
+	if myClaimsResponse.Code != http.StatusOK || !strings.Contains(myClaimsResponse.Body.String(), projectID) {
+		t.Fatalf("expected my-claims to include project, got %d body=%s", myClaimsResponse.Code, myClaimsResponse.Body.String())
+	}
+
+	claimedDetail := performUserProjectRequest(handler, http.MethodGet, "/api/projects/"+projectID, userID)
+	if claimedDetail.Code != http.StatusOK || !strings.Contains(claimedDetail.Body.String(), `"creditedPoints":12`) {
+		t.Fatalf("expected claimed detail, got %d body=%s", claimedDetail.Code, claimedDetail.Body.String())
+	}
+
+	var balance int64
+	var ledgers int64
+	var logs int64
+	var claimedCount int64
+	if err := db.QueryRow(ctx,
+		`SELECT
+		   (SELECT balance FROM point_accounts WHERE user_id = $1),
+		   (SELECT COUNT(*) FROM point_ledger WHERE user_id = $1 AND source = 'project_claim'),
+		   (SELECT COUNT(*) FROM exchange_logs WHERE user_id = $1 AND item_id = $2 AND type = 'project_direct'),
+		   (SELECT claimed_count FROM projects WHERE id = $2)`,
+		userID,
+		projectID,
+	).Scan(&balance, &ledgers, &logs, &claimedCount); err != nil {
+		t.Fatalf("query public claim state failed: %v", err)
+	}
+	if balance != 12 || ledgers != 1 || logs != 1 || claimedCount != 1 {
+		t.Fatalf("unexpected public claim state balance=%d ledgers=%d logs=%d claimed=%d", balance, ledgers, logs, claimedCount)
+	}
+}
+
 func TestAdminProjectAppendRejectsLegacyCodeProject(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
@@ -1165,6 +1277,19 @@ func performAdminFormRequest(handler http.Handler, method string, path string, v
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Origin", "http://example.com")
 	request.AddCookie(testSessionCookieFor(1, "admin", "Admin"))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func performUserProjectRequest(handler http.Handler, method string, path string, userID int64) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, path, strings.NewReader("{}"))
+	request.Host = "example.com"
+	if method != http.MethodGet {
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "http://example.com")
+	}
+	request.AddCookie(testSessionCookieFor(userID, "project_user", "Project User"))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response

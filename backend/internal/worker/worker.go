@@ -3,10 +3,13 @@ package worker
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"redemption/backend/internal/config"
 	"redemption/backend/internal/eco"
+	"redemption/backend/internal/farm"
+	"redemption/backend/internal/lottery"
 	"redemption/backend/internal/welfare"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,7 +25,9 @@ type Dependencies struct {
 }
 
 type Runner struct {
-	deps Dependencies
+	deps            Dependencies
+	farmEmailCursor int64
+	farmEmailMu     sync.Mutex
 }
 
 func New(deps Dependencies) *Runner {
@@ -56,7 +61,61 @@ func (runner *Runner) Run(ctx context.Context) error {
 	}
 
 	if _, err := scheduler.AddFunc("0 0 16 * * *", func() {
-		runner.deps.Logger.Info("后台任务占位：数字炸弹结算等待迁移")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		result, err := lottery.NewService(runner.deps.DB).SettleNumberBombDate(ctx, "")
+		if err != nil {
+			runner.deps.Logger.Error("数字炸弹结算失败", "error", err)
+			return
+		}
+		runner.deps.Logger.Info(
+			"数字炸弹结算完成",
+			"date", result.Date,
+			"systemNumber", result.SystemNumber,
+			"processed", result.Processed,
+			"won", result.Won,
+			"lost", result.Lost,
+			"skipped", result.Skipped,
+		)
+	}); err != nil {
+		return err
+	}
+
+	if _, err := scheduler.AddFunc("0 */5 * * * *", func() {
+		runner.farmEmailMu.Lock()
+		defer runner.farmEmailMu.Unlock()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+
+		emailSender := farm.NewResendEmailSender(farm.ResendEmailConfig{
+			APIKey: runner.deps.Config.ResendAPIKey,
+			APIURL: runner.deps.Config.ResendAPIURL,
+			From:   runner.deps.Config.FarmMailFrom,
+		})
+		result, err := farm.NewService(farm.NewStore(runner.deps.DB)).ProcessMaturityEmails(ctx, farm.MaturityEmailScanInput{
+			MaxUsers: 100,
+			Cursor:   runner.farmEmailCursor,
+			Sender:   emailSender,
+		})
+		if err != nil {
+			runner.deps.Logger.Error("农场邮件提醒处理失败", "error", err)
+			return
+		}
+		runner.farmEmailCursor = result.Cursor
+		if result.CheckedEvents > 0 || result.Sent > 0 || result.Failed > 0 {
+			runner.deps.Logger.Info(
+				"农场邮件提醒处理完成",
+				"scannedUsers", result.ScannedUsers,
+				"processedUsers", result.ProcessedUsers,
+				"checkedEvents", result.CheckedEvents,
+				"sent", result.Sent,
+				"skipped", result.Skipped,
+				"failed", result.Failed,
+				"cursor", result.Cursor,
+			)
+		}
 	}); err != nil {
 		return err
 	}

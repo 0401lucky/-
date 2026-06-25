@@ -699,6 +699,198 @@ func (store *Store) getEffectiveShopItemDefTx(ctx context.Context, tx pgx.Tx, ke
 	return item, true, nil
 }
 
+func (store *Store) ListEffectiveShopItems(ctx context.Context) ([]ShopItem, error) {
+	if store.db == nil {
+		return nil, ErrUnavailable
+	}
+	tx, err := store.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	items := make([]ShopItem, 0, len(shopItemOrder))
+	for _, key := range shopItemOrder {
+		item, exists, err := store.getEffectiveShopItemDefTx(ctx, tx, key)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			items = append(items, publicShopItem(item))
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (store *Store) ListFarmStateUserIDsAfterCursor(ctx context.Context, cursor int64, limit int) ([]int64, int64, error) {
+	if store.db == nil {
+		return nil, 0, ErrUnavailable
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	rows, err := store.db.Query(ctx,
+		`SELECT user_id
+		   FROM farm_states
+		  WHERE user_id > $1
+		  ORDER BY user_id ASC
+		  LIMIT $2`,
+		cursor,
+		limit,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	userIDs := []int64{}
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return nil, 0, err
+		}
+		userIDs = append(userIDs, userID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	nextCursor := int64(0)
+	if len(userIDs) >= limit {
+		nextCursor = userIDs[len(userIDs)-1]
+	}
+	return userIDs, nextCursor, nil
+}
+
+func (store *Store) GetUserQQEmail(ctx context.Context, userID int64) (string, error) {
+	if store.db == nil {
+		return "", ErrUnavailable
+	}
+	if userID <= 0 {
+		return "", errors.New("userID must be positive")
+	}
+	var qqEmail sql.NullString
+	err := store.db.QueryRow(ctx,
+		`SELECT qq_email
+		   FROM user_profiles
+		  WHERE user_id = $1`,
+		userID,
+	).Scan(&qqEmail)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !qqEmail.Valid {
+		return "", nil
+	}
+	return strings.TrimSpace(qqEmail.String), nil
+}
+
+func (store *Store) ClaimMaturityEmail(ctx context.Context, userID int64, eventID string, sentAtMs int64) (bool, error) {
+	if store.db == nil {
+		return false, ErrUnavailable
+	}
+	if userID <= 0 {
+		return false, errors.New("userID must be positive")
+	}
+	eventID = strings.TrimSpace(eventID)
+	if eventID == "" {
+		return false, errors.New("eventID is required")
+	}
+	if sentAtMs <= 0 {
+		return false, errors.New("sentAtMs must be positive")
+	}
+	commandTag, err := store.db.Exec(ctx,
+		`INSERT INTO farm_maturity_email_dedupes (user_id, event_id, sent_at_ms)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (user_id, event_id) DO NOTHING`,
+		userID,
+		eventID,
+		sentAtMs,
+	)
+	if err != nil {
+		return false, err
+	}
+	return commandTag.RowsAffected() > 0, nil
+}
+
+func (store *Store) DeleteMaturityEmailClaim(ctx context.Context, userID int64, eventID string) error {
+	if store.db == nil {
+		return ErrUnavailable
+	}
+	_, err := store.db.Exec(ctx,
+		`DELETE FROM farm_maturity_email_dedupes
+		  WHERE user_id = $1 AND event_id = $2`,
+		userID,
+		strings.TrimSpace(eventID),
+	)
+	return err
+}
+
+func (store *Store) ClaimWaterEmail(ctx context.Context, userID int64, landIndex int, plantedAtMs int64, nextWaterDueAtMs int64, waterMissCount int64, sentAtMs int64) (bool, error) {
+	if store.db == nil {
+		return false, ErrUnavailable
+	}
+	if userID <= 0 {
+		return false, errors.New("userID must be positive")
+	}
+	if landIndex <= 0 {
+		return false, errors.New("landIndex must be positive")
+	}
+	if plantedAtMs <= 0 || nextWaterDueAtMs <= 0 || sentAtMs <= 0 {
+		return false, errors.New("timestamps must be positive")
+	}
+	if waterMissCount < 0 {
+		return false, errors.New("waterMissCount must not be negative")
+	}
+	commandTag, err := store.db.Exec(ctx,
+		`INSERT INTO farm_water_email_dedupes (
+		   user_id, land_index, planted_at_ms, next_water_due_at_ms, water_miss_count, sent_at_ms
+		 ) VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (user_id, land_index, planted_at_ms, next_water_due_at_ms, water_miss_count) DO NOTHING`,
+		userID,
+		landIndex,
+		plantedAtMs,
+		nextWaterDueAtMs,
+		waterMissCount,
+		sentAtMs,
+	)
+	if err != nil {
+		return false, err
+	}
+	return commandTag.RowsAffected() > 0, nil
+}
+
+func (store *Store) DeleteWaterEmailClaim(ctx context.Context, userID int64, landIndex int, plantedAtMs int64, nextWaterDueAtMs int64, waterMissCount int64) error {
+	if store.db == nil {
+		return ErrUnavailable
+	}
+	_, err := store.db.Exec(ctx,
+		`DELETE FROM farm_water_email_dedupes
+		  WHERE user_id = $1
+		    AND land_index = $2
+		    AND planted_at_ms = $3
+		    AND next_water_due_at_ms = $4
+		    AND water_miss_count = $5`,
+		userID,
+		landIndex,
+		plantedAtMs,
+		nextWaterDueAtMs,
+		waterMissCount,
+	)
+	return err
+}
+
 func (store *Store) getDailyPurchaseCountForUpdateTx(ctx context.Context, tx pgx.Tx, userID int64, purchaseDate string, itemKey string, nowMs int64) (int64, error) {
 	if userID <= 0 {
 		return 0, errors.New("userID must be positive")

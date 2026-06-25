@@ -13,6 +13,7 @@ const cookie = makeSessionCookie(testUserID, testUsername, 'Farm Write Smoke');
 const targetCookie = makeSessionCookie(targetUserID, targetUsername, 'Farm Write Target');
 const expectedGatewayFarmRules = [
   '/api/farm/status',
+  '/api/farm/shop',
   '/api/farm/plant',
   '/api/farm/water',
   '/api/farm/water-all',
@@ -297,6 +298,10 @@ function main() {
 
     const status = apiRequest('GET', '/api/farm/status');
     assertStatusShape(status, 'initial status');
+    const shop = apiRequest('GET', '/api/farm/shop');
+    if (!Array.isArray(shop.data?.items) || shop.data.items.length < 10 || !shop.data.inventory || typeof shop.data.balance !== 'number') {
+      fail(`unexpected farm shop response: ${JSON.stringify(shop).slice(0, 500)}`);
+    }
     apiRequest('GET', '/api/farm/status', undefined, targetCookie);
     boostBalance(testUserID);
     boostBalance(targetUserID);
@@ -343,6 +348,7 @@ function main() {
     targetUserID,
     checkedAuthenticatedPaths: [
       'GET /api/farm/status',
+      'GET /api/farm/shop',
       'POST /api/farm/seeds/buy',
       'POST /api/farm/plant',
       'POST /api/farm/water',
