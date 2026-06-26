@@ -29,12 +29,14 @@ PR #9 仍是 GitHub 上的 open PR，尚未 merge 到 `main`。
   - `/api/admin/projects/*`
   - `/api/admin/feedback`
   - `/api/admin/feedback/*`
+- PR #9 后台环保入口和页面已补接到 `main`：
+  - `src/components/admin/AdminSidebar.tsx`
+  - `src/app/admin/eco/page.tsx`
 
 ## 当前仍缺的 PR #9 前端/页面改动
 
 优先补接这些，因为用户在 Zeabur 部署里看不到的“后台优化”主要来自这里：
 
-- `src/app/admin/eco/page.tsx`
 - `src/app/admin/dashboard/page.tsx`
 - `src/app/admin/users/page.tsx`
 - `src/app/admin/page.tsx`
@@ -44,7 +46,6 @@ PR #9 仍是 GitHub 上的 open PR，尚未 merge 到 `main`。
 - `src/app/admin/raffle/[id]/page.tsx`
 - `src/app/admin/raffle/create/page.tsx`
 - `src/app/admin/announcements/page.tsx`
-- `src/components/admin/AdminSidebar.tsx`
 - `src/components/BrowserCompatibility.tsx`
 - `src/components/MarkdownPreview.tsx`
 

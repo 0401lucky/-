@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   Package, Sparkles, Gift, Activity,
   Users, MessageSquareText, Megaphone,
-  ShoppingBag, Layers, Settings,
+  ShoppingBag, Layers, Settings, Recycle,
   LogOut, Home, X, Send,
   User as UserIcon,
 } from 'lucide-react';
@@ -47,6 +47,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { name: '商品管理', href: '/admin/store', icon: ShoppingBag },
       { name: '卡牌管理', href: '/admin/cards', icon: Layers },
+      { name: '环保管理', href: '/admin/eco', icon: Recycle },
     ],
   },
   {
