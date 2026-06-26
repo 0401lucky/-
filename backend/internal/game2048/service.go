@@ -209,6 +209,7 @@ func (service *Service) Checkpoint(ctx context.Context, user auth.User, input Su
 		}
 		simulation := simulateSegment(*session, normalized)
 		nextSession := *session
+		nextSession.ExpiresAt = millis(time.Now()) + sessionTTLSeconds*1000
 		nextSession.CheckpointGrid = simulation.Grid
 		nextSession.CheckpointScore = simulation.Score
 		nextSession.CheckpointMovesApplied = simulation.MovesApplied
@@ -594,11 +595,20 @@ func updateSessionPayload(ctx context.Context, tx pgx.Tx, session Session) error
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx,
+	expiresAt := time.UnixMilli(session.ExpiresAt)
+	if _, err := tx.Exec(ctx,
 		`UPDATE game_sessions
 		 SET status = $2, payload = $3, expires_at = $4, updated_at = now()
 		 WHERE id = $1 AND game_type = $5`,
-		session.ID, session.Status, raw, time.UnixMilli(session.ExpiresAt), GameType,
+		session.ID, session.Status, raw, expiresAt, GameType,
+	); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx,
+		`UPDATE active_game_sessions
+		 SET expires_at = $3
+		 WHERE user_id = $1 AND game_type = $2`,
+		session.UserID, GameType, expiresAt,
 	)
 	return err
 }
