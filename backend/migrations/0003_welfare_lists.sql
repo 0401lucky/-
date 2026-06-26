@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS raffles (
   prizes JSONB NOT NULL DEFAULT '[]'::jsonb,
   trigger_type TEXT NOT NULL DEFAULT 'threshold',
   threshold BIGINT NOT NULL DEFAULT 1,
+  scheduled_draw_at_ms BIGINT,
   status TEXT NOT NULL,
   participants_count BIGINT NOT NULL DEFAULT 0,
   winners_count BIGINT NOT NULL DEFAULT 0,
@@ -48,8 +49,9 @@ CREATE TABLE IF NOT EXISTS raffles (
   updated_at_ms BIGINT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (mode IN ('draw', 'red_packet')),
-  CHECK (trigger_type IN ('threshold', 'manual')),
+  CHECK (trigger_type IN ('threshold', 'manual', 'scheduled')),
   CHECK (threshold >= 0),
+  CHECK (scheduled_draw_at_ms IS NULL OR scheduled_draw_at_ms > 0),
   CHECK (status IN ('draft', 'active', 'ended', 'cancelled')),
   CHECK (participants_count >= 0),
   CHECK (winners_count >= 0),
@@ -61,6 +63,10 @@ CREATE TABLE IF NOT EXISTS raffles (
 
 CREATE INDEX IF NOT EXISTS idx_raffles_public_sort
   ON raffles(status, created_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_raffles_scheduled_draw
+  ON raffles(status, scheduled_draw_at_ms)
+  WHERE trigger_type = 'scheduled';
 
 -- +goose Down
 DROP TABLE IF EXISTS raffles;

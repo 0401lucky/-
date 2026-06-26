@@ -24,6 +24,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
+import { formatChinaDateTime } from '@/lib/time';
 
 // ============================================================================
 // 顶层路由分发：按 ?type=raffle 切换免费福利项目详情类型
@@ -628,8 +629,9 @@ interface Raffle {
   description: string;
   coverImage?: string;
   prizes: RafflePrize[];
-  triggerType: 'threshold' | 'manual';
+  triggerType: 'threshold' | 'manual' | 'scheduled';
   threshold: number;
+  scheduledDrawAt?: number;
   status: 'draft' | 'active' | 'ended' | 'cancelled';
   participantsCount: number;
   winnersCount: number;
@@ -821,6 +823,7 @@ function RaffleDetailView({ id }: { id: string }) {
     : 0;
   const remainingPoints = isRedPacket ? raffle.redPacketRemainingPoints ?? 0 : 0;
   const isThreshold = raffle.triggerType === 'threshold' && raffle.threshold > 0;
+  const isScheduled = raffle.triggerType === 'scheduled' && !!raffle.scheduledDrawAt;
   const progressPercent = isRedPacket && totalQuantity > 0
     ? Math.min(100, Math.round((raffle.participantsCount / totalQuantity) * 100))
     : isThreshold
@@ -941,9 +944,15 @@ function RaffleDetailView({ id }: { id: string }) {
             </div>
             <div className="stat-value-row">
               <span className="stat-value">
-                {isRedPacket ? formatNumber(totalQuantity) : isThreshold ? formatNumber(raffle.threshold) : '手动'}
+                {isRedPacket
+                  ? formatNumber(totalQuantity)
+                  : isThreshold
+                    ? formatNumber(raffle.threshold)
+                    : isScheduled
+                      ? '到点'
+                      : '手动'}
               </span>
-              <span className="stat-unit">{isRedPacket ? '人可抢' : isThreshold ? '人开奖' : '管理员开奖'}</span>
+              <span className="stat-unit">{isRedPacket ? '人可抢' : isThreshold ? '人开奖' : isScheduled ? formatChinaDateTime(raffle.scheduledDrawAt) : '管理员开奖'}</span>
             </div>
           </div>
         </section>
@@ -980,6 +989,8 @@ function RaffleDetailView({ id }: { id: string }) {
                   <span className="ic-tag limit">{formatNumber(totalQuantity)} 个红包</span>
                 ) : isThreshold ? (
                   <span className="ic-tag limit">满 {raffle.threshold} 人开奖</span>
+                ) : isScheduled ? (
+                  <span className="ic-tag limit">{formatChinaDateTime(raffle.scheduledDrawAt)} 开奖</span>
                 ) : (
                   <span className="ic-tag limit">手动开奖</span>
                 )}
@@ -1001,7 +1012,7 @@ function RaffleDetailView({ id }: { id: string }) {
 
           {raffle.description && <div className="ic-desc">{raffle.description}</div>}
 
-          {isActive && (isRedPacket || isThreshold) && (
+          {isActive && (isRedPacket || isThreshold || isScheduled) && (
             <div className="ic-progress-section">
               <div className="ic-progress-text">
                 <span>
@@ -1010,6 +1021,8 @@ function RaffleDetailView({ id }: { id: string }) {
                 <span>
                   {isRedPacket ? (
                     <>剩 <span className="num">{formatNumber(remainingSlots)}</span> 个 · {progressPercent}%</>
+                  ) : isScheduled ? (
+                    <>北京时间 <span className="num">{formatChinaDateTime(raffle.scheduledDrawAt)}</span></>
                   ) : (
                     <>目标 <span className="num">{formatNumber(raffle.threshold)}</span> 人 · {progressPercent}%</>
                   )}
@@ -1025,6 +1038,11 @@ function RaffleDetailView({ id }: { id: string }) {
               ) : remainingNeeded > 0 && (
                 <p className="progress-tip">
                   还差 <strong>{formatNumber(remainingNeeded)}</strong> 人即可开奖，邀请好友一起参与吧～
+                </p>
+              )}
+              {isScheduled && (
+                <p className="progress-tip">
+                  将于 <strong>{formatChinaDateTime(raffle.scheduledDrawAt)}</strong> 自动开奖。
                 </p>
               )}
             </div>

@@ -1,5 +1,4 @@
 import type { NextConfig } from "next";
-import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -13,10 +12,6 @@ const staticImageCacheHeaders = [
   { key: "Cache-Control", value: "public, max-age=2592000" },
 ];
 
-if (process.env.SKIP_OPENNEXT_DEV_INIT !== "1") {
-  initOpenNextCloudflareForDev();
-}
-
 const nextConfig: NextConfig = {
   output: "standalone",
 
@@ -26,7 +21,7 @@ const nextConfig: NextConfig = {
   // 图片优化
   images: {
     formats: ["image/avif", "image/webp"],
-    // Cloudflare + R2 自定义图片路由下，关闭 Next 内置优化，直接走原图 URL
+    // Zeabur/Gateway 部署下直接服务 public 静态图片，关闭 Next 内置优化。
     unoptimized: true,
   },
 

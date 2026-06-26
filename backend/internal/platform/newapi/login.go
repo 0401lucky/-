@@ -91,9 +91,20 @@ func Login(ctx context.Context, baseURL string, username string, password string
 	return LoginResult{
 		Success: true,
 		Message: "登录成功",
-		Cookies: strings.Join(response.Header.Values("Set-Cookie"), "; "),
+		Cookies: cookieHeader(response.Cookies()),
 		User:    &user,
 	}, nil
+}
+
+func cookieHeader(cookies []*http.Cookie) string {
+	values := make([]string, 0, len(cookies))
+	for _, cookie := range cookies {
+		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
+			continue
+		}
+		values = append(values, cookie.Name+"="+cookie.Value)
+	}
+	return strings.Join(values, "; ")
 }
 
 func parseLoginUser(raw json.RawMessage) (User, error) {

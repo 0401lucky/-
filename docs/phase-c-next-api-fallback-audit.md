@@ -24,10 +24,10 @@ node scripts/audit-next-api-fallback-risk.mjs
 入口显式 410 后：
 
 - Next API 文件总数：154
-- Gateway 已处理规则数：149
-- Gateway 已切到 Go 的规则数：145
+- Gateway 已处理规则数：151
+- Gateway 已切到 Go 的规则数：147
 - Gateway 直接返回 410 的旧入口规则数：4
-- 已由 Go 接管的 Next API 路径：142
+- 已由 Go 接管的 Next API 路径：144
 - 已墓碑化的旧工具/旧 internal 入口路径：10
 - 仍需迁移或墓碑化：0
 - 因外部配置暂缓：0
@@ -133,3 +133,12 @@ blockedByExternalConfig = 0
 internalOnly 均有 Go Worker 对齐证据
 默认 Zeabur 预检通过
 ```
+
+## 生产 readiness 补充
+
+阶段 C 回落审计只证明 Next API 路径没有继续落回旧 KV/D1 生产路径，
+不等价于真实生产切流已经完成。
+
+当前生产 readiness 已把 `auth` 纳入阻塞模块，和 `wallet`、`profile`、
+`notifications`、`farm`、`cards` 一起要求真实 Cookie、Zeabur 远端 HTTPS
+冒烟和证据包复核。

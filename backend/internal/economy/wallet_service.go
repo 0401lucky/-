@@ -113,7 +113,14 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 
 	creditResult, creditErr := service.quotaClient.CreditQuota(ctx, user.ID, preview.Dollars)
 	if creditErr != nil {
-		creditResult = quotaUncertainResult("提现额度入账结果不确定")
+		if errors.Is(creditErr, newapi.ErrAdminAuthFailed) {
+			creditResult = newapi.QuotaResult{
+				Success: false,
+				Message: "new-api 管理端鉴权失败，已退回积分",
+			}
+		} else {
+			creditResult = quotaUncertainResult("提现额度入账结果不确定")
+		}
 	}
 
 	if creditResult.Success {
@@ -243,6 +250,21 @@ func (service *Service) executeTopupInner(ctx context.Context, user auth.User, d
 
 	deductResult, deductErr := service.quotaClient.DeductQuota(ctx, user.ID, requestedDollars)
 	if deductErr != nil {
+		if errors.Is(deductErr, newapi.ErrAdminAuthFailed) {
+			message := "new-api 管理端鉴权失败，未扣减账户额度"
+			if _, err := service.UpdateWalletTransaction(ctx, walletTransactionQuotaUpdate(
+				transaction.ID,
+				WalletStatusFailed,
+				message,
+				newapi.QuotaResult{Success: false, Message: message},
+			)); err != nil {
+				return TopupResult{}, err
+			}
+			return TopupResult{
+				Success: false,
+				Message: message,
+			}, nil
+		}
 		deductResult = quotaUncertainResult("账户额度扣减结果不确定")
 	}
 	if !deductResult.Success && !deductResult.Uncertain {

@@ -31,6 +31,7 @@ func (service *Service) CreateAdminRaffle(ctx context.Context, input CreateAdmin
 
 	triggerType := "threshold"
 	threshold := input.Threshold
+	var scheduledDrawAt sql.NullInt64
 	prizesRaw := []byte("[]")
 	var redPacketTotalPoints sql.NullInt64
 	var redPacketTotalSlots sql.NullInt64
@@ -57,10 +58,22 @@ func (service *Service) CreateAdminRaffle(ctx context.Context, input CreateAdmin
 		if err != nil {
 			return AdminRaffle{}, err
 		}
-		if input.TriggerType == "manual" {
+		switch input.TriggerType {
+		case "", "threshold":
+			triggerType = "threshold"
+		case "manual":
 			triggerType = "manual"
+		case "scheduled":
+			triggerType = "scheduled"
+			normalized, err := normalizeScheduledDrawAt(input.ScheduledDrawAt)
+			if err != nil {
+				return AdminRaffle{}, err
+			}
+			scheduledDrawAt = sql.NullInt64{Int64: normalized, Valid: true}
+		default:
+			return AdminRaffle{}, errors.New("开奖方式不支持")
 		}
-		if input.TriggerType == "threshold" && threshold <= 0 {
+		if triggerType == "threshold" && threshold <= 0 {
 			return AdminRaffle{}, errors.New("人数阈值必须为正整数")
 		}
 		if threshold <= 0 {
@@ -73,12 +86,12 @@ func (service *Service) CreateAdminRaffle(ctx context.Context, input CreateAdmin
 	_, err := service.db.Exec(ctx,
 		`INSERT INTO raffles (
 		   id, mode, title, description, cover_image, prizes, trigger_type,
-		   threshold, status, participants_count, winners_count, winners,
+		   threshold, scheduled_draw_at_ms, status, participants_count, winners_count, winners,
 		   red_packet_total_points, red_packet_total_slots, red_packet_remaining_points,
 		   red_packet_remaining_slots, red_packet_packets, created_by, created_at_ms, updated_at_ms
 		 ) VALUES ($1, $2, $3, $4, NULLIF($5, ''), CAST($6 AS jsonb), $7,
-		           $8, 'draft', 0, 0, '[]'::jsonb,
-		           $9, $10, $11, $12, '[]'::jsonb, $13, $14, $14)`,
+		           $8, $9, 'draft', 0, 0, '[]'::jsonb,
+		           $10, $11, $12, $13, '[]'::jsonb, $14, $15, $15)`,
 		id,
 		mode,
 		title,
@@ -87,6 +100,7 @@ func (service *Service) CreateAdminRaffle(ctx context.Context, input CreateAdmin
 		string(prizesRaw),
 		triggerType,
 		threshold,
+		scheduledDrawAt,
 		redPacketTotalPoints,
 		redPacketTotalSlots,
 		redPacketRemainingPoints,
@@ -121,12 +135,13 @@ func (service *Service) UpdateAdminRaffle(ctx context.Context, id string, input 
 	var currentPrizesRaw []byte
 	var triggerType string
 	var threshold int64
+	var scheduledDrawAt sql.NullInt64
 	var status string
 	var redPacketTotalPoints sql.NullInt64
 	var redPacketTotalSlots sql.NullInt64
 	err = tx.QueryRow(ctx,
 		`SELECT mode, title, description, COALESCE(cover_image, ''), prizes,
-		        trigger_type, threshold, status, red_packet_total_points,
+		        trigger_type, threshold, scheduled_draw_at_ms, status, red_packet_total_points,
 		        red_packet_total_slots
 		 FROM raffles
 		 WHERE id = $1
@@ -140,6 +155,7 @@ func (service *Service) UpdateAdminRaffle(ctx context.Context, id string, input 
 		&currentPrizesRaw,
 		&triggerType,
 		&threshold,
+		&scheduledDrawAt,
 		&status,
 		&redPacketTotalPoints,
 		&redPacketTotalSlots,
@@ -185,6 +201,10 @@ func (service *Service) UpdateAdminRaffle(ctx context.Context, id string, input 
 	var nextRedPacketTotalSlots sql.NullInt64
 	var nextRedPacketRemainingPoints sql.NullInt64
 	var nextRedPacketRemainingSlots sql.NullInt64
+	nextScheduledDrawAt := sql.NullInt64{}
+	if currentMode == "draw" && scheduledDrawAt.Valid {
+		nextScheduledDrawAt = scheduledDrawAt
+	}
 
 	if nextMode == "red_packet" {
 		totalPoints, totalSlots, err := nextRedPacketConfig(
@@ -198,6 +218,7 @@ func (service *Service) UpdateAdminRaffle(ctx context.Context, id string, input 
 		}
 		triggerType = "manual"
 		threshold = totalSlots
+		nextScheduledDrawAt = sql.NullInt64{}
 		nextRedPacketTotalPoints = sql.NullInt64{Int64: totalPoints, Valid: true}
 		nextRedPacketTotalSlots = sql.NullInt64{Int64: totalSlots, Valid: true}
 		nextRedPacketRemainingPoints = sql.NullInt64{Int64: totalPoints, Valid: true}
@@ -225,9 +246,25 @@ func (service *Service) UpdateAdminRaffle(ctx context.Context, id string, input 
 			switch *input.TriggerType {
 			case "manual":
 				triggerType = "manual"
+				nextScheduledDrawAt = sql.NullInt64{}
 			case "threshold":
 				triggerType = "threshold"
+				nextScheduledDrawAt = sql.NullInt64{}
+			case "scheduled":
+				triggerType = "scheduled"
+				if input.ScheduledDrawAt == nil && !nextScheduledDrawAt.Valid {
+					return AdminRaffle{}, errors.New("请设置定时开奖时间")
+				}
+			default:
+				return AdminRaffle{}, errors.New("开奖方式不支持")
 			}
+		}
+		if input.ScheduledDrawAt != nil {
+			normalized, err := normalizeScheduledDrawAt(input.ScheduledDrawAt)
+			if err != nil {
+				return AdminRaffle{}, err
+			}
+			nextScheduledDrawAt = sql.NullInt64{Int64: normalized, Valid: true}
 		}
 		if currentMode != "draw" || threshold <= 0 {
 			threshold = 1
@@ -237,6 +274,12 @@ func (service *Service) UpdateAdminRaffle(ctx context.Context, id string, input 
 		}
 		if triggerType == "threshold" && threshold <= 0 {
 			return AdminRaffle{}, errors.New("人数阈值必须为正整数")
+		}
+		if triggerType == "scheduled" && !nextScheduledDrawAt.Valid {
+			return AdminRaffle{}, errors.New("请设置定时开奖时间")
+		}
+		if triggerType != "scheduled" {
+			nextScheduledDrawAt = sql.NullInt64{}
 		}
 		if threshold <= 0 {
 			threshold = 1
@@ -254,12 +297,13 @@ func (service *Service) UpdateAdminRaffle(ctx context.Context, id string, input 
 		     prizes = CAST($6 AS jsonb),
 		     trigger_type = $7,
 		     threshold = $8,
-		     red_packet_total_points = $9,
-		     red_packet_total_slots = $10,
-		     red_packet_remaining_points = $11,
-		     red_packet_remaining_slots = $12,
+		     scheduled_draw_at_ms = $9,
+		     red_packet_total_points = $10,
+		     red_packet_total_slots = $11,
+		     red_packet_remaining_points = $12,
+		     red_packet_remaining_slots = $13,
 		     red_packet_packets = '[]'::jsonb,
-		     updated_at_ms = $13,
+		     updated_at_ms = $14,
 		     updated_at = now()
 		 WHERE id = $1`,
 		id,
@@ -270,6 +314,7 @@ func (service *Service) UpdateAdminRaffle(ctx context.Context, id string, input 
 		string(prizesRaw),
 		triggerType,
 		threshold,
+		nextScheduledDrawAt,
 		nextRedPacketTotalPoints,
 		nextRedPacketTotalSlots,
 		nextRedPacketRemainingPoints,
@@ -302,15 +347,17 @@ func (service *Service) PublishAdminRaffle(ctx context.Context, id string) (Admi
 	var mode string
 	var status string
 	var prizesRaw []byte
+	var triggerType string
+	var scheduledDrawAt sql.NullInt64
 	var redPacketTotalPoints sql.NullInt64
 	var redPacketTotalSlots sql.NullInt64
 	err = tx.QueryRow(ctx,
-		`SELECT mode, status, prizes, red_packet_total_points, red_packet_total_slots
+		`SELECT mode, status, prizes, trigger_type, scheduled_draw_at_ms, red_packet_total_points, red_packet_total_slots
 		 FROM raffles
 		 WHERE id = $1
 		 FOR UPDATE`,
 		id,
-	).Scan(&mode, &status, &prizesRaw, &redPacketTotalPoints, &redPacketTotalSlots)
+	).Scan(&mode, &status, &prizesRaw, &triggerType, &scheduledDrawAt, &redPacketTotalPoints, &redPacketTotalSlots)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AdminRaffle{}, ErrRaffleNotFound
 	}
@@ -377,6 +424,9 @@ func (service *Service) PublishAdminRaffle(ctx context.Context, id string) (Admi
 		if totalRafflePrizeQuantity(prizes) <= 0 {
 			return AdminRaffle{}, errors.New("奖品总数量必须大于0")
 		}
+		if triggerType == "scheduled" && !scheduledDrawAt.Valid {
+			return AdminRaffle{}, errors.New("请设置定时开奖时间")
+		}
 		if _, err := tx.Exec(ctx,
 			`UPDATE raffles
 			 SET mode = 'draw',
@@ -397,6 +447,13 @@ func (service *Service) PublishAdminRaffle(ctx context.Context, id string) (Admi
 
 	raffle, _, err := service.GetAdminRaffleDetail(ctx, id)
 	return raffle, err
+}
+
+func normalizeScheduledDrawAt(value *int64) (int64, error) {
+	if value == nil || *value <= 0 {
+		return 0, errors.New("请设置定时开奖时间")
+	}
+	return *value, nil
 }
 
 func (service *Service) CancelAdminRaffle(ctx context.Context, id string) (AdminRaffle, error) {

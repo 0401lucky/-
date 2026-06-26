@@ -529,6 +529,31 @@ func TestExecuteTopupDeductUncertainStillGrantsPoints(t *testing.T) {
 	}
 }
 
+func TestExecuteTopupAdminAuthFailureDoesNotGrantPoints(t *testing.T) {
+	ctx := context.Background()
+	quota := &fakeWalletQuotaClient{
+		deductResults: []fakeQuotaResult{{
+			err: newapi.ErrAdminAuthFailed,
+		}},
+	}
+	service, cleanup := newWalletIntegrationService(t, ctx, quota)
+	defer cleanup()
+
+	user := integrationUser()
+	result, err := service.ExecuteTopup(ctx, user, 1)
+	if err != nil {
+		t.Fatalf("topup auth failure should return business result, got error: %v", err)
+	}
+	if result.Success || result.Uncertain || result.Balance != 0 {
+		t.Fatalf("unexpected topup result: %+v", result)
+	}
+	assertBalance(t, ctx, service, user, 0)
+	transaction := latestWalletTransaction(t, ctx, service, user.ID, WalletOperationTopup)
+	if transaction.Status != WalletStatusFailed || transaction.PointsDelta != 10 {
+		t.Fatalf("unexpected transaction: %+v", transaction)
+	}
+}
+
 func TestExecuteTopupGrantFailureRollsBackQuota(t *testing.T) {
 	ctx := context.Background()
 	quota := &fakeWalletQuotaClient{

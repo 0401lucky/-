@@ -1,7 +1,7 @@
 # Wallet 精确切流审计
 
 本文记录 `/store` 页面中的账户额度充值和提现 API 从 Next 精确切到 Go 的复核证据。
-当前结论：`/api/store/topup` 与 `/api/store/withdraw` 已在 Gateway 精确切到 Go；本地已验证未登录边界、缺 new-api 配置安全失败、无错误写账和 Caddy 配置有效。生产仍需要 Zeabur 配置 `NEW_API_URL`、`NEW_API_ADMIN_ACCESS_TOKEN`、`NEW_API_ADMIN_USER_ID` 后，用真实账号做余额、充值和提现冒烟。
+当前结论：`/api/store/topup` 与 `/api/store/withdraw` 已在 Gateway 精确切到 Go；本地已验证未登录边界、缺 new-api 配置安全失败、无错误写账和 Caddy 配置有效。生产仍需要 Zeabur 配置 `NEW_API_URL` 和一套 new-api 管理凭证后，用真实账号做余额、充值和提现冒烟。
 
 ## 当前前端依赖
 
@@ -104,9 +104,45 @@ Zeabur API 服务必须配置：
 NEW_API_URL=...
 NEW_API_ADMIN_ACCESS_TOKEN=...
 NEW_API_ADMIN_USER_ID=...
+NEW_API_ADMIN_USERNAME=...
+NEW_API_ADMIN_PASSWORD=...
+```
+
+`NEW_API_ADMIN_ACCESS_TOKEN` 使用 new-api 管理员账号在「个人设置 / 系统访问令牌」
+生成的访问令牌。不要填渠道 API Key、模型转发 `sk-...` key、登录密码或浏览器
+Cookie。
+
+`NEW_API_ADMIN_USER_ID` 必须是该访问令牌所属管理员账号的数字用户 ID，不是用户名，
+也不是当前兑换站登录用户 ID。
+
+如果暂时不生成系统访问令牌，也可以配置旧 Cloudflare 部署同款账号密码变量：
+
+```env
+NEW_API_ADMIN_USERNAME=管理员用户名
+NEW_API_ADMIN_PASSWORD=管理员密码
+```
+
+Go 会先尝试 access token；token 不可用时，如果账号密码已配置，会登录 new-api
+拿管理员 session cookie 后再重试管理接口。
+
+Go 侧会优先按你的 new-api fork 文档发送：
+
+```http
+Authorization: Bearer <NEW_API_ADMIN_ACCESS_TOKEN>
+New-Api-User: <NEW_API_ADMIN_USER_ID>
+```
+
+如果 new-api 返回 access token 鉴权失败，Go 会自动按 Cloudflare 旧版一致的
+裸 token 方式重试一次：
+
+```http
+Authorization: <NEW_API_ADMIN_ACCESS_TOKEN>
+New-Api-User: <NEW_API_ADMIN_USER_ID>
 ```
 
 缺少任意一项时，Go API 可以启动，但钱包相关接口会返回 `503`。
+如果 token 无效、用户 ID 不匹配或权限不足，接口会返回 `NEW_API_AUTH_FAILED`，
+并且充值不会发放站内积分，提现会退回已扣积分。
 
 ## 精确 Gateway 规则
 
@@ -126,13 +162,13 @@ handle /api/store/withdraw {
 1. `npm run audit:wallet-cutover` 通过。
 2. `node scripts/smoke-wallet-go-api.mjs` 通过。
 3. `node scripts/smoke-wallet-write-missing-newapi-go-api.mjs` 通过，确认缺配置时不写账。
-4. `go test ./internal/economy ./internal/httpserver` 通过。
+4. `go test ./internal/platform/newapi ./internal/economy ./internal/httpserver` 通过。
 5. `docker run ... caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` 通过。
 6. 本地 Gateway `GET /api/store/topup`、`POST /api/store/topup`、`POST /api/store/withdraw` 未登录均返回 401，且 API 日志显示请求进入 Go。
 
 ## 生产冒烟清单
 
-1. Zeabur 已配置 `NEW_API_URL`、`NEW_API_ADMIN_ACCESS_TOKEN`、`NEW_API_ADMIN_USER_ID`。
+1. Zeabur 已配置 `NEW_API_URL`，并配置 `NEW_API_ADMIN_ACCESS_TOKEN + NEW_API_ADMIN_USER_ID` 或 `NEW_API_ADMIN_USERNAME + NEW_API_ADMIN_PASSWORD`。
 2. 带真实账号 Cookie 复跑 `WALLET_GO_API_COOKIE="..." WALLET_GO_API_EXPECT_NEW_API=1 node scripts/smoke-wallet-go-api.mjs` 通过。
 3. 使用真实登录账号完成经 Gateway 的 `/store` 页面充值弹层余额读取冒烟。
 4. 使用小金额完成一次真实充值冒烟，并核对：

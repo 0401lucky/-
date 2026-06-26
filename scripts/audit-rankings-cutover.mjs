@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const repoRoot = process.cwd();
@@ -73,9 +73,20 @@ mustContain(settlementService, 'point_ledger', '排行榜结算积分账本', fa
 mustContain(settlementService, 'notifications', '排行榜结算通知', failures);
 mustContain(settlementService, 'peak_first', '排行榜结算月榜第一成就', failures);
 
-for (const file of legacyRouteFiles) {
-  const source = read(file);
-  mustContain(source, 'buildKvUnavailablePayload', `旧 Next 路由 ${file}`, failures);
+const missingLegacyRouteFiles = legacyRouteFiles.filter((file) => !existsSync(path.join(repoRoot, file)));
+const legacyRouteStatus = missingLegacyRouteFiles.length === legacyRouteFiles.length
+  ? 'physically-deleted'
+  : missingLegacyRouteFiles.length === 0
+    ? 'present'
+    : 'partially-deleted';
+if (legacyRouteStatus === 'partially-deleted') {
+  failures.push(`旧 Next 排行榜路由只删除了一部分：${missingLegacyRouteFiles.join(', ')}`);
+}
+if (legacyRouteStatus === 'present') {
+  for (const file of legacyRouteFiles) {
+    const source = read(file);
+    mustContain(source, 'buildKvUnavailablePayload', `旧 Next 路由 ${file}`, failures);
+  }
 }
 
 const forbiddenGatewayMarkers = [
@@ -112,6 +123,7 @@ console.log(JSON.stringify({
   goRoutes: expectedRoutes,
   gatewayRules,
   legacyRouteFiles,
+  legacyRouteStatus,
   postgresSources: [
     'point_accounts',
     'point_ledger',

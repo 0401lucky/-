@@ -57,6 +57,7 @@ type RaffleImportRecord struct {
 	WinnersCount             int64
 	Winners                  json.RawMessage
 	DrawnAt                  *int64
+	ScheduledDrawAt          *int64
 	RedPacketTotalPoints     *int64
 	RedPacketTotalSlots      *int64
 	RedPacketRemainingPoints *int64
@@ -99,6 +100,7 @@ type rawRaffle struct {
 	WinnersCount             json.RawMessage `json:"winnersCount"`
 	Winners                  json.RawMessage `json:"winners"`
 	DrawnAt                  json.RawMessage `json:"drawnAt"`
+	ScheduledDrawAt          json.RawMessage `json:"scheduledDrawAt"`
 	RedPacketTotalPoints     json.RawMessage `json:"redPacketTotalPoints"`
 	RedPacketTotalSlots      json.RawMessage `json:"redPacketTotalSlots"`
 	RedPacketRemainingPoints json.RawMessage `json:"redPacketRemainingPoints"`
@@ -217,10 +219,10 @@ func ApplyPublicListImport(ctx context.Context, db *pgxpool.Pool, plan PublicLis
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO raffles (
 			   id, mode, title, description, cover_image, prizes, trigger_type, threshold,
-			   status, participants_count, winners_count, winners, drawn_at_ms,
+			   status, participants_count, winners_count, winners, drawn_at_ms, scheduled_draw_at_ms,
 			   red_packet_total_points, red_packet_total_slots, red_packet_remaining_points,
 			   red_packet_remaining_slots, red_packet_packets, created_by, created_at_ms, updated_at_ms, updated_at
-			 ) VALUES ($1, $2, $3, $4, $5, CAST($6 AS jsonb), $7, $8, $9, $10, $11, CAST($12 AS jsonb), $13, $14, $15, $16, $17, CAST($18 AS jsonb), $19, $20, $21, now())
+			 ) VALUES ($1, $2, $3, $4, $5, CAST($6 AS jsonb), $7, $8, $9, $10, $11, CAST($12 AS jsonb), $13, $14, $15, $16, $17, $18, CAST($19 AS jsonb), $20, $21, $22, now())
 			 ON CONFLICT (id) DO UPDATE SET
 			   mode = excluded.mode,
 			   title = excluded.title,
@@ -234,6 +236,7 @@ func ApplyPublicListImport(ctx context.Context, db *pgxpool.Pool, plan PublicLis
 			   winners_count = excluded.winners_count,
 			   winners = excluded.winners,
 			   drawn_at_ms = excluded.drawn_at_ms,
+			   scheduled_draw_at_ms = excluded.scheduled_draw_at_ms,
 			   red_packet_total_points = excluded.red_packet_total_points,
 			   red_packet_total_slots = excluded.red_packet_total_slots,
 			   red_packet_remaining_points = excluded.red_packet_remaining_points,
@@ -256,6 +259,7 @@ func ApplyPublicListImport(ctx context.Context, db *pgxpool.Pool, plan PublicLis
 			raffle.WinnersCount,
 			string(raffle.Winners),
 			nullableInt64Ptr(raffle.DrawnAt),
+			nullableInt64Ptr(raffle.ScheduledDrawAt),
 			nullableInt64Ptr(raffle.RedPacketTotalPoints),
 			nullableInt64Ptr(raffle.RedPacketTotalSlots),
 			nullableInt64Ptr(raffle.RedPacketRemainingPoints),
@@ -373,6 +377,7 @@ func parseRaffleImportRecord(key string, rawValue string) (RaffleImportRecord, [
 		WinnersCount:             int64FromRaw(raw.WinnersCount, 0),
 		Winners:                  normalizedJSONArray(raw.Winners),
 		DrawnAt:                  positiveInt64FromRaw(raw.DrawnAt),
+		ScheduledDrawAt:          positiveInt64FromRaw(raw.ScheduledDrawAt),
 		RedPacketTotalPoints:     nonNegativeInt64FromRaw(raw.RedPacketTotalPoints),
 		RedPacketTotalSlots:      nonNegativeInt64FromRaw(raw.RedPacketTotalSlots),
 		RedPacketRemainingPoints: nonNegativeInt64FromRaw(raw.RedPacketRemainingPoints),
@@ -540,7 +545,7 @@ func isValidRaffleMode(mode string) bool {
 }
 
 func isValidRaffleTriggerType(triggerType string) bool {
-	return triggerType == "threshold" || triggerType == "manual"
+	return triggerType == "threshold" || triggerType == "manual" || triggerType == "scheduled"
 }
 
 func isValidRaffleStatus(status string) bool {

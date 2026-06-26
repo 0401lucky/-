@@ -144,6 +144,29 @@ func (runner *Runner) Run(ctx context.Context) error {
 	}
 
 	if _, err := scheduler.AddFunc("0 * * * * *", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		result, err := welfare.NewService(runner.deps.DB).ProcessDueScheduledRaffleDraws(ctx, 0, 20)
+		if err != nil {
+			runner.deps.Logger.Error("处理定时抽奖开奖失败", "error", err)
+			return
+		}
+		if result.Checked > 0 || result.Failed > 0 {
+			runner.deps.Logger.Info(
+				"定时抽奖开奖处理完成",
+				"checked", result.Checked,
+				"drawn", result.Drawn,
+				"enqueued", result.Enqueued,
+				"skipped", result.Skipped,
+				"failed", result.Failed,
+			)
+		}
+	}); err != nil {
+		return err
+	}
+
+	if _, err := scheduler.AddFunc("0 * * * * *", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 

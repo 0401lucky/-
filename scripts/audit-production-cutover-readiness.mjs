@@ -20,6 +20,9 @@ const requiredFiles = [
   'scripts/audit-gateway-upstreams.mjs',
   'scripts/audit-gateway-cutover-guard.mjs',
   'scripts/smoke-zeabur-runtime.mjs',
+  'scripts/smoke-auth-login-go-api.mjs',
+  'scripts/smoke-auth-me-go-api.mjs',
+  'scripts/smoke-auth-logout-go-api.mjs',
   'scripts/smoke-wallet-go-api.mjs',
   'scripts/smoke-profile-go-api.mjs',
   'scripts/smoke-notifications-go-api.mjs',
@@ -149,11 +152,29 @@ const freshDatabaseCheck = {
   message: 'fresh Zeabur 部署不要求 Cloudflare D1 导出；如需旧数据归档迁移，可额外传入 D1_EXPORT_SQL',
 };
 
+const hasNewAPIAdminAuth = (
+  hasValue('NEW_API_ADMIN_ACCESS_TOKEN') &&
+  hasValue('NEW_API_ADMIN_USER_ID')
+) || (
+  hasValue('NEW_API_ADMIN_USERNAME') &&
+  hasValue('NEW_API_ADMIN_PASSWORD')
+);
+
 const modules = [
+  buildModule('auth', [
+    freshDatabaseCheck,
+    { ok: hasValue('AUTH_GO_API_COOKIE'), message: '缺少 AUTH_GO_API_COOKIE，无法记录测试账号真实登录态 auth/me 证据' },
+  ], [
+    'docker compose exec -T api /app/migrate',
+    'node scripts/smoke-auth-login-go-api.mjs',
+    'node scripts/smoke-auth-me-go-api.mjs',
+    'node scripts/smoke-auth-logout-go-api.mjs',
+    '使用测试账号完成 /login -> /api/auth/me 页面级冒烟，并记录 AUTH_GO_API_COOKIE 对应的测试登录态证据',
+    '使用测试账号完成 /logout 页面级冒烟，确认旧 Cookie 失效',
+  ]),
   buildModule('wallet', [
     { ok: hasValue('NEW_API_URL'), message: '缺少 NEW_API_URL' },
-    { ok: hasValue('NEW_API_ADMIN_ACCESS_TOKEN'), message: '缺少 NEW_API_ADMIN_ACCESS_TOKEN' },
-    { ok: hasValue('NEW_API_ADMIN_USER_ID'), message: '缺少 NEW_API_ADMIN_USER_ID' },
+    { ok: hasNewAPIAdminAuth, message: '缺少 new-api 管理凭证：需要 NEW_API_ADMIN_ACCESS_TOKEN + NEW_API_ADMIN_USER_ID，或 NEW_API_ADMIN_USERNAME + NEW_API_ADMIN_PASSWORD' },
     { ok: hasValue('WALLET_GO_API_COOKIE'), message: '缺少 WALLET_GO_API_COOKIE，无法做真实登录态余额只读冒烟' },
   ], [
     'node scripts/smoke-wallet-go-api.mjs',

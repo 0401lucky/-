@@ -88,6 +88,7 @@ function assertStatus(response, expected, label) {
 
 function cleanup() {
   psql(`
+    DELETE FROM admin_alert_point_baselines WHERE user_id IN (${userIDs.join(', ')});
     DELETE FROM game_records WHERE user_id IN (${userIDs.join(', ')});
     DELETE FROM point_ledger WHERE user_id IN (${userIDs.join(', ')});
     DELETE FROM exchange_logs WHERE user_id IN (${userIDs.join(', ')});

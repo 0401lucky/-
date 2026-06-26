@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import {
   Gift, Loader2, Plus, Trash2, Coins, Users, Save
 } from 'lucide-react';
+import { parseChinaDateTimeInput } from '@/lib/time';
 
 interface PrizeInput {
   name: string;
@@ -23,8 +24,9 @@ export default function CreateRafflePage() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [coverImage, setCoverImage] = useState('');
-  const [triggerType, setTriggerType] = useState<'threshold' | 'manual'>('threshold');
+  const [triggerType, setTriggerType] = useState<'threshold' | 'manual' | 'scheduled'>('threshold');
   const [threshold, setThreshold] = useState(100);
+  const [scheduledDrawAt, setScheduledDrawAt] = useState('');
   const [redPacketTotalPoints, setRedPacketTotalPoints] = useState(1000);
   const [redPacketTotalSlots, setRedPacketTotalSlots] = useState(20);
   const [prizes, setPrizes] = useState<PrizeInput[]>([
@@ -92,6 +94,10 @@ export default function CreateRafflePage() {
         setError('人数阈值必须为正整数');
         return;
       }
+      if (triggerType === 'scheduled' && parseChinaDateTimeInput(scheduledDrawAt) === null) {
+        setError('请选择有效的到点开奖时间');
+        return;
+      }
     } else {
       if (!Number.isSafeInteger(redPacketTotalPoints) || redPacketTotalPoints <= 0) {
         setError('红包总积分必须为正整数');
@@ -122,6 +128,9 @@ export default function CreateRafflePage() {
             ? {
                 triggerType,
                 threshold,
+                scheduledDrawAt: triggerType === 'scheduled'
+                  ? parseChinaDateTimeInput(scheduledDrawAt) ?? undefined
+                  : undefined,
                 prizes: prizes.map(p => ({
                   name: p.name.trim(),
                   points: p.points,
@@ -266,7 +275,7 @@ export default function CreateRafflePage() {
           </h2>
 
           <div className="space-y-4">
-            <div className="flex gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <label className={`flex-1 p-4 rounded-xl border-2 cursor-pointer transition-all ${
                 triggerType === 'threshold'
                   ? 'border-pink-500 bg-pink-50'
@@ -282,6 +291,23 @@ export default function CreateRafflePage() {
                 />
                 <div className="font-bold text-stone-800 mb-1">人数阈值</div>
                 <div className="text-sm text-stone-500">满足指定人数后自动开奖</div>
+              </label>
+
+              <label className={`flex-1 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                triggerType === 'scheduled'
+                  ? 'border-pink-500 bg-pink-50'
+                  : 'border-stone-200 hover:border-stone-300'
+              }`}>
+                <input
+                  type="radio"
+                  name="triggerType"
+                  value="scheduled"
+                  checked={triggerType === 'scheduled'}
+                  onChange={() => setTriggerType('scheduled')}
+                  className="sr-only"
+                />
+                <div className="font-bold text-stone-800 mb-1">到点开奖</div>
+                <div className="text-sm text-stone-500">按设置的北京时间自动开奖</div>
               </label>
 
               <label className={`flex-1 p-4 rounded-xl border-2 cursor-pointer transition-all ${
@@ -315,6 +341,21 @@ export default function CreateRafflePage() {
                   className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 outline-none transition-all"
                 />
                 <p className="text-xs text-stone-400 mt-1">满足此人数后自动开奖</p>
+              </div>
+            )}
+
+            {triggerType === 'scheduled' && (
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">
+                  开奖时间（中国时间） <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="datetime-local"
+                  value={scheduledDrawAt}
+                  onChange={(e) => setScheduledDrawAt(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 outline-none transition-all"
+                />
+                <p className="text-xs text-stone-400 mt-1">到点后服务器自动开奖，无需保持页面打开</p>
               </div>
             )}
           </div>

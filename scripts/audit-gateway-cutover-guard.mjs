@@ -6,6 +6,14 @@ const gatewayPath = path.join(repoRoot, 'gateway', 'Caddyfile');
 
 const forbiddenRules = [
   {
+    reason: '认证只允许 login/me/logout 三个精确路径，禁止 auth 通配或路径改写',
+    patterns: [
+      /^handle\s+\/api\/auth\*/ ,
+      /^handle\s+\/api\/auth\/\*/ ,
+      /^handle_path\s+\/api\/auth/,
+    ],
+  },
+  {
     reason: '签到只允许 /api/checkin 与 /api/checkin/makeup 两个精确路径，禁止通配或路径改写',
     patterns: [
       /^handle\s+\/api\/checkin\*/ ,

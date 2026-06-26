@@ -36,7 +36,7 @@ export type RaffleMode = 'draw' | 'red_packet';
 /**
  * 开奖触发类型
  */
-export type RaffleTriggerType = 'threshold' | 'manual';
+export type RaffleTriggerType = 'threshold' | 'manual' | 'scheduled';
 
 /**
  * 中奖者奖励状态
@@ -77,6 +77,7 @@ export interface Raffle {
   // 开奖条件
   triggerType: RaffleTriggerType; // 人数阈值自动 / 手动开奖
   threshold: number;              // 人数阈值（triggerType='threshold' 时生效）
+  scheduledDrawAt?: number;       // 定时开奖时间（中国时间输入转换后的毫秒时间戳）
 
   // 状态
   status: RaffleStatus;
@@ -123,6 +124,7 @@ export interface CreateRaffleInput {
   prizes?: RafflePrizeInput[];
   triggerType?: RaffleTriggerType;
   threshold?: number;
+  scheduledDrawAt?: number;
   redPacketTotalPoints?: number;
   redPacketTotalSlots?: number;
 }
@@ -138,6 +140,7 @@ export interface UpdateRaffleInput {
   prizes?: RafflePrizeInput[];
   triggerType?: RaffleTriggerType;
   threshold?: number;
+  scheduledDrawAt?: number;
   redPacketTotalPoints?: number;
   redPacketTotalSlots?: number;
 }
@@ -181,6 +184,7 @@ export interface RaffleListItem {
   prizes: RafflePrize[];
   triggerType: RaffleTriggerType;
   threshold: number;
+  scheduledDrawAt?: number;
   status: RaffleStatus;
   participantsCount: number;
   winnersCount: number;

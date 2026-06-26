@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, use, useCallback } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Loader2, AlertCircle, Users, Package, Clock, User as UserIcon, Check, X, Gift, FileText, Copy } from 'lucide-react';
+import { formatChinaDateTime } from '@/lib/time';
 
 interface Project {
   id: string;
@@ -17,6 +18,8 @@ interface Project {
   rewardType?: 'code' | 'direct';
   directPoints?: number;
   directDollars?: number;
+  autoPauseAt?: number;
+  autoPausedAt?: number;
 }
 
 interface ClaimRecord {
@@ -222,9 +225,14 @@ export default function AdminProjectDetailPage({ params }: { params: Promise<{ i
                     : project.status === 'paused'
                       ? 'bg-amber-50 text-amber-600 border border-amber-100'
                       : 'bg-stone-100 text-stone-500 border border-stone-200'
-                    }`}>
+                  }`}>
                     {project.status === 'active' ? '进行中' : project.status === 'paused' ? '已暂停' : '已领完'}
                   </span>
+                  {project.autoPauseAt && (
+                    <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                      自动暂停 {formatChinaDateTime(project.autoPauseAt)}
+                    </span>
+                  )}
                 </div>
                 <p className="text-stone-500 mt-2 text-sm md:text-base leading-relaxed max-w-2xl">{project.description || '暂无描述'}</p>
               </div>

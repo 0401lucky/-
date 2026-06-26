@@ -16,10 +16,14 @@ import (
 
 const QuotaPerDollar = int64(500000)
 
+var ErrAdminAuthFailed = errors.New("new-api admin authentication failed")
+
 type Client struct {
 	baseURL          string
 	adminAccessToken string
 	adminUserID      string
+	adminUsername    string
+	adminPassword    string
 	httpClient       *http.Client
 }
 
@@ -27,6 +31,8 @@ type Options struct {
 	BaseURL          string
 	AdminAccessToken string
 	AdminUserID      string
+	AdminUsername    string
+	AdminPassword    string
 	HTTPClient       *http.Client
 }
 
@@ -57,14 +63,25 @@ func New(options Options) (*Client, error) {
 	if baseURL == "" {
 		return nil, errors.New("NEW_API_URL is not set")
 	}
-	if strings.TrimSpace(options.AdminAccessToken) == "" {
-		return nil, errors.New("NEW_API_ADMIN_ACCESS_TOKEN is not set")
+	adminAccessToken := normalizeAdminAccessToken(options.AdminAccessToken)
+	adminUserID := strings.TrimSpace(options.AdminUserID)
+	adminUsername := strings.TrimSpace(options.AdminUsername)
+	adminPassword := strings.TrimSpace(options.AdminPassword)
+	hasAccessTokenAuth := adminAccessToken != "" && adminUserID != ""
+	hasPasswordAuth := adminUsername != "" && adminPassword != ""
+	if !hasAccessTokenAuth && !hasPasswordAuth {
+		return nil, errors.New("NEW_API_ADMIN_ACCESS_TOKEN/NEW_API_ADMIN_USER_ID or NEW_API_ADMIN_USERNAME/NEW_API_ADMIN_PASSWORD is required")
 	}
-	if strings.TrimSpace(options.AdminUserID) == "" {
-		return nil, errors.New("NEW_API_ADMIN_USER_ID is not set")
+	if adminUserID != "" {
+		if _, err := strconv.ParseInt(adminUserID, 10, 64); err != nil {
+			return nil, errors.New("NEW_API_ADMIN_USER_ID must be a numeric new-api user ID")
+		}
 	}
-	if _, err := strconv.ParseInt(strings.TrimSpace(options.AdminUserID), 10, 64); err != nil {
-		return nil, errors.New("NEW_API_ADMIN_USER_ID must be a numeric new-api user ID")
+	if adminAccessToken != "" && adminUserID == "" && !hasPasswordAuth {
+		return nil, errors.New("NEW_API_ADMIN_USER_ID is required when NEW_API_ADMIN_ACCESS_TOKEN is set")
+	}
+	if adminUserID != "" && adminAccessToken == "" && !hasPasswordAuth {
+		return nil, errors.New("NEW_API_ADMIN_ACCESS_TOKEN is required when NEW_API_ADMIN_USER_ID is set")
 	}
 	httpClient := options.HTTPClient
 	if httpClient == nil {
@@ -72,8 +89,10 @@ func New(options Options) (*Client, error) {
 	}
 	return &Client{
 		baseURL:          baseURL,
-		adminAccessToken: strings.TrimSpace(options.AdminAccessToken),
-		adminUserID:      strings.TrimSpace(options.AdminUserID),
+		adminAccessToken: adminAccessToken,
+		adminUserID:      adminUserID,
+		adminUsername:    adminUsername,
+		adminPassword:    adminPassword,
 		httpClient:       httpClient,
 	}, nil
 }
@@ -182,7 +201,7 @@ func (client *Client) fetchUser(ctx context.Context, userID int64) (map[string]a
 	}
 	client.setAuthHeaders(request)
 
-	envelope, err := client.doJSON(request)
+	envelope, err := client.doJSONWithAdminAuthRetry(request)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +230,7 @@ func (client *Client) manageQuota(ctx context.Context, userID int64, mode string
 	client.setAuthHeaders(request)
 	request.Header.Set("Content-Type", "application/json")
 
-	envelope, err := client.doJSON(request)
+	envelope, err := client.doJSONWithAdminAuthRetry(request)
 	if err != nil {
 		return "", err
 	}
@@ -260,15 +279,132 @@ func (client *Client) doJSON(request *http.Request) (apiEnvelope, error) {
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return apiEnvelope{}, err
 	}
+	if isAdminAuthFailure(response.StatusCode, envelope) {
+		return envelope, fmt.Errorf("%w: %s", ErrAdminAuthFailed, fallbackMessage(envelope.Message, "new-api 管理端鉴权失败"))
+	}
 	if response.StatusCode >= 500 {
 		return envelope, fmt.Errorf("%s", fallbackMessage(envelope.Message, "new-api 服务错误"))
 	}
 	return envelope, nil
 }
 
+func (client *Client) doJSONWithAdminAuthRetry(request *http.Request) (apiEnvelope, error) {
+	var envelope apiEnvelope
+	var err error
+
+	if client.adminAccessToken != "" {
+		envelope, err = client.doJSON(request)
+		if !errors.Is(err, ErrAdminAuthFailed) {
+			return envelope, err
+		}
+
+		retry := client.cloneRequestForRetry(request)
+		client.setLegacyAuthHeaders(retry)
+
+		retryEnvelope, retryErr := client.doJSON(retry)
+		if retryErr == nil || !errors.Is(retryErr, ErrAdminAuthFailed) {
+			return retryEnvelope, retryErr
+		}
+	} else {
+		envelope = apiEnvelope{}
+		err = ErrAdminAuthFailed
+	}
+
+	if client.adminUsername == "" || client.adminPassword == "" {
+		return envelope, err
+	}
+
+	sessionRequest, sessionErr := client.requestWithAdminSession(request)
+	if sessionErr != nil {
+		return envelope, sessionErr
+	}
+	sessionEnvelope, sessionRequestErr := client.doJSON(sessionRequest)
+	if sessionRequestErr == nil || !errors.Is(sessionRequestErr, ErrAdminAuthFailed) {
+		return sessionEnvelope, sessionRequestErr
+	}
+	return envelope, err
+}
+
+func (client *Client) cloneRequestForRetry(request *http.Request) *http.Request {
+	retry := request.Clone(request.Context())
+	if request.GetBody != nil {
+		if body, err := request.GetBody(); err == nil {
+			retry.Body = body
+		}
+	}
+	retry.Header = request.Header.Clone()
+	return retry
+}
+
+func (client *Client) requestWithAdminSession(request *http.Request) (*http.Request, error) {
+	result, err := Login(request.Context(), client.baseURL, client.adminUsername, client.adminPassword, client.httpClient)
+	if err != nil {
+		return nil, fmt.Errorf("%w: 管理员账号登录 new-api 失败: %v", ErrAdminAuthFailed, err)
+	}
+	if !result.Success || result.User == nil || result.Cookies == "" {
+		return nil, fmt.Errorf("%w: %s", ErrAdminAuthFailed, fallbackMessage(result.Message, "管理员账号登录 new-api 失败"))
+	}
+	loginAdminUserID := strconv.FormatInt(result.User.ID, 10)
+	if client.adminUserID != "" && client.adminUserID != loginAdminUserID {
+		return nil, fmt.Errorf("%w: NEW_API_ADMIN_USER_ID 与管理员账号登录用户不匹配", ErrAdminAuthFailed)
+	}
+
+	retry := client.cloneRequestForRetry(request)
+	retry.Header.Del("Authorization")
+	retry.Header.Set("Cookie", result.Cookies)
+	retry.Header.Set("New-Api-User", loginAdminUserID)
+	return retry, nil
+}
+
 func (client *Client) setAuthHeaders(request *http.Request) {
-	request.Header.Set("Authorization", client.adminAccessToken)
-	request.Header.Set("New-Api-User", client.adminUserID)
+	if client.adminAccessToken != "" {
+		request.Header.Set("Authorization", "Bearer "+client.adminAccessToken)
+	}
+	if client.adminUserID != "" {
+		request.Header.Set("New-Api-User", client.adminUserID)
+	}
+}
+
+func (client *Client) setLegacyAuthHeaders(request *http.Request) {
+	if client.adminAccessToken != "" {
+		request.Header.Set("Authorization", client.adminAccessToken)
+	}
+	if client.adminUserID != "" {
+		request.Header.Set("New-Api-User", client.adminUserID)
+	}
+}
+
+func normalizeAdminAccessToken(value string) string {
+	token := strings.TrimSpace(value)
+	token = strings.Trim(token, `"'`)
+	if token == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(token), "authorization:") {
+		token = strings.TrimSpace(token[len("authorization:"):])
+	}
+	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		token = strings.TrimSpace(token[len("bearer "):])
+	}
+	return strings.Trim(token, `"'`)
+}
+
+func isAdminAuthFailure(statusCode int, envelope apiEnvelope) bool {
+	message := strings.ToLower(strings.TrimSpace(envelope.Message))
+	if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+		return true
+	}
+	if envelope.Success {
+		return false
+	}
+	return strings.Contains(message, "access token") ||
+		strings.Contains(message, "new-api-user") ||
+		strings.Contains(message, "unauthorized") ||
+		strings.Contains(message, "未提供 new-api-user") ||
+		strings.Contains(message, "new-api-user 格式错误") ||
+		strings.Contains(message, "new-api-user 与登录用户不匹配") ||
+		strings.Contains(message, "access token 无效") ||
+		strings.Contains(message, "无权进行此操作")
 }
 
 func quotaSuccess(message string, quota int64) QuotaResult {

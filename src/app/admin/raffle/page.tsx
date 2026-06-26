@@ -7,6 +7,7 @@ import {
   Gift, Loader2, Plus, Users, Trophy, Clock, Eye,
   Trash2, Edit
 } from 'lucide-react';
+import { formatChinaDateTime } from '@/lib/time';
 
 interface RafflePrize {
   id: string;
@@ -23,8 +24,9 @@ interface RaffleItem {
   description: string;
   coverImage?: string;
   prizes: RafflePrize[];
-  triggerType: 'threshold' | 'manual';
+  triggerType: 'threshold' | 'manual' | 'scheduled';
   threshold: number;
+  scheduledDrawAt?: number;
   status: 'draft' | 'active' | 'ended' | 'cancelled';
   participantsCount: number;
   winnersCount: number;
@@ -220,10 +222,20 @@ export default function AdminRaffleListPage() {
                           <Clock className="w-4 h-4" />
                           <span>剩 {remainingSlots} 个红包</span>
                         </div>
-                      ) : raffle.triggerType === 'threshold' && (
+                      ) : raffle.triggerType === 'threshold' ? (
                         <div className="flex items-center gap-1 text-stone-500">
                           <Clock className="w-4 h-4" />
                           <span>满 {raffle.threshold} 人开奖</span>
+                        </div>
+                      ) : raffle.triggerType === 'scheduled' && raffle.scheduledDrawAt ? (
+                        <div className="flex items-center gap-1 text-stone-500">
+                          <Clock className="w-4 h-4" />
+                          <span>{formatChinaDateTime(raffle.scheduledDrawAt)} 开奖</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 text-stone-500">
+                          <Clock className="w-4 h-4" />
+                          <span>手动开奖</span>
                         </div>
                       )}
                       {raffle.status === 'ended' && (

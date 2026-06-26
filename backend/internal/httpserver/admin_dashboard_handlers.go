@@ -36,7 +36,12 @@ func (handlers adminDashboardHandlers) get(writer http.ResponseWriter, request *
 		return
 	}
 
-	data, err := handlers.service.Get(request.Context(), request.URL.Query().Get("detect") == "1", time.Now())
+	data, err := handlers.service.Get(
+		request.Context(),
+		request.URL.Query().Get("detect") == "1",
+		time.Now(),
+		request.URL.Query().Get("pointsPeriod"),
+	)
 	if err != nil {
 		handlers.deps.Logger.Error("查询后台仪表盘失败", "error", err)
 		writeJSON(writer, http.StatusInternalServerError, map[string]any{

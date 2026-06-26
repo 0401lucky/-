@@ -12,6 +12,7 @@ var supportedGames = []gameDefinition{
 	{dbName: "whack_mole", apiName: "whack_mole"},
 	{dbName: "roguelite", apiName: "roguelite"},
 	{dbName: "minesweeper", apiName: "minesweeper"},
+	{dbName: "game_2048", apiName: "game_2048"},
 }
 
 func difficultyOptions(game gameDefinition) []GameDifficultyOption {

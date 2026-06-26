@@ -64,7 +64,7 @@ func TestAdminUserRoutesListDetailAndAchievements(t *testing.T) {
 	}
 	if _, err := db.Exec(ctx,
 		`INSERT INTO exchange_logs (id, user_id, item_id, item_name, points_cost, value, type, quantity, created_at)
-		 VALUES ($1, $2, 'store-item', '商城兑换项', 100, 1, 'lottery_spin', 1, now())`,
+		 VALUES ($1, $2, 'store-item', '商城兑换项', 0, 100, 'project_direct', 1, now())`,
 		exchangeID,
 		userID,
 	); err != nil {

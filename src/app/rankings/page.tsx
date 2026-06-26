@@ -10,6 +10,7 @@ import {
   CalendarDays,
   Clock,
   Crown,
+  Grid3X3,
   Home,
   Loader2,
   Recycle,
@@ -27,7 +28,7 @@ type SimplePeriod = 'all' | 'monthly';
 type LotteryPeriod = 'daily' | 'weekly' | 'monthly';
 type EcoPeriod = 'daily' | 'weekly' | 'monthly';
 
-type SupportedGame = 'linkgame' | 'match3' | 'memory' | 'whack_mole' | 'roguelite' | 'minesweeper';
+type SupportedGame = 'linkgame' | 'match3' | 'memory' | 'whack_mole' | 'roguelite' | 'minesweeper' | 'game_2048';
 
 interface GameOverallEntry {
   rank: number;
@@ -187,6 +188,7 @@ const GAME_LABEL: Record<SupportedGame, string> = {
   whack_mole: '打地鼠',
   roguelite: '星尘迷阵',
   minesweeper: '扫雷',
+  game_2048: '2048',
 };
 
 const GAME_CAPTION: Record<SupportedGame, string> = {
@@ -196,6 +198,7 @@ const GAME_CAPTION: Record<SupportedGame, string> = {
   whack_mole: 'WHACK MOLE',
   roguelite: 'STARDUST ROGUE',
   minesweeper: 'MINESWEEPER',
+  game_2048: '2048',
 };
 
 const GAME_THEME: Record<SupportedGame, string> = {
@@ -205,6 +208,7 @@ const GAME_THEME: Record<SupportedGame, string> = {
   whack_mole: 't-whack',
   roguelite: 't-roguelite',
   minesweeper: 't-mines',
+  game_2048: 't-2048',
 };
 
 const GAME_METRIC_LABEL: Record<SupportedGame, string> = {
@@ -214,6 +218,7 @@ const GAME_METRIC_LABEL: Record<SupportedGame, string> = {
   whack_mole: '最佳单局',
   roguelite: '最佳单局',
   minesweeper: '最佳单局',
+  game_2048: '最佳单局',
 };
 
 const GAME_UNIT: Record<SupportedGame, string> = {
@@ -223,6 +228,7 @@ const GAME_UNIT: Record<SupportedGame, string> = {
   whack_mole: '分',
   roguelite: '分',
   minesweeper: '分',
+  game_2048: '分',
 };
 
 const AVATAR_VARIANT_COUNT = 5;
@@ -3431,6 +3437,7 @@ export default function RankingsPage() {
         .rk-page .game-card.t-whack::before { background: rgba(245, 158, 11, 0.4); }
         .rk-page .game-card.t-roguelite::before { background: rgba(14, 165, 233, 0.4); }
         .rk-page .game-card.t-mines::before { background: rgba(71, 85, 105, 0.4); }
+        .rk-page .game-card.t-2048::before { background: rgba(16, 185, 129, 0.4); }
 
         .rk-page .game-card:hover {
           transform: translateY(-4px);
@@ -3469,6 +3476,7 @@ export default function RankingsPage() {
         .rk-page .game-card.t-whack .gc-icon { color: var(--c-yellow); box-shadow: 0 10px 20px rgba(245, 158, 11, 0.22); }
         .rk-page .game-card.t-roguelite .gc-icon { color: #0284c7; box-shadow: 0 10px 20px rgba(14, 165, 233, 0.22); }
         .rk-page .game-card.t-mines .gc-icon { color: #475569; box-shadow: 0 10px 20px rgba(71, 85, 105, 0.22); }
+        .rk-page .game-card.t-2048 .gc-icon { color: #059669; box-shadow: 0 10px 20px rgba(16, 185, 129, 0.22); }
 
         .rk-page .gc-title-wrap { flex: 1; min-width: 0; }
 
@@ -3535,6 +3543,7 @@ export default function RankingsPage() {
         .rk-page .game-card.t-whack .gc-metric-tag { background: rgba(245, 158, 11, 0.1); color: var(--c-yellow); }
         .rk-page .game-card.t-roguelite .gc-metric-tag { background: rgba(14, 165, 233, 0.1); color: #0284c7; }
         .rk-page .game-card.t-mines .gc-metric-tag { background: rgba(71, 85, 105, 0.1); color: #475569; }
+        .rk-page .game-card.t-2048 .gc-metric-tag { background: rgba(16, 185, 129, 0.1); color: #059669; }
 
         .rk-page .gc-top5 {
           display: flex;
@@ -5261,5 +5270,6 @@ function GameIcon({ gameType }: { gameType: SupportedGame }) {
   if (gameType === 'whack_mole') return <Sparkles />;
   if (gameType === 'roguelite') return <Sparkles />;
   if (gameType === 'minesweeper') return <Bomb />;
+  if (gameType === 'game_2048') return <Grid3X3 />;
   return <Sparkles />;
 }

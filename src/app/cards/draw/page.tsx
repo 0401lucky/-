@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { ALBUMS, CARDS } from '@/lib/cards/config';
 import { PITY_THRESHOLDS, RARITY_PROBABILITIES } from '@/lib/cards/constants';
-import type { RecentDraw, UserCards } from '@/lib/cards/draw';
+import type { RecentDraw, UserCards } from '@/lib/cards/draw-types';
 import type { CardConfig, Rarity } from '@/lib/cards/types';
 import confetti from 'canvas-confetti';
 

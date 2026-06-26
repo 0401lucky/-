@@ -14,21 +14,26 @@
     "audit:wallet-cutover": "node scripts/audit-wallet-cutover.mjs",
     "audit:games-summary-cutover": "node scripts/audit-games-summary-cutover.mjs",
     "audit:farm-status-cutover": "node scripts/audit-farm-status-cutover.mjs",
+    "audit:pr-9-go-reconciliation": "node scripts/audit-pr-9-go-reconciliation.mjs",
+    "audit:current-go-zeabur-release": "node scripts/audit-current-go-zeabur-release.mjs",
+    "audit:legacy-cloudflare-residuals": "node scripts/audit-legacy-cloudflare-residuals.mjs",
+    "audit:c1-c3-cleanup-readiness": "node scripts/audit-c1-c3-cleanup-readiness.mjs",
+    "audit:c1-c3-cleanup-runbook": "node scripts/audit-c1-c3-cleanup-runbook.mjs",
+    "cleanup:next-api-routes:dry-run": "node scripts/remove-next-api-routes.mjs",
+    "test:next-api-route-cleanup-guards": "node scripts/test-remove-next-api-routes-guards.mjs",
+    "cleanup:cloudflare-deploy-artifacts:dry-run": "node scripts/remove-cloudflare-deploy-artifacts.mjs",
+    "test:cloudflare-deploy-cleanup-guards": "node scripts/test-remove-cloudflare-deploy-artifacts-guards.mjs",
+    "cleanup:package-cloudflare:dry-run": "node scripts/plan-package-cloudflare-cleanup.mjs",
+    "test:package-cloudflare-cleanup-guards": "node scripts/test-package-cloudflare-cleanup-guards.mjs",
     "test:watch": "vitest",
     "migrate:feedback-images": "node scripts/migrate-feedback-images-to-blob.mjs",
-    "migrate:feedback-images:execute": "node scripts/migrate-feedback-images-to-blob.mjs --execute",
-    "opennext:patch": "node scripts/patch-opennext-windows.mjs",
-    "preview": "npm run opennext:patch && node scripts/build-cloudflare.mjs && opennextjs-cloudflare preview",
-    "deploy": "npm run opennext:patch && node scripts/build-cloudflare.mjs && opennextjs-cloudflare deploy",
-    "upload": "npm run opennext:patch && node scripts/build-cloudflare.mjs && opennextjs-cloudflare upload",
-    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
+    "migrate:feedback-images:execute": "node scripts/migrate-feedback-images-to-blob.mjs --execute"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^25.0.9",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
-    "@vercel/kv": "^3.0.0",
     "autoprefixer": "^10.4.23",
     "canvas-confetti": "^1.9.4",
     "clsx": "^2.1.1",
@@ -43,7 +48,6 @@
     "tailwindcss": "^4.1.18"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "^1.17.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@types/canvas-confetti": "^1.9.0",
     "@types/seedrandom": "^3.0.8",
@@ -52,7 +56,6 @@
     "jsdom": "^27.4.0",
     "typescript": "5.9.3",
     "vite-tsconfig-paths": "^6.0.5",
-    "vitest": "^4.0.18",
-    "wrangler": "^4.67.0"
+    "vitest": "^4.0.18"
   }
 }

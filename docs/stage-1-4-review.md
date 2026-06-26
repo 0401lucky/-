@@ -98,9 +98,9 @@
 当前证据：
 
 - `scripts/audit-production-cutover-readiness.mjs` 输出 `ok:true`、`ready:false`。
-- 当前 blocked modules 为 `wallet`、`profile`、`notifications`、`farm`、`cards`。
+- 当前 blocked modules 为 `auth`、`wallet`、`profile`、`notifications`、`farm`、`cards`。
 - `scripts/audit-gateway-cutover-guard.mjs` 通过。
-- 禁切路径仍包括 `/api/farm*`、`/api/profile*`、`/api/notifications*`、`/api/cards*`、`/api/admin/cards*`、`/api/games/*`、`/api/admin/*`。
+- 禁切路径仍包括 `/api/auth*`、`/api/farm*`、`/api/profile*`、`/api/notifications*`、`/api/cards*`、`/api/admin/cards*`、`/api/games/*`、`/api/admin/*`。
 - `scripts/audit-postgres-migrations.mjs` 通过，当前最新 migration 为 `0018_feedback.sql`。
 
 保留风险：

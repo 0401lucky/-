@@ -41,6 +41,7 @@ func (handlers adminUserHandlers) list(writer http.ResponseWriter, request *http
 		parseOptionalPositiveInt64(query.Get("page"), 1),
 		parseOptionalPositiveInt64(query.Get("limit"), 50),
 		query.Get("search"),
+		query.Get("status"),
 	)
 	if err != nil {
 		handlers.deps.Logger.Error("查询后台用户列表失败", "error", err)
@@ -92,8 +93,11 @@ func (handlers adminUserHandlers) detail(writer http.ResponseWriter, request *ht
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"success":        true,
+		"user":           detail.User,
+		"overview":       detail.Overview,
 		"claims":         detail.Claims,
 		"lotteryRecords": detail.LotteryRecords,
+		"exchangeLogs":   detail.ExchangeLogs,
 		"achievements":   detail.Achievements,
 	})
 }

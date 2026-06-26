@@ -27,7 +27,9 @@ func newEconomyHandlers(deps Dependencies) economyHandlers {
 func newWalletQuotaClient(deps Dependencies) economy.WalletQuotaClient {
 	if deps.Config.NewAPIURL == "" &&
 		deps.Config.NewAPIAdminAccessToken == "" &&
-		deps.Config.NewAPIAdminUserID == "" {
+		deps.Config.NewAPIAdminUserID == "" &&
+		deps.Config.NewAPIAdminUsername == "" &&
+		deps.Config.NewAPIAdminPassword == "" {
 		return nil
 	}
 
@@ -35,6 +37,8 @@ func newWalletQuotaClient(deps Dependencies) economy.WalletQuotaClient {
 		BaseURL:          deps.Config.NewAPIURL,
 		AdminAccessToken: deps.Config.NewAPIAdminAccessToken,
 		AdminUserID:      deps.Config.NewAPIAdminUserID,
+		AdminUsername:    deps.Config.NewAPIAdminUsername,
+		AdminPassword:    deps.Config.NewAPIAdminPassword,
 	})
 	if err != nil {
 		deps.Logger.Warn("new-api 管理端配置无效，钱包充值/提现接口将返回 503", "error", err)
@@ -315,6 +319,15 @@ func (handlers economyHandlers) writeWalletServiceError(writer http.ResponseWrit
 			"success": false,
 			"code":    "WALLET_LOCK_UNAVAILABLE",
 			"message": "钱包操作锁不可用，请稍后再试",
+		})
+		return
+	}
+	if errors.Is(err, newapi.ErrAdminAuthFailed) {
+		handlers.deps.Logger.Error(logMessage, "error", err)
+		writeJSON(writer, http.StatusBadGateway, map[string]any{
+			"success": false,
+			"code":    "NEW_API_AUTH_FAILED",
+			"message": "new-api 管理端鉴权失败：请检查 NEW_API_ADMIN_ACCESS_TOKEN 是否为管理员的系统访问令牌，以及 NEW_API_ADMIN_USER_ID 是否为该管理员的数字用户 ID",
 		})
 		return
 	}

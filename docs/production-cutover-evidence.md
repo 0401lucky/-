@@ -47,8 +47,9 @@ deploy/production-cutover-evidence.example.json
 
 ## 模块证据
 
-当前需要证据包覆盖 5 个仍阻塞生产切流的模块：
+当前需要证据包覆盖 6 个仍阻塞生产切流的模块：
 
+- `auth`：Go 登录、`auth/me` 用户同步、登出撤销会话、登录/退出页面级冒烟、Gateway 切流审批。
 - `wallet`：new-api 配置、真实登录态 API 冒烟、页面级冒烟、Gateway 切流审批。
 - `profile`：新库默认资料/成就状态复核、真实登录态 API 冒烟、页面级冒烟、Gateway 切流审批。
 - `notifications`：新库通知/奖励领取默认状态复核、真实登录态 API 冒烟、页面级冒烟、Gateway 切流审批。

@@ -22,8 +22,6 @@ const requiredGroups = {
   ],
   newAPI: [
     'NEW_API_URL',
-    'NEW_API_ADMIN_ACCESS_TOKEN',
-    'NEW_API_ADMIN_USER_ID',
   ],
   workerCron: [
     'RAFFLE_DELIVERY_CRON_SECRET',
@@ -43,6 +41,7 @@ const secretMinLength = {
   SESSION_SECRET: 32,
   INTERNAL_API_SECRET: 24,
   NEW_API_ADMIN_ACCESS_TOKEN: 16,
+  NEW_API_ADMIN_PASSWORD: 1,
   RAFFLE_DELIVERY_CRON_SECRET: 24,
   CRON_SECRET: 24,
   S3_ACCESS_KEY_ID: 8,
@@ -103,6 +102,7 @@ const placeholders = [];
 const weakSecrets = [];
 const invalidValues = [];
 const localOnlyValues = [];
+const authMissing = [];
 
 for (const [group, keys] of Object.entries(requiredGroups)) {
   for (const key of keys) {
@@ -128,6 +128,36 @@ for (const [group, keys] of Object.entries(requiredGroups)) {
   }
 }
 
+function envValue(key) {
+  return String(env[key] || '').trim();
+}
+
+const hasNewAPITokenPair = envValue('NEW_API_ADMIN_ACCESS_TOKEN') !== '' && envValue('NEW_API_ADMIN_USER_ID') !== '';
+const hasNewAPIPasswordPair = envValue('NEW_API_ADMIN_USERNAME') !== '' && envValue('NEW_API_ADMIN_PASSWORD') !== '';
+if (!hasNewAPITokenPair && !hasNewAPIPasswordPair) {
+  authMissing.push('newAPI.auth: configure NEW_API_ADMIN_ACCESS_TOKEN + NEW_API_ADMIN_USER_ID or NEW_API_ADMIN_USERNAME + NEW_API_ADMIN_PASSWORD');
+}
+for (const key of [
+  'NEW_API_ADMIN_ACCESS_TOKEN',
+  'NEW_API_ADMIN_USER_ID',
+  'NEW_API_ADMIN_USERNAME',
+  'NEW_API_ADMIN_PASSWORD',
+]) {
+  const value = envValue(key);
+  if (value === '') {
+    continue;
+  }
+  if (hasPlaceholder(value)) {
+    placeholders.push(`newAPI.${key}`);
+  }
+  if (!allowLocal && isLocalValue(value)) {
+    localOnlyValues.push(`newAPI.${key}`);
+  }
+  if (key in secretMinLength && value.length < secretMinLength[key]) {
+    weakSecrets.push(`newAPI.${key}:min${secretMinLength[key]}`);
+  }
+}
+
 for (const [key, valid] of Object.entries({
   NODE_ENV: String(env.NODE_ENV || '') === 'production',
   PORT: /^\d+$/.test(String(env.PORT || '')),
@@ -142,7 +172,7 @@ for (const [key, valid] of Object.entries({
   }
 }
 
-if (envFileMissing || missing.length > 0 || blank.length > 0 || placeholders.length > 0 || weakSecrets.length > 0 || invalidValues.length > 0 || localOnlyValues.length > 0) {
+if (envFileMissing || missing.length > 0 || blank.length > 0 || authMissing.length > 0 || placeholders.length > 0 || weakSecrets.length > 0 || invalidValues.length > 0 || localOnlyValues.length > 0) {
   console.error(JSON.stringify({
     ok: false,
     mode: 'zeabur-runtime-env-audit',
@@ -151,6 +181,7 @@ if (envFileMissing || missing.length > 0 || blank.length > 0 || placeholders.len
     allowLocal,
     missing,
     blank,
+    authMissing,
     placeholders,
     weakSecrets,
     invalidValues,
@@ -166,5 +197,5 @@ console.log(JSON.stringify({
   envFileMissing,
   allowLocal,
   checkedGroups: Object.keys(requiredGroups),
-  checkedKeys: Object.values(requiredGroups).flat().length,
+  checkedKeys: Object.values(requiredGroups).flat().length + 4,
 }, null, 2));

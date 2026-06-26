@@ -24,6 +24,16 @@ workflow 文件：
 .github/workflows/build-ghcr-image.yml
 ```
 
+推送前建议先运行当前 Go/Zeabur 发版汇总审计：
+
+```bash
+npm run audit:current-go-zeabur-release
+npm run typecheck
+```
+
+该审计会确认 GHCR workflow、单容器 Dockerfile、Zeabur 单服务计划、PR #9 Go
+补接门禁和 C1-C3 清理 readiness。它只做只读检查，不会部署或删除文件。
+
 触发方式：
 
 - push 到 `main` 自动构建。
@@ -95,12 +105,32 @@ FEEDBACK_MEDIA_DIR=/data/feedback-media
 FEEDBACK_MEDIA_PUBLIC_URL=
 ```
 
+## 持久卷
+
+如果已经配置 S3/R2 兼容对象存储，反馈图片和卡牌图片会走对象存储。
+
+如果暂时不配置 S3/R2，Go API 会使用本地 fallback：
+
+```env
+FEEDBACK_MEDIA_DIR=/data/feedback-media
+```
+
+这种模式下建议在 Zeabur 给 app 服务挂一个 persistent volume：
+
+```text
+Mount Path: /data
+```
+
+否则容器重建后，写入 `/data/feedback-media` 的本地反馈附件可能丢失。
+
 可选外部服务：
 
 ```env
 NEW_API_URL=
 NEW_API_ADMIN_ACCESS_TOKEN=
 NEW_API_ADMIN_USER_ID=该访问令牌所属管理员的数字用户ID，不是用户名
+NEW_API_ADMIN_USERNAME=
+NEW_API_ADMIN_PASSWORD=
 
 R2_PUBLIC_URL=
 S3_ENDPOINT=
@@ -110,6 +140,23 @@ S3_BUCKET_FEEDBACK_IMAGES=feedback-images
 S3_BUCKET_CARD_IMAGES=card-images
 ```
 
+`NEW_API_ADMIN_ACCESS_TOKEN` 要填写 new-api 管理员账号在「个人设置 / 系统访问令牌」
+生成的 token。不要填写渠道 API Key、模型转发 key、登录密码或 Cookie。
+如果不想生成 token，可以填写 `NEW_API_ADMIN_USERNAME` 和 `NEW_API_ADMIN_PASSWORD`，
+Go 会登录管理员账号拿 session cookie 后再调用管理接口。
+
+当前 Go 后端会调用你的 new-api fork：
+
+```http
+GET /api/user/{目标用户ID}
+POST /api/user/manage
+Authorization: Bearer <NEW_API_ADMIN_ACCESS_TOKEN>
+New-Api-User: <NEW_API_ADMIN_USER_ID>
+```
+
+如果 Zeabur 日志出现 `NEW_API_AUTH_FAILED` 或 `Unauthorized, invalid access token`，
+优先检查 `NEW_API_ADMIN_ACCESS_TOKEN` 是否误填成管理员密码。正确做法是重新生成管理员系统访问令牌，并确认 `NEW_API_ADMIN_USER_ID` 是同一个管理员账号的数字 ID；或者直接配置管理员账号密码 fallback。
+
 ## 首次部署后
 
 进入 Zeabur 的 `app` Shell 执行：
@@ -117,6 +164,9 @@ S3_BUCKET_CARD_IMAGES=card-images
 ```bash
 /app/migrate
 ```
+
+`/app/migrate` 只负责把 PostgreSQL 表结构建好或升级到最新版本。fresh Zeabur
+新部署不需要从 Cloudflare D1 导入数据。
 
 然后检查：
 

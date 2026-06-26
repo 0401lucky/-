@@ -32,7 +32,7 @@ import {
   type RogueliteRelicType,
   type RogueliteStateView,
 } from '@/lib/roguelite-engine';
-import type { RogueliteGameRecord, RogueliteSessionView } from '@/lib/roguelite';
+import type { RogueliteGameRecord, RogueliteSessionView } from '@/lib/roguelite-types';
 
 interface RogueliteStatus {
   balance: number;

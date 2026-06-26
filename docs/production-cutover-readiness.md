@@ -84,6 +84,7 @@ Remove-Item Env:\ZEABUR_ENV_FILE
 审计覆盖以下仍禁止通配切流的模块：
 
 - `wallet`：需要 new-api 管理端配置和真实登录态只读余额冒烟。
+- `auth`：需要 Go 登录、`auth/me` 用户同步、登出撤销会话和真实登录/退出页面冒烟。
 - `profile`：需要新库默认资料/成就状态复核和真实登录态冒烟。
 - `notifications`：需要新库通知/奖励领取默认状态复核和真实登录态冒烟。
 - `farm`：需要新库农场初始状态、种子数据、真实登录态直连冒烟和页面级冒烟。
@@ -101,6 +102,7 @@ Remove-Item Env:\ZEABUR_ENV_FILE
 - `NEW_API_URL`
 - `NEW_API_ADMIN_ACCESS_TOKEN`
 - `NEW_API_ADMIN_USER_ID`
+- `AUTH_GO_API_COOKIE`
 - `WALLET_GO_API_COOKIE`
 - `PROFILE_GO_API_COOKIE`
 - `NOTIFICATIONS_GO_API_COOKIE`
@@ -116,6 +118,7 @@ Remove-Item Env:\ZEABUR_ENV_FILE
 继续禁止：
 
 - `/api/farm*`
+- `/api/auth*`
 - `/api/profile*`
 - `/api/notifications*`
 - `/api/store/topup`

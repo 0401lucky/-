@@ -235,8 +235,13 @@ for (const [label, expected, actual] of [
 }
 
 const missingRouteFiles = legacyRouteFiles.filter((relativePath) => !existsSync(path.join(repoRoot, relativePath)));
-if (missingRouteFiles.length > 0) {
-  fail('legacy lottery route files changed before Go migration was updated', missingRouteFiles);
+const legacyRouteStatus = missingRouteFiles.length === legacyRouteFiles.length
+  ? 'physically-deleted'
+  : missingRouteFiles.length === 0
+    ? 'present'
+    : 'partially-deleted';
+if (legacyRouteStatus === 'partially-deleted') {
+  fail('legacy lottery route files are only partially deleted', missingRouteFiles);
 }
 
 const legacySource = [
@@ -388,6 +393,7 @@ console.log(JSON.stringify({
   goLegacyAdminLotteryTombstoneRoutes: requiredB47ServerRoutes,
   goTables: requiredB41MigrationMarkers.map((marker) => marker.replace('CREATE TABLE IF NOT EXISTS ', '')),
   legacyRouteFiles,
+  legacyRouteStatus,
   legacyKvMarkers: requiredLegacyKvMarkers,
   gatewayLotteryRules: expectedLotteryGatewayRules,
 }, null, 2));

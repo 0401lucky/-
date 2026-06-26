@@ -14,6 +14,14 @@
     "remoteRuntimeSmokePassed": false
   },
   "modules": {
+    "auth": {
+      "loginApiSmokePassed": false,
+      "meApiSmokePassed": false,
+      "logoutApiSmokePassed": false,
+      "pageSmokePassed": false,
+      "gatewayCutoverApproved": false,
+      "notes": "需要 Go 登录、auth/me 用户同步、登出撤销会话和登录页面流程冒烟"
+    },
     "wallet": {
       "newApiConfigured": false,
       "authenticatedApiSmokePassed": false,

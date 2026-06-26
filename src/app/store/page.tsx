@@ -41,6 +41,7 @@ import {
   previewWithdraw,
 } from '@/lib/wallet-rules';
 import type { PublicAchievement } from '@/lib/profile-achievements';
+import { formatChinaDateTime } from '@/lib/time';
 
 // ============================================================================
 // 类型
@@ -98,8 +99,9 @@ interface RaffleItem {
   title: string;
   description: string;
   prizes: RafflePrize[];
-  triggerType: 'threshold' | 'manual';
+  triggerType: 'threshold' | 'manual' | 'scheduled';
   threshold: number;
+  scheduledDrawAt?: number;
   status: 'active' | 'ended' | 'draft' | 'cancelled';
   participantsCount: number;
   winnersCount: number;
@@ -1126,6 +1128,7 @@ function StoreContent() {
                   ? raffle.redPacketRemainingSlots ?? Math.max(0, totalQuantity - raffle.participantsCount)
                   : 0;
                 const isThreshold = raffle.triggerType === 'threshold' && raffle.threshold > 0;
+                const isScheduled = raffle.triggerType === 'scheduled' && !!raffle.scheduledDrawAt;
                 // 阈值触发：参与人数/阈值；手动触发：粗略估算（参与即 60%）
                 const progress = isRedPacket && totalQuantity > 0
                   ? Math.min(100, Math.round((raffle.participantsCount / totalQuantity) * 100))
@@ -1159,6 +1162,8 @@ function StoreContent() {
                             <span className="ic-tag limit">剩 {remainingSlots} 个红包</span>
                           ) : isThreshold ? (
                             <span className="ic-tag limit">满 {raffle.threshold} 人开奖</span>
+                          ) : isScheduled ? (
+                            <span className="ic-tag limit">{formatChinaDateTime(raffle.scheduledDrawAt)} 开奖</span>
                           ) : (
                             <span className="ic-tag limit">手动开奖</span>
                           )}
@@ -1184,6 +1189,8 @@ function StoreContent() {
                             <>剩 <span className="num">{formatNumber(remainingSlots)}</span> 个</>
                           ) : isThreshold ? (
                             <>差 <span className="num">{formatNumber(Math.max(0, raffle.threshold - raffle.participantsCount))}</span> 人</>
+                          ) : isScheduled ? (
+                            <>到点 <span className="num">开奖</span></>
                           ) : (
                             <>奖品 <span className="num">{formatNumber(totalQuantity)}</span> 份</>
                           )}

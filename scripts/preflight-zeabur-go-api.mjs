@@ -4,6 +4,16 @@ const includeInternal = process.env.ZEABUR_PREFLIGHT_INCLUDE_INTERNAL === '1';
 
 const steps = [
   ['migration artifact audit', 'node', ['scripts/audit-migration-artifacts.mjs'], 60000],
+  ['pr 9 go reconciliation audit', 'node', ['scripts/audit-pr-9-go-reconciliation.mjs'], 60000],
+  ['legacy cloudflare residuals audit', 'node', ['scripts/audit-legacy-cloudflare-residuals.mjs'], 60000],
+  ['c1-c3 cleanup readiness audit', 'node', ['scripts/audit-c1-c3-cleanup-readiness.mjs'], 180000],
+  ['c1-c3 cleanup runbook audit', 'node', ['scripts/audit-c1-c3-cleanup-runbook.mjs'], 60000],
+  ['next api route deletion dry-run', 'node', ['scripts/remove-next-api-routes.mjs', '--batch=01-tombstoned-legacy-tools'], 60000],
+  ['next api route cleanup guards', 'node', ['scripts/test-remove-next-api-routes-guards.mjs'], 60000],
+  ['cloudflare deploy artifacts deletion dry-run', 'node', ['scripts/remove-cloudflare-deploy-artifacts.mjs'], 60000],
+  ['cloudflare deploy artifacts cleanup guards', 'node', ['scripts/test-remove-cloudflare-deploy-artifacts-guards.mjs'], 60000],
+  ['package cloudflare signals cleanup dry-run', 'node', ['scripts/plan-package-cloudflare-cleanup.mjs'], 60000],
+  ['package cloudflare signals cleanup guards', 'node', ['scripts/test-package-cloudflare-cleanup-guards.mjs'], 60000],
   ['compose topology audit', 'node', ['scripts/audit-compose-topology.mjs'], 60000],
   ['dockerfile audit', 'node', ['scripts/audit-dockerfiles.mjs'], 60000],
   ['postgres migrations audit', 'node', ['scripts/audit-postgres-migrations.mjs'], 60000],

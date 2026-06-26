@@ -102,6 +102,7 @@ type RaffleListItem struct {
 	Prizes                   json.RawMessage `json:"prizes"`
 	TriggerType              string          `json:"triggerType"`
 	Threshold                int64           `json:"threshold"`
+	ScheduledDrawAt          *int64          `json:"scheduledDrawAt,omitempty"`
 	Status                   string          `json:"status"`
 	ParticipantsCount        int64           `json:"participantsCount"`
 	WinnersCount             int64           `json:"winnersCount"`
@@ -141,6 +142,7 @@ type CreateAdminRaffleInput struct {
 	Prizes               []AdminRafflePrizeInput `json:"prizes,omitempty"`
 	TriggerType          string                  `json:"triggerType,omitempty"`
 	Threshold            int64                   `json:"threshold,omitempty"`
+	ScheduledDrawAt      *int64                  `json:"scheduledDrawAt,omitempty"`
 	RedPacketTotalPoints *int64                  `json:"redPacketTotalPoints,omitempty"`
 	RedPacketTotalSlots  *int64                  `json:"redPacketTotalSlots,omitempty"`
 	CreatedBy            int64                   `json:"createdBy"`
@@ -154,6 +156,7 @@ type UpdateAdminRaffleInput struct {
 	Prizes               *[]AdminRafflePrizeInput `json:"prizes,omitempty"`
 	TriggerType          *string                  `json:"triggerType,omitempty"`
 	Threshold            *int64                   `json:"threshold,omitempty"`
+	ScheduledDrawAt      *int64                   `json:"scheduledDrawAt,omitempty"`
 	RedPacketTotalPoints *int64                   `json:"redPacketTotalPoints,omitempty"`
 	RedPacketTotalSlots  *int64                   `json:"redPacketTotalSlots,omitempty"`
 }
@@ -225,6 +228,16 @@ type RaffleDeliveryQueueResult struct {
 	Pending       int64  `json:"pending"`
 	SkippedJobs   int64  `json:"skippedJobs"`
 	RecoveredJobs int64  `json:"recoveredJobs"`
+}
+
+type ScheduledRaffleDrawResult struct {
+	Success  bool   `json:"success"`
+	Message  string `json:"message"`
+	Checked  int64  `json:"checked"`
+	Drawn    int64  `json:"drawn"`
+	Enqueued int64  `json:"enqueued"`
+	Skipped  int64  `json:"skipped"`
+	Failed   int64  `json:"failed"`
 }
 
 type RaffleDetailResult struct {

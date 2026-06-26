@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -51,12 +52,13 @@ func (service *Service) GetAlerts(ctx context.Context, detect bool, reference ti
 	return alerts, detection, nil
 }
 
-func (service *Service) Get(ctx context.Context, detect bool, reference time.Time) (Data, error) {
+func (service *Service) Get(ctx context.Context, detect bool, reference time.Time, pointsPeriod string) (Data, error) {
 	if reference.IsZero() {
 		reference = time.Now()
 	}
 	dayStart := chinaDayStart(reference)
 	monthStart := chinaMonthStart(reference)
+	pointsPeriod = normalizePointsAnalyticsPeriod(pointsPeriod)
 
 	totalUsers, err := service.countUsers(ctx)
 	if err != nil {
@@ -79,6 +81,18 @@ func (service *Service) Get(ctx context.Context, detect bool, reference time.Tim
 		return Data{}, err
 	}
 	pointsIn, pointsOut, err := service.pointsFlow(ctx, dayStart)
+	if err != nil {
+		return Data{}, err
+	}
+	engagement, err := service.getEngagementOverview(ctx, dayStart)
+	if err != nil {
+		return Data{}, err
+	}
+	operations, err := service.getOperationsOverview(ctx)
+	if err != nil {
+		return Data{}, err
+	}
+	pointsAnalytics, err := service.getPointsAnalytics(ctx, reference, pointsPeriod)
 	if err != nil {
 		return Data{}, err
 	}
@@ -117,11 +131,14 @@ func (service *Service) Get(ctx context.Context, detect bool, reference time.Tim
 				TodayClaims:       todayClaims,
 				TodayLotterySpins: todayLotterySpins,
 			},
+			Engagement: engagement,
+			Operations: operations,
 			PointsFlow: PointsFlowOverview{
 				TodayIn:  pointsIn,
 				TodayOut: pointsOut,
 				TodayNet: pointsIn - pointsOut,
 			},
+			PointsAnalytics: pointsAnalytics,
 			Games: GamesOverview{
 				Participants:      gameParticipants,
 				ParticipationRate: participationRate(gameParticipants, totalUsers),
@@ -209,6 +226,57 @@ func (service *Service) countGameParticipants(ctx context.Context, since time.Ti
 	return count, err
 }
 
+func (service *Service) getEngagementOverview(ctx context.Context, dayStart time.Time) (EngagementOverview, error) {
+	dayStartMs := dayStart.UnixMilli()
+	var overview EngagementOverview
+	if err := service.db.QueryRow(ctx, `SELECT COUNT(*)::bigint FROM checkin_records WHERE checkin_date = $1::date`, dayStart).Scan(&overview.TodayCheckins); err != nil {
+		return EngagementOverview{}, err
+	}
+	if err := service.db.QueryRow(ctx, `SELECT COUNT(*)::bigint FROM card_draw_logs WHERE created_at_ms >= $1`, dayStartMs).Scan(&overview.TodayCardDraws); err != nil {
+		return EngagementOverview{}, err
+	}
+	if err := service.db.QueryRow(ctx, `SELECT COUNT(*)::bigint FROM card_reward_claims WHERE claimed_at_ms >= $1`, dayStartMs).Scan(&overview.TodayCardExchanges); err != nil {
+		return EngagementOverview{}, err
+	}
+	if err := service.db.QueryRow(ctx, `SELECT COUNT(*)::bigint FROM game_sessions WHERE started_at >= $1`, dayStart).Scan(&overview.TodayGamesStarted); err != nil {
+		return EngagementOverview{}, err
+	}
+	if err := service.db.QueryRow(ctx, `SELECT COUNT(*)::bigint FROM game_records WHERE created_at >= $1`, dayStart).Scan(&overview.TodayGamesCompleted); err != nil {
+		return EngagementOverview{}, err
+	}
+	return overview, nil
+}
+
+func (service *Service) getOperationsOverview(ctx context.Context) (OperationsOverview, error) {
+	var overview OperationsOverview
+	if err := service.db.QueryRow(ctx,
+		`SELECT COUNT(*)::bigint,
+		        COUNT(*) FILTER (WHERE status = 'active')::bigint,
+		        COALESCE(SUM(GREATEST(max_claims - claimed_count, 0)) FILTER (WHERE status = 'active'), 0)::bigint
+		   FROM projects`,
+	).Scan(&overview.Projects.Total, &overview.Projects.Active, &overview.Projects.RemainingSlots); err != nil {
+		return OperationsOverview{}, err
+	}
+	if err := service.db.QueryRow(ctx, `SELECT COUNT(*)::bigint FROM raffles WHERE status = 'active'`).Scan(&overview.Raffles.Active); err != nil {
+		return OperationsOverview{}, err
+	}
+	if err := service.db.QueryRow(ctx, `SELECT COUNT(*)::bigint FROM store_items WHERE enabled = TRUE`).Scan(&overview.Store.EnabledItems); err != nil {
+		return OperationsOverview{}, err
+	}
+	if err := service.db.QueryRow(ctx,
+		`SELECT COUNT(*) FILTER (WHERE status = 'open')::bigint,
+		        COUNT(*) FILTER (WHERE status = 'processing')::bigint
+		   FROM feedback_items
+		  WHERE archived_at_ms IS NULL`,
+	).Scan(&overview.Feedback.Open, &overview.Feedback.Processing); err != nil {
+		return OperationsOverview{}, err
+	}
+	if err := service.db.QueryRow(ctx, `SELECT COUNT(*)::bigint FROM announcements WHERE status = 'published'`).Scan(&overview.Announcements.Published); err != nil {
+		return OperationsOverview{}, err
+	}
+	return overview, nil
+}
+
 func (service *Service) countActiveUsers(ctx context.Context, since time.Time) (int64, error) {
 	var count int64
 	err := service.db.QueryRow(ctx,
@@ -240,6 +308,343 @@ func (service *Service) pointsFlow(ctx context.Context, since time.Time) (int64,
 		since,
 	).Scan(&incoming, &outgoing)
 	return incoming, outgoing, err
+}
+
+type pointsAnalyticsRange struct {
+	period     string
+	start      time.Time
+	end        time.Time
+	label      string
+	bucketUnit string
+	buckets    []time.Time
+	labels     []string
+}
+
+type pointsLedgerRow struct {
+	userID      int64
+	amount      int64
+	source      string
+	description string
+	createdAt   time.Time
+}
+
+type pointsCategoryAccumulator struct {
+	key          string
+	label        string
+	total        int64
+	count        int64
+	users        map[int64]struct{}
+	descriptions map[string]*PointsPathDetail
+	buckets      []PointsPathSeriesBucket
+}
+
+type pointsDirectionAccumulator struct {
+	total      int64
+	count      int64
+	users      map[int64]struct{}
+	categories map[string]*pointsCategoryAccumulator
+}
+
+func (service *Service) getPointsAnalytics(ctx context.Context, reference time.Time, period string) (PointsAnalytics, error) {
+	analyticsRange := buildPointsAnalyticsRange(reference, period)
+	rows, err := service.db.Query(ctx,
+		`SELECT user_id, amount, source, description, created_at
+		   FROM point_ledger
+		  WHERE created_at >= $1 AND created_at < $2
+		  ORDER BY created_at ASC`,
+		analyticsRange.start,
+		analyticsRange.end,
+	)
+	if err != nil {
+		return PointsAnalytics{}, err
+	}
+	defer rows.Close()
+
+	earning := newPointsDirectionAccumulator()
+	spending := newPointsDirectionAccumulator()
+	var scannedLogs int64
+	for rows.Next() {
+		var row pointsLedgerRow
+		if err := rows.Scan(&row.userID, &row.amount, &row.source, &row.description, &row.createdAt); err != nil {
+			return PointsAnalytics{}, err
+		}
+		if row.amount == 0 {
+			continue
+		}
+		scannedLogs++
+		if row.amount > 0 {
+			earning.add(row, row.amount, analyticsRange)
+		} else {
+			spending.add(row, -row.amount, analyticsRange)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return PointsAnalytics{}, err
+	}
+
+	userIDs := map[int64]struct{}{}
+	for userID := range earning.users {
+		userIDs[userID] = struct{}{}
+	}
+	for userID := range spending.users {
+		userIDs[userID] = struct{}{}
+	}
+
+	return PointsAnalytics{
+		Period: analyticsRange.period,
+		Range: PointsAnalyticsRange{
+			StartAt:    analyticsRange.start.UnixMilli(),
+			EndAt:      analyticsRange.end.UnixMilli(),
+			Label:      analyticsRange.label,
+			BucketUnit: analyticsRange.bucketUnit,
+		},
+		BucketLabels: analyticsRange.labels,
+		Earning:      earning.result(analyticsRange),
+		Spending:     spending.result(analyticsRange),
+		Meta: PointsAnalyticsMeta{
+			Storage:      "native",
+			ScannedUsers: int64(len(userIDs)),
+			ScannedLogs:  scannedLogs,
+		},
+	}, nil
+}
+
+func normalizePointsAnalyticsPeriod(period string) string {
+	switch strings.TrimSpace(period) {
+	case "week", "month":
+		return period
+	default:
+		return "day"
+	}
+}
+
+func buildPointsAnalyticsRange(reference time.Time, period string) pointsAnalyticsRange {
+	period = normalizePointsAnalyticsPeriod(period)
+	dayStart := chinaDayStart(reference)
+	switch period {
+	case "week":
+		start := dayStart.AddDate(0, 0, -6)
+		buckets, labels := dayBuckets(start, 7, "01/02")
+		return pointsAnalyticsRange{
+			period:     period,
+			start:      start,
+			end:        reference,
+			label:      "近 7 天",
+			bucketUnit: "day",
+			buckets:    buckets,
+			labels:     labels,
+		}
+	case "month":
+		start := chinaMonthStart(reference)
+		days := int(dayStart.Sub(start).Hours()/24) + 1
+		if days < 1 {
+			days = 1
+		}
+		buckets, labels := dayBuckets(start, days, "01/02")
+		return pointsAnalyticsRange{
+			period:     period,
+			start:      start,
+			end:        reference,
+			label:      fmt.Sprintf("%04d-%02d", reference.UTC().Add(chinaOffset).Year(), reference.UTC().Add(chinaOffset).Month()),
+			bucketUnit: "day",
+			buckets:    buckets,
+			labels:     labels,
+		}
+	default:
+		buckets := make([]time.Time, 24)
+		labels := make([]string, 24)
+		for index := 0; index < 24; index++ {
+			bucket := dayStart.Add(time.Duration(index) * time.Hour)
+			buckets[index] = bucket
+			labels[index] = fmt.Sprintf("%02d:00", bucket.UTC().Add(chinaOffset).Hour())
+		}
+		china := reference.UTC().Add(chinaOffset)
+		return pointsAnalyticsRange{
+			period:     "day",
+			start:      dayStart,
+			end:        reference,
+			label:      fmt.Sprintf("%04d-%02d-%02d", china.Year(), china.Month(), china.Day()),
+			bucketUnit: "hour",
+			buckets:    buckets,
+			labels:     labels,
+		}
+	}
+}
+
+func dayBuckets(start time.Time, days int, layout string) ([]time.Time, []string) {
+	buckets := make([]time.Time, days)
+	labels := make([]string, days)
+	for index := 0; index < days; index++ {
+		bucket := start.AddDate(0, 0, index)
+		buckets[index] = bucket
+		labels[index] = bucket.UTC().Add(chinaOffset).Format(layout)
+	}
+	return buckets, labels
+}
+
+func newPointsDirectionAccumulator() *pointsDirectionAccumulator {
+	return &pointsDirectionAccumulator{
+		users:      map[int64]struct{}{},
+		categories: map[string]*pointsCategoryAccumulator{},
+	}
+}
+
+func (accumulator *pointsDirectionAccumulator) add(row pointsLedgerRow, absoluteAmount int64, analyticsRange pointsAnalyticsRange) {
+	accumulator.total += absoluteAmount
+	accumulator.count++
+	accumulator.users[row.userID] = struct{}{}
+
+	key := normalizePointsSource(row.source)
+	category, ok := accumulator.categories[key]
+	if !ok {
+		category = &pointsCategoryAccumulator{
+			key:          key,
+			label:        pointsSourceLabel(key),
+			users:        map[int64]struct{}{},
+			descriptions: map[string]*PointsPathDetail{},
+			buckets:      make([]PointsPathSeriesBucket, len(analyticsRange.buckets)),
+		}
+		for index, bucket := range analyticsRange.buckets {
+			category.buckets[index] = PointsPathSeriesBucket{
+				BucketStart: bucket.UnixMilli(),
+				Label:       analyticsRange.labels[index],
+			}
+		}
+		accumulator.categories[key] = category
+	}
+
+	category.total += absoluteAmount
+	category.count++
+	category.users[row.userID] = struct{}{}
+	description := strings.TrimSpace(row.description)
+	if description == "" {
+		description = pointsSourceLabel(key)
+	}
+	detail, ok := category.descriptions[description]
+	if !ok {
+		detail = &PointsPathDetail{Description: description}
+		category.descriptions[description] = detail
+	}
+	detail.Total += absoluteAmount
+	detail.Count++
+	if bucketIndex := pointsBucketIndex(row.createdAt, analyticsRange); bucketIndex >= 0 && bucketIndex < len(category.buckets) {
+		category.buckets[bucketIndex].Value += absoluteAmount
+		category.buckets[bucketIndex].Count++
+	}
+}
+
+func (accumulator *pointsDirectionAccumulator) result(analyticsRange pointsAnalyticsRange) PointsDirectionAnalytics {
+	categories := make([]PointsPathCategory, 0, len(accumulator.categories))
+	series := make([]PointsPathSeries, 0, len(accumulator.categories))
+	for _, category := range accumulator.categories {
+		topDescriptions := make([]PointsPathDetail, 0, len(category.descriptions))
+		for _, detail := range category.descriptions {
+			topDescriptions = append(topDescriptions, *detail)
+		}
+		sort.Slice(topDescriptions, func(left, right int) bool {
+			if topDescriptions[left].Total == topDescriptions[right].Total {
+				return topDescriptions[left].Description < topDescriptions[right].Description
+			}
+			return topDescriptions[left].Total > topDescriptions[right].Total
+		})
+		percent := float64(0)
+		if accumulator.total > 0 {
+			percent = math.Round((float64(category.total)/float64(accumulator.total))*10000) / 100
+		}
+		average := int64(0)
+		if category.count > 0 {
+			average = int64(math.Round(float64(category.total) / float64(category.count)))
+		}
+		categories = append(categories, PointsPathCategory{
+			Key:             category.key,
+			Label:           category.label,
+			Total:           category.total,
+			Count:           category.count,
+			UserCount:       int64(len(category.users)),
+			Percent:         percent,
+			Average:         average,
+			TopDescriptions: topDescriptions,
+		})
+		series = append(series, PointsPathSeries{
+			Key:    category.key,
+			Label:  category.label,
+			Total:  category.total,
+			Points: category.buckets,
+		})
+	}
+	sort.Slice(categories, func(left, right int) bool {
+		if categories[left].Total == categories[right].Total {
+			return categories[left].Label < categories[right].Label
+		}
+		return categories[left].Total > categories[right].Total
+	})
+	sort.Slice(series, func(left, right int) bool {
+		if series[left].Total == series[right].Total {
+			return series[left].Label < series[right].Label
+		}
+		return series[left].Total > series[right].Total
+	})
+	average := int64(0)
+	if accumulator.count > 0 {
+		average = int64(math.Round(float64(accumulator.total) / float64(accumulator.count)))
+	}
+	return PointsDirectionAnalytics{
+		Total:      accumulator.total,
+		Count:      accumulator.count,
+		UserCount:  int64(len(accumulator.users)),
+		Average:    average,
+		Categories: categories,
+		Series:     series,
+	}
+}
+
+func pointsBucketIndex(createdAt time.Time, analyticsRange pointsAnalyticsRange) int {
+	if createdAt.Before(analyticsRange.start) || createdAt.After(analyticsRange.end) {
+		return -1
+	}
+	if analyticsRange.bucketUnit == "hour" {
+		return int(createdAt.Sub(analyticsRange.start).Hours())
+	}
+	return int(createdAt.Sub(analyticsRange.start).Hours() / 24)
+}
+
+func normalizePointsSource(source string) string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return "unknown"
+	}
+	return source
+}
+
+func pointsSourceLabel(source string) string {
+	labels := map[string]string{
+		"game_play":          "游戏游玩",
+		"game_win":           "游戏胜利",
+		"daily_login":        "每日登录",
+		"checkin_bonus":      "签到奖励",
+		"exchange":           "商店兑换",
+		"exchange_refund":    "兑换回滚",
+		"exchange_withdraw":  "额度提现",
+		"exchange_topup":     "额度兑换",
+		"admin_adjust":       "管理员调整",
+		"card_collection":    "卡牌奖励",
+		"ranking_reward":     "排行榜奖励",
+		"reward_claim":       "奖励领取",
+		"lottery_win":        "幸运抽奖",
+		"raffle_win":         "多人抽奖",
+		"number_bomb_bet":    "数字炸弹下注",
+		"number_bomb_refund": "数字炸弹退还",
+		"number_bomb_reward": "数字炸弹奖励",
+		"project_claim":      "福利领取",
+		"eco_collect":        "环保回收",
+		"eco_prize":          "环保奖品",
+		"farm_harvest":       "农场收获",
+		"farm_purchase":      "农场购买",
+	}
+	if label, ok := labels[source]; ok {
+		return label
+	}
+	return source
 }
 
 func (service *Service) getAlertOverview(ctx context.Context) (AlertOverview, error) {

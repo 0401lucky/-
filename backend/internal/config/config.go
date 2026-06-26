@@ -17,6 +17,8 @@ type Config struct {
 	NewAPIURL              string
 	NewAPIAdminAccessToken string
 	NewAPIAdminUserID      string
+	NewAPIAdminUsername    string
+	NewAPIAdminPassword    string
 
 	R2PublicURL          string
 	S3Endpoint           string
@@ -42,6 +44,8 @@ func Load() (Config, error) {
 		NewAPIURL:              strings.TrimSpace(os.Getenv("NEW_API_URL")),
 		NewAPIAdminAccessToken: strings.TrimSpace(os.Getenv("NEW_API_ADMIN_ACCESS_TOKEN")),
 		NewAPIAdminUserID:      strings.TrimSpace(os.Getenv("NEW_API_ADMIN_USER_ID")),
+		NewAPIAdminUsername:    strings.TrimSpace(os.Getenv("NEW_API_ADMIN_USERNAME")),
+		NewAPIAdminPassword:    strings.TrimSpace(os.Getenv("NEW_API_ADMIN_PASSWORD")),
 		R2PublicURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("R2_PUBLIC_URL")), "/"),
 		S3Endpoint:             strings.TrimSpace(os.Getenv("S3_ENDPOINT")),
 		S3AccessKeyID:          strings.TrimSpace(os.Getenv("S3_ACCESS_KEY_ID")),

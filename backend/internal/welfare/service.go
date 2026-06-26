@@ -97,7 +97,7 @@ func (service *Service) ListRaffles(ctx context.Context, filter RaffleListFilter
 
 	rows, err := service.db.Query(ctx,
 		`SELECT id, mode, title, description, COALESCE(cover_image, ''),
-		        prizes, trigger_type, threshold, status, participants_count,
+		        prizes, trigger_type, threshold, scheduled_draw_at_ms, status, participants_count,
 		        winners_count, drawn_at_ms, red_packet_total_points,
 		        red_packet_total_slots, red_packet_remaining_points,
 		        red_packet_remaining_slots, created_at_ms
@@ -117,6 +117,7 @@ func (service *Service) ListRaffles(ctx context.Context, filter RaffleListFilter
 	for rows.Next() {
 		var raffle RaffleListItem
 		var prizes []byte
+		var scheduledDrawAt sql.NullInt64
 		var drawnAt sql.NullInt64
 		var redPacketTotalPoints sql.NullInt64
 		var redPacketTotalSlots sql.NullInt64
@@ -131,6 +132,7 @@ func (service *Service) ListRaffles(ctx context.Context, filter RaffleListFilter
 			&prizes,
 			&raffle.TriggerType,
 			&raffle.Threshold,
+			&scheduledDrawAt,
 			&raffle.Status,
 			&raffle.ParticipantsCount,
 			&raffle.WinnersCount,
@@ -144,6 +146,7 @@ func (service *Service) ListRaffles(ctx context.Context, filter RaffleListFilter
 			return nil, err
 		}
 		raffle.Prizes = normalizeRawJSON(prizes)
+		raffle.ScheduledDrawAt = nullableInt64(scheduledDrawAt)
 		raffle.DrawnAt = nullableInt64(drawnAt)
 		raffle.RedPacketTotalPoints = nullableInt64(redPacketTotalPoints)
 		raffle.RedPacketTotalSlots = nullableInt64(redPacketTotalSlots)
@@ -158,7 +161,7 @@ func (service *Service) ListAdminRaffles(ctx context.Context, status string) ([]
 	status = strings.TrimSpace(status)
 	rows, err := service.db.Query(ctx,
 		`SELECT id, mode, title, description, COALESCE(cover_image, ''),
-		        prizes, trigger_type, threshold, status, participants_count,
+		        prizes, trigger_type, threshold, scheduled_draw_at_ms, status, participants_count,
 		        winners_count, winners, drawn_at_ms, red_packet_total_points,
 		        red_packet_total_slots, red_packet_remaining_points,
 		        red_packet_remaining_slots, red_packet_packets, created_by,
@@ -193,7 +196,7 @@ func (service *Service) GetAdminRaffleDetail(ctx context.Context, id string) (Ad
 
 	row := service.db.QueryRow(ctx,
 		`SELECT id, mode, title, description, COALESCE(cover_image, ''),
-		        prizes, trigger_type, threshold, status, participants_count,
+		        prizes, trigger_type, threshold, scheduled_draw_at_ms, status, participants_count,
 		        winners_count, winners, drawn_at_ms, red_packet_total_points,
 		        red_packet_total_slots, red_packet_remaining_points,
 		        red_packet_remaining_slots, red_packet_packets, created_by,
@@ -287,14 +290,15 @@ func (service *Service) JoinRaffle(ctx context.Context, raffleID string, user au
 	var status string
 	var triggerType string
 	var threshold int64
+	var scheduledDrawAt sql.NullInt64
 	var currentParticipantsCount int64
 	err = tx.QueryRow(ctx,
-		`SELECT mode, status, trigger_type, threshold, participants_count
+		`SELECT mode, status, trigger_type, threshold, scheduled_draw_at_ms, participants_count
 		 FROM raffles
 		 WHERE id = $1
 		 FOR UPDATE`,
 		raffleID,
-	).Scan(&mode, &status, &triggerType, &threshold, &currentParticipantsCount)
+	).Scan(&mode, &status, &triggerType, &threshold, &scheduledDrawAt, &currentParticipantsCount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return JoinRaffleResult{}, ErrRaffleNotFound
 	}
@@ -315,6 +319,9 @@ func (service *Service) JoinRaffle(ctx context.Context, raffleID string, user au
 		return JoinRaffleResult{Success: false, Message: "活动已取消"}, tx.Commit(ctx)
 	default:
 		return JoinRaffleResult{Success: false, Message: "活动状态异常"}, tx.Commit(ctx)
+	}
+	if triggerType == "scheduled" && scheduledDrawAt.Valid && scheduledDrawAt.Int64 <= millis(time.Now()) {
+		return JoinRaffleResult{Success: false, Message: "活动已到开奖时间，正在等待开奖，请稍后刷新"}, tx.Commit(ctx)
 	}
 
 	existing, err := service.getRaffleEntryForUserTx(ctx, tx, raffleID, user.ID)
@@ -388,7 +395,7 @@ func (service *Service) JoinRaffle(ctx context.Context, raffleID string, user au
 func (service *Service) getPublicRaffleDetail(ctx context.Context, id string) (RaffleDetail, json.RawMessage, error) {
 	row := service.db.QueryRow(ctx,
 		`SELECT id, mode, title, description, COALESCE(cover_image, ''),
-		        prizes, trigger_type, threshold, status, participants_count,
+		        prizes, trigger_type, threshold, scheduled_draw_at_ms, status, participants_count,
 		        winners_count, winners, drawn_at_ms, red_packet_total_points,
 		        red_packet_total_slots, red_packet_remaining_points,
 		        red_packet_remaining_slots, created_at_ms
@@ -400,6 +407,7 @@ func (service *Service) getPublicRaffleDetail(ctx context.Context, id string) (R
 	var detail RaffleDetail
 	var prizes []byte
 	var winners []byte
+	var scheduledDrawAt sql.NullInt64
 	var drawnAt sql.NullInt64
 	var redPacketTotalPoints sql.NullInt64
 	var redPacketTotalSlots sql.NullInt64
@@ -414,6 +422,7 @@ func (service *Service) getPublicRaffleDetail(ctx context.Context, id string) (R
 		&prizes,
 		&detail.TriggerType,
 		&detail.Threshold,
+		&scheduledDrawAt,
 		&detail.Status,
 		&detail.ParticipantsCount,
 		&detail.WinnersCount,
@@ -434,6 +443,7 @@ func (service *Service) getPublicRaffleDetail(ctx context.Context, id string) (R
 
 	fullWinners := normalizeRawJSON(winners)
 	detail.Prizes = normalizeRawJSON(prizes)
+	detail.ScheduledDrawAt = nullableInt64(scheduledDrawAt)
 	detail.DrawnAt = nullableInt64(drawnAt)
 	detail.RedPacketTotalPoints = nullableInt64(redPacketTotalPoints)
 	detail.RedPacketTotalSlots = nullableInt64(redPacketTotalSlots)
@@ -527,6 +537,7 @@ func scanAdminRaffle(row pgxScanner) (AdminRaffle, error) {
 	var prizes []byte
 	var winners []byte
 	var packets []byte
+	var scheduledDrawAt sql.NullInt64
 	var drawnAt sql.NullInt64
 	var redPacketTotalPoints sql.NullInt64
 	var redPacketTotalSlots sql.NullInt64
@@ -541,6 +552,7 @@ func scanAdminRaffle(row pgxScanner) (AdminRaffle, error) {
 		&prizes,
 		&raffle.TriggerType,
 		&raffle.Threshold,
+		&scheduledDrawAt,
 		&raffle.Status,
 		&raffle.ParticipantsCount,
 		&raffle.WinnersCount,
@@ -561,6 +573,7 @@ func scanAdminRaffle(row pgxScanner) (AdminRaffle, error) {
 	raffle.Prizes = normalizeRawJSON(prizes)
 	raffle.Winners = normalizeRawJSON(winners)
 	raffle.RedPacketPackets = normalizeRawJSON(packets)
+	raffle.ScheduledDrawAt = nullableInt64(scheduledDrawAt)
 	raffle.DrawnAt = nullableInt64(drawnAt)
 	raffle.RedPacketTotalPoints = nullableInt64(redPacketTotalPoints)
 	raffle.RedPacketTotalSlots = nullableInt64(redPacketTotalSlots)

@@ -30,7 +30,7 @@ import {
   type MinesweeperDifficultyConfig,
   type MinesweeperStateView,
 } from '@/lib/minesweeper-engine';
-import type { MinesweeperGameRecord, MinesweeperSessionView } from '@/lib/minesweeper';
+import type { MinesweeperGameRecord, MinesweeperSessionView } from '@/lib/minesweeper-types';
 
 type Phase = 'ready' | 'playing' | 'finished';
 type ToolMode = 'reveal' | 'flag';

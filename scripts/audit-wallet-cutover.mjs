@@ -47,6 +47,8 @@ const requiredNewAPIEnvNames = [
   'NEW_API_URL',
   'NEW_API_ADMIN_ACCESS_TOKEN',
   'NEW_API_ADMIN_USER_ID',
+  'NEW_API_ADMIN_USERNAME',
+  'NEW_API_ADMIN_PASSWORD',
 ];
 
 const requiredWalletSmokeFiles = [

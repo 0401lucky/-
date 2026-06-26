@@ -96,6 +96,8 @@ ZEABUR_ENV_FILE=./deploy/zeabur.env node scripts/audit-zeabur-runtime-env.mjs
 - `NEW_API_URL`
 - `NEW_API_ADMIN_ACCESS_TOKEN`
 - `NEW_API_ADMIN_USER_ID`
+- `NEW_API_ADMIN_USERNAME`
+- `NEW_API_ADMIN_PASSWORD`
 - `RAFFLE_DELIVERY_CRON_SECRET`
 - `CRON_SECRET`
 - R2 / S3 相关变量

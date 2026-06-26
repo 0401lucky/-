@@ -7,6 +7,13 @@ const strict = process.env.CUTOVER_EVIDENCE_STRICT === '1';
 const templateMode = evidenceFile === defaultEvidenceFile;
 
 const requiredModules = {
+  auth: [
+    'loginApiSmokePassed',
+    'meApiSmokePassed',
+    'logoutApiSmokePassed',
+    'pageSmokePassed',
+    'gatewayCutoverApproved',
+  ],
   wallet: [
     'newApiConfigured',
     'authenticatedApiSmokePassed',

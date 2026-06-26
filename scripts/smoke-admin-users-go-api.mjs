@@ -114,7 +114,7 @@ function seed() {
       (${otherUserID}, ${sqlLiteral(otherUsername)}, 'Admin Users Smoke Other', now() - interval '1 hour', now());
 
     INSERT INTO exchange_logs (id, user_id, item_id, item_name, points_cost, value, type, quantity, created_at)
-    VALUES (${sqlLiteral(exchangeID)}, ${targetUserID}, 'smoke-item', 'Smoke 兑换项', 100, 1, 'lottery_spin', 1, now());
+    VALUES (${sqlLiteral(exchangeID)}, ${targetUserID}, 'smoke-project', 'Smoke 兑换项', 0, 100, 'project_direct', 1, now());
 
     INSERT INTO raffles (
       id, mode, title, description, prizes, trigger_type, threshold, status,
