@@ -48,7 +48,7 @@ func TestAdminDashboardRouteAggregatesPostgresData(t *testing.T) {
 	cleanupAdminDashboardHTTPTest(t, ctx, db, userID, otherUserID, inactiveUserID, raffleID, alertID)
 	defer cleanupAdminDashboardHTTPTest(t, ctx, db, userID, otherUserID, inactiveUserID, raffleID, alertID)
 
-	baseline, err := admindashboard.NewService(db).Get(ctx, true, time.Now())
+	baseline, err := admindashboard.NewService(db).Get(ctx, true, time.Now(), "")
 	if err != nil {
 		t.Fatalf("query baseline dashboard failed: %v", err)
 	}
