@@ -32,6 +32,10 @@ PR #9 仍是 GitHub 上的 open PR，尚未 merge 到 `main`。
 - PR #9 后台环保入口和页面已补接到 `main`：
   - `src/components/admin/AdminSidebar.tsx`
   - `src/app/admin/eco/page.tsx`
+- PR #9 浏览器兼容层已补接到 `main`：
+  - `src/components/BrowserCompatibility.tsx`
+  - `src/app/layout.tsx`
+  - `src/app/globals.css`
 
 ## 当前仍缺的 PR #9 前端/页面改动
 
@@ -46,7 +50,6 @@ PR #9 仍是 GitHub 上的 open PR，尚未 merge 到 `main`。
 - `src/app/admin/raffle/[id]/page.tsx`
 - `src/app/admin/raffle/create/page.tsx`
 - `src/app/admin/announcements/page.tsx`
-- `src/components/BrowserCompatibility.tsx`
 - `src/components/MarkdownPreview.tsx`
 
 补接要求：
