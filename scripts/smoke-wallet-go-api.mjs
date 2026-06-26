@@ -19,7 +19,7 @@ function fail(message) {
   process.exit(1);
 }
 
-function assertGatewayWalletRulesDisabled() {
+function assertGatewayWalletRulesExact() {
   const caddyfile = readFileSync('gateway/Caddyfile', 'utf8');
   const activeWalletRules = caddyfile
     .split(/\r?\n/)
@@ -30,9 +30,20 @@ function assertGatewayWalletRulesDisabled() {
       line.includes('/api/store/withdraw') ||
       line.includes('/api/store*'),
     );
-  if (activeWalletRules.length > 0) {
-    fail(`gateway/Caddyfile contains wallet cutover rules: ${activeWalletRules.join('; ')}`);
+  const allowed = new Set([
+    'handle /api/store/topup {',
+    'handle /api/store/withdraw {',
+  ]);
+  const unexpected = activeWalletRules.filter((line) => !allowed.has(line));
+  if (unexpected.length > 0) {
+    fail(`gateway/Caddyfile contains unexpected wallet cutover rules: ${unexpected.join('; ')}`);
   }
+  for (const line of allowed) {
+    if (!activeWalletRules.includes(line)) {
+      fail(`gateway/Caddyfile missing wallet cutover rule: ${line}`);
+    }
+  }
+  return activeWalletRules;
 }
 
 function dockerWget(method, path, body = '', headers = {}) {
@@ -113,7 +124,7 @@ function assertWalletBalancePayload(payload, label) {
 }
 
 async function main() {
-  assertGatewayWalletRulesDisabled();
+  const gatewayWalletRules = assertGatewayWalletRulesExact();
 
   const ready = await request('GET', '/readyz');
   assertStatus(ready.status, 200, 'GET /readyz', ready.raw);
@@ -156,7 +167,7 @@ async function main() {
     checkedAuthenticatedReadPaths: cookie ? 1 : 0,
     authenticatedReadStatus,
     newAPIConfiguredRequired: expectNewAPIConfigured,
-    gatewayWalletRules: 'none',
+    gatewayWalletRules,
   }, null, 2));
 }
 

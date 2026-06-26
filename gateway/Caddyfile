@@ -330,11 +330,17 @@
 	handle /api/games/roguelite/cancel {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
-	# 商城需要细粒度切流，避免钱包路径在 new-api 未完成配置冒烟前被整体误转发：
+	# 商城需要细粒度切流，避免 /api/store* 通配误转发；钱包路径已完成 Go 迁移并依赖 Zeabur new-api 环境变量。
 	handle /api/store {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
 	handle /api/store/exchange {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/store/topup {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/store/withdraw {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
 	# handle /api/games/eco* {

@@ -28,7 +28,7 @@ function makeSessionCookie(userID, username, displayName) {
   return `app_session=${payload}.${sig}`;
 }
 
-function assertGatewayWalletRulesDisabled() {
+function assertGatewayWalletRulesExact() {
   const caddyfile = readFileSync('gateway/Caddyfile', 'utf8');
   const activeWalletRules = caddyfile
     .split(/\r?\n/)
@@ -39,9 +39,20 @@ function assertGatewayWalletRulesDisabled() {
       line.includes('/api/store/withdraw') ||
       line.includes('/api/store*')
     );
-  if (activeWalletRules.length > 0) {
-    fail(`gateway/Caddyfile contains wallet cutover rules: ${activeWalletRules.join('; ')}`);
+  const allowed = new Set([
+    'handle /api/store/topup {',
+    'handle /api/store/withdraw {',
+  ]);
+  const unexpected = activeWalletRules.filter((line) => !allowed.has(line));
+  if (unexpected.length > 0) {
+    fail(`gateway/Caddyfile contains unexpected wallet cutover rules: ${unexpected.join('; ')}`);
   }
+  for (const line of allowed) {
+    if (!activeWalletRules.includes(line)) {
+      fail(`gateway/Caddyfile missing wallet cutover rule: ${line}`);
+    }
+  }
+  return activeWalletRules;
 }
 
 function sqlLiteral(value) {
@@ -163,7 +174,7 @@ function verifyCleanup() {
 }
 
 function main() {
-  assertGatewayWalletRulesDisabled();
+  const gatewayWalletRules = assertGatewayWalletRulesExact();
 
   const ready = request('GET', '/readyz');
   if (ready.status !== 200) {
@@ -196,7 +207,7 @@ function main() {
     expectedCode: 'NEW_API_NOT_CONFIGURED',
     verification: noWrites,
     cleanup: cleanupResult,
-    gatewayWalletRules: 'none',
+    gatewayWalletRules,
   }, null, 2));
 }
 

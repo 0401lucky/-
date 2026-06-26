@@ -1,7 +1,7 @@
 # Store 精确切流前置审计
 
 本文记录商城核心路径从 Next 切到 Go 后的复核证据。
-当前结论：`/api/store`、`/api/store/exchange` 和 `/api/store/admin` 已精确切到 Go，并补齐独立审计脚本和 Docker 直连 Go API 冒烟门禁；`/api/store/topup`、`/api/store/withdraw` 和 `/api/store*` 通配仍不属于本小块。
+当前结论：`/api/store`、`/api/store/exchange`、`/api/store/topup`、`/api/store/withdraw` 和 `/api/store/admin` 已精确切到 Go，并补齐独立审计脚本和 Docker 直连 Go API 冒烟门禁；`/api/store*` 通配仍禁止打开。
 
 ## 当前前端依赖
 
@@ -20,13 +20,16 @@ node scripts/audit-store-cutover.mjs
 - `POST /api/store/withdraw`
 - `/api/store/admin` 的 GET/POST/PUT/PATCH/DELETE
 
-其中本阶段允许走 Go Gateway 的只有：
+其中当前允许走 Go Gateway 的只有：
 
 - `GET /api/store`
 - `POST /api/store/exchange`
+- `GET /api/store/topup`
+- `POST /api/store/topup`
+- `POST /api/store/withdraw`
 - `/api/store/admin`
 
-钱包路径仍由 `docs/wallet-cutover-preflight.md` 单独管理，不随商城核心路径一起切。
+钱包路径的生产 new-api 真实冒烟仍由 `docs/wallet-cutover-preflight.md` 单独管理。
 
 ## Go 覆盖范围
 
@@ -97,6 +100,12 @@ handle /api/store {
 handle /api/store/exchange {
 	reverse_proxy api:8080
 }
+handle /api/store/topup {
+	reverse_proxy api:8080
+}
+handle /api/store/withdraw {
+	reverse_proxy api:8080
+}
 handle /api/store/admin {
 	reverse_proxy api:8080
 }
@@ -105,12 +114,6 @@ handle /api/store/admin {
 禁止添加：
 
 ```caddyfile
-handle /api/store/topup {
-	reverse_proxy api:8080
-}
-handle /api/store/withdraw {
-	reverse_proxy api:8080
-}
 handle /api/store* {
 	reverse_proxy api:8080
 }

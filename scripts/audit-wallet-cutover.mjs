@@ -245,11 +245,19 @@ const activeGatewayWalletRules = gatewaySource
     entry.line.includes('/api/store*'),
   );
 
-if (activeGatewayWalletRules.length > 0) {
-  fail(
-    'Gateway already contains active wallet routing rules; review before declaring this a pre-cutover state',
-    activeGatewayWalletRules.map((entry) => `${normalizeSlash(path.relative(repoRoot, gatewayPath))}:${entry.lineNumber} ${entry.line}`),
-  );
+const allowedGatewayWalletRules = new Set([
+  'handle /api/store/topup {',
+  'handle /api/store/withdraw {',
+]);
+const missingGatewayWalletRules = [...allowedGatewayWalletRules].filter((line) =>
+  !activeGatewayWalletRules.some((entry) => entry.line === line),
+);
+const unexpectedGatewayWalletRules = activeGatewayWalletRules.filter((entry) => !allowedGatewayWalletRules.has(entry.line));
+if (missingGatewayWalletRules.length > 0 || unexpectedGatewayWalletRules.length > 0) {
+  fail('Gateway wallet rules are not the reviewed exact cutover set', [
+    ...missingGatewayWalletRules.map((line) => `missing gateway rule ${line}`),
+    ...unexpectedGatewayWalletRules.map((entry) => `${normalizeSlash(path.relative(repoRoot, gatewayPath))}:${entry.lineNumber} ${entry.line}`),
+  ]);
 }
 
 const missingWalletSmokeFiles = requiredWalletSmokeFiles.filter((relativePath) => !existsSync(path.join(repoRoot, relativePath)));
@@ -272,7 +280,7 @@ const summary = {
   newAPIEnvNames: requiredNewAPIEnvNames,
   migrations: requiredMigrationFiles,
   walletSmokeFiles: requiredWalletSmokeFiles,
-  gatewayWalletRules: 'none',
+  gatewayWalletRules: activeGatewayWalletRules.map((entry) => entry.line),
 };
 
 console.log(JSON.stringify(summary, null, 2));

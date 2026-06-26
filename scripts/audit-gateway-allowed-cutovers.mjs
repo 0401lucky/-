@@ -110,6 +110,8 @@ const allowedApiCutovers = [
   '/api/games/2048/cancel',
   '/api/store',
   '/api/store/exchange',
+  '/api/store/topup',
+  '/api/store/withdraw',
   '/api/store/admin',
   '/api/admin/store/reset',
   '/api/cards/inventory',

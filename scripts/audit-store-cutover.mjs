@@ -14,17 +14,17 @@ const expectedFrontendStorePaths = [
 const coreCutoverPaths = [
   '/api/store',
   '/api/store/exchange',
-  '/api/store/admin',
-];
-
-const deferredWalletPaths = [
   '/api/store/topup',
   '/api/store/withdraw',
+  '/api/store/admin',
 ];
 
 const requiredGoRouteSnippets = [
   'api.Get("/store", economyHandlers.getStore)',
   'api.Post("/store/exchange", economyHandlers.exchangeItem)',
+  'api.Get("/store/topup", economyHandlers.getTopupBalance)',
+  'api.Post("/store/topup", economyHandlers.topupWallet)',
+  'api.Post("/store/withdraw", economyHandlers.withdrawWallet)',
   'api.Get("/store/admin", economyHandlers.getStoreAdmin)',
   'api.Post("/store/admin", economyHandlers.createStoreAdminItem)',
   'api.Put("/store/admin", economyHandlers.updateStoreAdminItem)',
@@ -35,6 +35,9 @@ const requiredGoRouteSnippets = [
 const requiredHandlerSnippets = [
   'func (handlers economyHandlers) getStore',
   'func (handlers economyHandlers) exchangeItem',
+  'func (handlers economyHandlers) getTopupBalance',
+  'func (handlers economyHandlers) topupWallet',
+  'func (handlers economyHandlers) withdrawWallet',
   'func (handlers economyHandlers) getStoreAdmin',
   'func (handlers economyHandlers) createStoreAdminItem',
   'func (handlers economyHandlers) updateStoreAdminItem',
@@ -206,18 +209,15 @@ const activeGatewayStoreRules = gatewaySource
 const allowedGatewayRules = new Set([
   'handle /api/store {',
   'handle /api/store/exchange {',
+  'handle /api/store/topup {',
+  'handle /api/store/withdraw {',
   'handle /api/store/admin {',
 ]);
 const missingGatewayRules = [...allowedGatewayRules].filter((line) =>
   !activeGatewayStoreRules.some((entry) => entry.line === line)
 );
 const unexpectedGatewayRules = activeGatewayStoreRules.filter((entry) => !allowedGatewayRules.has(entry.line));
-const walletGatewayRules = activeGatewayStoreRules.filter((entry) =>
-  entry.line.includes('/api/store/topup') ||
-  entry.line.includes('/api/store/withdraw') ||
-  entry.line.includes('/api/store*')
-);
-if (missingGatewayRules.length > 0 || unexpectedGatewayRules.length > 0 || walletGatewayRules.length > 0) {
+if (missingGatewayRules.length > 0 || unexpectedGatewayRules.length > 0) {
   fail('Gateway store rules are not the reviewed exact cutover set', [
     ...missingGatewayRules.map((line) => `missing gateway rule ${line}`),
     ...unexpectedGatewayRules.map((entry) => `${normalizeSlash(path.relative(repoRoot, gatewayPath))}:${entry.lineNumber} ${entry.line}`),
@@ -227,7 +227,6 @@ if (missingGatewayRules.length > 0 || unexpectedGatewayRules.length > 0 || walle
 const summary = {
   frontendStoreApiPaths: Object.fromEntries([...discovered.entries()]),
   coreCutoverPaths,
-  deferredWalletPaths,
   goRoutes: requiredGoRouteSnippets,
   migrations: ['backend/migrations/0002_store.sql'],
   smokeFiles: requiredSmokeFiles,

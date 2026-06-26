@@ -44,6 +44,8 @@ function assertGatewayStoreRulesExact() {
   const allowed = new Set([
     'handle /api/store {',
     'handle /api/store/exchange {',
+    'handle /api/store/topup {',
+    'handle /api/store/withdraw {',
     'handle /api/store/admin {',
   ]);
   const unexpected = activeRules.filter((line) => !allowed.has(line));
@@ -311,7 +313,7 @@ function main() {
       'POST /api/store/exchange',
       'GET /api/store/admin',
     ],
-    deferredWalletPaths: [
+    walletPathsCutOver: [
       'GET /api/store/topup',
       'POST /api/store/topup',
       'POST /api/store/withdraw',

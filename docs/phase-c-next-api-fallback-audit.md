@@ -30,7 +30,7 @@ node scripts/audit-next-api-fallback-risk.mjs
 - 已由 Go 接管的 Next API 路径：142
 - 已墓碑化的旧工具/旧 internal 入口路径：10
 - 仍需迁移或墓碑化：0
-- 因外部配置暂缓：2
+- 因外部配置暂缓：0
 - 内部定时入口待 Worker 对齐：0
 
 ## 本轮已收口
@@ -86,9 +86,9 @@ node scripts/audit-next-api-fallback-risk.mjs
 
 当前为 0。
 
-## 暂缓项
+## 已处理的钱包外部依赖路径
 
-以下路径和 new-api 外部账号额度有关，不能只按数据库迁移处理：
+以下路径和 new-api 外部账号额度有关，已精确切到 Go，但生产仍需要 Zeabur 配置 new-api 后做真实余额、充值和提现冒烟：
 
 - `/api/store/topup`
 - `/api/store/withdraw`
@@ -97,12 +97,12 @@ node scripts/audit-next-api-fallback-risk.mjs
 
 - Go 已实现钱包 HTTP 路由、服务层、可信来源校验、限流、Redis 钱包操作锁、
   `wallet_transactions` 审计和 `uncertain` 补偿状态。
-- Gateway 当前没有活跃 `/api/store/topup`、`/api/store/withdraw` 或
-  `/api/store*` 钱包切流规则。
+- Gateway 当前已精确打开 `/api/store/topup`、`/api/store/withdraw`，仍禁止
+  `/api/store*` 钱包通配规则。
 - 本地缺 new-api 配置时，认证余额、充值和提现都会返回
   `NEW_API_NOT_CONFIGURED`，且不写钱包交易、积分流水或余额。
 
-处理前需要确认：
+生产验证需要确认：
 
 1. Zeabur 生产环境是否配置了 new-api 地址和凭据。
 2. 充值、提现是否继续开放。
@@ -122,14 +122,14 @@ node scripts/audit-next-api-fallback-risk.mjs
 
 ## 下一步执行顺序
 
-1. 外部 new-api 配置就绪后，再单独处理充值/提现精确切流。
-2. 充值/提现切流前，用小额真实账号执行只读余额和写路径补偿冒烟。
+1. 外部 new-api 配置就绪后，用真实账号执行只读余额冒烟。
+2. 用小额真实账号执行充值/提现写路径补偿冒烟。
 
 阶段 C 的完成标准：
 
 ```text
 mustMigrateOrTombstone = 0
-blockedByExternalConfig 只剩明确暂缓项
+blockedByExternalConfig = 0
 internalOnly 均有 Go Worker 对齐证据
 默认 Zeabur 预检通过
 ```

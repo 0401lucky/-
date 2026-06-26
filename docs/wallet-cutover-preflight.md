@@ -1,7 +1,7 @@
-# Wallet 精确切流前置审计
+# Wallet 精确切流审计
 
-本文记录 `/store` 页面中的账户额度充值和提现 API 从 Next 切到 Go 前必须复核的证据。
-当前结论：Go 内部路由、服务层、限流、缺配置降级、直连 Go API 容器冒烟和本地缺 new-api 配置写路径安全门禁已完成，但缺少 Zeabur new-api 管理端配置与真实认证冒烟前不做生产切流结论。
+本文记录 `/store` 页面中的账户额度充值和提现 API 从 Next 精确切到 Go 的复核证据。
+当前结论：`/api/store/topup` 与 `/api/store/withdraw` 已在 Gateway 精确切到 Go；本地已验证未登录边界、缺 new-api 配置安全失败、无错误写账和 Caddy 配置有效。生产仍需要 Zeabur 配置 `NEW_API_URL`、`NEW_API_ADMIN_ACCESS_TOKEN`、`NEW_API_ADMIN_USER_ID` 后，用真实账号做余额、充值和提现冒烟。
 
 ## 当前前端依赖
 
@@ -23,7 +23,7 @@ npm run audit:wallet-cutover
 - `/store` 页面提交充值时用账户额度兑换积分。
 - `/store` 页面提交提现时将积分兑换为账户额度。
 
-注意：`/api/store`、`/api/store/exchange` 和 `/api/store/admin` 已经按精确路径切到 Go，不属于本次钱包切流范围。
+注意：`/api/store`、`/api/store/exchange`、`/api/store/topup`、`/api/store/withdraw` 和 `/api/store/admin` 均已按精确路径切到 Go。
 
 ## Go 覆盖范围
 
@@ -51,7 +51,7 @@ Go 当前已覆盖旧前端需要的响应字段和行为：
 node scripts/smoke-wallet-go-api.mjs
 ```
 
-当前脚本默认通过 `docker compose exec -T api` 直连 Go API 容器，避免误走 Gateway。
+当前脚本默认通过 `docker compose exec -T api` 直连 Go API 容器，同时静态确认 Gateway 已打开钱包精确切流规则。
 
 脚本会检查：
 
@@ -59,7 +59,7 @@ node scripts/smoke-wallet-go-api.mjs
 - 未登录访问 `GET /api/store/topup` 返回 401。
 - 未登录访问 `POST /api/store/topup` 返回 401。
 - 未登录访问 `POST /api/store/withdraw` 返回 401。
-- `gateway/Caddyfile` 不包含活跃 `/api/store/topup`、`/api/store/withdraw` 或 `/api/store*` 切流规则。
+- `gateway/Caddyfile` 包含且仅包含 `/api/store/topup`、`/api/store/withdraw` 两条钱包精确切流规则，不包含 `/api/store*` 通配。
 
 真实登录账号可用后，使用登录态只读复验：
 
@@ -108,9 +108,9 @@ NEW_API_ADMIN_USER_ID=...
 
 缺少任意一项时，Go API 可以启动，但钱包相关接口会返回 `503`。
 
-## 精确 Gateway 草案
+## 精确 Gateway 规则
 
-只允许评估以下精确规则，不打开 `/api/store*` 通配：
+当前允许以下精确规则，不打开 `/api/store*` 通配：
 
 ```caddyfile
 handle /api/store/topup {
@@ -121,25 +121,29 @@ handle /api/store/withdraw {
 }
 ```
 
-## 切流前置条件
+## 已验证项
+
+1. `npm run audit:wallet-cutover` 通过。
+2. `node scripts/smoke-wallet-go-api.mjs` 通过。
+3. `node scripts/smoke-wallet-write-missing-newapi-go-api.mjs` 通过，确认缺配置时不写账。
+4. `go test ./internal/economy ./internal/httpserver` 通过。
+5. `docker run ... caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` 通过。
+6. 本地 Gateway `GET /api/store/topup`、`POST /api/store/topup`、`POST /api/store/withdraw` 未登录均返回 401，且 API 日志显示请求进入 Go。
+
+## 生产冒烟清单
 
 1. Zeabur 已配置 `NEW_API_URL`、`NEW_API_ADMIN_ACCESS_TOKEN`、`NEW_API_ADMIN_USER_ID`。
-2. `npm run audit:wallet-cutover` 通过。
-3. `node scripts/smoke-wallet-go-api.mjs` 通过。
-4. `node scripts/smoke-wallet-write-missing-newapi-go-api.mjs` 通过，确认缺配置时不写账。
-5. 带真实账号 Cookie 复跑 `WALLET_GO_API_COOKIE="..." WALLET_GO_API_EXPECT_NEW_API=1 node scripts/smoke-wallet-go-api.mjs` 通过。
-6. `go test ./internal/economy ./internal/httpserver` 通过。
-7. `docker compose config --quiet` 通过。
-8. 使用真实登录账号完成经 Gateway 的 `/store` 页面充值弹层余额读取冒烟。
-9. 使用小金额完成一次真实充值冒烟，并核对：
+2. 带真实账号 Cookie 复跑 `WALLET_GO_API_COOKIE="..." WALLET_GO_API_EXPECT_NEW_API=1 node scripts/smoke-wallet-go-api.mjs` 通过。
+3. 使用真实登录账号完成经 Gateway 的 `/store` 页面充值弹层余额读取冒烟。
+4. 使用小金额完成一次真实充值冒烟，并核对：
    - new-api 额度被扣减。
    - PostgreSQL 积分余额增加。
    - `wallet_transactions` 写入 `topup/success` 或可解释的 `uncertain`。
-10. 使用小积分完成一次真实提现冒烟，并核对：
+5. 使用小积分完成一次真实提现冒烟，并核对：
    - PostgreSQL 积分余额扣减。
    - new-api 额度增加。
    - `wallet_transactions` 写入 `withdraw/success` 或可解释的 `uncertain`。
-11. 充值和提现失败路径必须能在页面显示明确错误，不出现“结算失败但余额已变化”的不可解释状态。
+6. 充值和提现失败路径必须能在页面显示明确错误，不出现“结算失败但余额已变化”的不可解释状态。
 
 ## 回滚步骤
 
@@ -149,11 +153,4 @@ handle /api/store/withdraw {
 2. 重建并重启 `gateway`。
 3. 复验 `/api/store/topup` 和 `/api/store/withdraw` 回落到 Next。
 4. 保留 PostgreSQL 写入记录，根据 `wallet_transactions`、`point_ledger` 和 new-api 用户额度做人工对账。
-5. 复跑 `npm run audit:wallet-cutover`，确认 Gateway wallet 规则已清除。
-
-## 当前不切流原因
-
-- 本地和仓库内没有可用的生产 new-api 管理端配置。
-- 直连 Go API 冒烟目前已完成未登录边界和本地缺配置写路径安全门禁；带真实 Cookie 且要求 new-api 可用的只读余额冒烟仍待 Zeabur 配置后执行。
-- 尚未在 Zeabur 环境用真实登录账号完成余额读取、充值和提现冒烟。
-- Gateway 当前没有活跃 `/api/store/topup`、`/api/store/withdraw` 或 `/api/store*` 规则，保持 Next 回落更稳妥。
+5. 回滚后需要临时调整 `scripts/audit-wallet-cutover.mjs` 或记录回滚豁免，因为当前审计期望钱包路径已精确切到 Go。
