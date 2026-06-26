@@ -864,6 +864,12 @@ export default function MemoryGamePage(): React.JSX.Element {
           border-color: #34d399;
           background: #ecfdf5;
         }
+        .memory-page .memory-card-front.is-loading {
+          border-color: #67e8f9;
+          background:
+            radial-gradient(circle at 50% 42%, rgba(34, 211, 238, 0.18), transparent 36%),
+            #ecfeff;
+        }
         .memory-page .memory-card-front span {
           font-size: clamp(1.5rem, 5.8vw, 3rem);
           line-height: 1;
@@ -871,6 +877,13 @@ export default function MemoryGamePage(): React.JSX.Element {
         }
         .memory-page .memory-card-front span.is-pop {
           transform: scale(1.1);
+        }
+        .memory-page .memory-card-front.is-loading span {
+          animation: memory-card-loading 0.7s ease-in-out infinite alternate;
+        }
+        @keyframes memory-card-loading {
+          from { opacity: 0.45; transform: scale(0.92); }
+          to { opacity: 1; transform: scale(1.08); }
         }
         .memory-page .memory-result-modal {
           width: min(520px, 100%);

@@ -25,7 +25,10 @@ export const Card = memo(function Card({
   disabled,
 }: CardProps) {
   const isRevealed = iconId !== '__hidden__';
-  const iconData = isRevealed
+  const isFaceUp = isFlipped || isMatched || isRevealed || isLoading;
+  const iconData = isLoading && !isRevealed
+    ? { emoji: '…', color: '#0891b2' }
+    : isRevealed
     ? (CARD_ICON_MAP[iconId] || { emoji: '❓', color: '#6b7280' })
     : { emoji: '❔', color: '#6b7280' };
 
@@ -41,13 +44,13 @@ export const Card = memo(function Card({
       className="memory-card"
       onClick={handleClick}
       disabled={disabled || isFlipped || isMatched}
-      aria-label={`${index + 1} 号记忆卡${isMatched ? '，已配对' : isFlipped || isRevealed ? `，${iconData.emoji}` : '，未翻开'}`}
+      aria-label={`${index + 1} 号记忆卡${isMatched ? '，已配对' : isLoading ? '，正在翻开' : isFlipped || isRevealed ? `，${iconData.emoji}` : '，未翻开'}`}
     >
       <div
         className="memory-card-inner"
         style={{
           transformStyle: 'preserve-3d',
-          transform: isFlipped || isMatched || isRevealed ? 'rotateY(180deg)' : 'rotateY(0deg)',
+          transform: isFaceUp ? 'rotateY(180deg)' : 'rotateY(0deg)',
         }}
       >
         {/* 卡片背面 */}
@@ -60,7 +63,7 @@ export const Card = memo(function Card({
 
         {/* 卡片正面 */}
         <div
-          className={`memory-card-front ${isMatched ? 'is-matched' : ''}`}
+          className={`memory-card-front ${isMatched ? 'is-matched' : ''} ${isLoading ? 'is-loading' : ''}`}
           style={{
             backfaceVisibility: 'hidden',
             transform: 'rotateY(180deg)',

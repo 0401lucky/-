@@ -80,7 +80,7 @@ const NUMBER_COLORS: Record<number, string> = {
   7: 'text-slate-800',
   8: 'text-zinc-950',
 };
-const STEP_BATCH_FLUSH_DELAY_MS = 24;
+const STEP_BATCH_FLUSH_DELAY_MS = 8;
 
 async function parseJson<T>(res: Response): Promise<ApiResponse<T> | null> {
   try {
@@ -190,6 +190,13 @@ function pendingCellClass(cell: MinesweeperCellView, pendingAction: MinesweeperA
   const base = cellClass(cell);
   if (!pendingAction) return base;
   return `${base} mine-cell-pending-${pendingAction.type}`;
+}
+
+function pendingCellText(cell: MinesweeperCellView, pendingAction: MinesweeperAction | undefined): ReactNode {
+  if (pendingAction?.type === 'reveal' || pendingAction?.type === 'chord') {
+    return <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-600" />;
+  }
+  return cellText(cell);
 }
 
 function stepPositionKey(action: MinesweeperAction): string {
@@ -725,7 +732,7 @@ export default function MinesweeperPage() {
                         className={pendingCellClass(visibleCell, pendingAction)}
                         aria-label={`第 ${cell.row + 1} 行第 ${cell.col + 1} 列`}
                       >
-                        {cellText(visibleCell)}
+                        {pendingCellText(visibleCell, pendingAction)}
                       </button>
                     );
                   })}
