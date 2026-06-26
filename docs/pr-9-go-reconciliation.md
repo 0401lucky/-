@@ -43,6 +43,8 @@ PR #9 仍是 GitHub 上的 open PR，尚未 merge 到 `main`。
   - `backend/internal/worker/worker.go`
   - `src/app/admin/page.tsx`
   - `src/lib/time.ts`
+- PR #9 后台反馈删除入口已补接到 `main`：
+  - `src/app/admin/feedback/page.tsx`
 
 ## 当前仍缺的 PR #9 前端/页面改动
 
@@ -50,7 +52,6 @@ PR #9 仍是 GitHub 上的 open PR，尚未 merge 到 `main`。
 
 - `src/app/admin/dashboard/page.tsx`
 - `src/app/admin/users/page.tsx`
-- `src/app/admin/feedback/page.tsx`
 - `src/app/admin/project/[id]/page.tsx`
 - `src/app/admin/raffle/page.tsx`
 - `src/app/admin/raffle/[id]/page.tsx`

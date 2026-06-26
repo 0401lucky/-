@@ -15,6 +15,7 @@ import {
 import {
   Loader2,
   Send,
+  Trash2,
 } from 'lucide-react';
 
 type FeedbackStatus = 'open' | 'processing' | 'resolved' | 'closed';
@@ -116,6 +117,7 @@ export default function AdminFeedbackPage() {
   const [listLoading, setListLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [replying, setReplying] = useState(false);
 
   const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>([]);
@@ -399,6 +401,45 @@ export default function AdminFeedbackPage() {
     }
   };
 
+  const handleDeleteFeedback = async () => {
+    if (!selectedId) {
+      setError('请先选择一条反馈');
+      return;
+    }
+
+    const confirmed = window.confirm('确定要删除这条反馈吗？删除后不可恢复。');
+    if (!confirmed) {
+      return;
+    }
+
+    setDeleting(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const response = await fetch(`/api/admin/feedback/${selectedId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        setError(data.message || '删除反馈失败');
+        return;
+      }
+
+      setSuccess('反馈已删除');
+      setSelectedId(null);
+      setSelectedDetail(null);
+      await loadFeedbackList({ page: 1, append: false });
+    } catch (deleteError) {
+      console.error('Delete feedback failed:', deleteError);
+      setError('删除反馈失败，请稍后重试');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const handleReply = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -466,7 +507,8 @@ export default function AdminFeedbackPage() {
     );
   }
 
-  const isSelectedLocked = Boolean(
+  const isStatusLocked = Boolean(selectedDetail?.feedback.archivedAt);
+  const isReplyLocked = Boolean(
     selectedDetail?.feedback.status === 'closed' || selectedDetail?.feedback.archivedAt
   );
 
@@ -649,7 +691,7 @@ export default function AdminFeedbackPage() {
                     onChange={(event) =>
                       setNextStatus(event.target.value as FeedbackStatus)
                     }
-                    disabled={isSelectedLocked}
+                    disabled={isStatusLocked}
                     className="px-3 py-2 rounded-lg border border-stone-200 bg-white text-sm text-stone-700 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     <option value="open">待处理</option>
@@ -660,10 +702,23 @@ export default function AdminFeedbackPage() {
                   <button
                     type="button"
                     onClick={handleUpdateStatus}
-                    disabled={statusSaving || isSelectedLocked}
+                    disabled={statusSaving || isStatusLocked}
                     className="px-4 py-2 rounded-lg bg-stone-900 text-white text-sm font-semibold hover:bg-stone-800 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {statusSaving ? '更新中...' : '更新状态'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeleteFeedback}
+                    disabled={deleting}
+                    className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {deleting ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
+                    {deleting ? '删除中...' : '删除反馈'}
                   </button>
                   {selectedDetail.feedback.archivedAt && (
                     <span className="text-xs text-stone-400">已归档工单不可再修改状态</span>
@@ -742,7 +797,7 @@ export default function AdminFeedbackPage() {
                   onPaste={handleReplyPaste}
                   rows={3}
                   maxLength={1000}
-                  disabled={isSelectedLocked}
+                  disabled={isReplyLocked}
                   placeholder={
                     selectedDetail.feedback.archivedAt
                       ? '当前反馈已归档，无法回复'
@@ -757,7 +812,7 @@ export default function AdminFeedbackPage() {
                   <label
                     htmlFor="admin-feedback-reply-images"
                     className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                      isSelectedLocked
+                      isReplyLocked
                         ? 'border-stone-200 text-stone-300 cursor-not-allowed'
                         : 'border-stone-200 bg-white text-stone-600 cursor-pointer hover:border-orange-300 hover:text-orange-600'
                     }`}
@@ -771,7 +826,7 @@ export default function AdminFeedbackPage() {
                     multiple
                     className="hidden"
                     onChange={handleReplyFileChange}
-                    disabled={isSelectedLocked}
+                    disabled={isReplyLocked}
                   />
                   <div className="text-xs text-stone-400">
                     {replyContent.length}/1000 · {replyImages.length}/{MAX_FEEDBACK_IMAGES} 个附件
@@ -808,7 +863,7 @@ export default function AdminFeedbackPage() {
                   <div className="text-xs text-stone-400">支持文字 + 图片/视频混合发送</div>
                   <button
                     type="submit"
-                    disabled={replying || isSelectedLocked}
+                    disabled={replying || isReplyLocked}
                     className="px-4 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-semibold hover:bg-orange-600 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
                   >
                     {replying ? (
