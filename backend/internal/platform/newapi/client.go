@@ -63,6 +63,9 @@ func New(options Options) (*Client, error) {
 	if strings.TrimSpace(options.AdminUserID) == "" {
 		return nil, errors.New("NEW_API_ADMIN_USER_ID is not set")
 	}
+	if _, err := strconv.ParseInt(strings.TrimSpace(options.AdminUserID), 10, 64); err != nil {
+		return nil, errors.New("NEW_API_ADMIN_USER_ID must be a numeric new-api user ID")
+	}
 	httpClient := options.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 8 * time.Second}

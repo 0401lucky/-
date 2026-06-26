@@ -146,6 +146,21 @@ func TestQuotaConversions(t *testing.T) {
 	}
 }
 
+func TestNewRejectsNonNumericAdminUserID(t *testing.T) {
+	_, err := New(Options{
+		BaseURL:          "https://newapi.example.com",
+		AdminAccessToken: "token-abc",
+		AdminUserID:      "lucky",
+		HTTPClient:       http.DefaultClient,
+	})
+	if err == nil {
+		t.Fatalf("expected non-numeric admin user ID to be rejected")
+	}
+	if err.Error() != "NEW_API_ADMIN_USER_ID must be a numeric new-api user ID" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func newTestClient(t *testing.T, baseURL string) *Client {
 	t.Helper()
 	client, err := New(Options{
