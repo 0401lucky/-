@@ -175,6 +175,9 @@ func (service *Service) loadCollectStateForUpdate(ctx context.Context, tx pgx.Tx
 	if err := loadVisiblePrizesTx(ctx, tx, &snapshot); err != nil {
 		return StateSnapshot{}, err
 	}
+	if err := loadItemPurchasesTx(ctx, tx, &snapshot); err != nil {
+		return StateSnapshot{}, err
+	}
 	return snapshot, nil
 }
 
@@ -217,6 +220,27 @@ func loadVisiblePrizesTx(ctx context.Context, tx pgx.Tx, snapshot *StateSnapshot
 			return err
 		}
 		snapshot.VisiblePrizes = append(snapshot.VisiblePrizes, prize)
+	}
+	return rows.Err()
+}
+
+func loadItemPurchasesTx(ctx context.Context, tx pgx.Tx, snapshot *StateSnapshot) error {
+	rows, err := tx.Query(ctx,
+		`SELECT item_key, purchase_date::text, purchase_count
+		   FROM eco_item_purchases
+		  WHERE user_id = $1`,
+		snapshot.UserID,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var purchase ItemPurchase
+		if err := rows.Scan(&purchase.ItemKey, &purchase.PurchaseDate, &purchase.PurchaseCount); err != nil {
+			return err
+		}
+		snapshot.ItemPurchases = append(snapshot.ItemPurchases, purchase)
 	}
 	return rows.Err()
 }

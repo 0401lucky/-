@@ -149,6 +149,65 @@ func TestGetStateSnapshotReturnsInitialWhenMissing(t *testing.T) {
 	}
 }
 
+func TestBuyItemEnforcesDailyLimit(t *testing.T) {
+	ctx := context.Background()
+	service, db, cleanup := newEcoIntegrationService(t, ctx)
+	defer cleanup()
+	cleanupEcoUser(t, ctx, db, 99701)
+	nowMs := testChinaDateMs(2026, 6, 23)
+
+	if _, err := db.Exec(ctx,
+		`INSERT INTO users (id, username, display_name, first_seen_at, updated_at)
+		 VALUES (99701, 'eco_99701', 'eco_99701', now(), now())`,
+	); err != nil {
+		t.Fatalf("seed eco buy-item user failed: %v", err)
+	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO point_accounts (user_id, balance, updated_at)
+		 VALUES (99701, 1000, now())`,
+	); err != nil {
+		t.Fatalf("seed eco buy-item balance failed: %v", err)
+	}
+
+	// recycle_glove 每日限购 2 次，应只能成功买两次
+	for attempt := int64(1); attempt <= 2; attempt++ {
+		result, err := service.BuyItem(ctx, BuyItemInput{UserID: 99701, Key: "recycle_glove", NowMs: nowMs})
+		if err != nil {
+			t.Fatalf("buy attempt %d failed: %v", attempt, err)
+		}
+		if !result.Success {
+			t.Fatalf("buy attempt %d should succeed, got: %s", attempt, result.Message)
+		}
+		if result.PurchasedToday != attempt {
+			t.Fatalf("buy attempt %d purchasedToday = %d, want %d", attempt, result.PurchasedToday, attempt)
+		}
+	}
+
+	// 第 3 次应被每日限购拒绝
+	third, err := service.BuyItem(ctx, BuyItemInput{UserID: 99701, Key: "recycle_glove", NowMs: nowMs})
+	if err != nil {
+		t.Fatalf("buy attempt 3 failed: %v", err)
+	}
+	if third.Success {
+		t.Fatalf("buy attempt 3 应被每日限购拒绝，却成功了")
+	}
+	if third.RemainingToday != 0 {
+		t.Fatalf("buy attempt 3 remainingToday = %d, want 0", third.RemainingToday)
+	}
+
+	// 数据库里购买次数应停在上限 2，不应被突破
+	var count int64
+	if err := db.QueryRow(ctx,
+		`SELECT purchase_count FROM eco_item_purchases
+		  WHERE user_id = 99701 AND item_key = 'recycle_glove' AND purchase_date = '2026-06-23'`,
+	).Scan(&count); err != nil {
+		t.Fatalf("query item purchase failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("purchase_count = %d, want 2 (每日限购不应被突破)", count)
+	}
+}
+
 func TestCollectTrashCreditsPointsAndRankings(t *testing.T) {
 	ctx := context.Background()
 	service, db, cleanup := newEcoIntegrationService(t, ctx)
