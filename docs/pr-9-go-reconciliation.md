@@ -36,6 +36,13 @@ PR #9 仍是 GitHub 上的 open PR，尚未 merge 到 `main`。
   - `src/components/BrowserCompatibility.tsx`
   - `src/app/layout.tsx`
   - `src/app/globals.css`
+- PR #9 后台项目自动暂停已迁到 Go 并补接页面：
+  - `backend/migrations/0028_project_auto_pause.sql`
+  - `backend/internal/welfare/admin_project.go`
+  - `backend/internal/httpserver/welfare_handlers.go`
+  - `backend/internal/worker/worker.go`
+  - `src/app/admin/page.tsx`
+  - `src/lib/time.ts`
 
 ## 当前仍缺的 PR #9 前端/页面改动
 
@@ -43,7 +50,6 @@ PR #9 仍是 GitHub 上的 open PR，尚未 merge 到 `main`。
 
 - `src/app/admin/dashboard/page.tsx`
 - `src/app/admin/users/page.tsx`
-- `src/app/admin/page.tsx`
 - `src/app/admin/feedback/page.tsx`
 - `src/app/admin/project/[id]/page.tsx`
 - `src/app/admin/raffle/page.tsx`

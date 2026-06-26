@@ -13,6 +13,7 @@
   - 只创建 `rewardType=direct` 的直充积分项目。
   - 校验项目名称、限领人数和直充积分。
   - `codesCount` 与 `maxClaims` 保持一致。
+  - 支持 `autoPauseAt`，按中国时间解析后台 `datetime-local` 输入并保存 UTC 毫秒时间戳。
 - `GET /api/admin/projects/{id}`
   - 返回项目详情和最近领取记录。
   - fresh Zeabur 新部署下，领取记录来自 Go 侧 `exchange_logs`。
@@ -26,6 +27,9 @@
   - 历史兑换码项目返回只读错误。
 - `DELETE /api/admin/projects/{id}`
   - 与旧接口一致，执行删除并返回成功。
+- Go Worker
+  - 每分钟扫描 `auto_pause_at_ms <= now` 且仍为 `active` 的项目。
+  - 自动改为 `paused` 并写入 `auto_paused_at_ms`，避免后台页面必须常驻。
 
 ## Review 命令
 
@@ -34,7 +38,7 @@ node --check scripts/audit-admin-projects-cutover.mjs
 node --check scripts/smoke-admin-projects-go-api.mjs
 node scripts/audit-admin-projects-cutover.mjs
 go test ./internal/welfare ./internal/httpserver -run AdminProject -count=1
-TEST_DATABASE_URL=postgres://app:app@localhost:5432/app?sslmode=disable go test -tags integration ./internal/httpserver -run AdminProject -count=1
+TEST_DATABASE_URL=postgres://app:app@localhost:5432/app?sslmode=disable go test -tags integration ./internal/welfare ./internal/httpserver -run 'ProcessAutoPauseProjects|AdminProject' -count=1
 node scripts/smoke-admin-projects-go-api.mjs
 ```
 

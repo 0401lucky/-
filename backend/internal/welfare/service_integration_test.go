@@ -65,6 +65,79 @@ func TestListProjectsFiltersAndSortsPublicItems(t *testing.T) {
 	}
 }
 
+func TestProcessAutoPauseProjectsPausesDueActiveProjects(t *testing.T) {
+	ctx := context.Background()
+	service, cleanup := newIntegrationService(t, ctx)
+	defer cleanup()
+
+	suffix := time.Now().UnixNano()
+	dueID := fmt.Sprintf("project-auto-pause-due-%d", suffix)
+	futureID := fmt.Sprintf("project-auto-pause-future-%d", suffix)
+	pausedID := fmt.Sprintf("project-auto-pause-paused-%d", suffix)
+	nowMs := int64(2_000_000)
+
+	if err := seedProject(ctx, service, dueID, "到期项目", "active", false, 0, 1000); err != nil {
+		t.Fatalf("seed due project failed: %v", err)
+	}
+	if err := seedProject(ctx, service, futureID, "未到期项目", "active", false, 0, 1000); err != nil {
+		t.Fatalf("seed future project failed: %v", err)
+	}
+	if err := seedProject(ctx, service, pausedID, "已暂停项目", "paused", false, 0, 1000); err != nil {
+		t.Fatalf("seed paused project failed: %v", err)
+	}
+	if _, err := service.db.Exec(ctx,
+		`UPDATE projects
+		    SET auto_pause_at_ms = CASE id
+		      WHEN $1 THEN $4::bigint
+		      WHEN $2 THEN $5::bigint
+		      WHEN $3 THEN $4::bigint
+		    END
+		  WHERE id IN ($1, $2, $3)`,
+		dueID,
+		futureID,
+		pausedID,
+		nowMs-1,
+		nowMs+60_000,
+	); err != nil {
+		t.Fatalf("seed auto pause fields failed: %v", err)
+	}
+
+	result, err := service.ProcessAutoPauseProjects(ctx, nowMs, 100)
+	if err != nil {
+		t.Fatalf("process auto pause failed: %v", err)
+	}
+	if result.Paused != 1 {
+		t.Fatalf("expected one project paused, got %+v", result)
+	}
+
+	statuses := map[string]string{}
+	pausedAt := map[string]int64{}
+	rows, err := service.db.Query(ctx, `SELECT id, status, COALESCE(auto_paused_at_ms, 0) FROM projects WHERE id IN ($1, $2, $3)`, dueID, futureID, pausedID)
+	if err != nil {
+		t.Fatalf("query projects failed: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var status string
+		var pausedAtMs int64
+		if err := rows.Scan(&id, &status, &pausedAtMs); err != nil {
+			t.Fatalf("scan project failed: %v", err)
+		}
+		statuses[id] = status
+		pausedAt[id] = pausedAtMs
+	}
+	if statuses[dueID] != "paused" || pausedAt[dueID] != nowMs {
+		t.Fatalf("due project should be paused at now, status=%s pausedAt=%d", statuses[dueID], pausedAt[dueID])
+	}
+	if statuses[futureID] != "active" || pausedAt[futureID] != 0 {
+		t.Fatalf("future project should remain active, status=%s pausedAt=%d", statuses[futureID], pausedAt[futureID])
+	}
+	if statuses[pausedID] != "paused" || pausedAt[pausedID] != 0 {
+		t.Fatalf("already paused project should not be touched, status=%s pausedAt=%d", statuses[pausedID], pausedAt[pausedID])
+	}
+}
+
 func TestListRafflesFiltersPublicItems(t *testing.T) {
 	ctx := context.Background()
 	service, cleanup := newIntegrationService(t, ctx)

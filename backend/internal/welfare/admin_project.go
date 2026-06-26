@@ -21,7 +21,7 @@ func (service *Service) ListAdminProjects(ctx context.Context) ([]Project, error
 	rows, err := service.db.Query(ctx,
 		`SELECT id, name, description, max_claims, claimed_count, codes_count,
 		        status, created_at_ms, created_by, reward_type, direct_points,
-		        new_user_only, pinned, pinned_at_ms
+		        new_user_only, pinned, pinned_at_ms, auto_pause_at_ms, auto_paused_at_ms
 		   FROM projects
 		  ORDER BY pinned DESC, pinned_at_ms DESC NULLS LAST, created_at_ms DESC, id DESC`,
 	)
@@ -68,14 +68,15 @@ func (service *Service) CreateAdminProject(ctx context.Context, input CreateAdmi
 		RewardType:   "direct",
 		DirectPoints: &input.DirectPoints,
 		NewUserOnly:  input.NewUserOnly,
+		AutoPauseAt:  input.AutoPauseAt,
 	}
 
 	if _, err := service.db.Exec(ctx,
 		`INSERT INTO projects (
 		   id, name, description, max_claims, claimed_count, codes_count,
 		   status, created_at_ms, created_by, reward_type, direct_points,
-		   new_user_only, pinned, pinned_at_ms
-		 ) VALUES ($1, $2, $3, $4, 0, $4, 'active', $5, $6, 'direct', $7, $8, false, NULL)`,
+		   new_user_only, pinned, pinned_at_ms, auto_pause_at_ms, auto_paused_at_ms
+		 ) VALUES ($1, $2, $3, $4, 0, $4, 'active', $5, $6, 'direct', $7, $8, false, NULL, $9, NULL)`,
 		project.ID,
 		project.Name,
 		project.Description,
@@ -84,6 +85,7 @@ func (service *Service) CreateAdminProject(ctx context.Context, input CreateAdmi
 		project.CreatedBy,
 		input.DirectPoints,
 		input.NewUserOnly,
+		input.AutoPauseAt,
 	); err != nil {
 		return Project{}, err
 	}
@@ -178,7 +180,7 @@ func (service *Service) ClaimPublicProject(ctx context.Context, id string, user 
 	row := tx.QueryRow(ctx,
 		`SELECT id, name, description, max_claims, claimed_count, codes_count,
 		        status, created_at_ms, created_by, reward_type, direct_points,
-		        new_user_only, pinned, pinned_at_ms
+		        new_user_only, pinned, pinned_at_ms, auto_pause_at_ms, auto_paused_at_ms
 		   FROM projects
 		  WHERE id = $1
 		  FOR UPDATE`,
@@ -320,7 +322,7 @@ func (service *Service) UpdateAdminProject(ctx context.Context, id string, input
 	row := tx.QueryRow(ctx,
 		`SELECT id, name, description, max_claims, claimed_count, codes_count,
 		        status, created_at_ms, created_by, reward_type, direct_points,
-		        new_user_only, pinned, pinned_at_ms
+		        new_user_only, pinned, pinned_at_ms, auto_pause_at_ms, auto_paused_at_ms
 		   FROM projects
 		  WHERE id = $1
 		  FOR UPDATE`,
@@ -396,7 +398,7 @@ func (service *Service) AppendAdminProjectClaims(ctx context.Context, id string,
 	row := tx.QueryRow(ctx,
 		`SELECT id, name, description, max_claims, claimed_count, codes_count,
 		        status, created_at_ms, created_by, reward_type, direct_points,
-		        new_user_only, pinned, pinned_at_ms
+		        new_user_only, pinned, pinned_at_ms, auto_pause_at_ms, auto_paused_at_ms
 		   FROM projects
 		  WHERE id = $1
 		  FOR UPDATE`,
@@ -429,11 +431,45 @@ func (service *Service) AppendAdminProjectClaims(ctx context.Context, id string,
 	return updated, nil
 }
 
+func (service *Service) ProcessAutoPauseProjects(ctx context.Context, nowMs int64, limit int64) (AutoPauseProjectsResult, error) {
+	if nowMs <= 0 {
+		nowMs = millis(time.Now())
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	tag, err := service.db.Exec(ctx,
+		`WITH due AS (
+		   SELECT id
+		     FROM projects
+		    WHERE status = 'active'
+		      AND auto_pause_at_ms IS NOT NULL
+		      AND auto_pause_at_ms <= $1
+		      AND auto_paused_at_ms IS NULL
+		    ORDER BY auto_pause_at_ms ASC, created_at_ms ASC, id ASC
+		    LIMIT $2
+		    FOR UPDATE SKIP LOCKED
+		 )
+		 UPDATE projects p
+		    SET status = 'paused',
+		        auto_paused_at_ms = $1,
+		        updated_at = now()
+		   FROM due
+		  WHERE p.id = due.id`,
+		nowMs,
+		limit,
+	)
+	if err != nil {
+		return AutoPauseProjectsResult{}, err
+	}
+	return AutoPauseProjectsResult{Paused: tag.RowsAffected()}, nil
+}
+
 func (service *Service) getProject(ctx context.Context, id string) (Project, error) {
 	row := service.db.QueryRow(ctx,
 		`SELECT id, name, description, max_claims, claimed_count, codes_count,
 		        status, created_at_ms, created_by, reward_type, direct_points,
-		        new_user_only, pinned, pinned_at_ms
+		        new_user_only, pinned, pinned_at_ms, auto_pause_at_ms, auto_paused_at_ms
 		   FROM projects
 		  WHERE id = $1`,
 		id,
@@ -593,6 +629,8 @@ func scanProject(row pgxScanner) (Project, error) {
 	var rewardType sql.NullString
 	var directPoints sql.NullInt64
 	var pinnedAt sql.NullInt64
+	var autoPauseAt sql.NullInt64
+	var autoPausedAt sql.NullInt64
 	err := row.Scan(
 		&project.ID,
 		&project.Name,
@@ -608,6 +646,8 @@ func scanProject(row pgxScanner) (Project, error) {
 		&project.NewUserOnly,
 		&project.Pinned,
 		&pinnedAt,
+		&autoPauseAt,
+		&autoPausedAt,
 	)
 	if err != nil {
 		return Project{}, err
@@ -620,6 +660,12 @@ func scanProject(row pgxScanner) (Project, error) {
 	}
 	if pinnedAt.Valid {
 		project.PinnedAt = &pinnedAt.Int64
+	}
+	if autoPauseAt.Valid {
+		project.AutoPauseAt = &autoPauseAt.Int64
+	}
+	if autoPausedAt.Valid {
+		project.AutoPausedAt = &autoPausedAt.Int64
 	}
 	return project, nil
 }
@@ -634,11 +680,13 @@ func updateProjectRow(ctx context.Context, tx pgx.Tx, project Project) (Project,
 		        status = $6,
 		        pinned = $7,
 		        pinned_at_ms = $8,
+		        auto_pause_at_ms = $9,
+		        auto_paused_at_ms = $10,
 		        updated_at = now()
 		  WHERE id = $1
 		  RETURNING id, name, description, max_claims, claimed_count, codes_count,
 		            status, created_at_ms, created_by, reward_type, direct_points,
-		            new_user_only, pinned, pinned_at_ms`,
+		            new_user_only, pinned, pinned_at_ms, auto_pause_at_ms, auto_paused_at_ms`,
 		project.ID,
 		project.Name,
 		project.Description,
@@ -647,6 +695,8 @@ func updateProjectRow(ctx context.Context, tx pgx.Tx, project Project) (Project,
 		project.Status,
 		project.Pinned,
 		project.PinnedAt,
+		project.AutoPauseAt,
+		project.AutoPausedAt,
 	)
 	return scanProject(row)
 }

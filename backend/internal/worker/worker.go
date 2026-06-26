@@ -143,6 +143,22 @@ func (runner *Runner) Run(ctx context.Context) error {
 		return err
 	}
 
+	if _, err := scheduler.AddFunc("0 * * * * *", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+
+		result, err := welfare.NewService(runner.deps.DB).ProcessAutoPauseProjects(ctx, 0, 100)
+		if err != nil {
+			runner.deps.Logger.Error("自动暂停福利项目失败", "error", err)
+			return
+		}
+		if result.Paused > 0 {
+			runner.deps.Logger.Info("自动暂停福利项目完成", "paused", result.Paused)
+		}
+	}); err != nil {
+		return err
+	}
+
 	scheduler.Start()
 	runner.deps.Logger.Info("Go Worker 已启动")
 

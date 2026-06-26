@@ -17,6 +17,8 @@ type Project struct {
 	NewUserOnly  bool   `json:"newUserOnly,omitempty"`
 	Pinned       bool   `json:"pinned,omitempty"`
 	PinnedAt     *int64 `json:"pinnedAt,omitempty"`
+	AutoPauseAt  *int64 `json:"autoPauseAt,omitempty"`
+	AutoPausedAt *int64 `json:"autoPausedAt,omitempty"`
 }
 
 type AdminProjectRecord struct {
@@ -70,6 +72,7 @@ type CreateAdminProjectInput struct {
 	DirectPoints int64
 	NewUserOnly  bool
 	CreatedBy    string
+	AutoPauseAt  *int64
 }
 
 type UpdateAdminProjectInput struct {
@@ -79,6 +82,10 @@ type UpdateAdminProjectInput struct {
 	Description    *string `json:"description,omitempty"`
 	MaxClaims      *int64  `json:"maxClaims,omitempty"`
 	MaxClaimsValid bool    `json:"-"`
+}
+
+type AutoPauseProjectsResult struct {
+	Paused int64 `json:"paused"`
 }
 
 type RaffleListFilter struct {

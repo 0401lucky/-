@@ -31,7 +31,7 @@ func (service *Service) ListProjects(ctx context.Context) ([]Project, error) {
 	rows, err := service.db.Query(ctx,
 		`SELECT id, name, description, max_claims, claimed_count, codes_count,
 		        status, created_at_ms, created_by, reward_type, direct_points,
-		        new_user_only, pinned, pinned_at_ms
+		        new_user_only, pinned, pinned_at_ms, auto_pause_at_ms, auto_paused_at_ms
 		 FROM projects
 		 WHERE status <> 'paused'
 		 ORDER BY pinned DESC, pinned_at_ms DESC NULLS LAST, created_at_ms DESC, id DESC`,
@@ -47,6 +47,8 @@ func (service *Service) ListProjects(ctx context.Context) ([]Project, error) {
 		var rewardType sql.NullString
 		var directPoints sql.NullInt64
 		var pinnedAt sql.NullInt64
+		var autoPauseAt sql.NullInt64
+		var autoPausedAt sql.NullInt64
 		if err := rows.Scan(
 			&project.ID,
 			&project.Name,
@@ -62,6 +64,8 @@ func (service *Service) ListProjects(ctx context.Context) ([]Project, error) {
 			&project.NewUserOnly,
 			&project.Pinned,
 			&pinnedAt,
+			&autoPauseAt,
+			&autoPausedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -73,6 +77,12 @@ func (service *Service) ListProjects(ctx context.Context) ([]Project, error) {
 		}
 		if pinnedAt.Valid {
 			project.PinnedAt = &pinnedAt.Int64
+		}
+		if autoPauseAt.Valid {
+			project.AutoPauseAt = &autoPauseAt.Int64
+		}
+		if autoPausedAt.Valid {
+			project.AutoPausedAt = &autoPausedAt.Int64
 		}
 		projects = append(projects, project)
 	}

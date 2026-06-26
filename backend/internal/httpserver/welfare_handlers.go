@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"redemption/backend/internal/auth"
 	"redemption/backend/internal/welfare"
@@ -878,6 +879,10 @@ func parseCreateAdminProjectForm(request *http.Request, createdBy string) (welfa
 	if err != nil || directPoints <= 0 {
 		return welfare.CreateAdminProjectInput{}, errors.New("直充积分必须是正整数")
 	}
+	autoPauseAt, err := parseChinaDateTimeFormValue(request.FormValue("autoPauseAt"))
+	if err != nil {
+		return welfare.CreateAdminProjectInput{}, err
+	}
 
 	return welfare.CreateAdminProjectInput{
 		Name:         request.FormValue("name"),
@@ -886,7 +891,24 @@ func parseCreateAdminProjectForm(request *http.Request, createdBy string) (welfa
 		DirectPoints: directPoints,
 		NewUserOnly:  request.FormValue("newUserOnly") == "true",
 		CreatedBy:    createdBy,
+		AutoPauseAt:  autoPauseAt,
 	}, nil
+}
+
+func parseChinaDateTimeFormValue(value string) (*int64, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	location := time.FixedZone("Asia/Shanghai", 8*60*60)
+	for _, layout := range []string{"2006-01-02T15:04", "2006-01-02T15:04:05", "2006-01-02 15:04", "2006-01-02 15:04:05"} {
+		parsed, err := time.ParseInLocation(layout, value, location)
+		if err == nil {
+			timestamp := parsed.UTC().UnixMilli()
+			return &timestamp, nil
+		}
+	}
+	return nil, errors.New("暂停时间格式不正确，请按中国时间选择有效时间")
 }
 
 func parseAppendClaimsForm(request *http.Request) (int64, error) {

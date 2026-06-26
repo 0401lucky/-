@@ -955,6 +955,7 @@ func TestAdminProjectRoutesManageDirectProjects(t *testing.T) {
 		"maxClaims":    {"2"},
 		"directPoints": {"9"},
 		"newUserOnly":  {"true"},
+		"autoPauseAt":  {"2026-01-02T03:04"},
 	})
 	if createResponse.Code != http.StatusOK {
 		t.Fatalf("expected create 200, got %d body=%s", createResponse.Code, createResponse.Body.String())
@@ -968,7 +969,8 @@ func TestAdminProjectRoutesManageDirectProjects(t *testing.T) {
 	if err := json.Unmarshal(createResponse.Body.Bytes(), &createPayload); err != nil {
 		t.Fatalf("decode create response failed: %v", err)
 	}
-	if !createPayload.Success || createPayload.Message != "项目创建成功" || createPayload.Project.ID == "" || createPayload.Project.RewardType != "direct" || createPayload.Project.DirectPoints == nil || *createPayload.Project.DirectPoints != 9 || createPayload.Project.CodesCount != 2 || !createPayload.Project.NewUserOnly {
+	expectedAutoPauseAt := time.Date(2026, 1, 2, 3, 4, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60)).UTC().UnixMilli()
+	if !createPayload.Success || createPayload.Message != "项目创建成功" || createPayload.Project.ID == "" || createPayload.Project.RewardType != "direct" || createPayload.Project.DirectPoints == nil || *createPayload.Project.DirectPoints != 9 || createPayload.Project.CodesCount != 2 || !createPayload.Project.NewUserOnly || createPayload.Project.AutoPauseAt == nil || *createPayload.Project.AutoPauseAt != expectedAutoPauseAt {
 		t.Fatalf("unexpected create response: %+v", createPayload)
 	}
 
@@ -985,6 +987,9 @@ func TestAdminProjectRoutesManageDirectProjects(t *testing.T) {
 	}
 	if !listPayload.Success || !containsProject(listPayload.Projects, createPayload.Project.ID) {
 		t.Fatalf("admin list should include created project: %+v", listPayload)
+	}
+	if listed := findProject(listPayload.Projects, createPayload.Project.ID); listed == nil || listed.AutoPauseAt == nil || *listed.AutoPauseAt != expectedAutoPauseAt {
+		t.Fatalf("admin list should include auto pause timestamp, project=%+v", listed)
 	}
 
 	userID := int64(21001 + time.Now().UnixNano()%1_000_000_000)
@@ -1253,12 +1258,16 @@ func containsAdminRaffle(raffles []welfare.AdminRaffle, id string) bool {
 }
 
 func containsProject(projects []welfare.Project, id string) bool {
+	return findProject(projects, id) != nil
+}
+
+func findProject(projects []welfare.Project, id string) *welfare.Project {
 	for _, project := range projects {
 		if project.ID == id {
-			return true
+			return &project
 		}
 	}
-	return false
+	return nil
 }
 
 func performAdminJSONRequest(handler http.Handler, method string, path string, body string) *httptest.ResponseRecorder {
