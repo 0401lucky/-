@@ -557,19 +557,22 @@ func (service *Service) getProjectClaimTx(ctx context.Context, querier pgxQuerie
 }
 
 func (service *Service) isNewUserForProjectClaims(ctx context.Context, querier pgxQuerier, userID int64) (bool, error) {
-	var hasClaim bool
+	var claimedNewUserProject bool
 	err := querier.QueryRow(ctx,
 		`SELECT EXISTS (
-		   SELECT 1 FROM exchange_logs
-		    WHERE user_id = $1
-		      AND type = 'project_direct'
+		   SELECT 1
+		     FROM exchange_logs e
+		     JOIN projects p ON p.id = e.item_id
+		    WHERE e.user_id = $1
+		      AND e.type = 'project_direct'
+		      AND p.new_user_only = true
 		 )`,
 		userID,
-	).Scan(&hasClaim)
+	).Scan(&claimedNewUserProject)
 	if err != nil {
 		return false, err
 	}
-	return !hasClaim, nil
+	return !claimedNewUserProject, nil
 }
 
 func projectClaimResult(message string, claim ProjectClaim) ClaimProjectResult {

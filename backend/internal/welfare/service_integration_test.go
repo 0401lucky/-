@@ -970,6 +970,74 @@ func TestDeliverRaffleRewardsKeepsInvalidPrizePending(t *testing.T) {
 	}
 }
 
+func TestClaimPublicProjectNewUserOnlyNotConsumedByNormalClaim(t *testing.T) {
+	ctx := context.Background()
+	service, cleanup := newIntegrationService(t, ctx)
+	defer cleanup()
+
+	suffix := time.Now().UnixNano()
+	normalID := fmt.Sprintf("project-normal-%d", suffix)
+	newUserOnlyID := fmt.Sprintf("project-newuser-%d", suffix)
+	user := auth.User{ID: suffix, Username: fmt.Sprintf("tester-%d", suffix)}
+
+	if err := seedClaimableProject(ctx, service, normalID, "普通福利", false); err != nil {
+		t.Fatalf("seed 普通项目失败: %v", err)
+	}
+	if err := seedClaimableProject(ctx, service, newUserOnlyID, "新人福利", true); err != nil {
+		t.Fatalf("seed 新人项目失败: %v", err)
+	}
+
+	normalResult, err := service.ClaimPublicProject(ctx, normalID, user)
+	if err != nil {
+		t.Fatalf("领取普通项目出错: %v", err)
+	}
+	if !normalResult.Success {
+		t.Fatalf("领取普通福利应成功，却返回: %s", normalResult.Message)
+	}
+
+	newUserResult, err := service.ClaimPublicProject(ctx, newUserOnlyID, user)
+	if err != nil {
+		t.Fatalf("领取新人项目出错: %v", err)
+	}
+	if !newUserResult.Success {
+		t.Fatalf("领取普通福利不应消耗新人资格，但领取新人福利失败: %s", newUserResult.Message)
+	}
+}
+
+func TestClaimPublicProjectNewUserOnlyConsumedByNewUserClaim(t *testing.T) {
+	ctx := context.Background()
+	service, cleanup := newIntegrationService(t, ctx)
+	defer cleanup()
+
+	suffix := time.Now().UnixNano()
+	firstID := fmt.Sprintf("project-newuser-a-%d", suffix)
+	secondID := fmt.Sprintf("project-newuser-b-%d", suffix)
+	user := auth.User{ID: suffix, Username: fmt.Sprintf("tester-%d", suffix)}
+
+	if err := seedClaimableProject(ctx, service, firstID, "新人福利A", true); err != nil {
+		t.Fatalf("seed 新人项目A失败: %v", err)
+	}
+	if err := seedClaimableProject(ctx, service, secondID, "新人福利B", true); err != nil {
+		t.Fatalf("seed 新人项目B失败: %v", err)
+	}
+
+	firstResult, err := service.ClaimPublicProject(ctx, firstID, user)
+	if err != nil {
+		t.Fatalf("领取首个新人项目出错: %v", err)
+	}
+	if !firstResult.Success {
+		t.Fatalf("首次领取新人福利应成功，却返回: %s", firstResult.Message)
+	}
+
+	secondResult, err := service.ClaimPublicProject(ctx, secondID, user)
+	if err != nil {
+		t.Fatalf("领取第二个新人项目出错: %v", err)
+	}
+	if secondResult.Success {
+		t.Fatalf("领取新人福利后资格应已用尽，第二个新人福利不应可领，却返回成功")
+	}
+}
+
 func newIntegrationService(t *testing.T, ctx context.Context) (*Service, func()) {
 	t.Helper()
 
@@ -1014,6 +1082,20 @@ func seedProject(ctx context.Context, service *Service, id string, name string, 
 		createdAt,
 		pinned,
 		pinnedAt,
+	)
+	return err
+}
+
+func seedClaimableProject(ctx context.Context, service *Service, id string, name string, newUserOnly bool) error {
+	_, err := service.db.Exec(ctx,
+		`INSERT INTO projects (
+		   id, name, description, max_claims, claimed_count, codes_count, status,
+		   created_at_ms, created_by, reward_type, direct_points, new_user_only,
+		   pinned, pinned_at_ms
+		 ) VALUES ($1, $2, '测试项目', 10, 0, 10, 'active', 1000, 'test', 'direct', 50, $3, false, NULL)`,
+		id,
+		name,
+		newUserOnly,
 	)
 	return err
 }

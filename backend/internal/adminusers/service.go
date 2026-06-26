@@ -40,23 +40,24 @@ func (service *Service) ListUsers(ctx context.Context, page int64, limit int64, 
 
 	var total int64
 	if err := service.db.QueryRow(ctx,
-		`WITH claim_counts AS (
-		     SELECT user_id, COUNT(*)::bigint AS count
-		       FROM exchange_logs
-		      WHERE type = 'project_direct'
-		      GROUP BY user_id
+		`WITH new_user_claims AS (
+		     SELECT DISTINCT e.user_id
+		       FROM exchange_logs e
+		       JOIN projects p ON p.id = e.item_id
+		      WHERE e.type = 'project_direct'
+		        AND p.new_user_only = true
 		   ),
 		   filtered AS (
-		     SELECT u.id, COALESCE(c.count, 0)::bigint AS claims_count
+		     SELECT u.id, (nuc.user_id IS NOT NULL) AS claimed_new_user
 		       FROM users u
-		       LEFT JOIN claim_counts c ON c.user_id = u.id
+		       LEFT JOIN new_user_claims nuc ON nuc.user_id = u.id
 		      WHERE ($1 = '' OR lower(u.username) LIKE $2 OR u.id::text LIKE $2)
 		   )
 		 SELECT COUNT(*)::bigint
 		   FROM filtered
 		  WHERE ($3 = 'all')
-		     OR ($3 = 'new' AND claims_count = 0)
-		     OR ($3 = 'claimed' AND claims_count > 0)`,
+		     OR ($3 = 'new' AND NOT claimed_new_user)
+		     OR ($3 = 'claimed' AND claimed_new_user)`,
 		search,
 		pattern,
 		status,
@@ -70,6 +71,13 @@ func (service *Service) ListUsers(ctx context.Context, page int64, limit int64, 
 		       FROM exchange_logs
 		      WHERE type = 'project_direct'
 		      GROUP BY user_id
+		   ),
+		   new_user_claims AS (
+		     SELECT DISTINCT e.user_id
+		       FROM exchange_logs e
+		       JOIN projects p ON p.id = e.item_id
+		      WHERE e.type = 'project_direct'
+		        AND p.new_user_only = true
 		   ),
 		   lottery_counts AS (
 		     SELECT user_id, COUNT(*)::bigint AS count
@@ -123,9 +131,11 @@ func (service *Service) ListUsers(ctx context.Context, page int64, limit int64, 
 		          COALESCE(lc.claimed_at_ms, 0),
 		          COALESCE(ll.lottery_at_ms, 0),
 		          COALESCE(g.latest_game_at_ms, 0)
-		        )::bigint AS last_activity_at
+		        )::bigint AS last_activity_at,
+		        (nuc.user_id IS NOT NULL) AS claimed_new_user
 		   FROM users u
 		   LEFT JOIN claim_counts c ON c.user_id = u.id
+		   LEFT JOIN new_user_claims nuc ON nuc.user_id = u.id
 		   LEFT JOIN lottery_counts l ON l.user_id = u.id
 		   LEFT JOIN point_accounts pa ON pa.user_id = u.id
 		   LEFT JOIN today_games g ON g.user_id = u.id
@@ -135,8 +145,8 @@ func (service *Service) ListUsers(ctx context.Context, page int64, limit int64, 
 		  WHERE ($1 = '' OR lower(u.username) LIKE $2 OR u.id::text LIKE $2)
 		    AND (
 		      $3 = 'all'
-		      OR ($3 = 'new' AND COALESCE(c.count, 0) = 0)
-		      OR ($3 = 'claimed' AND COALESCE(c.count, 0) > 0)
+		      OR ($3 = 'new' AND nuc.user_id IS NULL)
+		      OR ($3 = 'claimed' AND nuc.user_id IS NOT NULL)
 		    )
 		  ORDER BY u.first_seen_at DESC, u.id DESC
 		  LIMIT $5 OFFSET $6`,
@@ -159,6 +169,7 @@ func (service *Service) ListUsers(ctx context.Context, page int64, limit int64, 
 		var latestPointChangeAt sql.NullInt64
 		var lastClaimAt sql.NullInt64
 		var lastLotteryAt sql.NullInt64
+		var claimedNewUser bool
 		if err := rows.Scan(
 			&user.ID,
 			&user.Username,
@@ -173,10 +184,11 @@ func (service *Service) ListUsers(ctx context.Context, page int64, limit int64, 
 			&lastClaimAt,
 			&lastLotteryAt,
 			&user.LastActivityAt,
+			&claimedNewUser,
 		); err != nil {
 			return ListUsersResult{}, err
 		}
-		user.IsNewUser = user.ClaimsCount == 0
+		user.IsNewUser = !claimedNewUser
 		user.LatestPointChange = nullableInt64(latestPointChange)
 		user.LatestPointChangeAt = nullableInt64(latestPointChangeAt)
 		user.LastClaimAt = nullableInt64(lastClaimAt)
@@ -357,9 +369,11 @@ func (service *Service) userStats(ctx context.Context, search string, pattern st
 		      WHERE ($1 = '' OR lower(u.username) LIKE $2 OR u.id::text LIKE $2)
 		   ),
 		   claimed AS (
-		     SELECT DISTINCT user_id
-		       FROM exchange_logs
-		      WHERE type = 'project_direct'
+		     SELECT DISTINCT e.user_id
+		       FROM exchange_logs e
+		       JOIN projects p ON p.id = e.item_id
+		      WHERE e.type = 'project_direct'
+		        AND p.new_user_only = true
 		   )
 		 SELECT COUNT(f.id)::bigint,
 		        COUNT(f.id) FILTER (WHERE c.user_id IS NULL)::bigint,
@@ -380,7 +394,9 @@ func (service *Service) getDetailUser(ctx context.Context, userID int64) (UserDe
 		            (array_agg(e.item_id ORDER BY e.created_at DESC, e.id DESC))[1] AS latest_project_id,
 		            floor(extract(epoch from MAX(e.created_at)) * 1000)::bigint AS latest_claimed_at_ms
 		       FROM exchange_logs e
+		       JOIN projects p ON p.id = e.item_id
 		      WHERE e.type = 'project_direct'
+		        AND p.new_user_only = true
 		      GROUP BY e.user_id
 		   )
 		 SELECT u.id,
