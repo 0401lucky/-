@@ -101,6 +101,18 @@ const ROGUELITE_CELL_ART: Record<RogueliteCellView['type'], string> = {
   exit: `${ROGUELITE_ART_BASE}/exit.webp`,
 };
 
+const DEFAULT_ROGUELITE_SCORE: RogueliteStateView['scorePreview'] = {
+  floorPoints: 0,
+  explorationPoints: 0,
+  monsterPoints: 0,
+  stardustPoints: 0,
+  lifePoints: 0,
+  relicPoints: 0,
+  chestPoints: 0,
+  winBonus: 0,
+  total: 0,
+};
+
 async function parseJson<T>(res: Response): Promise<ApiResponse<T> | null> {
   try {
     return (await res.json()) as ApiResponse<T>;
@@ -157,6 +169,72 @@ function riskLabel(risk: RogueliteCellView['risk']): string {
   return '安全';
 }
 
+function safeNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function safeInteger(value: unknown, fallback = 0): number {
+  return Math.floor(safeNumber(value, fallback));
+}
+
+function isSafePosition(value: unknown): value is { row: number; col: number } {
+  if (!value || typeof value !== 'object') return false;
+  const position = value as { row?: unknown; col?: unknown };
+  return Number.isFinite(position.row) && Number.isFinite(position.col);
+}
+
+function safePositionLabel(position: unknown): string {
+  return isSafePosition(position)
+    ? `${safeInteger(position.row)},${safeInteger(position.col)}`
+    : '未知';
+}
+
+function safeRelicLabel(relic: unknown): string {
+  return typeof relic === 'string' && relic in ROGUELITE_RELIC_LABELS
+    ? ROGUELITE_RELIC_LABELS[relic as RogueliteRelicType]
+    : '未知遗物';
+}
+
+function safeRelicIcon(relic: unknown): string {
+  return typeof relic === 'string' && relic in ROGUELITE_RELIC_ICONS
+    ? ROGUELITE_RELIC_ICONS[relic as RogueliteRelicType]
+    : '◇';
+}
+
+function safeRelicDescription(relic: unknown): string {
+  return typeof relic === 'string' && relic in ROGUELITE_RELIC_DESCRIPTIONS
+    ? ROGUELITE_RELIC_DESCRIPTIONS[relic as RogueliteRelicType]
+    : '旧会话遗物数据不完整，效果以服务端结算为准。';
+}
+
+function getSafeScorePreview(state: Pick<RogueliteStateView, 'scorePreview'>): RogueliteStateView['scorePreview'] {
+  const score = state.scorePreview ?? DEFAULT_ROGUELITE_SCORE;
+  return {
+    floorPoints: safeInteger(score.floorPoints),
+    explorationPoints: safeInteger(score.explorationPoints),
+    monsterPoints: safeInteger(score.monsterPoints),
+    stardustPoints: safeInteger(score.stardustPoints),
+    lifePoints: safeInteger(score.lifePoints),
+    relicPoints: safeInteger(score.relicPoints),
+    chestPoints: safeInteger(score.chestPoints),
+    winBonus: safeInteger(score.winBonus),
+    total: safeInteger(score.total),
+  };
+}
+
+function getSafeBoardSize(value: unknown): number {
+  const size = safeInteger(value, 7);
+  return size > 0 && size <= 15 ? size : 7;
+}
+
+function getSafeCellArt(cell: RogueliteCellView): string {
+  return ROGUELITE_CELL_ART[cell.type] ?? ROGUELITE_CELL_ART.hidden;
+}
+
+function isRenderableCell(cell: RogueliteCellView): boolean {
+  return isSafePosition(cell.position) && isSafePosition(cell.viewPosition);
+}
+
 function cellTone(cell: RogueliteCellView): string {
   if (cell.state === 'current') {
     return 'text-sky-100';
@@ -198,6 +276,8 @@ export default function RoguelitePage() {
   const state = session?.state ?? null;
   const player = state?.player ?? null;
   const pending = state?.pending ?? null;
+  const starGate = state?.starGate ?? null;
+  const boardSize = getSafeBoardSize(state?.boardSize);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -352,7 +432,9 @@ export default function RoguelitePage() {
   const canMove = state?.status === 'playing' && !pending && !loading;
 
   const sortedBoard = useMemo(() => {
-    return [...(state?.board ?? [])].sort((a, b) => (a.viewPosition.row - b.viewPosition.row) || (a.viewPosition.col - b.viewPosition.col));
+    return [...(state?.board ?? [])]
+      .filter(isRenderableCell)
+      .sort((a, b) => (a.viewPosition.row - b.viewPosition.row) || (a.viewPosition.col - b.viewPosition.col));
   }, [state?.board]);
 
   const tacticalLine = useMemo(() => {
@@ -361,9 +443,9 @@ export default function RoguelitePage() {
     if (state.pending?.type === 'event') return '事件会改变资源结构，低生命时优先保命。';
     if (state.pending?.type === 'shop') return '商店是稳定补强点，星尘不足时可以先离开。';
     if (state.pending?.type === 'chest') return '宝箱收益高，但钥匙也可能用于后续回复事件。';
-    if (state.starGate.endlessUnlocked) return '已进入无尽阶段，可以继续贪收益，也可以撤离锁定积分。';
-    if (state.starGate.distance <= 2) return '星门很近，准备穿门前先看生命和护盾是否稳。';
-    if (player && player.hp <= Math.max(6, Math.floor(player.maxHp * 0.25))) return '生命偏低，优先选择安全格、回复、护盾或商店。';
+    if (state.starGate?.endlessUnlocked) return '已进入无尽阶段，可以继续贪收益，也可以撤离锁定积分。';
+    if (safeNumber(state.starGate?.distance, Infinity) <= 2) return '星门很近，准备穿门前先看生命和护盾是否稳。';
+    if (player && safeNumber(player.hp) <= Math.max(6, Math.floor(safeNumber(player.maxHp, 30) * 0.25))) return '生命偏低，优先选择安全格、回复、护盾或商店。';
     return '优先点亮收益格，同时保留星尘给商店和星爆。';
   }, [player, state]);
 
@@ -422,7 +504,7 @@ export default function RoguelitePage() {
           phase={phase}
           loading={loading}
           status={status}
-          canEscape={Boolean(state?.status === 'playing' && state.starGate.endlessUnlocked && !state.pending)}
+          canEscape={Boolean(state?.status === 'playing' && state.starGate?.endlessUnlocked && !state.pending)}
           onStart={() => void startGame()}
           onCancel={() => void cancelGame()}
           onEscape={() => void stepGame({ type: 'escape' })}
@@ -473,12 +555,12 @@ export default function RoguelitePage() {
               <div className="rogue-board-hint">
                 <div className="flex items-center gap-2 font-black text-emerald-800">
                   <Map className="h-4 w-4" />
-                  星门在{state.starGate.direction}，距离 {state.starGate.distance} 步
+                  星门在{starGate?.direction ?? '未知方向'}，距离 {safeInteger(starGate?.distance)} 步
                 </div>
                 <div className="font-bold text-emerald-700">
-                  {state.starGate.exact && state.starGate.position
-                    ? `坐标 ${state.starGate.position.row},${state.starGate.position.col}`
-                    : state.starGate.endlessUnlocked
+                  {starGate?.exact && starGate.position
+                    ? `坐标 ${safePositionLabel(starGate.position)}`
+                    : starGate?.endlessUnlocked
                       ? '无尽阶段可撤离'
                       : '取得星门罗盘可显示精确坐标'}
                 </div>
@@ -504,18 +586,18 @@ export default function RoguelitePage() {
                       top: '12.143%',
                       width: '75.714%',
                       height: '75.714%',
-                      gridTemplateColumns: `repeat(${state.boardSize}, minmax(0, 1fr))`,
-                      gridTemplateRows: `repeat(${state.boardSize}, minmax(0, 1fr))`,
+                      gridTemplateColumns: `repeat(${boardSize}, minmax(0, 1fr))`,
+                      gridTemplateRows: `repeat(${boardSize}, minmax(0, 1fr))`,
                     }}
                   >
                     {sortedBoard.map((cell) => {
                       const movable = canMove && cell.adjacent && cell.state !== 'current';
-                      const artSrc = ROGUELITE_CELL_ART[cell.type];
+                      const artSrc = getSafeCellArt(cell);
                       const ariaLabel = cell.state === 'hidden'
-                        ? `世界坐标 ${cell.position.row},${cell.position.col}，迷雾，尚未照亮`
+                        ? `世界坐标 ${safePositionLabel(cell.position)}，迷雾，尚未照亮`
                         : cell.state === 'current'
-                          ? `世界坐标 ${cell.position.row},${cell.position.col}，当前位置，${cell.label}，${riskLabel(cell.risk)}`
-                          : `世界坐标 ${cell.position.row},${cell.position.col}，${cell.label}，${riskLabel(cell.risk)}`;
+                          ? `世界坐标 ${safePositionLabel(cell.position)}，当前位置，${cell.label}，${riskLabel(cell.risk)}`
+                          : `世界坐标 ${safePositionLabel(cell.position)}，${cell.label}，${riskLabel(cell.risk)}`;
                       return (
                         <button
                           key={cell.id}
@@ -571,6 +653,7 @@ export default function RoguelitePage() {
           outcome={lastOutcome}
           loading={loading}
           onAction={(action) => void stepGame(action)}
+          onRecover={() => void fetchStatus()}
         />
       )}
 
@@ -1077,12 +1160,12 @@ function StatusDock({
           <RelicRibbon player={player} />
         </div>
         <div className="rogue-status-metrics">
-          <StatusMetric icon={<Heart className="h-4 w-4" />} label="生命" value={player ? `${player.hp}/${player.maxHp}` : '-'} tone="text-rose-600" />
-          <StatusMetric icon={<Shield className="h-4 w-4" />} label="护盾" value={player?.shield ?? 0} tone="text-sky-600" />
-          <StatusMetric icon={<Gem className="h-4 w-4" />} label="星尘" value={player?.stardust ?? 0} tone="text-emerald-600" />
-          <StatusMetric icon={<Key className="h-4 w-4" />} label="钥匙" value={player?.keys ?? 0} tone="text-amber-600" />
-          <StatusMetric icon={<Sword className="h-4 w-4" />} label="攻击" value={player?.attack ?? 0} tone="text-slate-800" />
-          <StatusMetric icon={<DoorOpen className="h-4 w-4" />} label="步数" value={player?.stepsRemaining ?? 0} tone="text-emerald-700" />
+          <StatusMetric icon={<Heart className="h-4 w-4" />} label="生命" value={player ? `${safeInteger(player.hp)}/${safeInteger(player.maxHp, 30)}` : '-'} tone="text-rose-600" />
+          <StatusMetric icon={<Shield className="h-4 w-4" />} label="护盾" value={safeInteger(player?.shield)} tone="text-sky-600" />
+          <StatusMetric icon={<Gem className="h-4 w-4" />} label="星尘" value={safeInteger(player?.stardust)} tone="text-emerald-600" />
+          <StatusMetric icon={<Key className="h-4 w-4" />} label="钥匙" value={safeInteger(player?.keys)} tone="text-amber-600" />
+          <StatusMetric icon={<Sword className="h-4 w-4" />} label="攻击" value={safeInteger(player?.attack)} tone="text-slate-800" />
+          <StatusMetric icon={<DoorOpen className="h-4 w-4" />} label="步数" value={safeInteger(player?.stepsRemaining)} tone="text-emerald-700" />
         </div>
       </div>
 
@@ -1137,25 +1220,26 @@ function StatusMetric({ icon, label, value, tone }: { icon: ReactNode; label: st
 }
 
 function RelicRibbon({ player }: { player: RogueliteStateView['player'] | null }) {
-  if (!player?.relics.length) {
+  const relics = Array.isArray(player?.relics) ? player.relics : [];
+  if (relics.length === 0) {
     return <span className="text-xs font-bold text-slate-400">暂无遗物</span>;
   }
 
   return (
     <div className="flex min-w-0 flex-wrap gap-1.5">
-      {player.relics.slice(0, 4).map((relic) => (
+      {relics.slice(0, 4).map((relic) => (
         <span
           key={relic}
           className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-xs font-black text-violet-700 shadow-sm"
-          title={ROGUELITE_RELIC_DESCRIPTIONS[relic]}
+          title={safeRelicDescription(relic)}
         >
-          <span className="text-amber-500">{ROGUELITE_RELIC_ICONS[relic]}</span>
-          {ROGUELITE_RELIC_LABELS[relic]}
+          <span className="text-amber-500">{safeRelicIcon(relic)}</span>
+          {safeRelicLabel(relic)}
         </span>
       ))}
-      {player.relics.length > 4 && (
+      {relics.length > 4 && (
         <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-slate-500 shadow-sm">
-          +{player.relics.length - 4}
+          +{relics.length - 4}
         </span>
       )}
     </div>
@@ -1226,25 +1310,25 @@ function ModalPlayerSnapshot({ player }: { player: RogueliteStateView['player'] 
         tone="hp"
         icon={<Heart className="h-3.5 w-3.5 text-rose-500" />}
         label="生命"
-        value={`${player.hp}/${player.maxHp}`}
+        value={`${safeInteger(player.hp)}/${safeInteger(player.maxHp, 30)}`}
       />
       <ModalSnapshotMetric
         tone="shield"
         icon={<Shield className="h-3.5 w-3.5 text-sky-500" />}
         label="护盾"
-        value={player.shield}
+        value={safeInteger(player.shield)}
       />
       <ModalSnapshotMetric
         tone="attack"
         icon={<Sword className="h-3.5 w-3.5 text-orange-500" />}
         label="攻击"
-        value={player.attack}
+        value={safeInteger(player.attack)}
       />
       <ModalSnapshotMetric
         tone="stardust"
         icon={<Gem className="h-3.5 w-3.5 text-emerald-500" />}
         label="星尘"
-        value={player.stardust}
+        value={safeInteger(player.stardust)}
       />
     </div>
   );
@@ -1273,7 +1357,7 @@ function ModalSnapshotMetric({
 }
 
 function ScorePreviewPanel({ state }: { state: RogueliteStateView }) {
-  const score = state.scorePreview;
+  const score = getSafeScorePreview(state);
   const finalPoints = calculateRoguelitePointReward(score.total);
 
   return (
@@ -1326,17 +1410,29 @@ function PendingActionModal({
   outcome,
   loading,
   onAction,
+  onRecover,
 }: {
   pending: RoguelitePendingView;
   player: RogueliteStateView['player'];
   outcome: RogueliteOutcomeView | null;
   loading: boolean;
   onAction: (action: RogueliteAction) => void;
+  onRecover: () => void;
 }) {
   const appliedItemCard = <AppliedItemCard relic={outcome?.relicGained} inModal />;
 
   if (pending.type === 'combat') {
     const monster = pending.monster;
+    if (!monster) {
+      return (
+        <PendingSyncFallback
+          title="战斗状态同步中"
+          message="当前战斗数据不完整，请同步最新迷阵状态后继续。"
+          loading={loading}
+          onRecover={onRecover}
+        />
+      );
+    }
     return (
       <div className="rogue-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="roguelite-combat-title">
         <div className="rogue-event-modal combat">
@@ -1351,14 +1447,14 @@ function PendingActionModal({
           <ModalPlayerSnapshot player={player} />
           {appliedItemCard}
           <div className="mt-5 grid grid-cols-3 gap-2 text-sm">
-            <ScoreLine label="生命" value={monster.hp} />
-            <ScoreLine label="攻击" value={monster.attack} />
-            <ScoreLine label="奖励" value={monster.rewardStardust} />
+            <ScoreLine label="生命" value={safeInteger(monster.hp)} />
+            <ScoreLine label="攻击" value={safeInteger(monster.attack)} />
+            <ScoreLine label="奖励" value={safeInteger(monster.rewardStardust)} />
           </div>
           <div className="modal-option-grid">
             <ActionButton icon={<Sword className="h-4 w-4" />} label="攻击" disabled={loading} onClick={() => onAction({ type: 'combat', style: 'attack' })} />
             <ActionButton icon={<Shield className="h-4 w-4" />} label="防御" disabled={loading} onClick={() => onAction({ type: 'combat', style: 'guard' })} />
-            <ActionButton icon={<Sparkles className="h-4 w-4" />} label="星爆（8 星尘）" disabled={loading || player.stardust < 8} onClick={() => onAction({ type: 'combat', style: 'skill' })} />
+            <ActionButton icon={<Sparkles className="h-4 w-4" />} label="星爆（8 星尘）" disabled={loading || safeNumber(player.stardust) < 8} onClick={() => onAction({ type: 'combat', style: 'skill' })} />
           </div>
         </div>
       </div>
@@ -1366,6 +1462,17 @@ function PendingActionModal({
   }
 
   if (pending.type === 'event') {
+    const options = Array.isArray(pending.options) ? pending.options : [];
+    if (options.length === 0) {
+      return (
+        <PendingSyncFallback
+          title="事件状态同步中"
+          message="当前事件选项缺失，请同步最新迷阵状态后继续。"
+          loading={loading}
+          onRecover={onRecover}
+        />
+      );
+    }
     return (
       <div className="rogue-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="roguelite-event-title">
         <div className="rogue-event-modal event">
@@ -1380,7 +1487,7 @@ function PendingActionModal({
           <ModalPlayerSnapshot player={player} />
           {appliedItemCard}
           <div className="modal-option-grid">
-            {pending.options.map((option) => (
+            {options.map((option) => (
               <button
                 key={option.id}
                 onClick={() => onAction({ type: 'event', optionId: option.id })}
@@ -1399,6 +1506,7 @@ function PendingActionModal({
   }
 
   if (pending.type === 'shop') {
+    const items = Array.isArray(pending.items) ? pending.items : [];
     return (
       <div className="rogue-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="roguelite-shop-title">
         <div className="rogue-event-modal shop">
@@ -1413,11 +1521,11 @@ function PendingActionModal({
           <ModalPlayerSnapshot player={player} />
           {appliedItemCard}
           <div className="modal-option-grid">
-            {pending.items.map((item) => (
+            {items.map((item) => (
               <button
                 key={item.id}
                 onClick={() => onAction({ type: 'shop', itemId: item.id })}
-                disabled={loading || player.stardust < item.cost}
+                disabled={loading || safeNumber(player.stardust) < safeNumber(item.cost)}
                 className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4 text-left transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-lg hover:shadow-emerald-100 disabled:opacity-50"
                 type="button"
               >
@@ -1435,6 +1543,18 @@ function PendingActionModal({
     );
   }
 
+  const reward = pending.type === 'chest' ? pending.reward : null;
+  if (!reward) {
+    return (
+      <PendingSyncFallback
+        title="宝箱状态同步中"
+        message="当前宝箱奖励数据缺失，请同步最新迷阵状态后继续。"
+        loading={loading}
+        onRecover={onRecover}
+      />
+    );
+  }
+
   return (
     <div className="rogue-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="roguelite-chest-title">
       <div className="rogue-event-modal chest">
@@ -1444,13 +1564,46 @@ function PendingActionModal({
         </div>
         <h2 id="roguelite-chest-title" className="text-2xl font-black text-slate-900">星纹宝箱</h2>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          消耗 1 把钥匙，获得 {pending.reward.stardust} 星尘
-          {pending.reward.relic ? ` 与 ${ROGUELITE_RELIC_LABELS[pending.reward.relic]}` : ''}。
+          消耗 1 把钥匙，获得 {safeInteger(reward.stardust)} 星尘
+          {reward.relic ? ` 与 ${safeRelicLabel(reward.relic)}` : ''}。
         </p>
         <div className="modal-option-grid grid-cols-2">
-          <ActionButton icon={<Key className="h-4 w-4" />} label="打开" disabled={loading || player.keys <= 0} onClick={() => onAction({ type: 'chest', open: true })} />
+          <ActionButton icon={<Key className="h-4 w-4" />} label="打开" disabled={loading || safeNumber(player.keys) <= 0} onClick={() => onAction({ type: 'chest', open: true })} />
           <ActionButton icon={<DoorOpen className="h-4 w-4" />} label="跳过" disabled={loading} onClick={() => onAction({ type: 'chest', open: false })} />
         </div>
+      </div>
+    </div>
+  );
+}
+
+function PendingSyncFallback({
+  title,
+  message,
+  loading,
+  onRecover,
+}: {
+  title: string;
+  message: string;
+  loading: boolean;
+  onRecover: () => void;
+}) {
+  return (
+    <div className="rogue-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="roguelite-sync-title">
+      <div className="rogue-event-modal event">
+        <div className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-600">
+          <Sparkles className="h-4 w-4" />
+          状态同步
+        </div>
+        <h2 id="roguelite-sync-title" className="text-2xl font-black text-slate-900">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-500">{message}</p>
+        <button
+          onClick={onRecover}
+          disabled={loading}
+          className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-200 transition-all hover:-translate-y-0.5 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+          type="button"
+        >
+          {loading ? '同步中...' : '同步状态'}
+        </button>
       </div>
     </div>
   );
@@ -1466,7 +1619,8 @@ function RogueliteOutcomeModal({
   onSubmit: () => void;
 }) {
   const won = state.status === 'escaped';
-  const score = state.scorePreview.total;
+  const scorePreview = getSafeScorePreview(state);
+  const score = safeInteger(scorePreview.total);
   const finalPoints = calculateRoguelitePointReward(score);
   const title = won ? '成功撤离星尘迷阵' : '迷阵挑战失败';
   const description = won
