@@ -17,11 +17,36 @@ import (
 )
 
 type authHandlers struct {
-	deps Dependencies
+	deps            Dependencies
+	turnstileConfig *turnstileConfigClient
 }
 
 func newAuthHandlers(deps Dependencies) authHandlers {
-	return authHandlers{deps: deps}
+	return authHandlers{
+		deps:            deps,
+		turnstileConfig: newTurnstileConfigClient(deps.Config.NewAPIURL),
+	}
+}
+
+func (handlers authHandlers) getTurnstileConfig(writer http.ResponseWriter, request *http.Request) {
+	config, err := handlers.turnstileConfig.get(request.Context())
+	if err != nil {
+		if handlers.turnstileConfig.shouldLogError() {
+			handlers.deps.Logger.Error("读取 new-api 人机验证配置失败", "error", err)
+		}
+		writeJSON(writer, http.StatusServiceUnavailable, map[string]any{
+			"success": false,
+			"message": "人机验证配置暂时不可用",
+		})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"success": true,
+		"data": map[string]any{
+			"enabled": config.Enabled,
+			"siteKey": config.SiteKey,
+		},
+	})
 }
 
 func (handlers authHandlers) me(writer http.ResponseWriter, request *http.Request) {
@@ -74,17 +99,10 @@ func (handlers authHandlers) login(writer http.ResponseWriter, request *http.Req
 		})
 		return
 	}
-	if handlers.deps.DB == nil {
-		writeJSON(writer, http.StatusServiceUnavailable, map[string]any{
-			"success": false,
-			"message": "用户数据库未配置",
-		})
-		return
-	}
-
 	var payload struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username       string `json:"username"`
+		Password       string `json:"password"`
+		TurnstileToken string `json:"turnstileToken"`
 	}
 	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"success": false, "message": "请求体格式无效"})
@@ -95,6 +113,40 @@ func (handlers authHandlers) login(writer http.ResponseWriter, request *http.Req
 	normalizedUsername := strings.ToLower(username)
 	if username == "" || password == "" {
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"success": false, "message": "用户名和密码不能为空"})
+		return
+	}
+	if len(payload.TurnstileToken) > 4096 {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"code":    "TURNSTILE_INVALID",
+			"message": "人机验证令牌格式无效",
+		})
+		return
+	}
+	turnstileConfig, err := handlers.turnstileConfig.get(request.Context())
+	if err != nil {
+		if handlers.turnstileConfig.shouldLogError() {
+			handlers.deps.Logger.Error("读取 new-api 人机验证配置失败", "error", err)
+		}
+		writeJSON(writer, http.StatusServiceUnavailable, map[string]any{
+			"success": false,
+			"message": "人机验证配置暂时不可用",
+		})
+		return
+	}
+	if turnstileConfig.Enabled && strings.TrimSpace(payload.TurnstileToken) == "" {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"code":    "TURNSTILE_REQUIRED",
+			"message": "请先完成人机验证",
+		})
+		return
+	}
+	if handlers.deps.DB == nil {
+		writeJSON(writer, http.StatusServiceUnavailable, map[string]any{
+			"success": false,
+			"message": "用户数据库未配置",
+		})
 		return
 	}
 
@@ -113,13 +165,21 @@ func (handlers authHandlers) login(writer http.ResponseWriter, request *http.Req
 	if handlers.rejectAuthRateLimited(writer, request, clientIP(request), authLoginIPRateLimit) {
 		return
 	}
-	if handlers.rejectAuthRateLimited(writer, request, normalizedUsername, authLoginUserRateLimit) {
+	if handlers.rejectAuthRateLimitReached(writer, request, normalizedUsername, authLoginUserRateLimit) {
 		return
 	}
 
-	result, err := newapi.Login(request.Context(), handlers.deps.Config.NewAPIURL, username, password, nil)
+	result, err := newapi.Login(
+		request.Context(),
+		handlers.deps.Config.NewAPIURL,
+		username,
+		password,
+		payload.TurnstileToken,
+		nil,
+	)
 	if err != nil {
-		handlers.deps.Logger.Error("new-api 登录失败", "error", err)
+		// http.Client 的错误文本可能包含带 Turnstile query 的完整 URL，禁止写入日志。
+		handlers.deps.Logger.Error("new-api 登录失败")
 		writeJSON(writer, http.StatusBadGateway, map[string]any{
 			"success": false,
 			"message": "登录服务暂时不可用",
@@ -127,22 +187,46 @@ func (handlers authHandlers) login(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if !result.Success || result.User == nil {
-		locked, remaining, err := recordLoginFailure(request.Context(), handlers.deps.Redis, normalizedUsername)
-		if err != nil {
-			handlers.writeAuthDependencyError(writer, "记录登录失败次数失败", err)
+		failureKind := newapi.ClassifyLoginFailure(result)
+		if failureKind == newapi.LoginFailureVerificationRequired || failureKind == newapi.LoginFailureVerificationFailed {
+			if shouldInvalidateTurnstileConfig(turnstileConfig, failureKind) {
+				handlers.turnstileConfig.invalidate()
+			}
+			writeJSON(writer, http.StatusUnauthorized, map[string]any{
+				"success": false,
+				"code":    "TURNSTILE_FAILED",
+				"message": "人机验证已失效，请重新验证",
+			})
 			return
 		}
+
 		status := http.StatusUnauthorized
 		message := result.Message
 		if strings.TrimSpace(message) == "" {
 			message = "登录失败"
 		}
-		if locked {
-			status = http.StatusTooManyRequests
-			message = "登录失败次数过多，请 " + strconv.FormatInt(remaining, 10) + " 秒后再试"
+		locked := false
+		remaining := int64(0)
+		code := "AUTH_FAILED"
+		if failureKind == newapi.LoginFailureInvalidCredentials {
+			if handlers.rejectAuthRateLimited(writer, request, normalizedUsername, authLoginUserRateLimit) {
+				return
+			}
+			code = "INVALID_CREDENTIALS"
+			var err error
+			locked, remaining, err = recordLoginFailure(request.Context(), handlers.deps.Redis, normalizedUsername)
+			if err != nil {
+				handlers.writeAuthDependencyError(writer, "记录登录失败次数失败", err)
+				return
+			}
+			if locked {
+				status = http.StatusTooManyRequests
+				message = "登录失败次数过多，请 " + strconv.FormatInt(remaining, 10) + " 秒后再试"
+			}
 		}
 		writeJSON(writer, status, map[string]any{
 			"success":    false,
+			"code":       code,
 			"message":    message,
 			"retryAfter": retryAfterValue(locked, remaining),
 		})
@@ -236,8 +320,34 @@ func (handlers authHandlers) logout(writer http.ResponseWriter, request *http.Re
 	})
 }
 
+func shouldInvalidateTurnstileConfig(config turnstileConfig, failureKind newapi.LoginFailureKind) bool {
+	return !config.Enabled && failureKind == newapi.LoginFailureVerificationRequired
+}
+
 func (handlers authHandlers) rejectAuthRateLimited(writer http.ResponseWriter, request *http.Request, key string, rule userRateLimitRule) bool {
 	result, err := checkAuthRateLimit(request.Context(), handlers.deps.Redis, key, rule)
+	if err != nil {
+		handlers.writeAuthDependencyError(writer, "登录限流检查失败", err)
+		return true
+	}
+	if result.allowed {
+		writer.Header().Set("X-RateLimit-Remaining", strconv.FormatInt(result.remaining, 10))
+		writer.Header().Set("X-RateLimit-Reset", strconv.FormatInt(result.resetAt, 10))
+		return false
+	}
+	writer.Header().Set("Retry-After", strconv.FormatInt(result.retryAfter, 10))
+	writer.Header().Set("X-RateLimit-Remaining", "0")
+	writer.Header().Set("X-RateLimit-Reset", strconv.FormatInt(result.resetAt, 10))
+	writeJSON(writer, http.StatusTooManyRequests, map[string]any{
+		"success":    false,
+		"message":    "请求过于频繁，请稍后再试",
+		"retryAfter": result.retryAfter,
+	})
+	return true
+}
+
+func (handlers authHandlers) rejectAuthRateLimitReached(writer http.ResponseWriter, request *http.Request, key string, rule userRateLimitRule) bool {
+	result, err := inspectAuthRateLimit(request.Context(), handlers.deps.Redis, key, rule)
 	if err != nil {
 		handlers.writeAuthDependencyError(writer, "登录限流检查失败", err)
 		return true

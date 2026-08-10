@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, Suspense } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -15,7 +15,28 @@ import {
   UserRound,
 } from 'lucide-react';
 import TypewriterTitle from '@/components/TypewriterTitle';
+import TurnstileWidget from '@/components/TurnstileWidget';
 import { getSafeRedirectPath } from '@/lib/navigation';
+
+type TurnstileConfigState =
+  | { status: 'loading' }
+  | { status: 'error' }
+  | { status: 'ready'; enabled: false; siteKey: '' }
+  | { status: 'ready'; enabled: true; siteKey: string };
+
+interface TurnstileConfigResponse {
+  success?: boolean;
+  data?: {
+    enabled?: boolean;
+    siteKey?: string;
+  };
+}
+
+interface LoginResponse {
+  success?: boolean;
+  code?: string;
+  message?: string;
+}
 
 function LoginForm() {
   const [username, setUsername] = useState('');
@@ -23,13 +44,71 @@ function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [turnstileConfig, setTurnstileConfig] =
+    useState<TurnstileConfigState>({ status: 'loading' });
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
+  const [configReloadSignal, setConfigReloadSignal] = useState(0);
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirect = getSafeRedirectPath(searchParams.get('redirect'));
 
+  const handleTurnstileTokenChange = useCallback((token: string | null) => {
+    setTurnstileToken(token);
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setTurnstileConfig({ status: 'loading' });
+    setTurnstileToken(null);
+
+    void fetch('/api/auth/turnstile-config', {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = (await response.json()) as TurnstileConfigResponse;
+        if (!response.ok || payload.success !== true || !payload.data) {
+          throw new Error('人机验证配置不可用');
+        }
+
+        if (payload.data.enabled !== true) {
+          setTurnstileConfig({ status: 'ready', enabled: false, siteKey: '' });
+          return;
+        }
+
+        const siteKey = payload.data.siteKey?.trim();
+        if (!siteKey) {
+          throw new Error('人机验证站点密钥缺失');
+        }
+
+        setTurnstileConfig({ status: 'ready', enabled: true, siteKey });
+      })
+      .catch((fetchError: unknown) => {
+        if (fetchError instanceof DOMException && fetchError.name === 'AbortError') {
+          return;
+        }
+        setTurnstileConfig({ status: 'error' });
+      });
+
+    return () => controller.abort();
+  }, [configReloadSignal]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
+
+    if (turnstileConfig.status !== 'ready') {
+      setError('人机验证配置暂时不可用，请重新加载后再试');
+      return;
+    }
+
+    if (turnstileConfig.enabled && !turnstileToken) {
+      setError('请先完成人机验证');
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -37,21 +116,39 @@ function LoginForm() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({
+          username,
+          password,
+          turnstileToken: turnstileConfig.enabled ? turnstileToken : '',
+        }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as LoginResponse;
       if (data.success) {
         router.push(redirect);
         router.refresh();
       } else {
         setError(data.message || '登录失败，请检查用户名与密码');
+        if (
+          data.code === 'TURNSTILE_REQUIRED' ||
+          data.code === 'TURNSTILE_FAILED'
+        ) {
+          setConfigReloadSignal((signal) => signal + 1);
+        }
       }
     } catch {
       setError('网络错误，请稍后重试');
     } finally {
       setLoading(false);
+      if (turnstileConfig.enabled) {
+        setTurnstileToken(null);
+        setTurnstileResetSignal((signal) => signal + 1);
+      }
     }
   };
+
+  const turnstileBlocksLogin =
+    turnstileConfig.status !== 'ready' ||
+    (turnstileConfig.enabled && !turnstileToken);
 
   return (
     <div className="lucky-login">
@@ -177,7 +274,38 @@ function LoginForm() {
               </span>
             </label>
 
-            <button type="submit" className="login-btn" disabled={loading}>
+            {turnstileConfig.status === 'loading' && (
+              <div className="turnstile-config-state" role="status">
+                <Loader2 className="spin" size={16} strokeWidth={2.4} />
+                <span>正在读取人机验证配置…</span>
+              </div>
+            )}
+
+            {turnstileConfig.status === 'error' && (
+              <div className="turnstile-config-state is-error" role="alert">
+                <span>人机验证配置暂时不可用</span>
+                <button
+                  type="button"
+                  onClick={() => setConfigReloadSignal((signal) => signal + 1)}
+                >
+                  重新加载配置
+                </button>
+              </div>
+            )}
+
+            {turnstileConfig.status === 'ready' && turnstileConfig.enabled && (
+              <TurnstileWidget
+                key={turnstileResetSignal}
+                siteKey={turnstileConfig.siteKey}
+                onTokenChange={handleTurnstileTokenChange}
+              />
+            )}
+
+            <button
+              type="submit"
+              className="login-btn"
+              disabled={loading || turnstileBlocksLogin}
+            >
               {loading ? (
                 <>
                   <Loader2 className="spin" size={18} strokeWidth={2.4} />
@@ -583,6 +711,39 @@ function LoginForm() {
         }
         .lucky-login .field-toggle:hover {
           color: var(--c-orange);
+        }
+
+        .lucky-login .turnstile-config-state {
+          display: flex;
+          min-height: 70px;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          padding: 14px;
+          border: 1.5px solid rgba(255, 255, 255, 0.85);
+          border-radius: 14px;
+          background: rgba(255, 255, 255, 0.6);
+          color: var(--text-light);
+          font-size: 12.5px;
+          font-weight: 600;
+          text-align: center;
+        }
+
+        .lucky-login .turnstile-config-state.is-error {
+          flex-direction: column;
+          border-color: rgba(244, 63, 94, 0.22);
+          background: rgba(244, 63, 94, 0.08);
+          color: #be123c;
+        }
+
+        .lucky-login .turnstile-config-state button {
+          padding: 0;
+          border: 0;
+          border-bottom: 1px solid currentColor;
+          background: transparent;
+          color: inherit;
+          cursor: pointer;
+          font: inherit;
         }
 
         /* 登录按钮（与首页 brand-icon 同色调橙红渐变） */

@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,10 +53,32 @@ func TestAuthLoginCreatesSessionAndSyncsUser(t *testing.T) {
 	cleanupLoginIntegrationState(t, ctx, db, redisClient, userID, username)
 	defer cleanupLoginIntegrationState(t, ctx, db, redisClient, userID, username)
 
+	var statusRequests atomic.Int64
 	newAPIServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/api/status" && request.Method == http.MethodGet {
+			statusRequests.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"turnstile_check":true,"turnstile_site_key":"0x-public"}}`))
+			return
+		}
 		if request.URL.Path != "/api/user/login" || request.Method != http.MethodPost {
 			http.NotFound(writer, request)
 			return
+		}
+		turnstileToken := request.URL.Query().Get("turnstile")
+		if turnstileToken == "invalid-turnstile" {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"success":false,"message":"Turnstile 校验失败，请刷新重试！"}`))
+			return
+		}
+		if turnstileToken == "upstream-error" {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = writer.Write([]byte(`{"success":false,"message":"服务暂时不可用"}`))
+			return
+		}
+		if turnstileToken == "" {
+			t.Fatalf("fake new-api login did not receive turnstile query")
 		}
 		var payload struct {
 			Username string `json:"username"`
@@ -85,12 +108,38 @@ func TestAuthLoginCreatesSessionAndSyncsUser(t *testing.T) {
 		Redis:  redisClient,
 	})
 
-	bad := loginRequest(handler, username, "bad-password")
+	missingTurnstile := loginRequest(handler, username, "bad-password", "")
+	if missingTurnstile.Code != http.StatusBadRequest || !strings.Contains(missingTurnstile.Body.String(), "TURNSTILE_REQUIRED") {
+		t.Fatalf("expected missing turnstile 400, got status=%d body=%s", missingTurnstile.Code, missingTurnstile.Body.String())
+	}
+	assertLoginFailureCount(t, ctx, redisClient, username, 0)
+	assertAuthRateLimitCount(t, ctx, redisClient, username, 0)
+
+	invalidTurnstile := loginRequest(handler, username, "bad-password", "invalid-turnstile")
+	if invalidTurnstile.Code != http.StatusUnauthorized || !strings.Contains(invalidTurnstile.Body.String(), "TURNSTILE_FAILED") {
+		t.Fatalf("expected invalid turnstile 401, got status=%d body=%s", invalidTurnstile.Code, invalidTurnstile.Body.String())
+	}
+	assertLoginFailureCount(t, ctx, redisClient, username, 0)
+	assertAuthRateLimitCount(t, ctx, redisClient, username, 0)
+	if got := statusRequests.Load(); got != 1 {
+		t.Fatalf("invalid Turnstile token must not invalidate enabled config cache, got %d status requests", got)
+	}
+
+	upstreamError := loginRequest(handler, username, "bad-password", "upstream-error")
+	if upstreamError.Code != http.StatusBadGateway || !strings.Contains(upstreamError.Body.String(), "登录服务暂时不可用") {
+		t.Fatalf("expected upstream error 502, got status=%d body=%s", upstreamError.Code, upstreamError.Body.String())
+	}
+	assertLoginFailureCount(t, ctx, redisClient, username, 0)
+	assertAuthRateLimitCount(t, ctx, redisClient, username, 0)
+
+	bad := loginRequest(handler, username, "bad-password", "valid-turnstile-bad-password")
 	if bad.Code != http.StatusUnauthorized || !strings.Contains(bad.Body.String(), "密码错误") {
 		t.Fatalf("expected bad login 401, got status=%d body=%s", bad.Code, bad.Body.String())
 	}
+	assertLoginFailureCount(t, ctx, redisClient, username, 1)
+	assertAuthRateLimitCount(t, ctx, redisClient, username, 1)
 
-	response := loginRequest(handler, username, "correct-password")
+	response := loginRequest(handler, username, "correct-password", "valid-turnstile-success")
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected login 200, got status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -130,12 +179,46 @@ func TestAuthLoginCreatesSessionAndSyncsUser(t *testing.T) {
 	}
 }
 
-func loginRequest(handler http.Handler, username string, password string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"`+username+`","password":"`+password+`"}`))
+func loginRequest(handler http.Handler, username string, password string, turnstileToken string) *httptest.ResponseRecorder {
+	body, err := json.Marshal(map[string]string{
+		"username":       username,
+		"password":       password,
+		"turnstileToken": turnstileToken,
+	})
+	if err != nil {
+		panic(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(string(body)))
 	request.Host = "example.com"
 	request.Header.Set("Origin", "http://example.com")
 	request.Header.Set("Content-Type", "application/json")
 	return performRequest(handler, request)
+}
+
+func assertLoginFailureCount(t *testing.T, ctx context.Context, redisClient *redis.Client, username string, want int64) {
+	t.Helper()
+	got, err := redisClient.Get(ctx, loginFailKeyPrefix+username).Int64()
+	if err == redis.Nil {
+		got = 0
+	} else if err != nil {
+		t.Fatalf("query login failure count failed: %v", err)
+	}
+	if got != want {
+		t.Fatalf("unexpected login failure count: got %d want %d", got, want)
+	}
+}
+
+func assertAuthRateLimitCount(t *testing.T, ctx context.Context, redisClient *redis.Client, username string, want int64) {
+	t.Helper()
+	got, err := redisClient.Get(ctx, authLoginUserRateLimit.prefix+":"+username).Int64()
+	if err == redis.Nil {
+		got = 0
+	} else if err != nil {
+		t.Fatalf("query auth username rate-limit count failed: %v", err)
+	}
+	if got != want {
+		t.Fatalf("unexpected auth username rate-limit count: got %d want %d", got, want)
+	}
 }
 
 func hasCookie(response *httptest.ResponseRecorder, name string) bool {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -36,7 +37,7 @@ type loginEnvelope struct {
 	Data    json.RawMessage `json:"data"`
 }
 
-func Login(ctx context.Context, baseURL string, username string, password string, httpClient *http.Client) (LoginResult, error) {
+func Login(ctx context.Context, baseURL string, username string, password string, turnstileToken string, httpClient *http.Client) (LoginResult, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
 		return LoginResult{}, errors.New("NEW_API_URL is not set")
@@ -53,7 +54,17 @@ func Login(ctx context.Context, baseURL string, username string, password string
 		return LoginResult{}, err
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/user/login", bytes.NewReader(body))
+	loginURL, err := url.Parse(baseURL + "/api/user/login")
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if strings.TrimSpace(turnstileToken) != "" {
+		query := loginURL.Query()
+		query.Set("turnstile", turnstileToken)
+		loginURL.RawQuery = query.Encode()
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL.String(), bytes.NewReader(body))
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -61,7 +72,9 @@ func Login(ctx context.Context, baseURL string, username string, password string
 
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return LoginResult{}, err
+		// net/http 的传输错误通常会包含完整请求 URL；Turnstile token 位于
+		// query 中，因此这里不能向上返回原始错误，避免被调用方日志记录。
+		return LoginResult{}, errors.New("new-api login request failed")
 	}
 	defer response.Body.Close()
 

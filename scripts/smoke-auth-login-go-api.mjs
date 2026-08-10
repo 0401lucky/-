@@ -21,7 +21,7 @@ function assertGatewayAuthRules() {
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'))
     .filter((line) => line.includes('/api/auth'));
-  const expected = ['handle /api/auth/login {', 'handle /api/auth/me {', 'handle /api/auth/logout {'];
+  const expected = ['handle /api/auth/login {', 'handle /api/auth/turnstile-config {', 'handle /api/auth/me {', 'handle /api/auth/logout {'];
   const unexpected = activeRules.filter((line) => !expected.includes(line));
   const missing = expected.filter((line) => !activeRules.includes(line));
   if (missing.length > 0 || unexpected.length > 0) {
@@ -60,7 +60,16 @@ function cleanup() {
 
 function startFakeNewApi() {
   const server = http.createServer((req, res) => {
-    if (req.method !== 'POST' || req.url !== '/api/user/login') {
+    const requestURL = new URL(req.url, `http://127.0.0.1:${newApiPort}`);
+    if (req.method === 'GET' && req.url === '/api/status') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        data: { turnstile_check: true, turnstile_site_key: '0x-public-smoke' },
+      }));
+      return;
+    }
+    if (req.method !== 'POST' || requestURL.pathname !== '/api/user/login') {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, message: 'not found' }));
       return;
@@ -71,6 +80,11 @@ function startFakeNewApi() {
     });
     req.on('end', () => {
       const body = JSON.parse(raw || '{}');
+      if (!requestURL.searchParams.get('turnstile')) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: 'missing turnstile' }));
+        return;
+      }
       res.setHeader('Content-Type', 'application/json');
       if (body.username === testUsername && body.password === 'correct-password') {
         res.setHeader('Set-Cookie', 'session=fake-new-api-session; Path=/; HttpOnly');
@@ -173,6 +187,18 @@ async function request(baseURL, payload) {
   };
 }
 
+async function requestTurnstileConfig(baseURL) {
+  const response = await fetch(`${baseURL}/api/auth/turnstile-config`);
+  const text = await response.text();
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    fail(`turnstile config response is not JSON: ${text.slice(0, 300)}`);
+  }
+  return { status: response.status, body };
+}
+
 function verifySyncedUser() {
   const raw = psql(`
     SELECT json_build_object(
@@ -199,12 +225,17 @@ async function main() {
   try {
     await waitForReady(baseURL, proc);
 
-    const bad = await request(baseURL, { username: testUsername, password: 'bad-password' });
+    const config = await requestTurnstileConfig(baseURL);
+    if (config.status !== 200 || !config.body.success || config.body.data?.enabled !== true || config.body.data?.siteKey !== '0x-public-smoke') {
+      fail(`turnstile config mismatch: status=${config.status} body=${JSON.stringify(config.body)}`);
+    }
+
+    const bad = await request(baseURL, { username: testUsername, password: 'bad-password', turnstileToken: 'smoke-token-bad' });
     if (bad.status !== 401 || bad.body.message !== '密码错误') {
       fail(`bad login mismatch: status=${bad.status} body=${JSON.stringify(bad.body)}`);
     }
 
-    const ok = await request(baseURL, { username: testUsername, password: 'correct-password' });
+    const ok = await request(baseURL, { username: testUsername, password: 'correct-password', turnstileToken: 'smoke-token-success' });
     if (ok.status !== 200 || !ok.body.success || ok.body.user?.id !== testUserID) {
       fail(`successful login mismatch: status=${ok.status} body=${JSON.stringify(ok.body)}`);
     }
@@ -224,7 +255,7 @@ async function main() {
     console.log(JSON.stringify({
       ok: true,
       mode: 'local-go-api-fake-new-api-postgres-redis',
-      checkedPath: 'POST /api/auth/login',
+      checkedPath: ['GET /api/auth/turnstile-config', 'POST /api/auth/login'],
       gatewayLoginCutover: 'enabled-exact',
       syncedUser,
     }, null, 2));

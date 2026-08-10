@@ -180,14 +180,9 @@ func checkAuthRateLimit(ctx context.Context, client *redis.Client, key string, r
 		return rateLimitResult{}, err
 	}
 	fullKey := rule.prefix + ":" + key
-	count, err := client.Incr(ctx, fullKey).Result()
+	count, err := userRateLimitIncrScript.Run(ctx, client, []string{fullKey}, rule.windowSeconds).Int64()
 	if err != nil {
 		return rateLimitResult{}, err
-	}
-	if count == 1 {
-		if err := client.Expire(ctx, fullKey, time.Duration(rule.windowSeconds)*time.Second).Err(); err != nil {
-			return rateLimitResult{}, err
-		}
 	}
 	ttl, err := client.TTL(ctx, fullKey).Result()
 	if err != nil || ttl <= 0 {
@@ -200,6 +195,36 @@ func checkAuthRateLimit(ctx context.Context, client *redis.Client, key string, r
 		remaining = 0
 	}
 	if count > rule.maxRequests {
+		return rateLimitResult{allowed: false, remaining: 0, resetAt: resetAt, retryAfter: maxInt64(1, resetAt-now)}, nil
+	}
+	return rateLimitResult{allowed: true, remaining: remaining, resetAt: resetAt, retryAfter: 0}, nil
+}
+
+// inspectAuthRateLimit 只读取用户名维度的当前计数，不递增 key。
+// Turnstile 失败和上游故障不能消耗用户名额度；只有明确的凭证错误才会递增。
+func inspectAuthRateLimit(ctx context.Context, client *redis.Client, key string, rule userRateLimitRule) (rateLimitResult, error) {
+	if err := requireRedis(client); err != nil {
+		return rateLimitResult{}, err
+	}
+	fullKey := rule.prefix + ":" + key
+	count, err := client.Get(ctx, fullKey).Int64()
+	if errors.Is(err, redis.Nil) {
+		count = 0
+	} else if err != nil {
+		return rateLimitResult{}, err
+	}
+
+	ttl, err := client.TTL(ctx, fullKey).Result()
+	if err != nil || ttl <= 0 {
+		ttl = time.Duration(rule.windowSeconds) * time.Second
+	}
+	now := time.Now().Unix()
+	resetAt := now + int64(ttl.Seconds())
+	remaining := rule.maxRequests - count
+	if remaining < 0 {
+		remaining = 0
+	}
+	if count >= rule.maxRequests {
 		return rateLimitResult{allowed: false, remaining: 0, resetAt: resetAt, retryAfter: maxInt64(1, resetAt-now)}, nil
 	}
 	return rateLimitResult{allowed: true, remaining: remaining, resetAt: resetAt, retryAfter: 0}, nil

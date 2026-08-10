@@ -61,6 +61,7 @@ func New(deps Dependencies) http.Handler {
 
 	router.Route("/api", func(api chi.Router) {
 		api.Post("/auth/login", authHandlers.login)
+		api.Get("/auth/turnstile-config", authHandlers.getTurnstileConfig)
 		api.Get("/auth/me", authHandlers.me)
 		api.Post("/auth/logout", authHandlers.logout)
 		api.Get("/checkin", checkinHandlers.status)

@@ -337,7 +337,7 @@ func (client *Client) cloneRequestForRetry(request *http.Request) *http.Request 
 }
 
 func (client *Client) requestWithAdminSession(request *http.Request) (*http.Request, error) {
-	result, err := Login(request.Context(), client.baseURL, client.adminUsername, client.adminPassword, client.httpClient)
+	result, err := Login(request.Context(), client.baseURL, client.adminUsername, client.adminPassword, "", client.httpClient)
 	if err != nil {
 		return nil, fmt.Errorf("%w: 管理员账号登录 new-api 失败: %v", ErrAdminAuthFailed, err)
 	}

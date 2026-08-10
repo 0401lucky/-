@@ -142,8 +142,10 @@ S3_BUCKET_CARD_IMAGES=card-images
 
 `NEW_API_ADMIN_ACCESS_TOKEN` 要填写 new-api 管理员账号在「个人设置 / 系统访问令牌」
 生成的 token。不要填写渠道 API Key、模型转发 key、登录密码或 Cookie。
-如果不想生成 token，可以填写 `NEW_API_ADMIN_USERNAME` 和 `NEW_API_ADMIN_PASSWORD`，
-Go 会登录管理员账号拿 session cookie 后再调用管理接口。
+
+当 new-api 开启 Turnstile 时，服务端管理员密码登录无法生成浏览器验证码 token，
+因此 `NEW_API_ADMIN_USERNAME` / `NEW_API_ADMIN_PASSWORD` 回退不可用。生产必须配置有效的
+`NEW_API_ADMIN_ACCESS_TOKEN` 和同一管理员的 `NEW_API_ADMIN_USER_ID`。
 
 当前 Go 后端会调用你的 new-api fork：
 
@@ -155,7 +157,9 @@ New-Api-User: <NEW_API_ADMIN_USER_ID>
 ```
 
 如果 Zeabur 日志出现 `NEW_API_AUTH_FAILED` 或 `Unauthorized, invalid access token`，
-优先检查 `NEW_API_ADMIN_ACCESS_TOKEN` 是否误填成管理员密码。正确做法是重新生成管理员系统访问令牌，并确认 `NEW_API_ADMIN_USER_ID` 是同一个管理员账号的数字 ID；或者直接配置管理员账号密码 fallback。
+优先检查 `NEW_API_ADMIN_ACCESS_TOKEN` 是否误填成管理员密码。正确做法是重新生成管理员
+系统访问令牌，并确认 `NEW_API_ADMIN_USER_ID` 是同一个管理员账号的数字 ID；不要在
+Turnstile 开启时回退到管理员账号密码登录。
 
 ## 首次部署后
 

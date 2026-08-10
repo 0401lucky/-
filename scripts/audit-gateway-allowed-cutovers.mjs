@@ -8,6 +8,7 @@ const allowedApiCutovers = [
   '/healthz',
   '/readyz',
   '/api/auth/login',
+  '/api/auth/turnstile-config',
   '/api/auth/me',
   '/api/auth/logout',
   '/api/checkin',

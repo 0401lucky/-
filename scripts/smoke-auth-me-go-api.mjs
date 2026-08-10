@@ -33,7 +33,7 @@ function assertGatewayAuthRulesExact() {
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'))
     .filter((line) => line.includes('/api/auth'));
-  const expectedRules = ['handle /api/auth/login {', 'handle /api/auth/me {', 'handle /api/auth/logout {'];
+  const expectedRules = ['handle /api/auth/login {', 'handle /api/auth/turnstile-config {', 'handle /api/auth/me {', 'handle /api/auth/logout {'];
   const missing = expectedRules.filter((line) => !activeRules.includes(line));
   const unexpected = activeRules.filter((line) => !expectedRules.includes(line));
   if (missing.length > 0 || unexpected.length > 0) {
