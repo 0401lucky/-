@@ -20,10 +20,18 @@ const ALBUM_S2_COUNTS: Record<Rarity, number> = {
   legendary_rare: 3,
 };
 
+const ALBUM_PERSONA_COUNTS: Record<Rarity, number> = {
+  common: 9,
+  rare: 7,
+  epic: 5,
+  legendary: 3,
+  legendary_rare: 2,
+};
+
 describe("card configuration", () => {
   it("defines cards for all albums", () => {
-    expect(ALBUMS.length).toBe(3);
-    expect(CARDS.length).toBe(137); // 20 (S1) + 39 (S2) + 78 (Tarot)
+    expect(ALBUMS.length).toBe(4);
+    expect(CARDS.length).toBe(163); // 20 (S1) + 39 (S2) + 78 (Tarot) + 26 (Persona S1)
   });
 
   it("assigns the expected number of cards per rarity for each album", () => {
@@ -41,6 +49,14 @@ describe("card configuration", () => {
     s2Cards.forEach(card => { s2Counts[card.rarity]++; });
     for (const rarity of Object.keys(ALBUM_S2_COUNTS) as Rarity[]) {
       expect(s2Counts[rarity]).toBe(ALBUM_S2_COUNTS[rarity]);
+    }
+
+    // Check Persona Album S1
+    const personaCards = getCardsByAlbum("persona-s1");
+    const personaCounts: Record<Rarity, number> = { common: 0, rare: 0, epic: 0, legendary: 0, legendary_rare: 0 };
+    personaCards.forEach(card => { personaCounts[card.rarity]++; });
+    for (const rarity of Object.keys(ALBUM_PERSONA_COUNTS) as Rarity[]) {
+      expect(personaCounts[rarity]).toBe(ALBUM_PERSONA_COUNTS[rarity]);
     }
   });
 

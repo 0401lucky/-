@@ -358,6 +358,13 @@ var adminAlbumDefinitions = []adminAlbumDefinition{
 		Season:      "特别篇",
 		Reward:      500,
 	},
+	{
+		ID:          "persona-s1",
+		Name:        "站务拟人图鉴",
+		Description: "把站内的功能与小游戏拟人化，收集 26 位同僚",
+		Season:      "拟人篇",
+		Reward:      150,
+	},
 }
 
 var adminVisibleRewardTiers = []struct {

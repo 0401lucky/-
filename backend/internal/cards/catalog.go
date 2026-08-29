@@ -20,7 +20,7 @@ type tarotCardSeed struct {
 }
 
 func AllCards() []Card {
-	cards := make([]Card, 0, 137)
+	cards := make([]Card, 0, 163)
 	cards = append(cards, buildNamedCards("animal-s1", RarityLegendaryRare, animalS1LegendaryRare, "")...)
 	cards = append(cards, buildNamedCards("animal-s1", RarityLegendary, animalS1Legendary, "")...)
 	cards = append(cards, buildNamedCards("animal-s1", RarityEpic, animalS1Epic, "")...)
@@ -38,6 +38,12 @@ func AllCards() []Card {
 	cards = append(cards, buildTarotCards(RarityEpic, tarotEpic, "/images/塔罗/史诗")...)
 	cards = append(cards, buildTarotCards(RarityRare, tarotRare, "/images/塔罗/稀有")...)
 	cards = append(cards, buildTarotCards(RarityCommon, tarotCommon, "/images/塔罗/普通")...)
+
+	cards = append(cards, buildNamedCards("persona-s1", RarityLegendaryRare, personaS1LegendaryRare, "/images/拟人卡/传说稀有")...)
+	cards = append(cards, buildNamedCards("persona-s1", RarityLegendary, personaS1Legendary, "/images/拟人卡/传说")...)
+	cards = append(cards, buildNamedCards("persona-s1", RarityEpic, personaS1Epic, "/images/拟人卡/史诗")...)
+	cards = append(cards, buildNamedCards("persona-s1", RarityRare, personaS1Rare, "/images/拟人卡/稀有")...)
+	cards = append(cards, buildNamedCards("persona-s1", RarityCommon, personaS1Common, "/images/拟人卡/普通")...)
 	return cards
 }
 
@@ -124,10 +130,17 @@ var animalS2Epic = []string{"刺猬", "狐猴", "火烈鸟", "小松鼠", "小�
 var animalS2Rare = []string{"布偶猫", "黑猫", "加菲猫", "金毛", "柯基", "绵阳", "奶牛", "青蛙", "萨摩耶", "小猴子", "小毛驴", "鹦鹉"}
 var animalS2Common = []string{"斑马", "蝙蝠", "变色龙", "法斗", "河马", "獾", "树懒", "暹罗猫", "小浣熊", "小鸡", "小马", "小象", "小猪", "雪纳瑞", "野猪", "长颈鹿"}
 
+var personaS1LegendaryRare = []string{"持钥者", "计数官"}
+var personaS1Legendary = []string{"唤卡师", "守序者", "登顶者"}
+var personaS1Epic = []string{"轮舞者", "兑物人", "耕种者", "布阵官", "轮回者"}
+var personaS1Rare = []string{"合数少女", "拆弹员", "节拍手", "牵线人", "碎晶匠", "记牌者", "挥锤者"}
+var personaS1Common = []string{"循环者", "传讯者", "提醒者", "倾听者", "记录者", "构筑者", "掌钱人", "派活人", "持权者"}
+
 var albumRewardPoints = map[string]int64{
-	"animal-s1": 100,
-	"animal-s2": 200,
-	"tarot":     500,
+	"animal-s1":  100,
+	"animal-s2":  200,
+	"tarot":      500,
+	"persona-s1": 150,
 }
 
 var albumTierRewardPoints = map[string]map[RewardType]int64{
@@ -151,6 +164,13 @@ var albumTierRewardPoints = map[string]map[RewardType]int64{
 		RewardType(RarityEpic):          30,
 		RewardType(RarityLegendary):     45,
 		RewardType(RarityLegendaryRare): 85,
+	},
+	"persona-s1": {
+		RewardType(RarityCommon):        5,
+		RewardType(RarityRare):          9,
+		RewardType(RarityEpic):          15,
+		RewardType(RarityLegendary):     23,
+		RewardType(RarityLegendaryRare): 43,
 	},
 }
 

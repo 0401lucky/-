@@ -48,6 +48,21 @@ export const ALBUMS: CardAlbum[] = [
       legendary_rare: 85,
     },
   },
+  {
+    id: "persona-s1",
+    name: "站务拟人图鉴",
+    description: "把站内的功能与小游戏拟人化，收集 26 位同僚",
+    coverImage: getOptimizedImagePath("/images/拟人卡/传说稀有/持钥者.png", "thumb"),
+    reward: 150,
+    season: "拟人篇",
+    tierRewards: {
+      common: 5,
+      rare: 9,
+      epic: 15,
+      legendary: 23,
+      legendary_rare: 43,
+    },
+  },
 ];
 
 const createCard = (name: string, rarity: Rarity, albumId: string, imagePath?: string): CardConfig => {
@@ -233,7 +248,36 @@ const tarotAllCards: CardConfig[] = [
   ...tarotCommonCards.map((c) => createCard(c.name, "common", tarotAlbumId, getTarotImagePath(c.file, "common"))),
 ];
 
-export const CARDS: CardConfig[] = [...animalS1Cards, ...animalS2Cards, ...tarotAllCards];
+// Persona Album S1 Cards
+const personaS1AlbumId = "persona-s1";
+const personaBasePath = "/images/拟人卡";
+
+const personaLegendaryRareCards = ["持钥者", "计数官"] as const;
+const personaLegendaryCards = ["唤卡师", "守序者", "登顶者"] as const;
+const personaEpicCards = ["轮舞者", "兑物人", "耕种者", "布阵官", "轮回者"] as const;
+const personaRareCards = ["合数少女", "拆弹员", "节拍手", "牵线人", "碎晶匠", "记牌者", "挥锤者"] as const;
+const personaCommonCards = ["循环者", "传讯者", "提醒者", "倾听者", "记录者", "构筑者", "掌钱人", "派活人", "持权者"] as const;
+
+const getPersonaImagePath = (name: string, rarity: Rarity) => {
+  const rarityFolders: Record<Rarity, string> = {
+    legendary_rare: "传说稀有",
+    legendary: "传说",
+    epic: "史诗",
+    rare: "稀有",
+    common: "普通",
+  };
+  return `${personaBasePath}/${rarityFolders[rarity]}/${name}.png`;
+};
+
+const personaS1Cards: CardConfig[] = [
+  ...personaLegendaryRareCards.map((name) => createCard(name, "legendary_rare", personaS1AlbumId, getPersonaImagePath(name, "legendary_rare"))),
+  ...personaLegendaryCards.map((name) => createCard(name, "legendary", personaS1AlbumId, getPersonaImagePath(name, "legendary"))),
+  ...personaEpicCards.map((name) => createCard(name, "epic", personaS1AlbumId, getPersonaImagePath(name, "epic"))),
+  ...personaRareCards.map((name) => createCard(name, "rare", personaS1AlbumId, getPersonaImagePath(name, "rare"))),
+  ...personaCommonCards.map((name) => createCard(name, "common", personaS1AlbumId, getPersonaImagePath(name, "common"))),
+];
+
+export const CARDS: CardConfig[] = [...animalS1Cards, ...animalS2Cards, ...tarotAllCards, ...personaS1Cards];
 
 // Helper functions
 export function getAlbumById(albumId: string): CardAlbum | undefined {

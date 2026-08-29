@@ -4,7 +4,7 @@ import "testing"
 
 func TestAllCardsMatchesLegacyCatalogCounts(t *testing.T) {
 	catalog := AllCards()
-	if len(catalog) != 137 {
+	if len(catalog) != 163 {
 		t.Fatalf("unexpected total cards: %d", len(catalog))
 	}
 
@@ -14,11 +14,11 @@ func TestAllCardsMatchesLegacyCatalogCounts(t *testing.T) {
 		counts[card.AlbumID] += 1
 		rarityCounts[card.Rarity] += 1
 	}
-	if counts["animal-s1"] != 20 || counts["animal-s2"] != 39 || counts["tarot"] != 78 {
+	if counts["animal-s1"] != 20 || counts["animal-s2"] != 39 || counts["tarot"] != 78 || counts["persona-s1"] != 26 {
 		t.Fatalf("unexpected album counts: %#v", counts)
 	}
-	if rarityCounts[RarityLegendaryRare] != 10 || rarityCounts[RarityLegendary] != 13 ||
-		rarityCounts[RarityEpic] != 25 || rarityCounts[RarityRare] != 42 || rarityCounts[RarityCommon] != 47 {
+	if rarityCounts[RarityLegendaryRare] != 12 || rarityCounts[RarityLegendary] != 16 ||
+		rarityCounts[RarityEpic] != 30 || rarityCounts[RarityRare] != 49 || rarityCounts[RarityCommon] != 56 {
 		t.Fatalf("unexpected rarity counts: %#v", rarityCounts)
 	}
 }
@@ -37,11 +37,20 @@ func TestAllCardsMatchesLegacyCardShape(t *testing.T) {
 		t.Fatalf("unexpected first card assets: %+v", first)
 	}
 
+	tarotCards := CardsByAlbum("tarot")
+	lastTarot := tarotCards[len(tarotCards)-1]
+	if lastTarot.ID != "tarot-common-隐士" ||
+		lastTarot.Image != "/images-optimized/large/塔罗/普通/9-The Hermit-隐士.webp" ||
+		lastTarot.ThumbnailImage != "/images-optimized/thumb/塔罗/普通/9-The Hermit-隐士.webp" {
+		t.Fatalf("unexpected last tarot card: %+v", lastTarot)
+	}
+
 	last := catalog[len(catalog)-1]
-	if last.ID != "tarot-common-隐士" ||
-		last.Image != "/images-optimized/large/塔罗/普通/9-The Hermit-隐士.webp" ||
-		last.ThumbnailImage != "/images-optimized/thumb/塔罗/普通/9-The Hermit-隐士.webp" {
-		t.Fatalf("unexpected last tarot card: %+v", last)
+	if last.ID != "persona-s1-common-持权者" ||
+		last.Image != "/images-optimized/large/拟人卡/普通/持权者.webp" ||
+		last.ThumbnailImage != "/images-optimized/thumb/拟人卡/普通/持权者.webp" ||
+		last.OriginalImage != "/images/拟人卡/普通/持权者.png" {
+		t.Fatalf("unexpected last persona card: %+v", last)
 	}
 }
 

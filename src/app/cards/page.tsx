@@ -67,11 +67,12 @@ interface CardRulesConfig {
   exchangePrices: Record<Rarity, number>;
 }
 
-// 三套卡册的主题色映射，按 album.id 区分视觉风格
+// 各套卡册的主题色映射，按 album.id 区分视觉风格
 const ALBUM_THEME: Record<string, 's1' | 's2' | 'special'> = {
   'animal-s1': 's1',
   'animal-s2': 's2',
   tarot: 'special',
+  'persona-s1': 'special',
 };
 
 // 各主题在卡册封面上的装饰 emoji（左右两条）

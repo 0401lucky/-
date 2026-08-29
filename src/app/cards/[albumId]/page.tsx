@@ -17,11 +17,12 @@ import { CardGrid } from '@/components/cards/CardGrid';
 import { RewardsSection } from '@/components/cards/RewardsSection';
 import type { UserCards } from '@/lib/cards/draw-types';
 
-// 三套卡册的主题色映射，与卡牌图鉴主页保持一致
+// 各套卡册的主题色映射，与卡牌图鉴主页保持一致
 const ALBUM_THEME: Record<string, 's1' | 's2' | 'special'> = {
   'animal-s1': 's1',
   'animal-s2': 's2',
   tarot: 'special',
+  'persona-s1': 'special',
 };
 
 export default function AlbumDetailPage() {

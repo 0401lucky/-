@@ -52,7 +52,7 @@ func TestBuildAdminRewardConfigUsesDefaultsAndOverrides(t *testing.T) {
 		},
 	)
 
-	if len(config.Albums) != 3 || config.Albums[0].ID != "animal-s1" {
+	if len(config.Albums) != 4 || config.Albums[0].ID != "animal-s1" {
 		t.Fatalf("unexpected albums: %#v", config.Albums)
 	}
 	if config.Albums[0].DefaultReward != 100 || config.Albums[0].CurrentReward != 123 {
