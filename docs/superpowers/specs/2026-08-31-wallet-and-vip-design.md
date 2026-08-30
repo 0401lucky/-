@@ -13,7 +13,7 @@
 本轮做两件事：
 
 1. **钱包**：把提现与充值整体迁到独立页面 `/wallet`，补齐交易流水列表，并新增「每日提现次数限制」这一风控机制。
-2. **站内 VIP**：新建时长制月卡（积分购买，重复购买时长累加），提供三项特权：更多每日提现次数、提现手续费折扣、每日赠送抽奖次数。
+2. **站内 VIP**：新建时长制月卡（积分购买，重复购买时长累加，累计剩余时长设上限），提供三项特权：更多每日提现次数、提现手续费折扣、每日赠送抽奖次数。
 
 所有数值全部落到后台可改。
 
@@ -27,10 +27,10 @@
 |---|---|
 | 钱包页 | 新建 `/wallet`；积分与额度双余额卡片；提现；充值；交易流水列表；今日剩余提现次数实时展示；VIP 状态与特权入口 |
 | 提现限次 | 新增每日提现次数上限，按中国时区 0 点重置，后台可配 |
-| VIP | 时长制月卡，积分购买，重复购买时长累加；三项特权；后台可配 |
+| VIP | 时长制月卡，积分购买，重复购买时长累加；累计剩余时长上限；三项特权；后台可配 |
 | 商店改造 | 摘除双 Tab 弹窗与结果弹窗，保留一个跳转钱包的入口卡片 |
 | 抽奖改造 | 每日免费次数从「固定 1 次」改为「1 + VIP 赠送数」，含前端剩余次数展示 |
-| 后台 | `/admin/settings` 新增 6 个配置项 |
+| 后台 | `/admin/settings` 新增 7 个配置项 |
 
 ### 2.2 本轮明确不做
 
@@ -38,6 +38,7 @@
 - **不改提现/充值的接口路径**。`POST /api/store/withdraw`、`GET|POST /api/store/topup` 保持原样（详见 3.3）。
 - **不改现有阶梯费率表本身**（`≥10000→1%` / `≥1000→2%` / `≥100→3%` / `≥10→5%`），只在其上叠加 VIP 折扣。
 - **不做 VIP 到期提醒/通知**。
+- **不做「每月限购一次」式的次数限购**。它与已定的「时长累加」冲突：每月只能买一次，累计时长就永远追不上自然时间的流逝，时长累加这个特性等于失效，而且用户必须每月记得回来买一次。次数限购适合「月卡按自然月生效」的模型，不适合时长制。改用累计时长上限（详见 5.4）。
 - **不消除 `wallet-rules.ts` 与 `wallet.go` 的双实现**。这是既有事实，本轮只做参数化对齐（详见 3.4）。
 - **不重构 `store/page.tsx` 中与钱包无关的代码**。
 
@@ -177,7 +178,7 @@ DROP TABLE IF EXISTS vip_memberships;
 
 ### 4.3 `0034_system_config_wallet_vip.sql` — 后台配置扩展
 
-沿用 `system_config` 单行列式表的既有范式，新增 6 列。
+沿用 `system_config` 单行列式表的既有范式，新增 7 列。
 
 ```sql
 -- +goose Up
@@ -187,6 +188,7 @@ ALTER TABLE system_config ADD COLUMN IF NOT EXISTS vip_price_points BIGINT NOT N
 ALTER TABLE system_config ADD COLUMN IF NOT EXISTS vip_duration_days BIGINT NOT NULL DEFAULT 30;
 ALTER TABLE system_config ADD COLUMN IF NOT EXISTS vip_withdraw_fee_percent BIGINT NOT NULL DEFAULT 50;
 ALTER TABLE system_config ADD COLUMN IF NOT EXISTS vip_daily_lottery_spins BIGINT NOT NULL DEFAULT 2;
+ALTER TABLE system_config ADD COLUMN IF NOT EXISTS vip_max_total_days BIGINT NOT NULL DEFAULT 365;
 
 ALTER TABLE system_config ADD CONSTRAINT system_config_daily_withdraw_limit_check
   CHECK (daily_withdraw_limit BETWEEN 1 AND 100);
@@ -200,14 +202,21 @@ ALTER TABLE system_config ADD CONSTRAINT system_config_vip_withdraw_fee_percent_
   CHECK (vip_withdraw_fee_percent BETWEEN 0 AND 100);
 ALTER TABLE system_config ADD CONSTRAINT system_config_vip_daily_lottery_spins_check
   CHECK (vip_daily_lottery_spins BETWEEN 0 AND 50);
+ALTER TABLE system_config ADD CONSTRAINT system_config_vip_max_total_days_check
+  CHECK (vip_max_total_days BETWEEN 1 AND 3650);
+ALTER TABLE system_config ADD CONSTRAINT system_config_vip_max_total_days_gte_duration_check
+  CHECK (vip_max_total_days >= vip_duration_days);
 
 -- +goose Down
+ALTER TABLE system_config DROP CONSTRAINT IF EXISTS system_config_vip_max_total_days_gte_duration_check;
+ALTER TABLE system_config DROP CONSTRAINT IF EXISTS system_config_vip_max_total_days_check;
 ALTER TABLE system_config DROP CONSTRAINT IF EXISTS system_config_vip_daily_lottery_spins_check;
 ALTER TABLE system_config DROP CONSTRAINT IF EXISTS system_config_vip_withdraw_fee_percent_check;
 ALTER TABLE system_config DROP CONSTRAINT IF EXISTS system_config_vip_duration_days_check;
 ALTER TABLE system_config DROP CONSTRAINT IF EXISTS system_config_vip_price_points_check;
 ALTER TABLE system_config DROP CONSTRAINT IF EXISTS system_config_vip_daily_withdraw_limit_check;
 ALTER TABLE system_config DROP CONSTRAINT IF EXISTS system_config_daily_withdraw_limit_check;
+ALTER TABLE system_config DROP COLUMN IF EXISTS vip_max_total_days;
 ALTER TABLE system_config DROP COLUMN IF EXISTS vip_daily_lottery_spins;
 ALTER TABLE system_config DROP COLUMN IF EXISTS vip_withdraw_fee_percent;
 ALTER TABLE system_config DROP COLUMN IF EXISTS vip_duration_days;
@@ -217,6 +226,10 @@ ALTER TABLE system_config DROP COLUMN IF EXISTS daily_withdraw_limit;
 ```
 
 **`vip_withdraw_fee_percent` 语义**：VIP 实际手续费 = 原阶梯费率 × `vip_withdraw_fee_percent / 100`。默认 50 即五折。0 表示 VIP 免手续费。
+
+**`vip_max_total_days` 语义**：用户任意时刻的**剩余** VIP 时长不得超过这个天数。它约束的是「距今的剩余时长」，不是「历史累计购买量」——买满 365 天后过一个月，就又能再买 30 天。默认 365，即最多囤一年。
+
+**跨列 CHECK 是最后一道防线**：若 `vip_max_total_days < vip_duration_days`，非 VIP 用户第一次购买就会因超上限被拒（0 + 30 > 20），功能直接不可用。因此在数据库层加表级 CHECK 兜底，同时在 `systemconfig` 与后台 handler 各做一次校验（详见 5.7）。三处都做是因为数据库 CHECK 的报错信息对管理员不可读，前两层负责给出中文提示。
 
 ### 4.4 `0035_lottery_free_spins.sql` — 抽奖每日免费次数计数化
 
@@ -343,18 +356,48 @@ type PurchaseVIPResult struct {
 ```
 1. beginIdempotency(scope = "vip:purchase:{userID}")  ← 命中则直接返回缓存结果
 2. ensureUser
-3. systemconfig.Get(tx) → 价格、天数
-4. SELECT balance FROM point_accounts WHERE user_id = $1 FOR UPDATE
-5. 余额不足 → 返回失败（不报错）
-6. 扣分 + insertPointLog(source = SourceVIPPurchase)
-7. vip.Extend(ctx, tx, userID, days, now)
-8. INSERT INTO vip_purchases
-9. completeIdempotency
+3. systemconfig.Get(tx) → 价格、天数、累计时长上限
+4. SELECT balance FROM point_accounts WHERE user_id = $1 FOR UPDATE  ← 同一用户的串行化点
+5. vip.Get(ctx, tx, userID) → 校验累计时长上限，超限则返回失败（不报错）
+6. 余额不足 → 返回失败（不报错）
+7. 扣分 + insertPointLog(source = SourceVIPPurchase)
+8. vip.Extend(ctx, tx, userID, days, now)
+9. INSERT INTO vip_purchases
+10. completeIdempotency
 ```
 
 新增来源常量 `SourceVIPPurchase = "vip_purchase"`（`economy/types.go`）。`point_ledger.source` 无 CHECK 约束，可自由扩展。
 
 **幂等键是必要的**：一次购买扣 3000 积分，网络重试造成的重复扣费代价高。`ExchangeItem` 已有同样的机制，直接照抄，成本很低。
+
+#### 累计时长上限校验（步骤 5）
+
+```go
+// 已持有 point_accounts 行锁，此处读到的到期时间不会再被并发事务改写
+current, err := vip.Get(ctx, tx, userID)
+
+base := now
+if current.ExpiresAt != nil {
+    if existing := time.UnixMilli(*current.ExpiresAt); existing.After(base) {
+        base = existing
+    }
+}
+newExpiresAt := base.Add(time.Duration(durationDays) * 24 * time.Hour)
+ceiling := now.Add(time.Duration(maxTotalDays) * 24 * time.Hour)
+
+if newExpiresAt.After(ceiling) {
+    // 返回 Success=false，不是 error；与「余额不足」同一类分支
+    return failure(fmt.Sprintf("VIP 剩余时长已达上限 %d 天，请在临近到期时再购买", maxTotalDays))
+}
+```
+
+**必须放在行锁之后，这是本节的关键约束。** `Extend` 是累加语义，若校验在锁外，两个并发请求会各自读到同一个旧到期时间、各自算出「再加 30 天不超限」，执行后却累加了 60 天。反例：上限 370 天、当前剩余 340 天、月卡 30 天 —— 两次校验都通过（370 ≤ 370），落库后变成 400 天，捅破上限。步骤 4 的 `SELECT ... FOR UPDATE` 已把同一用户的所有 `economy` 事务串行化，把校验挪到它之后即可免疫。
+
+**幂等键不能替代这把锁**：两个携带不同幂等键的请求是两笔各自合法的购买，幂等机制本就不该拦截它们。
+
+**加法必须与 `Extend` 的 SQL 语义对齐**：Go 侧统一用固定时长 `24h × days`，对应 SQL 的 `days * INTERVAL '1 day'`（TIMESTAMPTZ 以 UTC 存储，无 DST 干扰，两者等价）。不要用 `AddDate` —— 它按日历日推进，在带 DST 的时区会与 SQL 结果差一小时。集成测试需断言 `Extend` 的返回值与 Go 侧预算的 `newExpiresAt` 完全相等。
+
+**上限被调小后不追溯**：管理员把 `vip_max_total_days` 从 365 改成 90 时，已持有 300 天剩余时长的用户不会被削减，只是在剩余时长回落到 60 天以内之前无法再购买。这是刻意的 —— 已售出的时长不回收。
 
 ### 5.5 交易流水列表
 
@@ -409,9 +452,18 @@ canSpin := config.Enabled && canSpinByMode && hasQuota &&
 
 ### 5.7 `systemconfig` 扩展
 
-`Config` 结构与 `UpdateInput` 各加 6 个字段，`Get` / `Update` 的 SQL 相应扩列，并为每项加 `ValidXxx()` 校验函数（对齐既有的 `ValidDailyPointsLimit`）。
+`Config` 结构与 `UpdateInput` 各加 7 个字段，`Get` / `Update` 的 SQL 相应扩列，并为每项加 `ValidXxx()` 校验函数（对齐既有的 `ValidDailyPointsLimit`）。
 
-> ⚠️ **`Update` 的「nil → 重置为默认值」语义保持不变**（`service.go:66-69` 的既有行为）。这意味着**后台页面必须一次性提交全部 7 个字段**，任何漏提交的字段都会被静默重置为默认值。本轮不修改这个语义（属于「不重构没坏的东西」），但必须在 `UpdateInput` 的字段上加注释显式标注该陷阱，并保证 `/admin/settings` 的 `handleSave` 全量提交。
+除逐项范围校验外，还需要一个**跨字段校验**：
+
+```go
+// vip_max_total_days 必须 >= vip_duration_days，否则用户第一次购买就会被上限拒绝
+func ValidVIPDurationAgainstMaxTotal(durationDays int64, maxTotalDays int64) bool
+```
+
+它在 `Update` 里于两个值都归一化（nil → 默认值）之后执行，因此能覆盖「只提交 duration、max 被重置为默认值」这类组合。数据库的表级 CHECK 是最后一道防线，但报错信息对管理员不可读，所以这一层负责给出中文提示。
+
+> ⚠️ **`Update` 的「nil → 重置为默认值」语义保持不变**（`service.go:66-69` 的既有行为）。这意味着**后台页面必须一次性提交全部 8 个字段**，任何漏提交的字段都会被静默重置为默认值。本轮不修改这个语义（属于「不重构没坏的东西」），但必须在 `UpdateInput` 的字段上加注释显式标注该陷阱，并保证 `/admin/settings` 的 `handleSave` 全量提交。
 
 ---
 
@@ -441,6 +493,9 @@ canSpin := config.Enabled && canSpinByMode && hasQuota &&
       "expiresAt": 1759161600000,        // 非 VIP 时省略
       "pricePoints": 3000,
       "durationDays": 30,
+      "maxTotalDays": 365,               // 剩余时长上限
+      "canPurchase": true,               // 仅反映累计时长上限，不含余额
+      "purchaseBlockedReason": null,     // canPurchase=false 时给出中文原因
       "benefits": {
         "dailyWithdrawLimit": 8,
         "withdrawFeePercent": 50,
@@ -452,6 +507,8 @@ canSpin := config.Enabled && canSpinByMode && hasQuota &&
 ```
 
 `benefits` 恒定下发（无论是否 VIP），用于非 VIP 用户看到「开通后能得到什么」。
+
+**`canPurchase` 由后端判定，前端不重算。** 它复用与 5.4 步骤 5 完全相同的表达式，避免再造一处前后端双实现（§11.1 已经有一处 `previewWithdraw` 的对齐负担，不再增加第二处）。它**不包含余额判断** —— 余额够不够前端用 `balance >= pricePoints` 自己比即可，这个判断无歧义、也不需要后端权威。
 
 #### `GET /api/wallet/transactions?limit=20&offset=0`
 
@@ -472,15 +529,22 @@ canSpin := config.Enabled && canSpinByMode && hasQuota &&
 
 请求：`{ "idempotencyKey": "..." }`，同时支持 `Idempotency-Key` / `X-Idempotency-Key` 请求头（照抄 `exchangeItem` 的三重取值顺序）。
 
-响应：`{ success, message, data: { newBalance, expiresAt, daysAdded, pointsSpent } }`。余额不足返回 `400`。
+响应：`{ success, message, data: { newBalance, expiresAt, daysAdded, pointsSpent } }`。
+
+失败分支（均返回 `400`，`success: false`）：
+
+| 场景 | `code` | 文案 |
+|---|---|---|
+| 余额不足 | `INSUFFICIENT_POINTS` | 积分不足，还差 N 积分 |
+| 累计时长超上限 | `VIP_MAX_DURATION_REACHED` | VIP 剩余时长已达上限 N 天，请在临近到期时再购买 |
 
 ### 6.2 变更接口
 
 | 接口 | 变更 |
 |---|---|
 | `POST /api/store/withdraw` | 新增每日限次校验；超限返回 `400` + `code: "WITHDRAW_DAILY_LIMIT"`；成功响应 `data` 补 `dailyWithdrawUsed` / `dailyWithdrawLimit` 供前端即时刷新 |
-| `GET /api/admin/config` | `config` 对象新增 6 个字段 |
-| `PUT /api/admin/config` | 请求体新增 6 个字段，逐项校验，任一越界返回 `400` 与对应中文提示 |
+| `GET /api/admin/config` | `config` 对象新增 7 个字段 |
+| `PUT /api/admin/config` | 请求体新增 7 个字段，逐项校验 + 一项跨字段校验（`vip_max_total_days >= vip_duration_days`），任一不通过返回 `400` 与对应中文提示 |
 | `GET /api/lottery` | `PagePayload` 新增 `freeSpinLimit` / `freeSpinRemaining` |
 
 ### 6.3 路由注册
@@ -510,7 +574,7 @@ api.Post("/vip/purchase", economyHandlers.purchaseVIP)
   └─ 账户额度      ← GET /api/store/topup（懒加载，失败可重试，不阻塞其余区块）
 VIP 状态条
   ├─ 非 VIP：三项特权说明 + 「N 积分开通 M 天」按钮
-  └─ VIP：到期时间 + 「续费」按钮（附「时长累加」说明）
+  └─ VIP：到期时间 + 剩余天数 + 「续费」按钮（附「时长累加，最多囤 N 天」说明）
 操作区（桌面左右两栏 / 移动端上下堆叠）
   ├─ 积分提现：输入 + 预览（含 VIP 折扣）+ 今日剩余次数 + 阶梯表
   └─ 额度充值：输入 + 预览 + new-api 额度卡片
@@ -518,6 +582,8 @@ VIP 状态条
 ```
 
 **今日剩余提现次数的实时性**：初始值来自 `GET /api/wallet`；每次提现返回后用响应里的 `dailyWithdrawUsed` / `dailyWithdrawLimit` 就地更新，不重新拉整页。
+
+**购买按钮的禁用态**：`canPurchase === false` 时按钮置灰，并把 `purchaseBlockedReason` 显示在按钮下方；余额不足则单独用 `balance < pricePoints` 判定（两个原因都成立时优先显示上限原因，因为它更需要解释）。禁用只是前置提示，后端仍会在 5.4 步骤 5 重新校验。购买成功后用响应里的 `expiresAt` 就地更新状态条，并重算 `canPurchase` —— 需要 `maxTotalDays` 已在本地缓存，所以购买响应本身不必回传上限。
 
 **结果反馈**：保留既有的结果弹窗形态（复用 `wallet-result-*` 样式），信息量足够且改动最小。
 
@@ -558,9 +624,10 @@ VIP 状态条
 
 `src/app/admin/settings/page.tsx`（172 行）：
 
-- `SystemConfig` 接口加 6 个字段，新增 6 个受控输入框
-- 分成两个区块：既有「游戏配置」（每日积分上限）+ 新增「钱包与 VIP 配置」（6 项），每项带取值范围与中文说明
-- `handleSave` **必须全量提交 7 个字段**（见 5.7 的 nil 语义陷阱）
+- `SystemConfig` 接口加 7 个字段，新增 7 个受控输入框
+- 分成两个区块：既有「游戏配置」（每日积分上限）+ 新增「钱包与 VIP 配置」（7 项），每项带取值范围与中文说明
+- 「累计时长上限」输入框下方标注它必须 ≥「月卡时长」，保存失败时展示后端返回的中文提示
+- `handleSave` **必须全量提交 8 个字段**（见 5.7 的 nil 语义陷阱）
 
 ### 7.5 `src/lib/wallet-rules.ts` 参数化
 
@@ -600,6 +667,7 @@ handle /api/vip/purchase {
 | 月卡时长 | `vip_duration_days` | 30 天 | 1 - 365 |
 | VIP 手续费百分比 | `vip_withdraw_fee_percent` | 50（五折） | 0 - 100 |
 | VIP 每日赠送抽奖次数 | `vip_daily_lottery_spins` | 2 | 0 - 50 |
+| VIP 累计时长上限 | `vip_max_total_days` | 365 天 | 1 - 3650，且 ≥ 月卡时长 |
 
 ---
 
@@ -608,7 +676,7 @@ handle /api/vip/purchase {
 ### 10.1 单元测试（不需要数据库）
 
 - `backend/internal/economy/wallet_test.go`：`PreviewWithdraw` 在 `feePercent` 为 100 / 50 / 0 时的费用计算；边界 `points = 10`（验证低额时向上取整导致折扣不显效的既定行为）；既有用例补 `100` 参数保持原断言
-- `backend/internal/systemconfig`：6 个新校验函数的边界值
+- `backend/internal/systemconfig`：7 个新校验函数的边界值；`ValidVIPDurationAgainstMaxTotal` 在 `max < duration` / `max == duration` / `max > duration` 三种情形下的结果
 - 前端：`previewWithdraw` 与 Go 版本使用**同一组输入输出向量**，确保双实现对齐
 
 ### 10.2 集成测试（需要数据库）
@@ -617,6 +685,12 @@ handle /api/vip/purchase {
 
 - **提现限次**：连续提现至上限 → 第 N+1 次返回 `WITHDRAW_DAILY_LIMIT` 且无任何副作用；`uncertain` 计数；`failed` 不计数；跨日重置；VIP 与非 VIP 的上限差异
 - **VIP 购买**：余额不足；首次购买；未过期时重复购买（时长累加）；已过期后购买（从当前时间重新起算）；幂等键重放返回同一结果且只扣一次分
+- **VIP 累计时长上限**：
+  - 反复购买直至逼近上限 → 下一次返回 `VIP_MAX_DURATION_REACHED`，且**积分余额与 `vip_memberships.expires_at` 均无变化**（校验先于扣分，不能有任何副作用）
+  - 恰好等于上限的边界（`剩余 + 时长 == 上限`）应当**允许**购买
+  - 把 `vip_max_total_days` 调小到低于用户当前剩余时长 → 已有时长不变，新购买被拒
+  - `Extend` 的返回值与 Go 侧预算的 `newExpiresAt` 完全相等（校验加法与 SQL 加法对齐）
+  - 并发两笔购买（不同幂等键）→ 被 `point_accounts` 行锁串行化，第二笔读到第一笔的结果并按新值判定，两笔合计不会突破上限
 - **抽奖免费次数**：普通用户 1 次；VIP 用户 1+2 次；`extra_spins` 优先消耗的既有顺序不变；五连抽在单事务内的连续消耗；跨日重置；`daily_free_claimed` 旧列同步正确
 - **流水列表**：分页正确；只返回本人记录
 
@@ -653,6 +727,7 @@ node scripts/audit-gateway-allowed-cutovers.mjs   # 必须 ok: true
 6. **管理员提现不豁免限次**：与抽奖的 `IsAdmin` bypass 行为不一致，这是刻意的选择（资金操作从严）。
 7. **`daily_free_claimed` 成为冗余列**：被 `free_used_count` 取代但仍同步写入。这是刻意的兼容层，不是遗留死代码，需在代码里注释清楚。
 8. **`/lottery` 被卷入改动范围**：原始需求只提到钱包与 VIP，但「VIP 每日赠送抽奖次数」特权必然要改抽奖的次数模型与前端展示。
+9. **VIP 累计时长上限依赖行锁的先后顺序**：校验一旦被挪到 `SELECT ... FOR UPDATE` 之前（比如日后有人「优化」成先查 VIP 再开事务），并发购买就能突破上限。这个约束靠代码注释与集成测试固定，是本轮 VIP 侧最脆弱的一处。
 
 ---
 
@@ -664,7 +739,7 @@ node scripts/audit-gateway-allowed-cutovers.mjs   # 必须 ok: true
 |---|---|
 | `backend/migrations/0032_wallet_daily_withdrawals.sql` | 每日提现次数表 |
 | `backend/migrations/0033_vip.sql` | VIP 会籍与购买流水表 |
-| `backend/migrations/0034_system_config_wallet_vip.sql` | 后台配置 6 列 |
+| `backend/migrations/0034_system_config_wallet_vip.sql` | 后台配置 7 列 |
 | `backend/migrations/0035_lottery_free_spins.sql` | 抽奖免费次数计数化 |
 | `backend/internal/vip/vip.go` | `Status` / `Get` / `Extend` |
 | `backend/internal/vip/vip_integration_test.go` | 续期与累加的集成测试 |
@@ -680,11 +755,11 @@ node scripts/audit-gateway-allowed-cutovers.mjs   # 必须 ok: true
 | `backend/internal/economy/wallet_service.go` | `executeWithdrawInner` 接入限次与折扣 |
 | `backend/internal/economy/wallet_store.go` | 新增 `ListWalletTransactions` |
 | `backend/internal/economy/types.go` | `SourceVIPPurchase`、`WithdrawDailyUsage`、`PurchaseVIPResult` |
-| `backend/internal/systemconfig/service.go` | 6 个字段与校验函数 |
+| `backend/internal/systemconfig/service.go` | 7 个字段、逐项校验函数与一个跨字段校验函数 |
 | `backend/internal/lottery/service.go` | `consumeSpinCount` 加 `freeSpinQuota`；`PagePayload` 两个新字段 |
 | `backend/internal/lottery/types.go` | `PagePayload` 字段 |
 | `backend/internal/httpserver/economy_handlers.go` | 3 个新 handler |
-| `backend/internal/httpserver/admin_config_handlers.go` | 6 个字段的解析与校验 |
+| `backend/internal/httpserver/admin_config_handlers.go` | 7 个字段的解析与校验 |
 | `backend/internal/httpserver/server.go` | 3 条路由 |
 | `gateway/Caddyfile` | 3 条精确路径 |
 | `scripts/audit-gateway-allowed-cutovers.mjs` | 白名单 3 条 |
@@ -699,7 +774,7 @@ node scripts/audit-gateway-allowed-cutovers.mjs   # 必须 ok: true
 
 1. 迁移 `0032` - `0035`（4 个文件）
 2. `vip` 包（`Get` / `Extend` + 单元测试）
-3. `systemconfig` 扩展 6 字段 + 校验函数
+3. `systemconfig` 扩展 7 字段 + 逐项校验函数 + 跨字段校验函数
 4. `economy`：提现限次 → 手续费折扣 → `PurchaseVIP` → `ListWalletTransactions`
 5. 后端 handler + 路由 + `gateway/Caddyfile` + 审计脚本（并跑审计验证）
 6. 前端 `src/lib/wallet-rules.ts` 参数化
