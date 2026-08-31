@@ -91,6 +91,8 @@ interface PersistedEvents {
 
 const BOARD_SIZE = 4;
 const BEST_SCORE_KEY = 'lucky-whack-mole-best-score';
+/** 局内固定屏幕仅在该宽度及以下生效，与页面移动端断点保持一致 */
+const FOCUS_LOCK_MAX_WIDTH = 768;
 const EVENTS_PERSIST_KEY = 'lucky-whack-mole-events';
 const FEEDBACK_DURATION_MS = 520;
 const TIMER_TICK_MS = 80;
@@ -457,6 +459,22 @@ export default function WhackMolePage() {
     phaseRef.current = phase;
   }, [phase]);
 
+  /** 移动端固定屏幕：局内锁死页面滚动，避免敲击时误触上下滑动 */
+  useEffect(() => {
+    if (phase !== 'playing') return;
+    const compact = window.matchMedia(`(max-width: ${FOCUS_LOCK_MAX_WIDTH}px)`);
+    if (!compact.matches) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const previousOverscroll = document.body.style.overscrollBehavior;
+    document.body.style.overflow = 'hidden';
+    document.body.style.overscrollBehavior = 'none';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.overscrollBehavior = previousOverscroll;
+    };
+  }, [phase]);
+
   useEffect(() => {
     return () => {
       for (const timer of Object.values(feedbackTimersRef.current)) {
@@ -643,7 +661,7 @@ export default function WhackMolePage() {
     : primaryButtonLabel;
 
   return (
-    <div className="whack-page">
+    <div className={`whack-page${phase === 'playing' ? ' is-focus-locked' : ''}`}>
       <div className="whack-mesh-bg" aria-hidden />
       <div className="whack-stardust" aria-hidden>
         <span style={{ top: '8%', left: '6%', fontSize: 14 }}>✦</span>
@@ -1548,6 +1566,67 @@ export default function WhackMolePage() {
           }
         }
         @media (max-width: 768px) {
+          /* 局内固定屏幕：整局提升为全屏层，棋盘按剩余高度自适应，杜绝滑动误触 */
+          .whack-page.is-focus-locked .whack-game-card {
+            position: fixed;
+            inset: 0;
+            z-index: 50;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            border-radius: 0;
+            padding: max(10px, env(safe-area-inset-top)) 12px max(10px, env(safe-area-inset-bottom));
+            overflow: hidden;
+          }
+          .whack-page.is-focus-locked .whack-board-heading {
+            display: none;
+          }
+          /* 局内隐藏规则条：规则在开局前的难度卡和「规则」弹窗里已完整呈现 */
+          .whack-page.is-focus-locked .whack-rule-strip {
+            display: none;
+          }
+          /* 局内压缩状态栏：4 个指标压回单行，把高度让给棋盘 */
+          .whack-page.is-focus-locked .whack-status-dock {
+            gap: 10px;
+            padding: 10px;
+            margin-bottom: 0;
+            border-radius: 18px;
+          }
+          .whack-page.is-focus-locked .whack-status-metrics {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 6px;
+          }
+          .whack-page.is-focus-locked .whack-metric {
+            padding: 6px 8px;
+            border-radius: 12px;
+          }
+          .whack-page.is-focus-locked .whack-board-panel {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            /* 局内面板只剩棋盘一个可见子元素，可安全作为尺寸容器 */
+            container-type: size;
+          }
+          /* 棋盘取「能放进面板的最大正方形」，避免高屏上被拉成长条 */
+          .whack-page.is-focus-locked .whack-board {
+            /* 回退：不支持容器查询单位时填满剩余空间 */
+            width: 100%;
+            height: 100%;
+            max-width: min(100%, 620px);
+            /* 支持 cqmin 时按容器短边取正方形 */
+            width: min(100cqmin, 620px);
+            height: min(100cqmin, 620px);
+            margin: auto;
+            aspect-ratio: auto;
+            grid-template-rows: repeat(4, minmax(0, 1fr));
+          }
+          /* grid 子项的自动最小尺寸(min-height:auto)会顶掉 minmax(0,1fr)，必须显式归零 */
+          .whack-page.is-focus-locked .whack-hole {
+            min-height: 0;
+          }
           .whack-page .whack-topbar {
             padding: 12px 14px;
           }
