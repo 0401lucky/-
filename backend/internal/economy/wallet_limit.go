@@ -3,6 +3,7 @@ package economy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -14,6 +15,12 @@ import (
 
 // CodeWithdrawDailyLimit 标识「今日提现次数已用完」。
 const CodeWithdrawDailyLimit = "WITHDRAW_DAILY_LIMIT"
+
+// CodeWithdrawBalanceCap 标识「账户额度余额已达封顶线，禁止继续提现」。
+const CodeWithdrawBalanceCap = "WITHDRAW_BALANCE_CAP"
+
+// CodeWithdrawBalanceUnknown 标识「账户额度余额查不到，无法校验封顶线」。
+const CodeWithdrawBalanceUnknown = "WITHDRAW_BALANCE_UNKNOWN"
 
 // 计数只是一条本地 UPSERT，不该共用提现主流程那份可能已被 new-api 耗尽的预算。
 const withdrawCountTimeout = 5 * time.Second
@@ -49,6 +56,22 @@ func withdrawFeePercentFor(config systemconfig.Config, vipActive bool) int64 {
 		return config.VIPWithdrawFeePercent
 	}
 	return 100
+}
+
+// checkWithdrawBalanceCap 判断账户额度（new-api）余额是否已达封顶线。
+//
+// 比较用整数美元（QuotaToWholeDollars 的 floor 值）而不是 BalanceDollars：
+// 后者经过两位四舍五入，$9999.996 会被抬成 10000.00，把还没到顶的用户误拦。
+//
+// VIP 与管理员都不豁免：这是控制 new-api 成本敞口的闸门，与提现次数限制同一立场。
+func checkWithdrawBalanceCap(balanceWholeDollars int64, capDollars int64) (bool, string) {
+	if balanceWholeDollars < capDollars {
+		return false, ""
+	}
+	return true, fmt.Sprintf(
+		"账户额度余额已达上限 $%d，暂不能继续提现，请先消耗额度后再试",
+		capDollars,
+	)
 }
 
 type withdrawLimitQuerier interface {

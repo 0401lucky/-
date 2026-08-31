@@ -45,6 +45,12 @@ const (
 	DefaultVIPMaxTotalDays = int64(365)
 	MinVIPMaxTotalDays     = int64(1)
 	MaxVIPMaxTotalDays     = int64(3650)
+
+	// 账户额度（new-api）余额达到该美元数后禁止继续提现。
+	// 上限留到 1e12：调到远高于任何真实余额即等价于关闭本限制，无需额外开关字段。
+	DefaultWithdrawBalanceCapDollars = int64(10000)
+	MinWithdrawBalanceCapDollars     = int64(1)
+	MaxWithdrawBalanceCapDollars     = int64(1000000000000)
 )
 
 type QueryRower interface {
@@ -52,31 +58,33 @@ type QueryRower interface {
 }
 
 type Config struct {
-	DailyPointsLimit      int64   `json:"dailyPointsLimit"`
-	DailyWithdrawLimit    int64   `json:"dailyWithdrawLimit"`
-	VIPDailyWithdrawLimit int64   `json:"vipDailyWithdrawLimit"`
-	VIPPricePoints        int64   `json:"vipPricePoints"`
-	VIPDurationDays       int64   `json:"vipDurationDays"`
-	VIPWithdrawFeePercent int64   `json:"vipWithdrawFeePercent"`
-	VIPDailyLotterySpins  int64   `json:"vipDailyLotterySpins"`
-	VIPMaxTotalDays       int64   `json:"vipMaxTotalDays"`
-	UpdatedAt             *int64  `json:"updatedAt,omitempty"`
-	UpdatedBy             *string `json:"updatedBy,omitempty"`
+	DailyPointsLimit          int64   `json:"dailyPointsLimit"`
+	DailyWithdrawLimit        int64   `json:"dailyWithdrawLimit"`
+	VIPDailyWithdrawLimit     int64   `json:"vipDailyWithdrawLimit"`
+	VIPPricePoints            int64   `json:"vipPricePoints"`
+	VIPDurationDays           int64   `json:"vipDurationDays"`
+	VIPWithdrawFeePercent     int64   `json:"vipWithdrawFeePercent"`
+	VIPDailyLotterySpins      int64   `json:"vipDailyLotterySpins"`
+	VIPMaxTotalDays           int64   `json:"vipMaxTotalDays"`
+	WithdrawBalanceCapDollars int64   `json:"withdrawBalanceCapDollars"`
+	UpdatedAt                 *int64  `json:"updatedAt,omitempty"`
+	UpdatedBy                 *string `json:"updatedBy,omitempty"`
 }
 
 // UpdateInput 的每个字段为 nil 时会被重置为默认值，不是「保持原值」。
 // 调用方必须一次性提交全部字段，漏传的字段会被静默重置。
 type UpdateInput struct {
-	DailyPointsLimit      *int64
-	DailyWithdrawLimit    *int64
-	VIPDailyWithdrawLimit *int64
-	VIPPricePoints        *int64
-	VIPDurationDays       *int64
-	VIPWithdrawFeePercent *int64
-	VIPDailyLotterySpins  *int64
-	VIPMaxTotalDays       *int64
-	UpdatedBy             string
-	Now                   time.Time
+	DailyPointsLimit          *int64
+	DailyWithdrawLimit        *int64
+	VIPDailyWithdrawLimit     *int64
+	VIPPricePoints            *int64
+	VIPDurationDays           *int64
+	VIPWithdrawFeePercent     *int64
+	VIPDailyLotterySpins      *int64
+	VIPMaxTotalDays           *int64
+	WithdrawBalanceCapDollars *int64
+	UpdatedBy                 string
+	Now                       time.Time
 }
 
 type Service struct {
@@ -116,6 +124,7 @@ func (service *Service) Update(ctx context.Context, input UpdateInput) (Config, 
 	vipFeePercent := valueOrDefault(input.VIPWithdrawFeePercent, DefaultVIPWithdrawFeePercent)
 	vipLotterySpins := valueOrDefault(input.VIPDailyLotterySpins, DefaultVIPDailyLotterySpins)
 	vipMaxTotalDays := valueOrDefault(input.VIPMaxTotalDays, DefaultVIPMaxTotalDays)
+	withdrawBalanceCap := valueOrDefault(input.WithdrawBalanceCapDollars, DefaultWithdrawBalanceCapDollars)
 
 	if !ValidDailyPointsLimit(limit) ||
 		!ValidDailyWithdrawLimit(withdrawLimit) ||
@@ -125,6 +134,7 @@ func (service *Service) Update(ctx context.Context, input UpdateInput) (Config, 
 		!ValidVIPWithdrawFeePercent(vipFeePercent) ||
 		!ValidVIPDailyLotterySpins(vipLotterySpins) ||
 		!ValidVIPMaxTotalDays(vipMaxTotalDays) ||
+		!ValidWithdrawBalanceCapDollars(withdrawBalanceCap) ||
 		!ValidVIPDurationAgainstMaxTotal(vipDuration, vipMaxTotalDays) {
 		return Config{}, ErrInvalid
 	}
@@ -138,10 +148,10 @@ func (service *Service) Update(ctx context.Context, input UpdateInput) (Config, 
 		`INSERT INTO system_config (
 		   id, daily_points_limit, daily_withdraw_limit, vip_daily_withdraw_limit,
 		   vip_price_points, vip_duration_days, vip_withdraw_fee_percent,
-		   vip_daily_lottery_spins, vip_max_total_days,
+		   vip_daily_lottery_spins, vip_max_total_days, withdraw_balance_cap_dollars,
 		   updated_at_ms, updated_by, updated_at
 		 )
-		 VALUES ('system', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+		 VALUES ('system', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
 		 ON CONFLICT (id) DO UPDATE SET
 		   daily_points_limit = excluded.daily_points_limit,
 		   daily_withdraw_limit = excluded.daily_withdraw_limit,
@@ -151,11 +161,12 @@ func (service *Service) Update(ctx context.Context, input UpdateInput) (Config, 
 		   vip_withdraw_fee_percent = excluded.vip_withdraw_fee_percent,
 		   vip_daily_lottery_spins = excluded.vip_daily_lottery_spins,
 		   vip_max_total_days = excluded.vip_max_total_days,
+		   withdraw_balance_cap_dollars = excluded.withdraw_balance_cap_dollars,
 		   updated_at_ms = excluded.updated_at_ms,
 		   updated_by = excluded.updated_by,
 		   updated_at = now()`,
 		limit, withdrawLimit, vipWithdrawLimit, vipPrice, vipDuration,
-		vipFeePercent, vipLotterySpins, vipMaxTotalDays,
+		vipFeePercent, vipLotterySpins, vipMaxTotalDays, withdrawBalanceCap,
 		nowMs, emptyStringToNil(input.UpdatedBy),
 	)
 	if err != nil {
@@ -178,7 +189,7 @@ func Get(ctx context.Context, queryer QueryRower) (Config, error) {
 	err := queryer.QueryRow(ctx,
 		`SELECT daily_points_limit, daily_withdraw_limit, vip_daily_withdraw_limit,
 		        vip_price_points, vip_duration_days, vip_withdraw_fee_percent,
-		        vip_daily_lottery_spins, vip_max_total_days,
+		        vip_daily_lottery_spins, vip_max_total_days, withdraw_balance_cap_dollars,
 		        updated_at_ms, updated_by
 		   FROM system_config
 		  WHERE id = 'system'`,
@@ -191,6 +202,7 @@ func Get(ctx context.Context, queryer QueryRower) (Config, error) {
 		&config.VIPWithdrawFeePercent,
 		&config.VIPDailyLotterySpins,
 		&config.VIPMaxTotalDays,
+		&config.WithdrawBalanceCapDollars,
 		&updatedAt,
 		&updatedBy,
 	)
@@ -227,6 +239,9 @@ func Get(ctx context.Context, queryer QueryRower) (Config, error) {
 	if !ValidVIPMaxTotalDays(config.VIPMaxTotalDays) {
 		config.VIPMaxTotalDays = fallbacks.VIPMaxTotalDays
 	}
+	if !ValidWithdrawBalanceCapDollars(config.WithdrawBalanceCapDollars) {
+		config.WithdrawBalanceCapDollars = fallbacks.WithdrawBalanceCapDollars
+	}
 	if !ValidVIPDurationAgainstMaxTotal(config.VIPDurationDays, config.VIPMaxTotalDays) {
 		config.VIPDurationDays = fallbacks.VIPDurationDays
 		config.VIPMaxTotalDays = fallbacks.VIPMaxTotalDays
@@ -241,14 +256,15 @@ func Get(ctx context.Context, queryer QueryRower) (Config, error) {
 
 func defaultConfig() Config {
 	return Config{
-		DailyPointsLimit:      DefaultDailyPointsLimit,
-		DailyWithdrawLimit:    DefaultDailyWithdrawLimit,
-		VIPDailyWithdrawLimit: DefaultVIPDailyWithdrawLimit,
-		VIPPricePoints:        DefaultVIPPricePoints,
-		VIPDurationDays:       DefaultVIPDurationDays,
-		VIPWithdrawFeePercent: DefaultVIPWithdrawFeePercent,
-		VIPDailyLotterySpins:  DefaultVIPDailyLotterySpins,
-		VIPMaxTotalDays:       DefaultVIPMaxTotalDays,
+		DailyPointsLimit:          DefaultDailyPointsLimit,
+		DailyWithdrawLimit:        DefaultDailyWithdrawLimit,
+		VIPDailyWithdrawLimit:     DefaultVIPDailyWithdrawLimit,
+		VIPPricePoints:            DefaultVIPPricePoints,
+		VIPDurationDays:           DefaultVIPDurationDays,
+		VIPWithdrawFeePercent:     DefaultVIPWithdrawFeePercent,
+		VIPDailyLotterySpins:      DefaultVIPDailyLotterySpins,
+		VIPMaxTotalDays:           DefaultVIPMaxTotalDays,
+		WithdrawBalanceCapDollars: DefaultWithdrawBalanceCapDollars,
 	}
 }
 
@@ -290,6 +306,11 @@ func ValidVIPDailyLotterySpins(spins int64) bool {
 
 func ValidVIPMaxTotalDays(days int64) bool {
 	return days >= MinVIPMaxTotalDays && days <= MaxVIPMaxTotalDays
+}
+
+// ValidWithdrawBalanceCapDollars 校验账户额度提现封顶线（整数美元）。
+func ValidWithdrawBalanceCapDollars(dollars int64) bool {
+	return dollars >= MinWithdrawBalanceCapDollars && dollars <= MaxWithdrawBalanceCapDollars
 }
 
 // ValidVIPDurationAgainstMaxTotal 校验累计时长上限不低于月卡时长。

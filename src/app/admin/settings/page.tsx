@@ -11,6 +11,7 @@ interface SystemConfig {
   vipWithdrawFeePercent: number;
   vipDailyLotterySpins: number;
   vipMaxTotalDays: number;
+  withdrawBalanceCapDollars: number;
   updatedAt?: number;
   updatedBy?: string;
 }
@@ -32,6 +33,7 @@ export default function AdminSettingsPage() {
   const [vipWithdrawFeePercent, setVipWithdrawFeePercent] = useState('');
   const [vipDailyLotterySpins, setVipDailyLotterySpins] = useState('');
   const [vipMaxTotalDays, setVipMaxTotalDays] = useState('');
+  const [withdrawBalanceCapDollars, setWithdrawBalanceCapDollars] = useState('');
 
   const scheduleSuccessClear = useCallback(() => {
     if (successTimeoutRef.current) {
@@ -70,6 +72,7 @@ export default function AdminSettingsPage() {
         setVipWithdrawFeePercent(String(systemData.config.vipWithdrawFeePercent));
         setVipDailyLotterySpins(String(systemData.config.vipDailyLotterySpins));
         setVipMaxTotalDays(String(systemData.config.vipMaxTotalDays));
+        setWithdrawBalanceCapDollars(String(systemData.config.withdrawBalanceCapDollars));
       } else {
         setError(systemData.error || '获取系统配置失败');
       }
@@ -90,7 +93,7 @@ export default function AdminSettingsPage() {
       const res = await fetch('/api/admin/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        // 后端的 nil 语义是「重置为默认值」，必须全量提交 8 个字段
+        // 后端的 nil 语义是「重置为默认值」，必须全量提交 9 个字段
         body: JSON.stringify({
           dailyPointsLimit: Number(dailyPointsLimit),
           dailyWithdrawLimit: Number(dailyWithdrawLimit),
@@ -100,6 +103,7 @@ export default function AdminSettingsPage() {
           vipWithdrawFeePercent: Number(vipWithdrawFeePercent),
           vipDailyLotterySpins: Number(vipDailyLotterySpins),
           vipMaxTotalDays: Number(vipMaxTotalDays),
+          withdrawBalanceCapDollars: Number(withdrawBalanceCapDollars),
         }),
       });
 
@@ -194,6 +198,28 @@ export default function AdminSettingsPage() {
         </div>
 
         <div className="p-8 space-y-8">
+          {/* 账户额度提现上限 */}
+          <div>
+            <label className="block text-sm font-bold text-stone-500 uppercase tracking-widest mb-3">
+              账户额度提现上限
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="number"
+                value={withdrawBalanceCapDollars}
+                onChange={(e) => setWithdrawBalanceCapDollars(e.target.value)}
+                min="1"
+                max="1000000000000"
+                className="w-48 px-5 py-3 border-2 border-stone-100 bg-stone-50/50 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none font-black text-lg transition-all"
+              />
+              <span className="text-stone-400 font-bold">美元</span>
+            </div>
+            <p className="mt-3 text-sm text-stone-400 font-medium leading-relaxed">
+              用户在 new-api 的账户额度余额<strong className="font-black text-stone-500">达到该金额后禁止继续提现</strong>，
+              需先消耗额度。VIP 与管理员均不豁免。把它调到远高于任何真实余额即等价于关闭本限制。
+            </p>
+          </div>
+
           {/* 普通用户每日提现次数 */}
           <div>
             <label className="block text-sm font-bold text-stone-500 uppercase tracking-widest mb-3">

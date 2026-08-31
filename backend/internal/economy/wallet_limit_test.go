@@ -63,3 +63,32 @@ func TestWithdrawFeePercentFor(t *testing.T) {
 		t.Fatalf("vip fee percent = %d, want 50", got)
 	}
 }
+
+func TestCheckWithdrawBalanceCap(t *testing.T) {
+	cases := []struct {
+		name                string
+		balanceWholeDollars int64
+		capDollars          int64
+		wantBlocked         bool
+	}{
+		{name: "余额远低于上限", balanceWholeDollars: 0, capDollars: 10000, wantBlocked: false},
+		{name: "余额差 $1 到顶", balanceWholeDollars: 9999, capDollars: 10000, wantBlocked: false},
+		{name: "余额恰好到顶", balanceWholeDollars: 10000, capDollars: 10000, wantBlocked: true},
+		{name: "余额已超顶", balanceWholeDollars: 1000000827, capDollars: 10000, wantBlocked: true},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			blocked, message := checkWithdrawBalanceCap(tt.balanceWholeDollars, tt.capDollars)
+			if blocked != tt.wantBlocked {
+				t.Fatalf("blocked = %v, want %v", blocked, tt.wantBlocked)
+			}
+			if blocked && message == "" {
+				t.Fatal("拦截时必须给出可展示的原因")
+			}
+			if !blocked && message != "" {
+				t.Fatalf("放行时不该带消息，got %q", message)
+			}
+		})
+	}
+}

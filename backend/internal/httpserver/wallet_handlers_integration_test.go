@@ -30,12 +30,13 @@ import (
 type walletOverviewPayload struct {
 	Success bool `json:"success"`
 	Data    struct {
-		Balance           *int64 `json:"balance"`
-		PointsPerDollar   *int64 `json:"pointsPerDollar"`
-		MinWithdrawPoints *int64 `json:"minWithdrawPoints"`
-		MinTopupDollars   *int64 `json:"minTopupDollars"`
-		FeePercent        *int64 `json:"feePercent"`
-		DailyWithdraw     struct {
+		Balance                   *int64 `json:"balance"`
+		PointsPerDollar           *int64 `json:"pointsPerDollar"`
+		MinWithdrawPoints         *int64 `json:"minWithdrawPoints"`
+		MinTopupDollars           *int64 `json:"minTopupDollars"`
+		FeePercent                *int64 `json:"feePercent"`
+		WithdrawBalanceCapDollars *int64 `json:"withdrawBalanceCapDollars"`
+		DailyWithdraw             struct {
 			Used      *int64 `json:"used"`
 			Limit     *int64 `json:"limit"`
 			Remaining *int64 `json:"remaining"`
@@ -91,6 +92,7 @@ func TestWalletOverviewHandlerReturnsFullShape(t *testing.T) {
 		"minWithdrawPoints":               payload.Data.MinWithdrawPoints,
 		"minTopupDollars":                 payload.Data.MinTopupDollars,
 		"feePercent":                      payload.Data.FeePercent,
+		"withdrawBalanceCapDollars":       payload.Data.WithdrawBalanceCapDollars,
 		"dailyWithdraw.used":              payload.Data.DailyWithdraw.Used,
 		"dailyWithdraw.limit":             payload.Data.DailyWithdraw.Limit,
 		"dailyWithdraw.remaining":         payload.Data.DailyWithdraw.Remaining,
@@ -112,6 +114,10 @@ func TestWalletOverviewHandlerReturnsFullShape(t *testing.T) {
 
 	if *payload.Data.Balance != 5000 || *payload.Data.FeePercent != 100 {
 		t.Fatalf("unexpected balance/feePercent: %d/%d", *payload.Data.Balance, *payload.Data.FeePercent)
+	}
+	if *payload.Data.WithdrawBalanceCapDollars != walletHTTPWithdrawBalanceCapDollars {
+		t.Fatalf("unexpected withdrawBalanceCapDollars: %d, want %d",
+			*payload.Data.WithdrawBalanceCapDollars, walletHTTPWithdrawBalanceCapDollars)
 	}
 	if *payload.Data.DailyWithdraw.Used != 0 ||
 		*payload.Data.DailyWithdraw.Limit != walletHTTPDailyWithdrawLimit ||
@@ -591,6 +597,8 @@ const (
 	walletHTTPVIPWithdrawFeePercent = int64(50)
 	walletHTTPVIPDailyLotterySpins  = int64(2)
 	walletHTTPVIPMaxTotalDays       = int64(365)
+	// 与迁移默认值一致；提现封顶闸门在本文件的用例里都不该被触发
+	walletHTTPWithdrawBalanceCapDollars = int64(10000)
 )
 
 // seedWalletHTTPConfig 显式写入本文件断言依赖的 system_config 取值。
@@ -604,8 +612,9 @@ func seedWalletHTTPConfig(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
 		`INSERT INTO system_config (
 		   id, daily_points_limit, daily_withdraw_limit, vip_daily_withdraw_limit,
 		   vip_price_points, vip_duration_days, vip_withdraw_fee_percent,
-		   vip_daily_lottery_spins, vip_max_total_days, updated_at_ms
-		 ) VALUES ('system', 5000, $1, $2, $3, $4, $5, $6, $7, 1)
+		   vip_daily_lottery_spins, vip_max_total_days, withdraw_balance_cap_dollars,
+		   updated_at_ms
+		 ) VALUES ('system', 5000, $1, $2, $3, $4, $5, $6, $7, $8, 1)
 		 ON CONFLICT (id) DO UPDATE SET
 		   daily_withdraw_limit     = excluded.daily_withdraw_limit,
 		   vip_daily_withdraw_limit = excluded.vip_daily_withdraw_limit,
@@ -614,6 +623,7 @@ func seedWalletHTTPConfig(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
 		   vip_withdraw_fee_percent = excluded.vip_withdraw_fee_percent,
 		   vip_daily_lottery_spins  = excluded.vip_daily_lottery_spins,
 		   vip_max_total_days       = excluded.vip_max_total_days,
+		   withdraw_balance_cap_dollars = excluded.withdraw_balance_cap_dollars,
 		   updated_at               = now()`,
 		walletHTTPDailyWithdrawLimit,
 		walletHTTPVIPDailyWithdrawLimit,
@@ -622,6 +632,7 @@ func seedWalletHTTPConfig(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
 		walletHTTPVIPWithdrawFeePercent,
 		walletHTTPVIPDailyLotterySpins,
 		walletHTTPVIPMaxTotalDays,
+		walletHTTPWithdrawBalanceCapDollars,
 	); err != nil {
 		t.Fatalf("seed system config failed: %v", err)
 	}

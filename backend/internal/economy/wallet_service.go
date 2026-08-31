@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -105,6 +106,40 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 		return WithdrawResult{
 			Success:            false,
 			Message:            "积分余额不足",
+			Balance:            summary.Balance,
+			DailyWithdrawUsed:  usedCount,
+			DailyWithdrawLimit: dailyLimit,
+		}, nil
+	}
+
+	// 账户额度封顶闸门放在全部本地校验之后：本地能拒的先拒，不白跑一次 new-api 调用。
+	// 仍在 BeginWalletTransaction 之前，因此拒绝路径不产生任何副作用。
+	quotaBalance, quotaErr := service.quotaClient.GetQuotaBalance(ctx, user.ID)
+	if quotaErr != nil {
+		// 查不到余额一律拒绝：校验不了闸门却放行，等于闸门形同虚设。
+		// 这不比现状更差 —— new-api 不可达时后面的 CreditQuota 本来也会失败并退款，
+		// 提前拒绝反而省掉「扣分→入账失败→退款」这一轮副作用。
+		slog.Warn("提现前查询账户额度余额失败，按拒绝处理",
+			"userId", user.ID,
+			"error", quotaErr,
+		)
+		return WithdrawResult{
+			Success:            false,
+			Code:               CodeWithdrawBalanceUnknown,
+			Message:            "暂时查不到账户额度余额，无法校验提现上限，请稍后再试",
+			Balance:            summary.Balance,
+			DailyWithdrawUsed:  usedCount,
+			DailyWithdrawLimit: dailyLimit,
+		}, nil
+	}
+	if blocked, reason := checkWithdrawBalanceCap(
+		quotaBalance.BalanceWholeDollars,
+		config.WithdrawBalanceCapDollars,
+	); blocked {
+		return WithdrawResult{
+			Success:            false,
+			Code:               CodeWithdrawBalanceCap,
+			Message:            reason,
 			Balance:            summary.Balance,
 			DailyWithdrawUsed:  usedCount,
 			DailyWithdrawLimit: dailyLimit,

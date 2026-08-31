@@ -4,10 +4,10 @@ import "testing"
 
 func TestValidatorsAcceptBoundariesAndRejectOutOfRange(t *testing.T) {
 	cases := []struct {
-		name    string
-		valid   func(int64) bool
-		low     int64
-		high    int64
+		name  string
+		valid func(int64) bool
+		low   int64
+		high  int64
 	}{
 		{"dailyWithdrawLimit", ValidDailyWithdrawLimit, MinDailyWithdrawLimit, MaxDailyWithdrawLimit},
 		{"vipDailyWithdrawLimit", ValidVIPDailyWithdrawLimit, MinDailyWithdrawLimit, MaxDailyWithdrawLimit},
@@ -16,6 +16,7 @@ func TestValidatorsAcceptBoundariesAndRejectOutOfRange(t *testing.T) {
 		{"vipWithdrawFeePercent", ValidVIPWithdrawFeePercent, MinVIPWithdrawFeePercent, MaxVIPWithdrawFeePercent},
 		{"vipDailyLotterySpins", ValidVIPDailyLotterySpins, MinVIPDailyLotterySpins, MaxVIPDailyLotterySpins},
 		{"vipMaxTotalDays", ValidVIPMaxTotalDays, MinVIPMaxTotalDays, MaxVIPMaxTotalDays},
+		{"withdrawBalanceCapDollars", ValidWithdrawBalanceCapDollars, MinWithdrawBalanceCapDollars, MaxWithdrawBalanceCapDollars},
 	}
 
 	for _, tt := range cases {
@@ -52,7 +53,8 @@ func TestDefaultsSatisfyTheirOwnValidators(t *testing.T) {
 		!ValidVIPDurationDays(DefaultVIPDurationDays) ||
 		!ValidVIPWithdrawFeePercent(DefaultVIPWithdrawFeePercent) ||
 		!ValidVIPDailyLotterySpins(DefaultVIPDailyLotterySpins) ||
-		!ValidVIPMaxTotalDays(DefaultVIPMaxTotalDays) {
+		!ValidVIPMaxTotalDays(DefaultVIPMaxTotalDays) ||
+		!ValidWithdrawBalanceCapDollars(DefaultWithdrawBalanceCapDollars) {
 		t.Fatal("every default value must satisfy its own validator")
 	}
 	if !ValidVIPDurationAgainstMaxTotal(DefaultVIPDurationDays, DefaultVIPMaxTotalDays) {

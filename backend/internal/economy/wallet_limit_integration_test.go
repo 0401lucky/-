@@ -4,6 +4,7 @@ package economy
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"redemption/backend/internal/auth"
@@ -161,6 +162,87 @@ func TestWithdrawAppliesVIPFeeDiscount(t *testing.T) {
 	}
 	if result.DailyWithdrawLimit != 8 {
 		t.Fatalf("vip daily limit = %d, want 8", result.DailyWithdrawLimit)
+	}
+}
+
+// 账户额度封顶必须在任何副作用之前拦住提现：既不扣分、不调 new-api，也不建交易行。
+func TestWithdrawRejectsWhenBalanceCapReachedWithoutSideEffects(t *testing.T) {
+	ctx := context.Background()
+	// 默认封顶线 $10000，这里让余额恰好压线，锁住「>= 即拦」的边界
+	quotaClient := &fakeWalletQuotaClient{
+		balance: newapi.QuotaBalance{BalanceWholeDollars: 10000, BalanceDollars: 10000},
+	}
+	service, cleanup := newWalletIntegrationService(t, ctx, quotaClient)
+	defer cleanup()
+
+	user := integrationUser()
+	seedPoints(t, ctx, service, user, 10000)
+
+	balanceBefore, err := service.GetPointsSummary(ctx, user, 0)
+	if err != nil {
+		t.Fatalf("read balance failed: %v", err)
+	}
+	transactionsBefore := countWalletTransactionsForTest(t, ctx, service, user.ID)
+
+	result, err := service.ExecuteWithdraw(ctx, user, 100)
+	if err != nil {
+		t.Fatalf("capped withdraw returned error: %v", err)
+	}
+	if result.Success || result.Code != CodeWithdrawBalanceCap {
+		t.Fatalf("withdraw should be rejected by balance cap, got %+v", result)
+	}
+
+	balanceAfter, err := service.GetPointsSummary(ctx, user, 0)
+	if err != nil {
+		t.Fatalf("read balance failed: %v", err)
+	}
+	if balanceAfter.Balance != balanceBefore.Balance {
+		t.Fatalf("balance changed on capped withdraw: %d -> %d", balanceBefore.Balance, balanceAfter.Balance)
+	}
+	if len(quotaClient.creditCalls) != 0 {
+		t.Fatalf("capped withdraw must not credit new-api, calls = %d", len(quotaClient.creditCalls))
+	}
+	if got := countWalletTransactionsForTest(t, ctx, service, user.ID); got != transactionsBefore {
+		t.Fatalf("capped withdraw must not create a wallet transaction, rows %d -> %d", transactionsBefore, got)
+	}
+	// 拒绝不该消耗当日次数：闸门不是惩罚
+	if used, err := countWithdrawUsedToday(ctx, service.db, user.ID, todayChina()); err != nil || used != 0 {
+		t.Fatalf("capped withdraw must not consume daily quota, used=%d err=%v", used, err)
+	}
+}
+
+// 余额查不到时必须拒绝（fail-closed）：校验不了闸门却放行等于闸门失效。
+func TestWithdrawRejectsWhenQuotaBalanceLookupFails(t *testing.T) {
+	ctx := context.Background()
+	quotaClient := &fakeWalletQuotaClient{balanceErr: errors.New("new-api unreachable")}
+	service, cleanup := newWalletIntegrationService(t, ctx, quotaClient)
+	defer cleanup()
+
+	user := integrationUser()
+	seedPoints(t, ctx, service, user, 10000)
+
+	balanceBefore, err := service.GetPointsSummary(ctx, user, 0)
+	if err != nil {
+		t.Fatalf("read balance failed: %v", err)
+	}
+
+	result, err := service.ExecuteWithdraw(ctx, user, 100)
+	if err != nil {
+		t.Fatalf("withdraw returned error: %v", err)
+	}
+	if result.Success || result.Code != CodeWithdrawBalanceUnknown {
+		t.Fatalf("withdraw should fail closed when balance lookup fails, got %+v", result)
+	}
+
+	balanceAfter, err := service.GetPointsSummary(ctx, user, 0)
+	if err != nil {
+		t.Fatalf("read balance failed: %v", err)
+	}
+	if balanceAfter.Balance != balanceBefore.Balance {
+		t.Fatalf("balance changed on fail-closed withdraw: %d -> %d", balanceBefore.Balance, balanceAfter.Balance)
+	}
+	if len(quotaClient.creditCalls) != 0 {
+		t.Fatalf("fail-closed withdraw must not credit new-api, calls = %d", len(quotaClient.creditCalls))
 	}
 }
 

@@ -21,19 +21,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// 提交给 handler 的 8 个取值。刻意做到两两互不相等，且都与迁移默认值不同：
-// handler 是按 values[] 数组下标把 8 个值装进 UpdateInput 的，下标错位不会编译失败
+// 提交给 handler 的 9 个取值。刻意做到两两互不相等，且都与迁移默认值不同：
+// handler 是按 values[] 数组下标把 9 个值装进 UpdateInput 的，下标错位不会编译失败
 // 也不会越界，只会把某个字段的值静默写进另一个字段。取值互不相等时，
 // 任何一处错位都会让下面逐字段的断言变红。
 const (
-	adminConfigWantDailyPointsLimit      = int64(12345)
-	adminConfigWantDailyWithdrawLimit    = int64(7)
-	adminConfigWantVIPDailyWithdrawLimit = int64(11)
-	adminConfigWantVIPPricePoints        = int64(4567)
-	adminConfigWantVIPDurationDays       = int64(45)
-	adminConfigWantVIPWithdrawFeePercent = int64(33)
-	adminConfigWantVIPDailyLotterySpins  = int64(6)
-	adminConfigWantVIPMaxTotalDays       = int64(730)
+	adminConfigWantDailyPointsLimit          = int64(12345)
+	adminConfigWantDailyWithdrawLimit        = int64(7)
+	adminConfigWantVIPDailyWithdrawLimit     = int64(11)
+	adminConfigWantVIPPricePoints            = int64(4567)
+	adminConfigWantVIPDurationDays           = int64(45)
+	adminConfigWantVIPWithdrawFeePercent     = int64(33)
+	adminConfigWantVIPDailyLotterySpins      = int64(6)
+	adminConfigWantVIPMaxTotalDays           = int64(730)
+	adminConfigWantWithdrawBalanceCapDollars = int64(98765)
 )
 
 // adminConfigUpdatePayload 每个字段都是指针：这些 key 是 json tag 里的字符串字面量，
@@ -42,21 +43,22 @@ type adminConfigUpdatePayload struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 	Config  struct {
-		DailyPointsLimit      *int64  `json:"dailyPointsLimit"`
-		DailyWithdrawLimit    *int64  `json:"dailyWithdrawLimit"`
-		VIPDailyWithdrawLimit *int64  `json:"vipDailyWithdrawLimit"`
-		VIPPricePoints        *int64  `json:"vipPricePoints"`
-		VIPDurationDays       *int64  `json:"vipDurationDays"`
-		VIPWithdrawFeePercent *int64  `json:"vipWithdrawFeePercent"`
-		VIPDailyLotterySpins  *int64  `json:"vipDailyLotterySpins"`
-		VIPMaxTotalDays       *int64  `json:"vipMaxTotalDays"`
-		UpdatedBy             *string `json:"updatedBy"`
+		DailyPointsLimit          *int64  `json:"dailyPointsLimit"`
+		DailyWithdrawLimit        *int64  `json:"dailyWithdrawLimit"`
+		VIPDailyWithdrawLimit     *int64  `json:"vipDailyWithdrawLimit"`
+		VIPPricePoints            *int64  `json:"vipPricePoints"`
+		VIPDurationDays           *int64  `json:"vipDurationDays"`
+		VIPWithdrawFeePercent     *int64  `json:"vipWithdrawFeePercent"`
+		VIPDailyLotterySpins      *int64  `json:"vipDailyLotterySpins"`
+		VIPMaxTotalDays           *int64  `json:"vipMaxTotalDays"`
+		WithdrawBalanceCapDollars *int64  `json:"withdrawBalanceCapDollars"`
+		UpdatedBy                 *string `json:"updatedBy"`
 	} `json:"config"`
 }
 
-// TestAdminConfigUpdatePersistsAllEightFields 验证全量提交时 8 个字段各自落到正确的列，
+// TestAdminConfigUpdatePersistsAllNineFields 验证全量提交时 9 个字段各自落到正确的列，
 // 顺带覆盖漏字段与跨字段冲突两条 400 路径（计划 Task 10 Step 4 的三种情况）。
-func TestAdminConfigUpdatePersistsAllEightFields(t *testing.T) {
+func TestAdminConfigUpdatePersistsAllNineFields(t *testing.T) {
 	ctx := context.Background()
 	db, done := openAdminConfigHTTPDatabase(t, ctx)
 	defer done()
@@ -64,7 +66,7 @@ func TestAdminConfigUpdatePersistsAllEightFields(t *testing.T) {
 
 	handler := New(adminConfigHTTPDependencies(db))
 
-	// 情况一：全量提交应成功，且 8 个字段逐一等于提交值
+	// 情况一：全量提交应成功，且 9 个字段逐一等于提交值
 	response := performRequest(handler, adminConfigHTTPPut(`{
 		"dailyPointsLimit":12345,
 		"dailyWithdrawLimit":7,
@@ -73,7 +75,8 @@ func TestAdminConfigUpdatePersistsAllEightFields(t *testing.T) {
 		"vipDurationDays":45,
 		"vipWithdrawFeePercent":33,
 		"vipDailyLotterySpins":6,
-		"vipMaxTotalDays":730
+		"vipMaxTotalDays":730,
+		"withdrawBalanceCapDollars":98765
 	}`))
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected config update 200, got %d body=%s", response.Code, response.Body.String())
@@ -88,14 +91,15 @@ func TestAdminConfigUpdatePersistsAllEightFields(t *testing.T) {
 		actual *int64
 		want   int64
 	}{
-		"dailyPointsLimit":      {payload.Config.DailyPointsLimit, adminConfigWantDailyPointsLimit},
-		"dailyWithdrawLimit":    {payload.Config.DailyWithdrawLimit, adminConfigWantDailyWithdrawLimit},
-		"vipDailyWithdrawLimit": {payload.Config.VIPDailyWithdrawLimit, adminConfigWantVIPDailyWithdrawLimit},
-		"vipPricePoints":        {payload.Config.VIPPricePoints, adminConfigWantVIPPricePoints},
-		"vipDurationDays":       {payload.Config.VIPDurationDays, adminConfigWantVIPDurationDays},
-		"vipWithdrawFeePercent": {payload.Config.VIPWithdrawFeePercent, adminConfigWantVIPWithdrawFeePercent},
-		"vipDailyLotterySpins":  {payload.Config.VIPDailyLotterySpins, adminConfigWantVIPDailyLotterySpins},
-		"vipMaxTotalDays":       {payload.Config.VIPMaxTotalDays, adminConfigWantVIPMaxTotalDays},
+		"dailyPointsLimit":          {payload.Config.DailyPointsLimit, adminConfigWantDailyPointsLimit},
+		"dailyWithdrawLimit":        {payload.Config.DailyWithdrawLimit, adminConfigWantDailyWithdrawLimit},
+		"vipDailyWithdrawLimit":     {payload.Config.VIPDailyWithdrawLimit, adminConfigWantVIPDailyWithdrawLimit},
+		"vipPricePoints":            {payload.Config.VIPPricePoints, adminConfigWantVIPPricePoints},
+		"vipDurationDays":           {payload.Config.VIPDurationDays, adminConfigWantVIPDurationDays},
+		"vipWithdrawFeePercent":     {payload.Config.VIPWithdrawFeePercent, adminConfigWantVIPWithdrawFeePercent},
+		"vipDailyLotterySpins":      {payload.Config.VIPDailyLotterySpins, adminConfigWantVIPDailyLotterySpins},
+		"vipMaxTotalDays":           {payload.Config.VIPMaxTotalDays, adminConfigWantVIPMaxTotalDays},
+		"withdrawBalanceCapDollars": {payload.Config.WithdrawBalanceCapDollars, adminConfigWantWithdrawBalanceCapDollars},
 	} {
 		if field.actual == nil {
 			t.Fatalf("响应缺少字段 %s，响应体=%s", name, body)
@@ -128,7 +132,8 @@ func TestAdminConfigUpdatePersistsAllEightFields(t *testing.T) {
 		"vipDurationDays":30,
 		"vipWithdrawFeePercent":50,
 		"vipDailyLotterySpins":2,
-		"vipMaxTotalDays":20
+		"vipMaxTotalDays":20,
+		"withdrawBalanceCapDollars":98765
 	}`))
 	if conflict.Code != http.StatusBadRequest || !strings.Contains(conflict.Body.String(), "VIP 累计时长上限不能小于月卡时长") {
 		t.Fatalf("expected cross-field conflict 400, got %d body=%s", conflict.Code, conflict.Body.String())
@@ -140,24 +145,25 @@ func TestAdminConfigUpdatePersistsAllEightFields(t *testing.T) {
 func assertAdminConfigHTTPColumns(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
 	t.Helper()
 	var (
-		dailyPointsLimit      int64
-		dailyWithdrawLimit    int64
-		vipDailyWithdrawLimit int64
-		vipPricePoints        int64
-		vipDurationDays       int64
-		vipWithdrawFeePercent int64
-		vipDailyLotterySpins  int64
-		vipMaxTotalDays       int64
+		dailyPointsLimit          int64
+		dailyWithdrawLimit        int64
+		vipDailyWithdrawLimit     int64
+		vipPricePoints            int64
+		vipDurationDays           int64
+		vipWithdrawFeePercent     int64
+		vipDailyLotterySpins      int64
+		vipMaxTotalDays           int64
+		withdrawBalanceCapDollars int64
 	)
 	if err := db.QueryRow(ctx,
 		`SELECT daily_points_limit, daily_withdraw_limit, vip_daily_withdraw_limit,
 		        vip_price_points, vip_duration_days, vip_withdraw_fee_percent,
-		        vip_daily_lottery_spins, vip_max_total_days
+		        vip_daily_lottery_spins, vip_max_total_days, withdraw_balance_cap_dollars
 		   FROM system_config WHERE id = 'system'`,
 	).Scan(
 		&dailyPointsLimit, &dailyWithdrawLimit, &vipDailyWithdrawLimit,
 		&vipPricePoints, &vipDurationDays, &vipWithdrawFeePercent,
-		&vipDailyLotterySpins, &vipMaxTotalDays,
+		&vipDailyLotterySpins, &vipMaxTotalDays, &withdrawBalanceCapDollars,
 	); err != nil {
 		t.Fatalf("read back system_config failed: %v", err)
 	}
@@ -165,14 +171,15 @@ func assertAdminConfigHTTPColumns(t *testing.T, ctx context.Context, db *pgxpool
 		actual int64
 		want   int64
 	}{
-		"daily_points_limit":       {dailyPointsLimit, adminConfigWantDailyPointsLimit},
-		"daily_withdraw_limit":     {dailyWithdrawLimit, adminConfigWantDailyWithdrawLimit},
-		"vip_daily_withdraw_limit": {vipDailyWithdrawLimit, adminConfigWantVIPDailyWithdrawLimit},
-		"vip_price_points":         {vipPricePoints, adminConfigWantVIPPricePoints},
-		"vip_duration_days":        {vipDurationDays, adminConfigWantVIPDurationDays},
-		"vip_withdraw_fee_percent": {vipWithdrawFeePercent, adminConfigWantVIPWithdrawFeePercent},
-		"vip_daily_lottery_spins":  {vipDailyLotterySpins, adminConfigWantVIPDailyLotterySpins},
-		"vip_max_total_days":       {vipMaxTotalDays, adminConfigWantVIPMaxTotalDays},
+		"daily_points_limit":           {dailyPointsLimit, adminConfigWantDailyPointsLimit},
+		"daily_withdraw_limit":         {dailyWithdrawLimit, adminConfigWantDailyWithdrawLimit},
+		"vip_daily_withdraw_limit":     {vipDailyWithdrawLimit, adminConfigWantVIPDailyWithdrawLimit},
+		"vip_price_points":             {vipPricePoints, adminConfigWantVIPPricePoints},
+		"vip_duration_days":            {vipDurationDays, adminConfigWantVIPDurationDays},
+		"vip_withdraw_fee_percent":     {vipWithdrawFeePercent, adminConfigWantVIPWithdrawFeePercent},
+		"vip_daily_lottery_spins":      {vipDailyLotterySpins, adminConfigWantVIPDailyLotterySpins},
+		"vip_max_total_days":           {vipMaxTotalDays, adminConfigWantVIPMaxTotalDays},
+		"withdraw_balance_cap_dollars": {withdrawBalanceCapDollars, adminConfigWantWithdrawBalanceCapDollars},
 	} {
 		if field.actual != field.want {
 			t.Fatalf("列 %s 的值不对：got %d want %d", name, field.actual, field.want)
@@ -196,6 +203,7 @@ func restoreAdminConfigHTTPRow(t *testing.T, ctx context.Context, db *pgxpool.Po
 		        vip_withdraw_fee_percent = $6,
 		        vip_daily_lottery_spins  = $7,
 		        vip_max_total_days       = $8,
+		        withdraw_balance_cap_dollars = $9,
 		        updated_at_ms            = 1,
 		        updated_by               = NULL,
 		        updated_at               = now()
@@ -208,6 +216,7 @@ func restoreAdminConfigHTTPRow(t *testing.T, ctx context.Context, db *pgxpool.Po
 		systemconfig.DefaultVIPWithdrawFeePercent,
 		systemconfig.DefaultVIPDailyLotterySpins,
 		systemconfig.DefaultVIPMaxTotalDays,
+		systemconfig.DefaultWithdrawBalanceCapDollars,
 	); err != nil {
 		t.Fatalf("restore system config failed: %v", err)
 	}

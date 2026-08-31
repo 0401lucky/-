@@ -56,6 +56,7 @@ interface WalletOverview {
   minWithdrawPoints: number;
   minTopupDollars: number;
   feePercent: number;
+  withdrawBalanceCapDollars: number;
   dailyWithdraw: WalletDailyWithdraw;
   vip: WalletVIPView;
 }
@@ -238,11 +239,21 @@ export default function WalletPage() {
   const topupExceeded =
     Boolean(newApiBalance) && topupPreview.ok && topupPreview.spentDollars > (newApiBalance?.balanceWholeDollars ?? 0);
 
+  // 账户额度到顶时后端一定会拒，这里提前禁用按钮并说明原因，省掉一次白跑的请求。
+  // 余额是懒加载的，没拿到之前不预判：否则首屏那一小段时间会把按钮误禁。
+  // 该窗口内仍由后端兜底拦截，所以不构成绕过。
+  const withdrawCapDollars = overview?.withdrawBalanceCapDollars ?? 0;
+  const balanceCapReached =
+    withdrawCapDollars > 0 &&
+    newApiBalance !== null &&
+    newApiBalance.balanceWholeDollars >= withdrawCapDollars;
+
   const withdrawDisabled =
     withdrawing ||
     !overview ||
     !withdrawPreview.ok ||
     balance < withdrawPreview.deducted ||
+    balanceCapReached ||
     dailyRemaining <= 0;
 
   const topupDisabled = topping || !overview || !topupPreview.ok || topupExceeded;
@@ -315,6 +326,9 @@ export default function WalletPage() {
           ],
         });
         setWithdrawInput('');
+        // 提现推高账户额度，而封顶闸门就是拿这个余额判的：不刷新会让按钮停在旧状态，
+        // 用户越过上限后还能点，再被后端拒一次。
+        void loadNewApiBalance();
       } else {
         setResult({
           kind: 'error',
@@ -336,6 +350,7 @@ export default function WalletPage() {
       // 请求可能已在后端生效，只是响应丢在回程 —— 拉一次真实余额与流水
       void loadOverview();
       void loadTransactions(0);
+      void loadNewApiBalance();
     } finally {
       setWithdrawing(false);
     }
@@ -774,6 +789,12 @@ export default function WalletPage() {
                 })}
               </div>
             </div>
+
+            {balanceCapReached && (
+              <p className="wallet-hint">
+                账户额度余额已达上限 ${formatNumber(withdrawCapDollars)}，需先消耗额度后才能继续提现。
+              </p>
+            )}
 
             {overview && dailyRemaining <= 0 && (
               <p className="wallet-hint">

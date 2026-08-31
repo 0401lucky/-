@@ -35,9 +35,12 @@ type WalletOverview struct {
 	MinTopupDollars   int64 `json:"minTopupDollars"`
 	// FeePercent 是当前用户适用的手续费百分比，非 VIP 为 100。仅供前端预览展示，
 	// 后端在实际提现时会重新计算，因此不构成安全面。
-	FeePercent    int64              `json:"feePercent"`
-	DailyWithdraw WithdrawDailyUsage `json:"dailyWithdraw"`
-	VIP           WalletVIPView      `json:"vip"`
+	FeePercent int64 `json:"feePercent"`
+	// WithdrawBalanceCapDollars 是账户额度余额的提现封顶线（整数美元）。
+	// 这里只下发阈值，不下发余额本身 —— 余额由前端懒加载 GET /api/store/topup 后自行比较。
+	WithdrawBalanceCapDollars int64              `json:"withdrawBalanceCapDollars"`
+	DailyWithdraw             WithdrawDailyUsage `json:"dailyWithdraw"`
+	VIP                       WalletVIPView      `json:"vip"`
 }
 
 // GetWalletOverview 聚合钱包页首屏所需的全部本地数据。
@@ -104,12 +107,13 @@ func (service *Service) GetWalletOverview(ctx context.Context, userID int64) (Wa
 	}
 
 	return WalletOverview{
-		Balance:           balance,
-		PointsPerDollar:   PointsPerDollar,
-		MinWithdrawPoints: MinWithdrawPoints,
-		MinTopupDollars:   MinTopupDollars,
-		FeePercent:        withdrawFeePercentFor(config, active),
-		DailyWithdraw:     dailyWithdraw,
-		VIP:               vipView,
+		Balance:                   balance,
+		PointsPerDollar:           PointsPerDollar,
+		MinWithdrawPoints:         MinWithdrawPoints,
+		MinTopupDollars:           MinTopupDollars,
+		FeePercent:                withdrawFeePercentFor(config, active),
+		WithdrawBalanceCapDollars: config.WithdrawBalanceCapDollars,
+		DailyWithdraw:             dailyWithdraw,
+		VIP:                       vipView,
 	}, nil
 }

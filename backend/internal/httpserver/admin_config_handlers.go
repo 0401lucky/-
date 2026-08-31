@@ -47,14 +47,15 @@ func (handlers adminConfigHandlers) update(writer http.ResponseWriter, request *
 		return
 	}
 	var payload struct {
-		DailyPointsLimit      json.RawMessage `json:"dailyPointsLimit"`
-		DailyWithdrawLimit    json.RawMessage `json:"dailyWithdrawLimit"`
-		VIPDailyWithdrawLimit json.RawMessage `json:"vipDailyWithdrawLimit"`
-		VIPPricePoints        json.RawMessage `json:"vipPricePoints"`
-		VIPDurationDays       json.RawMessage `json:"vipDurationDays"`
-		VIPWithdrawFeePercent json.RawMessage `json:"vipWithdrawFeePercent"`
-		VIPDailyLotterySpins  json.RawMessage `json:"vipDailyLotterySpins"`
-		VIPMaxTotalDays       json.RawMessage `json:"vipMaxTotalDays"`
+		DailyPointsLimit          json.RawMessage `json:"dailyPointsLimit"`
+		DailyWithdrawLimit        json.RawMessage `json:"dailyWithdrawLimit"`
+		VIPDailyWithdrawLimit     json.RawMessage `json:"vipDailyWithdrawLimit"`
+		VIPPricePoints            json.RawMessage `json:"vipPricePoints"`
+		VIPDurationDays           json.RawMessage `json:"vipDurationDays"`
+		VIPWithdrawFeePercent     json.RawMessage `json:"vipWithdrawFeePercent"`
+		VIPDailyLotterySpins      json.RawMessage `json:"vipDailyLotterySpins"`
+		VIPMaxTotalDays           json.RawMessage `json:"vipMaxTotalDays"`
+		WithdrawBalanceCapDollars json.RawMessage `json:"withdrawBalanceCapDollars"`
 	}
 	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"success": false, "message": "请求体格式无效"})
@@ -70,6 +71,7 @@ func (handlers adminConfigHandlers) update(writer http.ResponseWriter, request *
 		{raw: payload.VIPWithdrawFeePercent, valid: systemconfig.ValidVIPWithdrawFeePercent, message: "VIP 手续费百分比必须在 0 - 100 之间"},
 		{raw: payload.VIPDailyLotterySpins, valid: systemconfig.ValidVIPDailyLotterySpins, message: "VIP 每日赠送抽奖次数必须在 0 - 50 之间"},
 		{raw: payload.VIPMaxTotalDays, valid: systemconfig.ValidVIPMaxTotalDays, message: "VIP 累计时长上限必须在 1 - 3650 天之间"},
+		{raw: payload.WithdrawBalanceCapDollars, valid: systemconfig.ValidWithdrawBalanceCapDollars, message: "账户额度提现上限必须在 $1 - $1000000000000 之间"},
 	}
 	values := make([]int64, len(fields))
 	for index, field := range fields {
@@ -90,15 +92,16 @@ func (handlers adminConfigHandlers) update(writer http.ResponseWriter, request *
 	}
 
 	config, err := handlers.service.Update(request.Context(), systemconfig.UpdateInput{
-		DailyPointsLimit:      &values[0],
-		DailyWithdrawLimit:    &values[1],
-		VIPDailyWithdrawLimit: &values[2],
-		VIPPricePoints:        &values[3],
-		VIPDurationDays:       &values[4],
-		VIPWithdrawFeePercent: &values[5],
-		VIPDailyLotterySpins:  &values[6],
-		VIPMaxTotalDays:       &values[7],
-		UpdatedBy:             admin.Username,
+		DailyPointsLimit:          &values[0],
+		DailyWithdrawLimit:        &values[1],
+		VIPDailyWithdrawLimit:     &values[2],
+		VIPPricePoints:            &values[3],
+		VIPDurationDays:           &values[4],
+		VIPWithdrawFeePercent:     &values[5],
+		VIPDailyLotterySpins:      &values[6],
+		VIPMaxTotalDays:           &values[7],
+		WithdrawBalanceCapDollars: &values[8],
+		UpdatedBy:                 admin.Username,
 	})
 	if errors.Is(err, systemconfig.ErrUnavailable) {
 		writeJSON(writer, http.StatusServiceUnavailable, map[string]any{"success": false, "message": "系统配置数据库未配置"})

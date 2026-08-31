@@ -43,43 +43,45 @@ func TestAdminConfigRoutesReturnUnavailableWithoutDatabase(t *testing.T) {
 	}
 }
 
-// adminConfigFullPayload 拼出全部 8 个字段都合法的请求体。
+// adminConfigFullPayload 拼出全部 9 个字段都合法的请求体。
 // 缺失字段现在一律 400，所以想走到 handler 后段的用例必须全量提交。
 func adminConfigFullPayload(dailyPointsLimit int64, vipMaxTotalDays int64) string {
 	return fmt.Sprintf(
 		`{"dailyPointsLimit":%d,"dailyWithdrawLimit":4,"vipDailyWithdrawLimit":8,`+
 			`"vipPricePoints":3000,"vipDurationDays":30,"vipWithdrawFeePercent":50,`+
-			`"vipDailyLotterySpins":2,"vipMaxTotalDays":%d}`,
+			`"vipDailyLotterySpins":2,"vipMaxTotalDays":%d,"withdrawBalanceCapDollars":10000}`,
 		dailyPointsLimit, vipMaxTotalDays,
 	)
 }
 
 // TestAdminConfigUpdateRejectsMissingField 逐个字段验证「漏传即 400」。
 // systemconfig.Update 的 nil 语义是「重置为默认值」，若 handler 回落默认值，
-// 管理员只提交一个字段就会静默把其余 7 项刷成默认值。
+// 管理员只提交一个字段就会静默把其余 8 项刷成默认值。
 func TestAdminConfigUpdateRejectsMissingField(t *testing.T) {
 	handler := New(testDependenciesWithAdmin())
 
 	// key 是被删掉的字段，value 是期望的中文提示
 	cases := map[string]string{
-		"dailyPointsLimit":      "每日积分上限必须在 100 - 100000 之间",
-		"dailyWithdrawLimit":    "普通用户每日提现次数必须在 1 - 100 之间",
-		"vipDailyWithdrawLimit": "VIP 每日提现次数必须在 1 - 100 之间",
-		"vipPricePoints":        "月卡价格必须在 1 - 1000000 积分之间",
-		"vipDurationDays":       "月卡时长必须在 1 - 365 天之间",
-		"vipWithdrawFeePercent": "VIP 手续费百分比必须在 0 - 100 之间",
-		"vipDailyLotterySpins":  "VIP 每日赠送抽奖次数必须在 0 - 50 之间",
-		"vipMaxTotalDays":       "VIP 累计时长上限必须在 1 - 3650 天之间",
+		"dailyPointsLimit":          "每日积分上限必须在 100 - 100000 之间",
+		"dailyWithdrawLimit":        "普通用户每日提现次数必须在 1 - 100 之间",
+		"vipDailyWithdrawLimit":     "VIP 每日提现次数必须在 1 - 100 之间",
+		"vipPricePoints":            "月卡价格必须在 1 - 1000000 积分之间",
+		"vipDurationDays":           "月卡时长必须在 1 - 365 天之间",
+		"vipWithdrawFeePercent":     "VIP 手续费百分比必须在 0 - 100 之间",
+		"vipDailyLotterySpins":      "VIP 每日赠送抽奖次数必须在 0 - 50 之间",
+		"vipMaxTotalDays":           "VIP 累计时长上限必须在 1 - 3650 天之间",
+		"withdrawBalanceCapDollars": "账户额度提现上限必须在 $1 - $1000000000000 之间",
 	}
 	full := map[string]int64{
-		"dailyPointsLimit":      5000,
-		"dailyWithdrawLimit":    4,
-		"vipDailyWithdrawLimit": 8,
-		"vipPricePoints":        3000,
-		"vipDurationDays":       30,
-		"vipWithdrawFeePercent": 50,
-		"vipDailyLotterySpins":  2,
-		"vipMaxTotalDays":       365,
+		"dailyPointsLimit":          5000,
+		"dailyWithdrawLimit":        4,
+		"vipDailyWithdrawLimit":     8,
+		"vipPricePoints":            3000,
+		"vipDurationDays":           30,
+		"vipWithdrawFeePercent":     50,
+		"vipDailyLotterySpins":      2,
+		"vipMaxTotalDays":           365,
+		"withdrawBalanceCapDollars": 10000,
 	}
 
 	for omitted, message := range cases {
