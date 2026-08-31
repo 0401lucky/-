@@ -156,3 +156,50 @@ func optionalFloat64(value *float64) any {
 	}
 	return *value
 }
+
+// ListWalletTransactions 按创建时间倒序分页返回用户的钱包流水，同时返回总条数。
+//
+// 刻意用 offset 分页而非游标分页：单用户的流水量受每日提现限次天然约束
+// （每天至多 4-8 条提现 + 少量充值），offset 分页足够，游标分页是不必要的复杂度。
+func (service *Service) ListWalletTransactions(ctx context.Context, userID int64, limit int, offset int) ([]WalletTransaction, int64, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	var total int64
+	if err := service.db.QueryRow(ctx,
+		`SELECT count(*) FROM wallet_transactions WHERE user_id = $1`,
+		userID,
+	).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := service.db.Query(ctx,
+		`SELECT `+walletTransactionSelectColumns()+`
+		   FROM wallet_transactions
+		  WHERE user_id = $1
+		  ORDER BY created_at DESC, id DESC
+		  LIMIT $2 OFFSET $3`,
+		userID, limit, offset,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	transactions := make([]WalletTransaction, 0, limit)
+	for rows.Next() {
+		transaction, err := scanWalletTransaction(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		transactions = append(transactions, transaction)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return transactions, total, nil
+}
