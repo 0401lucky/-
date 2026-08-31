@@ -67,13 +67,16 @@ func TestLotteryHandlersReadOnlyRoutes(t *testing.T) {
 	if pageResponse.Code != http.StatusOK {
 		t.Fatalf("expected lottery page 200, got %d body=%s", pageResponse.Code, pageResponse.Body.String())
 	}
+	// FreeSpin* 用指针：key 写错时留 nil 而不是静默解成 0，否则「剩余 0 次」这条断言抓不到拼写错误。
 	var pagePayload struct {
-		Success            bool  `json:"success"`
-		CanSpin            bool  `json:"canSpin"`
-		HasSpunToday       bool  `json:"hasSpunToday"`
-		ExtraSpins         int64 `json:"extraSpins"`
-		DailySpinUsed      int64 `json:"dailySpinUsed"`
-		DailySpinRemaining int64 `json:"dailySpinRemaining"`
+		Success            bool   `json:"success"`
+		CanSpin            bool   `json:"canSpin"`
+		HasSpunToday       bool   `json:"hasSpunToday"`
+		ExtraSpins         int64  `json:"extraSpins"`
+		FreeSpinLimit      *int64 `json:"freeSpinLimit"`
+		FreeSpinRemaining  *int64 `json:"freeSpinRemaining"`
+		DailySpinUsed      int64  `json:"dailySpinUsed"`
+		DailySpinRemaining int64  `json:"dailySpinRemaining"`
 		Records            []struct {
 			ID            string `json:"id"`
 			PointsAwarded *int64 `json:"pointsAwarded"`
@@ -84,6 +87,14 @@ func TestLotteryHandlersReadOnlyRoutes(t *testing.T) {
 	}
 	if !pagePayload.Success || !pagePayload.CanSpin || !pagePayload.HasSpunToday || pagePayload.ExtraSpins != 1 || pagePayload.DailySpinUsed != 1 || pagePayload.DailySpinRemaining != 9 {
 		t.Fatalf("unexpected lottery page payload: %+v", pagePayload)
+	}
+	// 非 VIP 且今日免费次数已用尽：额度 1、剩余 0。这两个 key 在 handler 里是 map 字面量，
+	// 编译器不校验，只能靠解码后的断言防止 key 写错后静默上线。
+	if pagePayload.FreeSpinLimit == nil || *pagePayload.FreeSpinLimit != 1 {
+		t.Fatalf("unexpected freeSpinLimit: %v", pagePayload.FreeSpinLimit)
+	}
+	if pagePayload.FreeSpinRemaining == nil || *pagePayload.FreeSpinRemaining != 0 {
+		t.Fatalf("unexpected freeSpinRemaining: %v", pagePayload.FreeSpinRemaining)
 	}
 	if len(pagePayload.Records) != 1 || pagePayload.Records[0].ID != recordID || pagePayload.Records[0].PointsAwarded == nil || *pagePayload.Records[0].PointsAwarded != 30 {
 		t.Fatalf("unexpected lottery page records: %+v", pagePayload.Records)
@@ -522,8 +533,8 @@ func seedLotteryHTTPUser(t *testing.T, ctx context.Context, db *pgxpool.Pool, us
 		t.Fatalf("seed user assets failed: %v", err)
 	}
 	if _, err := db.Exec(ctx,
-		`INSERT INTO lottery_daily_spins (user_id, spin_date, used_count, daily_free_claimed)
-		 VALUES ($1, $2, 1, true)`,
+		`INSERT INTO lottery_daily_spins (user_id, spin_date, used_count, daily_free_claimed, free_used_count)
+		 VALUES ($1, $2, 1, true, 1)`,
 		userID, time.Now().UTC().Add(8*time.Hour).Format("2006-01-02"),
 	); err != nil {
 		t.Fatalf("seed daily spin failed: %v", err)

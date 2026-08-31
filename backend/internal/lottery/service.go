@@ -198,7 +198,7 @@ func (service *Service) spinPointsTimes(ctx context.Context, user auth.User, tim
 		return nil, ErrModeNotMigrated
 	}
 
-	freeSpinQuota, err := freeSpinQuotaInTx(ctx, tx, user.ID)
+	freeSpinQuota, err := freeSpinQuota(ctx, tx, user.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +286,8 @@ func (service *Service) PagePayload(ctx context.Context, user auth.User, records
 	if err != nil {
 		return PagePayload{}, err
 	}
-	dailySpinUsed, dailyFreeClaimed, dailyFreeUsed, err := service.dailySpinUsage(ctx, user.ID, todayChina())
+	// 第二个返回值是兼容列 daily_free_claimed，行为判定已改用 free_used_count，故丢弃。
+	dailySpinUsed, _, dailyFreeUsed, err := service.dailySpinUsage(ctx, user.ID, todayChina())
 	if err != nil {
 		return PagePayload{}, err
 	}
@@ -332,7 +333,7 @@ func (service *Service) PagePayload(ctx context.Context, user auth.User, records
 		canSpinByMode = activeCount > 0
 	}
 
-	freeSpinQuota, err := service.freeSpinQuota(ctx, user.ID)
+	freeSpinQuota, err := freeSpinQuota(ctx, service.db, user.ID)
 	if err != nil {
 		return PagePayload{}, err
 	}
@@ -347,8 +348,9 @@ func (service *Service) PagePayload(ctx context.Context, user auth.User, records
 		remaining = 0
 	}
 	hasQuota := remaining > 0 || bypassSpinLimit
-	// HasSpunToday 语义保持为「今日已用过免费次数」，供既有前端与对账继续使用
-	hasSpunToday := dailyFreeClaimed
+	// HasSpunToday 语义是「今日已用过免费次数」，直接由 free_used_count 判定：
+	// 不读兼容列 daily_free_claimed，这样将来删掉那一列不会连带打断这个行为判定。
+	hasSpunToday := dailyFreeUsed > 0
 	canSpin := config.Enabled && canSpinByMode && hasQuota &&
 		(bypassSpinLimit || freeSpinRemaining > 0 || extraSpins > 0)
 	if bypassSpinLimit {
@@ -622,29 +624,17 @@ func (service *Service) dailySpinUsage(ctx context.Context, userID int64, date t
 	return used, claimed, freeUsed, err
 }
 
-// freeSpinQuotaInTx 返回今日免费次数总额度：基础 1 次 + VIP 赠送数。
-func freeSpinQuotaInTx(ctx context.Context, tx pgx.Tx, userID int64) (int64, error) {
-	sysConfig, err := systemconfig.Get(ctx, tx)
+// freeSpinQuota 返回今日免费次数总额度：基础 1 次 + VIP 赠送数。
+//
+// querier 同时接 pgx.Tx（消耗侧，见 spinPointsTimes）与 *pgxpool.Pool（只读侧，见 PagePayload）：
+// vip.QueryRower 与 systemconfig.QueryRower 是同一个结构类型，两者都只要求 QueryRow。
+// 消耗侧与展示侧共用这一个额度公式，避免「页面显示的额度」与「实际消耗的额度」漂移。
+func freeSpinQuota(ctx context.Context, querier vip.QueryRower, userID int64) (int64, error) {
+	sysConfig, err := systemconfig.Get(ctx, querier)
 	if err != nil {
 		return 0, err
 	}
-	status, err := vip.Get(ctx, tx, userID)
-	if err != nil {
-		return 0, err
-	}
-	if status.Active {
-		return 1 + sysConfig.VIPDailyLotterySpins, nil
-	}
-	return 1, nil
-}
-
-// freeSpinQuota 是 freeSpinQuotaInTx 的连接池版本，供只读的 PagePayload 使用。
-func (service *Service) freeSpinQuota(ctx context.Context, userID int64) (int64, error) {
-	sysConfig, err := systemconfig.Get(ctx, service.db)
-	if err != nil {
-		return 0, err
-	}
-	status, err := vip.Get(ctx, service.db, userID)
+	status, err := vip.Get(ctx, querier, userID)
 	if err != nil {
 		return 0, err
 	}
@@ -918,6 +908,11 @@ func consumeSpinCount(ctx context.Context, tx pgx.Tx, userID int64, dailySpinLim
 		return ErrNoSpinChance
 	}
 
+	// free_used_count 是「读-改-写」的绝对写：写回的是上面读出来再自增的值，
+	// 正确性完全依赖前面那条 SELECT ... FOR UPDATE 的行锁。相邻的
+	// used_count = used_count + 1 是相对写、自身能收敛，别被它误导成这一行也安全 ——
+	// 一旦去掉行锁或出现第二个写入者，丢更新会直接表现为「用户多抽一次」。
+	//
 	// daily_free_claimed 是被 free_used_count 取代的旧列，这里刻意继续同步写入：
 	// 既有集成测试与对账口径仍在读它。这不是遗留死代码，删除前需先迁移那些读取方。
 	// $3 显式标注 bigint：不加的话 `$3 > 0` 会把参数推断成 integer，与赋值处的 bigint 冲突。
