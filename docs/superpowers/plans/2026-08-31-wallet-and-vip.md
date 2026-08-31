@@ -1812,11 +1812,20 @@ func (service *Service) PurchaseVIP(ctx context.Context, user auth.User, idempot
 			return err
 		}
 
-		// 先拿 point_accounts 行锁，再做上限校验 —— 顺序不能颠倒。
-		// vip.Extend 是累加语义：校验若放在锁外，两个并发请求会各自读到同一个旧
-		// 到期时间、各自算出「再加一个周期不超限」，执行后却累加了两个周期。
-		// 这把行锁把同一用户的 economy 事务串行化，是上限不被击穿的唯一保证。
-		// 幂等键替代不了它：两个携带不同幂等键的请求是两笔各自合法的购买。
+		// 上限校验必须落在同一用户的串行化区间之内 —— 顺序不能颠倒。
+		// vip.Extend 是累加语义：校验若落在全部 per-user 行锁之外，两个并发请求会
+		// 各自读到同一个旧到期时间、各自算出「再加一个周期不超限」，执行后却累加了
+		// 两个周期。
+		//
+		// 本事务有两道 per-user 行锁，校验排在它们之后：
+		//  1. 上面的 ensureUser：INSERT INTO users ... ON CONFLICT (id) DO UPDATE
+		//     （service.go:477）会以 FOR UPDATE 强度锁住 users 行并持有到事务结束。
+		//     这是先到的一道，实际把并发购买串起来的就是它。
+		//  2. 下面的 getBalanceForUpdate：SELECT ... FOR UPDATE，扣分依赖的那一道。
+		//
+		// 改动其中任何一道之前，先确认另一道仍然覆盖本次校验。尤其当心 ensureUser：
+		// 它名字上只是「确保用户存在」，实际承担着串行化职责。
+		// 幂等键替代不了行锁：两个携带不同幂等键的请求是两笔各自合法的购买。
 		balance, err := getBalanceForUpdate(ctx, tx, user.ID)
 		if err != nil {
 			return err
@@ -2152,7 +2161,7 @@ func TestPurchaseVIPConcurrentDistinctKeysRespectCeiling(t *testing.T) {
 Run: `cd backend && TEST_DATABASE_URL="<测试库>" go test -tags=integration ./internal/economy/ -run TestPurchaseVIP -v`
 Expected: 6 个测试全部 PASS
 
-> 若 `TestPurchaseVIPConcurrentDistinctKeysRespectCeiling` 失败，说明上限校验被挪到了 `getBalanceForUpdate` 之前 —— 检查 Step 4 里两者的先后顺序。
+> 若 `TestPurchaseVIPConcurrentDistinctKeysRespectCeiling` 失败，说明上限校验被挪到了**所有 per-user 行锁之外**。注意锁有两道：先到的一道是 `ensureUser` 里的 `INSERT INTO users ... ON CONFLICT (id) DO UPDATE`（它以 `FOR UPDATE` 强度锁住 `users` 行并持有到事务结束，实际起串行化作用的就是它），第二道才是 `getBalanceForUpdate` 的 `SELECT ... FOR UPDATE`。只把校验挪到 `getBalanceForUpdate` 之前该测试仍会通过（`ensureUser` 兜住了）；挪到 `ensureUser` 之前才会变红。检查 Step 4 里校验相对这两者的先后顺序。
 
 - [ ] **Step 8: Commit**
 

@@ -63,14 +63,90 @@ func TestPurchaseVIPAccumulatesDuration(t *testing.T) {
 		t.Fatalf("expiry gap = %d ms, want %d ms", gap, wantGap)
 	}
 
-	var purchaseCount int64
-	if err := service.db.QueryRow(ctx,
-		`SELECT count(*) FROM vip_purchases WHERE user_id = $1`, user.ID,
-	).Scan(&purchaseCount); err != nil {
-		t.Fatalf("count purchases failed: %v", err)
+	// 资金底账：两次购买各留下一条 source='vip_purchase' 的流水，
+	// 金额为负、balance_after 与两次返回的余额一致。
+	ledgerRows, err := service.db.Query(ctx,
+		`SELECT amount, balance_after FROM point_ledger
+		 WHERE user_id = $1 AND source = $2
+		 ORDER BY created_at, id`,
+		user.ID, SourceVIPPurchase,
+	)
+	if err != nil {
+		t.Fatalf("query point_ledger failed: %v", err)
 	}
-	if purchaseCount != 2 {
-		t.Fatalf("vip_purchases rows = %d, want 2", purchaseCount)
+	defer ledgerRows.Close()
+
+	var amounts, balancesAfter []int64
+	for ledgerRows.Next() {
+		var amount, balanceAfter int64
+		if err := ledgerRows.Scan(&amount, &balanceAfter); err != nil {
+			t.Fatalf("scan point_ledger failed: %v", err)
+		}
+		amounts = append(amounts, amount)
+		balancesAfter = append(balancesAfter, balanceAfter)
+	}
+	if err := ledgerRows.Err(); err != nil {
+		t.Fatalf("iterate point_ledger failed: %v", err)
+	}
+	if len(amounts) != 2 {
+		t.Fatalf("point_ledger %s rows = %d, want 2", SourceVIPPurchase, len(amounts))
+	}
+	if amounts[0] != -3000 || amounts[1] != -3000 {
+		t.Fatalf("point_ledger amounts = %v, want [-3000 -3000]", amounts)
+	}
+	if balancesAfter[0] != 7000 || balancesAfter[1] != 4000 {
+		t.Fatalf("point_ledger balance_after = %v, want [7000 4000]", balancesAfter)
+	}
+
+	// 审计明细：vip_purchases 两行的内容。首购无会籍故 expires_at_before 为 NULL，
+	// 二购的 expires_at_before 必须等于首购落库的 expires_at_after —— 这一条把
+	// 「累加的起算点」钉死在库里。
+	purchaseRows, err := service.db.Query(ctx,
+		`SELECT points_cost, days, expires_at_before, expires_at_after
+		 FROM vip_purchases
+		 WHERE user_id = $1
+		 ORDER BY created_at, id`,
+		user.ID,
+	)
+	if err != nil {
+		t.Fatalf("query vip_purchases failed: %v", err)
+	}
+	defer purchaseRows.Close()
+
+	type vipPurchaseRow struct {
+		pointsCost      int64
+		days            int64
+		expiresAtBefore *time.Time
+		expiresAtAfter  time.Time
+	}
+	var purchases []vipPurchaseRow
+	for purchaseRows.Next() {
+		var row vipPurchaseRow
+		if err := purchaseRows.Scan(&row.pointsCost, &row.days, &row.expiresAtBefore, &row.expiresAtAfter); err != nil {
+			t.Fatalf("scan vip_purchases failed: %v", err)
+		}
+		purchases = append(purchases, row)
+	}
+	if err := purchaseRows.Err(); err != nil {
+		t.Fatalf("iterate vip_purchases failed: %v", err)
+	}
+	if len(purchases) != 2 {
+		t.Fatalf("vip_purchases rows = %d, want 2", len(purchases))
+	}
+	for index, row := range purchases {
+		if row.pointsCost != 3000 || row.days != 30 {
+			t.Fatalf("vip_purchases[%d] points_cost=%d days=%d, want 3000/30", index, row.pointsCost, row.days)
+		}
+	}
+	if purchases[0].expiresAtBefore != nil {
+		t.Fatalf("first purchase expires_at_before = %v, want NULL", *purchases[0].expiresAtBefore)
+	}
+	if purchases[1].expiresAtBefore == nil {
+		t.Fatal("second purchase expires_at_before must record the first purchase's result, got NULL")
+	}
+	if !purchases[1].expiresAtBefore.Equal(purchases[0].expiresAtAfter) {
+		t.Fatalf("second purchase expires_at_before = %v, want first expires_at_after %v",
+			*purchases[1].expiresAtBefore, purchases[0].expiresAtAfter)
 	}
 }
 
@@ -134,7 +210,10 @@ func TestPurchaseVIPRejectsOverMaxTotalDaysWithoutSideEffects(t *testing.T) {
 	}
 }
 
-func TestPurchaseVIPAllowsExactCeiling(t *testing.T) {
+// TestPurchaseVIPAllowsPurchaseJustBelowCeiling 覆盖「距上限还差一天时仍可购买」。
+// 严格等号边界（335 + 30 = 365）由单元测试 TestVIPPurchaseWindowAllowsExactCeiling
+// 用确定性时钟覆盖；这里保守地留出一天，避开应用进程与数据库服务器之间可能的时钟偏差。
+func TestPurchaseVIPAllowsPurchaseJustBelowCeiling(t *testing.T) {
 	ctx := context.Background()
 	service, cleanup := newIntegrationService(t, ctx)
 	defer cleanup()
@@ -218,13 +297,38 @@ func TestPurchaseVIPConcurrentDistinctKeysRespectCeiling(t *testing.T) {
 	user := integrationUser()
 	seedPoints(t, ctx, service, user, 100000)
 
-	// 20 笔并发、各自幂等键不同的合法购买。行锁把它们串行化，
+	// 20 笔并发、各自幂等键不同的合法购买。per-user 行锁把它们串行化，
 	// 每笔都基于前一笔的结果重新判定，累计剩余时长不得突破 365 天上限。
+	var successes, ceilingRejections atomic.Int64
 	runConcurrent(20, func(index int) {
-		if _, err := service.PurchaseVIP(ctx, user, randomID()); err != nil {
+		result, err := service.PurchaseVIP(ctx, user, randomID())
+		if err != nil {
 			t.Errorf("purchase %d returned error: %v", index, err)
+			return
+		}
+		switch {
+		case result.Success:
+			successes.Add(1)
+		case result.Code == CodeVIPMaxDurationReached:
+			ceilingRejections.Add(1)
+		default:
+			t.Errorf("purchase %d ended with an unexpected outcome: %+v", index, result)
 		}
 	})
+
+	// 每笔要么成功、要么因触顶被拒，不存在第三种结局（余额 100000 足够 33 笔）
+	succeeded := successes.Load()
+	if total := succeeded + ceilingRejections.Load(); total != 20 {
+		t.Fatalf("successes + ceiling rejections = %d, want 20 (successes=%d rejections=%d)",
+			total, succeeded, ceilingRejections.Load())
+	}
+	// 成功笔数随并发时序波动，故只断言不变量：至少放行一笔，且成功笔数 × 30 天不越上限
+	if succeeded < 1 {
+		t.Fatalf("expected at least one successful purchase, got %d", succeeded)
+	}
+	if days := succeeded * 30; days > 365 {
+		t.Fatalf("%d successful purchases add %d days, breaking the 365-day ceiling", succeeded, days)
+	}
 
 	expiry, ok, err := vip.GetExpiry(ctx, service.db, user.ID)
 	if err != nil || !ok {

@@ -61,7 +61,11 @@ func Get(ctx context.Context, querier QueryRower, userID int64) (Status, error) 
 // 已过期则从当前时间重新起算。
 //
 // 天数用 double precision 相乘而不是 make_interval，是为了与调用方 Go 侧的
-// 固定时长加法（24h × days）逐位对齐；timestamptz 以 UTC 存储，无 DST 干扰。
+// 固定时长加法（24h × days）逐位对齐。这个对齐的前提是数据库会话时区无 DST，
+// 而不是「timestamptz 以 UTC 存储」—— 存储格式不决定 interval 加法的行为：
+// 这里得到的是带 days 分量的 interval，PostgreSQL 对 timestamptz + interval 的
+// days 分量按会话 TimeZone 的日历日推进、保持当地钟面时刻不变。部署时区
+// UTC / Asia/Shanghai（后者自 1991 年起无 DST）满足这一前提。
 func Extend(ctx context.Context, tx pgx.Tx, userID int64, days int64, now time.Time) (time.Time, error) {
 	var expiresAt time.Time
 	err := tx.QueryRow(ctx,
