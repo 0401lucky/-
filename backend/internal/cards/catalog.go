@@ -140,7 +140,7 @@ var albumRewardPoints = map[string]int64{
 	"animal-s1":  100,
 	"animal-s2":  200,
 	"tarot":      500,
-	"persona-s1": 150,
+	"persona-s1": 1200,
 }
 
 var albumTierRewardPoints = map[string]map[RewardType]int64{

@@ -53,7 +53,7 @@ export const ALBUMS: CardAlbum[] = [
     name: "站务拟人图鉴",
     description: "把站内的功能与小游戏拟人化，收集 26 位同僚",
     coverImage: getOptimizedImagePath("/images/拟人卡/传说稀有/持钥者.png", "thumb"),
-    reward: 150,
+    reward: 1200,
     season: "拟人篇",
     tierRewards: {
       common: 5,
