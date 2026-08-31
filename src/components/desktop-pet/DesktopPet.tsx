@@ -324,6 +324,10 @@ interface RestoreButtonProps {
 }
 
 function RestoreButton({ petType, onClick }: RestoreButtonProps) {
+  const viewport = useViewportSize();
+  /** 移动端让出右下角，改为贴右侧边缘的半隐藏把手，避免遮挡页面浮层 */
+  const compact = viewport.width <= RESTORE_COMPACT_MAX_WIDTH;
+
   return (
     <button
       type="button"
@@ -332,19 +336,21 @@ function RestoreButton({ petType, onClick }: RestoreButtonProps) {
       title="显示桌宠"
       style={{
         position: 'fixed',
-        right: 16,
-        bottom: 16,
+        right: compact ? -RESTORE_COMPACT_HIDDEN : 16,
+        bottom: compact ? '28vh' : 16,
         width: 44,
         height: 44,
-        borderRadius: 22,
+        borderRadius: compact ? '22px 0 0 22px' : 22,
         border: '1px solid rgba(15,23,42,0.15)',
         background: 'rgba(255,255,255,0.92)',
-        boxShadow: '0 6px 20px rgba(15,23,42,0.15)',
+        boxShadow: compact ? '-2px 4px 14px rgba(15,23,42,0.12)' : '0 6px 20px rgba(15,23,42,0.15)',
+        opacity: compact ? 0.55 : 1,
         cursor: 'pointer',
         zIndex: 9998,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
+        paddingRight: compact ? RESTORE_COMPACT_HIDDEN : 0,
         fontSize: 22,
         lineHeight: 1,
       }}
@@ -353,6 +359,11 @@ function RestoreButton({ petType, onClick }: RestoreButtonProps) {
     </button>
   );
 }
+
+/** 移动端断点：不超过该宽度时恢复按钮使用半隐藏把手形态 */
+const RESTORE_COMPACT_MAX_WIDTH = 768;
+/** 半隐藏时移出视口的像素数（44px 按钮实际露出 26px） */
+const RESTORE_COMPACT_HIDDEN = 18;
 
 const RESTORE_ICON: Record<DesktopPetType, string> = {
   cat: '🐱',
