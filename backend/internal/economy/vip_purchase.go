@@ -82,7 +82,9 @@ func (service *Service) PurchaseVIP(ctx context.Context, user auth.User, idempot
 		//
 		// 本事务有两道 per-user 行锁，校验排在它们之后：
 		//  1. 上面的 ensureUser：INSERT INTO users ... ON CONFLICT (id) DO UPDATE
-		//     （service.go:477）会以 FOR UPDATE 强度锁住 users 行并持有到事务结束。
+		//     （service.go:477）会以 FOR NO KEY UPDATE 强度锁住 users 行并持有到事务
+		//     结束（DO UPDATE SET 的列与唯一索引列无交集，PostgreSQL 不升级到独占锁）；
+		//     该锁与另一个 FOR NO KEY UPDATE 互斥，足以把并发购买串行化。
 		//     这是先到的一道，实际把并发购买串起来的就是它。（它的第二条语句
 		//     point_accounts ... ON CONFLICT DO NOTHING 不加锁，承重的只有 users
 		//     那条 upsert。）

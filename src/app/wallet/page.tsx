@@ -287,6 +287,11 @@ export default function WalletPage() {
         setOverview((current) =>
           current ? { ...current, balance: pickNumber(data.data.newBalance, current.balance) } : current,
         );
+      } else {
+        // 500 一类的异常响应体里既没有 limit 也没有 newBalance，上面两条分支都不走，
+        // 头部余额会停在扣款前的旧值 —— 而流水已经把 uncertain 那笔拉出来了，页面会自相矛盾。
+        // 响应体不可用，只能重新拉一次真实状态，与下面 catch 分支的处理一致。
+        void loadOverview();
       }
 
       if (data.success) {

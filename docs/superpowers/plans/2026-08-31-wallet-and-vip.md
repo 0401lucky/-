@@ -1819,7 +1819,9 @@ func (service *Service) PurchaseVIP(ctx context.Context, user auth.User, idempot
 		//
 		// 本事务有两道 per-user 行锁，校验排在它们之后：
 		//  1. 上面的 ensureUser：INSERT INTO users ... ON CONFLICT (id) DO UPDATE
-		//     （service.go:477）会以 FOR UPDATE 强度锁住 users 行并持有到事务结束。
+		//     （service.go:477）会以 FOR NO KEY UPDATE 强度锁住 users 行并持有到事务
+		//     结束（DO UPDATE SET 的列与唯一索引列无交集，PostgreSQL 不升级到独占锁）；
+		//     该锁与另一个 FOR NO KEY UPDATE 互斥，足以把并发购买串行化。
 		//     这是先到的一道，实际把并发购买串起来的就是它。
 		//  2. 下面的 getBalanceForUpdate：SELECT ... FOR UPDATE，扣分依赖的那一道。
 		//
@@ -2161,7 +2163,7 @@ func TestPurchaseVIPConcurrentDistinctKeysRespectCeiling(t *testing.T) {
 Run: `cd backend && TEST_DATABASE_URL="<测试库>" go test -tags=integration ./internal/economy/ -run TestPurchaseVIP -v`
 Expected: 6 个测试全部 PASS
 
-> 若 `TestPurchaseVIPConcurrentDistinctKeysRespectCeiling` 失败，说明上限校验被挪到了**所有 per-user 行锁之外**。注意锁有两道：先到的一道是 `ensureUser` 里的 `INSERT INTO users ... ON CONFLICT (id) DO UPDATE`（它以 `FOR UPDATE` 强度锁住 `users` 行并持有到事务结束，实际起串行化作用的就是它），第二道才是 `getBalanceForUpdate` 的 `SELECT ... FOR UPDATE`。只把校验挪到 `getBalanceForUpdate` 之前该测试仍会通过（`ensureUser` 兜住了）；挪到 `ensureUser` 之前才会变红。检查 Step 4 里校验相对这两者的先后顺序。
+> 若 `TestPurchaseVIPConcurrentDistinctKeysRespectCeiling` 失败，说明上限校验被挪到了**所有 per-user 行锁之外**。注意锁有两道：先到的一道是 `ensureUser` 里的 `INSERT INTO users ... ON CONFLICT (id) DO UPDATE`（它以 `FOR NO KEY UPDATE` 强度锁住 `users` 行并持有到事务结束 —— `DO UPDATE SET` 的列与唯一索引列无交集，PostgreSQL 不升级到独占锁；该锁与另一个 `FOR NO KEY UPDATE` 互斥，足以把并发购买串行化，实际起串行化作用的就是它），第二道才是 `getBalanceForUpdate` 的 `SELECT ... FOR UPDATE`。只把校验挪到 `getBalanceForUpdate` 之前该测试仍会通过（`ensureUser` 兜住了）；挪到 `ensureUser` 之前才会变红。检查 Step 4 里校验相对这两者的先后顺序。
 
 - [ ] **Step 8: Commit**
 
