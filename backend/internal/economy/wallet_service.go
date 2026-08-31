@@ -9,6 +9,8 @@ import (
 
 	"redemption/backend/internal/auth"
 	"redemption/backend/internal/platform/newapi"
+	"redemption/backend/internal/systemconfig"
+	"redemption/backend/internal/vip"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -57,9 +59,42 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), walletOperationFinishTimeout)
 	defer cancel()
 
-	preview := PreviewWithdraw(points, 100)
+	// 限次与折扣都依赖 VIP 状态与后台配置，在锁内一次读齐。
+	config, err := systemconfig.Get(ctx, service.db)
+	if err != nil {
+		return WithdrawResult{}, err
+	}
+	vipStatus, err := vip.Get(ctx, service.db, user.ID)
+	if err != nil {
+		return WithdrawResult{}, err
+	}
+
+	dailyLimit := withdrawDailyLimitFor(config, vipStatus.Active)
+	feePercent := withdrawFeePercentFor(config, vipStatus.Active)
+	withdrawDate := todayChina()
+	usedCount, err := countWithdrawUsedToday(ctx, service.db, user.ID, withdrawDate)
+	if err != nil {
+		return WithdrawResult{}, err
+	}
+	// 管理员不豁免：抽奖的 IsAdmin bypass 是既有行为，但提现是资金操作，从严。
+	if usedCount >= dailyLimit {
+		return WithdrawResult{
+			Success:            false,
+			Code:               CodeWithdrawDailyLimit,
+			Message:            fmt.Sprintf("今日提现次数已用完（%d/%d），请明天再试", usedCount, dailyLimit),
+			DailyWithdrawUsed:  usedCount,
+			DailyWithdrawLimit: dailyLimit,
+		}, nil
+	}
+
+	preview := PreviewWithdraw(points, feePercent)
 	if !preview.OK {
-		return WithdrawResult{Success: false, Message: fallbackWalletMessage(preview.Message, "参数无效")}, nil
+		return WithdrawResult{
+			Success:            false,
+			Message:            fallbackWalletMessage(preview.Message, "参数无效"),
+			DailyWithdrawUsed:  usedCount,
+			DailyWithdrawLimit: dailyLimit,
+		}, nil
 	}
 
 	summary, err := service.GetPointsSummary(ctx, user, 0)
@@ -67,7 +102,13 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 		return WithdrawResult{}, err
 	}
 	if summary.Balance < preview.Deducted {
-		return WithdrawResult{Success: false, Message: "积分余额不足", Balance: summary.Balance}, nil
+		return WithdrawResult{
+			Success:            false,
+			Message:            "积分余额不足",
+			Balance:            summary.Balance,
+			DailyWithdrawUsed:  usedCount,
+			DailyWithdrawLimit: dailyLimit,
+		}, nil
 	}
 
 	description := fmt.Sprintf("提现 %d 积分（手续费 %d，到账 $%s）",
@@ -114,9 +155,11 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 			return WithdrawResult{}, updateErr
 		}
 		return WithdrawResult{
-			Success: false,
-			Message: fallbackWalletMessage(deductResult.Message, "扣减积分失败"),
-			Balance: deductResult.Balance,
+			Success:            false,
+			Message:            fallbackWalletMessage(deductResult.Message, "扣减积分失败"),
+			Balance:            deductResult.Balance,
+			DailyWithdrawUsed:  usedCount,
+			DailyWithdrawLimit: dailyLimit,
 		}, nil
 	}
 
@@ -141,12 +184,15 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 		)); err != nil {
 			return WithdrawResult{}, err
 		}
+		nextUsed := service.markWithdrawUsed(ctx, user.ID, withdrawDate, usedCount)
 		return WithdrawResult{
-			Success:   true,
-			Message:   fmt.Sprintf("已成功提现 %d 积分至账户额度，到账 $%s", preview.Deducted, formatWalletDollars(preview.Dollars)),
-			Balance:   deductResult.Balance,
-			Dollars:   preview.Dollars,
-			FeePoints: preview.FeePoints,
+			Success:            true,
+			Message:            fmt.Sprintf("已成功提现 %d 积分至账户额度，到账 $%s", preview.Deducted, formatWalletDollars(preview.Dollars)),
+			Balance:            deductResult.Balance,
+			Dollars:            preview.Dollars,
+			FeePoints:          preview.FeePoints,
+			DailyWithdrawUsed:  nextUsed,
+			DailyWithdrawLimit: dailyLimit,
 		}, nil
 	}
 
@@ -159,13 +205,16 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 		)); err != nil {
 			return WithdrawResult{}, err
 		}
+		nextUsed := service.markWithdrawUsed(ctx, user.ID, withdrawDate, usedCount)
 		return WithdrawResult{
-			Success:   false,
-			Message:   strings.TrimSpace("提现请求已受理，但额度入账结果暂不确定，请稍后查看新 API 余额。" + creditResult.Message),
-			Balance:   deductResult.Balance,
-			Dollars:   preview.Dollars,
-			FeePoints: preview.FeePoints,
-			Uncertain: true,
+			Success:            false,
+			Message:            strings.TrimSpace("提现请求已受理，但额度入账结果暂不确定，请稍后查看新 API 余额。" + creditResult.Message),
+			Balance:            deductResult.Balance,
+			Dollars:            preview.Dollars,
+			FeePoints:          preview.FeePoints,
+			Uncertain:          true,
+			DailyWithdrawUsed:  nextUsed,
+			DailyWithdrawLimit: dailyLimit,
 		}, nil
 	}
 
@@ -191,11 +240,14 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 		if refundErr != nil {
 			return WithdrawResult{}, refundErr
 		}
+		nextUsed := service.markWithdrawUsed(ctx, user.ID, withdrawDate, usedCount)
 		return WithdrawResult{
-			Success:   false,
-			Message:   message,
-			Balance:   deductResult.Balance,
-			Uncertain: true,
+			Success:            false,
+			Message:            message,
+			Balance:            deductResult.Balance,
+			Uncertain:          true,
+			DailyWithdrawUsed:  nextUsed,
+			DailyWithdrawLimit: dailyLimit,
 		}, nil
 	}
 
@@ -208,9 +260,11 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 		return WithdrawResult{}, err
 	}
 	return WithdrawResult{
-		Success: false,
-		Message: fallbackWalletMessage(creditResult.Message, "账户额度入账失败，已退回积分"),
-		Balance: refund.Balance,
+		Success:            false,
+		Message:            fallbackWalletMessage(creditResult.Message, "账户额度入账失败，已退回积分"),
+		Balance:            refund.Balance,
+		DailyWithdrawUsed:  usedCount,
+		DailyWithdrawLimit: dailyLimit,
 	}, nil
 }
 

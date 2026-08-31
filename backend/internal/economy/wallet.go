@@ -42,11 +42,15 @@ type TopupPreview struct {
 
 type WithdrawResult struct {
 	Success   bool    `json:"success"`
+	Code      string  `json:"code,omitempty"`
 	Message   string  `json:"message"`
 	Balance   int64   `json:"balance,omitempty"`
 	Dollars   float64 `json:"dollars,omitempty"`
 	FeePoints int64   `json:"feePoints,omitempty"`
 	Uncertain bool    `json:"uncertain,omitempty"`
+	// 供前端就地刷新「今日剩余次数」，不必重新拉整页
+	DailyWithdrawUsed  int64 `json:"dailyWithdrawUsed"`
+	DailyWithdrawLimit int64 `json:"dailyWithdrawLimit"`
 }
 
 type TopupResult struct {
