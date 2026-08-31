@@ -19,6 +19,9 @@ const VECTORS = [
   { name: 'half off ceil fee', points: 101, feePercent: 50, feePoints: 2, netPoints: 99, feeRate: 0.03, dollars: 9.9 },
   { name: 'zero percent min tier', points: 10, feePercent: 0, feePoints: 0, netPoints: 10, feeRate: 0.05, dollars: 1 },
   { name: 'zero percent ten thousand tier', points: 10000, feePercent: 0, feePoints: 0, netPoints: 10000, feeRate: 0.01, dollars: 1000 },
+  // 判别向量：feePercent=28 时被禁的「先除后乘」写法会算出 8，正确的左结合写法算出 7。
+  // 这条向量把「两边表达式逐字对齐」从注释约定升级为测试不变量，请勿删除。
+  { name: 'order sensitive', points: 1250, feePercent: 28, feePoints: 7, netPoints: 1243, feeRate: 0.02, dollars: 124.3 },
 ];
 
 describe('previewWithdraw', () => {
@@ -36,9 +39,7 @@ describe('previewWithdraw', () => {
     expect(previewWithdraw(101)).toEqual(previewWithdraw(101, 100));
   });
 
-  it('拒绝非法输入', () => {
-    for (const points of [-1, 0, MIN_WITHDRAW_POINTS - 1, 1.5, Number.NaN]) {
-      expect(previewWithdraw(points).ok).toBe(false);
-    }
+  it.each([-1, 0, MIN_WITHDRAW_POINTS - 1, 1.5, Number.NaN])('拒绝非法输入 %s', (points) => {
+    expect(previewWithdraw(points).ok).toBe(false);
   });
 });

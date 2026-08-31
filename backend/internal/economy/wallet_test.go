@@ -34,6 +34,10 @@ var walletPreviewVectors = []walletPreviewVector{
 	// 免手续费
 	{name: "zero percent min tier", points: 10, feePercent: 0, feePoints: 0, netPoints: 10, feeRate: 0.05, dollars: 1},
 	{name: "zero percent ten thousand tier", points: 10000, feePercent: 0, feePoints: 0, netPoints: 10000, feeRate: 0.01, dollars: 1000},
+
+	// 判别向量：feePercent=28 时被禁的「先除后乘」写法会算出 8，正确的左结合写法算出 7。
+	// 这条向量把「两边表达式逐字对齐」从注释约定升级为测试不变量，请勿删除。
+	{name: "order sensitive", points: 1250, feePercent: 28, feePoints: 7, netPoints: 1243, feeRate: 0.02, dollars: 124.3},
 }
 
 func TestPreviewWithdrawMatchesWalletRules(t *testing.T) {
@@ -48,7 +52,8 @@ func TestPreviewWithdrawMatchesWalletRules(t *testing.T) {
 				got.NetPoints != tt.netPoints ||
 				got.FeeRate != tt.feeRate ||
 				got.Dollars != tt.dollars {
-				t.Fatalf("unexpected preview: %+v", got)
+				t.Fatalf("unexpected preview: got %+v, want fee=%d net=%d rate=%v dollars=%v",
+					got, tt.feePoints, tt.netPoints, tt.feeRate, tt.dollars)
 			}
 		})
 	}
