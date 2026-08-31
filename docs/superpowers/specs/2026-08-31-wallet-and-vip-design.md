@@ -527,14 +527,26 @@ func ValidVIPDurationAgainstMaxTotal(durationDays int64, maxTotalDays int64) boo
 
 #### `POST /api/vip/purchase`
 
-请求：`{ "idempotencyKey": "..." }`，同时支持 `Idempotency-Key` / `X-Idempotency-Key` 请求头（照抄 `exchangeItem` 的三重取值顺序）。
+请求：`{ "idempotencyKey": "..." }`，同时支持 `Idempotency-Key` / `X-Idempotency-Key` 请求头（照抄 `exchangeItem` 的三重取值顺序）。**三处全空必须返回 `400` + `IDEMPOTENCY_KEY_REQUIRED`** —— `beginIdempotency` 在 key 为空时会静默放行不做保护，不校验的话一次网络重试就是重复扣款；handler 自己生成一个也无效（重试会用新 key，幂等性荡然无存）。
 
-响应：`{ success, message, data: { newBalance, expiresAt, daysAdded, pointsSpent } }`。
+响应：`{ success, message, code?, data }`。
+
+`data` 的形状**随成败变化**：
+
+| 字段 | 成功 | 失败 |
+|---|---|---|
+| `newBalance` | 有（扣款后余额） | **有（当前真实余额，不是 0）** |
+| `expiresAt` / `daysAdded` / `pointsSpent` | 有 | **缺席** |
+
+失败时刻意省略后三个字段：它们此时都是零值，而 `expiresAt: 0` 会把用户**当前**的 VIP 到期时间
+表达成「未开通」—— 前端若无条件套用 `data` 刷新展示，一个已开通 VIP 的用户会被显示成未开通。
+在后端省略，比要求每个前端消费点都记住「仅在 `success` 为真时才套用 `data`」更可靠。
 
 失败分支（均返回 `400`，`success: false`）：
 
 | 场景 | `code` | 文案 |
 |---|---|---|
+| 缺少幂等键 | `IDEMPOTENCY_KEY_REQUIRED` | 缺少幂等键，请重试 |
 | 余额不足 | `INSUFFICIENT_POINTS` | 积分不足，还差 N 积分 |
 | 累计时长超上限 | `VIP_MAX_DURATION_REACHED` | VIP 剩余时长已达上限 N 天，请在临近到期时再购买 |
 
