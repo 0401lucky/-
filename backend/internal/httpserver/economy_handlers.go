@@ -325,8 +325,8 @@ func (handlers economyHandlers) listWalletTransactions(writer http.ResponseWrite
 		return
 	}
 
-	limit := parsePositiveQueryInt(request, "limit", 20, 100)
-	offset := parsePositiveQueryInt(request, "offset", 0, math.MaxInt32)
+	limit := parsePagingQueryInt(request, "limit", 20, 100)
+	offset := parsePagingQueryInt(request, "offset", 0, math.MaxInt32)
 
 	transactions, total, err := handlers.service.ListWalletTransactions(request.Context(), user.ID, limit, offset)
 	if err != nil {
@@ -408,31 +408,46 @@ func (handlers economyHandlers) purchaseVIP(writer http.ResponseWriter, request 
 	if !result.Success {
 		status = http.StatusBadRequest
 	}
+	// 业务失败时只下发 newBalance：它在两条拒绝路径上都是用户的真实余额，
+	// 而 expiresAt / daysAdded / pointsSpent 都会是 0 —— 尤其
+	// VIP_MAX_DURATION_REACHED 时 expiresAt: 0 会把「用户当前的到期时间」
+	// 表达成 0，前端若无条件套用 data 就会把已有 VIP 显示成未开通。
+	// 省略这些键，让那种误用写不出来。
+	data := map[string]any{"newBalance": result.Balance}
+	if result.Success {
+		data["expiresAt"] = result.ExpiresAt
+		data["daysAdded"] = result.DaysAdded
+		data["pointsSpent"] = result.PointsSpent
+	}
 	writeJSON(writer, status, map[string]any{
 		"success": result.Success,
 		"message": result.Message,
 		"code":    result.Code,
-		"data": map[string]any{
-			"newBalance":  result.Balance,
-			"expiresAt":   result.ExpiresAt,
-			"daysAdded":   result.DaysAdded,
-			"pointsSpent": result.PointsSpent,
-		},
+		"data":    data,
 	})
 }
 
-// parsePositiveQueryInt 解析非负整数查询参数，缺失或非法时回落到 fallback，并夹到 max。
-func parsePositiveQueryInt(request *http.Request, name string, fallback int, max int) int {
+// parsePagingQueryInt 解析分页查询参数：缺失、非法或不大于 0 时回落到 fallback，
+// 超过 maximum 时夹到 maximum。
+//
+// 之所以把 0 也算「非法」：service 层对 limit <= 0 会自己回落到默认页大小
+// （wallet_store.go），若这里原样回显 0，响应就会出现「返回 20 条但 limit: 0」，
+// 前端拿回显值递增 offset 会永远停在原地。offset 的 fallback 本身就是 0，
+// 因此这条规则对它没有副作用。
+//
+// 命名刻意不叫 parsePositiveQueryInt：同包已有一个 parsePositiveIntQuery
+// （notification_handlers.go），只差词序而语义不同（那个走 ParseFloat + Floor）。
+func parsePagingQueryInt(request *http.Request, name string, fallback int, maximum int) int {
 	raw := strings.TrimSpace(request.URL.Query().Get(name))
 	if raw == "" {
 		return fallback
 	}
 	value, err := strconv.Atoi(raw)
-	if err != nil || value < 0 {
+	if err != nil || value <= 0 {
 		return fallback
 	}
-	if value > max {
-		return max
+	if value > maximum {
+		return maximum
 	}
 	return value
 }

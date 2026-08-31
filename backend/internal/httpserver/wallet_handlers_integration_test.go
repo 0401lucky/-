@@ -66,6 +66,7 @@ func TestWalletOverviewHandlerReturnsFullShape(t *testing.T) {
 	userID := int64(99901 + time.Now().UnixNano()%1_000_000_000)
 	cleanupWalletHTTPUser(t, ctx, db, userID)
 	defer cleanupWalletHTTPUser(t, ctx, db, userID)
+	seedWalletHTTPConfig(t, ctx, db)
 	seedWalletHTTPUser(t, ctx, db, userID, 5000)
 
 	handler := New(walletHTTPDependencies(db, nil, config.Config{SessionSecret: testSessionSecret}))
@@ -112,26 +113,35 @@ func TestWalletOverviewHandlerReturnsFullShape(t *testing.T) {
 	if *payload.Data.Balance != 5000 || *payload.Data.FeePercent != 100 {
 		t.Fatalf("unexpected balance/feePercent: %d/%d", *payload.Data.Balance, *payload.Data.FeePercent)
 	}
-	if *payload.Data.DailyWithdraw.Used != 0 || *payload.Data.DailyWithdraw.Limit != 4 || *payload.Data.DailyWithdraw.Remaining != 4 {
-		t.Fatalf("unexpected dailyWithdraw: %+v", payload.Data.DailyWithdraw)
+	if *payload.Data.DailyWithdraw.Used != 0 ||
+		*payload.Data.DailyWithdraw.Limit != walletHTTPDailyWithdrawLimit ||
+		*payload.Data.DailyWithdraw.Remaining != walletHTTPDailyWithdrawLimit {
+		t.Fatalf("unexpected dailyWithdraw: used=%d limit=%d remaining=%d",
+			*payload.Data.DailyWithdraw.Used, *payload.Data.DailyWithdraw.Limit, *payload.Data.DailyWithdraw.Remaining)
 	}
 	if *payload.Data.DailyWithdraw.ResetAtMs <= time.Now().UnixMilli() {
 		t.Fatalf("resetAtMs 应晚于当前时间，got %d", *payload.Data.DailyWithdraw.ResetAtMs)
 	}
 	// 从未购买过 VIP：active=false 且 expiresAt 键省略
 	if payload.Data.VIP.Active || payload.Data.VIP.ExpiresAt != nil {
-		t.Fatalf("unexpected vip state: %+v", payload.Data.VIP)
+		t.Fatalf("unexpected vip state: active=%v expiresAt=%v", payload.Data.VIP.Active, payload.Data.VIP.ExpiresAt)
 	}
 	if !*payload.Data.VIP.CanPurchase || payload.Data.VIP.PurchaseBlockedReason != nil {
-		t.Fatalf("非 VIP 用户应可购买且无阻断原因: %+v", payload.Data.VIP)
+		t.Fatalf("非 VIP 用户应可购买且无阻断原因，响应体=%s", body)
 	}
-	if *payload.Data.VIP.PricePoints != 3000 || *payload.Data.VIP.DurationDays != 30 || *payload.Data.VIP.MaxTotalDays != 365 {
-		t.Fatalf("unexpected vip config: %+v", payload.Data.VIP)
+	if *payload.Data.VIP.PricePoints != walletHTTPVIPPricePoints ||
+		*payload.Data.VIP.DurationDays != walletHTTPVIPDurationDays ||
+		*payload.Data.VIP.MaxTotalDays != walletHTTPVIPMaxTotalDays {
+		t.Fatalf("unexpected vip config: pricePoints=%d durationDays=%d maxTotalDays=%d",
+			*payload.Data.VIP.PricePoints, *payload.Data.VIP.DurationDays, *payload.Data.VIP.MaxTotalDays)
 	}
-	if *payload.Data.VIP.Benefits.DailyWithdrawLimit != 8 ||
-		*payload.Data.VIP.Benefits.WithdrawFeePercent != 50 ||
-		*payload.Data.VIP.Benefits.DailyLotterySpins != 2 {
-		t.Fatalf("unexpected vip benefits: %+v", payload.Data.VIP.Benefits)
+	if *payload.Data.VIP.Benefits.DailyWithdrawLimit != walletHTTPVIPDailyWithdrawLimit ||
+		*payload.Data.VIP.Benefits.WithdrawFeePercent != walletHTTPVIPWithdrawFeePercent ||
+		*payload.Data.VIP.Benefits.DailyLotterySpins != walletHTTPVIPDailyLotterySpins {
+		t.Fatalf("unexpected vip benefits: dailyWithdrawLimit=%d withdrawFeePercent=%d dailyLotterySpins=%d",
+			*payload.Data.VIP.Benefits.DailyWithdrawLimit,
+			*payload.Data.VIP.Benefits.WithdrawFeePercent,
+			*payload.Data.VIP.Benefits.DailyLotterySpins)
 	}
 }
 
@@ -189,6 +199,12 @@ func TestWalletTransactionsHandlerPaginatesAndClampsQuery(t *testing.T) {
 	if *fallback.Data.Limit != 20 || *fallback.Data.Offset != 0 {
 		t.Fatalf("unexpected fallback page: %s", fallback.pagingString())
 	}
+	// limit=0 必须回落到 20 并如实回显：service 层对 limit <= 0 会自己用默认页大小，
+	// 若这里原样回显 0，前端拿回显值递增 offset 会永远停在原地。
+	zeroLimit := decodeWalletTransactionsPage(t, handler, "/api/wallet/transactions?limit=0", userID)
+	if *zeroLimit.Data.Limit != 20 || len(zeroLimit.Data.Transactions) != 3 {
+		t.Fatalf("limit=0 应回落到 20：%s", zeroLimit.pagingString())
+	}
 }
 
 func TestPurchaseVIPHandlerRequiresIdempotencyKeyAndReplaysSameResult(t *testing.T) {
@@ -199,9 +215,16 @@ func TestPurchaseVIPHandlerRequiresIdempotencyKeyAndReplaysSameResult(t *testing
 	userID := int64(99921 + time.Now().UnixNano()%1_000_000_000)
 	cleanupWalletHTTPUser(t, ctx, db, userID)
 	defer cleanupWalletHTTPUser(t, ctx, db, userID)
+	seedWalletHTTPConfig(t, ctx, db)
 	seedWalletHTTPUser(t, ctx, db, userID, 0)
 
 	handler := New(walletHTTPDependencies(db, nil, config.Config{SessionSecret: testSessionSecret}))
+
+	// 畸形 JSON 走「请求体格式无效」，而不是被 EOF 分支放过
+	malformed := performRequest(handler, walletHTTPPost("/api/vip/purchase", userID, `{"idempotencyKey":`, "vip-http-malformed"))
+	if malformed.Code != http.StatusBadRequest || !strings.Contains(malformed.Body.String(), "请求体格式无效") {
+		t.Fatalf("expected malformed body 400, got %d body=%s", malformed.Code, malformed.Body.String())
+	}
 
 	// 缺少幂等键必须被拒：beginIdempotency 遇到空 key 会直接放行，
 	// 重试就会重复扣掉一整个周期的积分。
@@ -229,12 +252,20 @@ func TestPurchaseVIPHandlerRequiresIdempotencyKeyAndReplaysSameResult(t *testing
 	if poor.Code != http.StatusBadRequest {
 		t.Fatalf("expected insufficient points 400, got %d body=%s", poor.Code, poor.Body.String())
 	}
-	poorPayload, _ := decodePurchaseVIPPayload(t, poor)
+	poorPayload, poorBody := decodePurchaseVIPPayload(t, poor)
 	if poorPayload.Success || poorPayload.Code != "INSUFFICIENT_POINTS" {
 		t.Fatalf("unexpected insufficient points payload: %+v", poorPayload)
 	}
+	// 业务失败只下发真值 newBalance；expiresAt / daysAdded / pointsSpent 必须缺席，
+	// 否则前端无条件套用 data 会把「当前到期时间」读成 0。
+	if poorPayload.Data.NewBalance == nil || *poorPayload.Data.NewBalance != 0 {
+		t.Fatalf("失败响应的 newBalance 应为真实余额 0，响应体=%s", poorBody)
+	}
+	if poorPayload.Data.ExpiresAt != nil || poorPayload.Data.DaysAdded != nil || poorPayload.Data.PointsSpent != nil {
+		t.Fatalf("失败响应不应下发 expiresAt / daysAdded / pointsSpent，响应体=%s", poorBody)
+	}
 
-	if _, err := db.Exec(ctx, `UPDATE point_accounts SET balance = 3000 WHERE user_id = $1`, userID); err != nil {
+	if _, err := db.Exec(ctx, `UPDATE point_accounts SET balance = $2 WHERE user_id = $1`, userID, walletHTTPVIPPricePoints); err != nil {
 		t.Fatalf("top up points failed: %v", err)
 	}
 
@@ -256,8 +287,11 @@ func TestPurchaseVIPHandlerRequiresIdempotencyKeyAndReplaysSameResult(t *testing
 			t.Fatalf("purchase 响应缺少字段 data.%s，响应体=%s", name, firstBody)
 		}
 	}
-	if *firstPayload.Data.NewBalance != 0 || *firstPayload.Data.DaysAdded != 30 || *firstPayload.Data.PointsSpent != 3000 {
-		t.Fatalf("unexpected purchase data: %+v", firstPayload.Data)
+	if *firstPayload.Data.NewBalance != 0 ||
+		*firstPayload.Data.DaysAdded != walletHTTPVIPDurationDays ||
+		*firstPayload.Data.PointsSpent != walletHTTPVIPPricePoints {
+		t.Fatalf("unexpected purchase data: newBalance=%d daysAdded=%d pointsSpent=%d",
+			*firstPayload.Data.NewBalance, *firstPayload.Data.DaysAdded, *firstPayload.Data.PointsSpent)
 	}
 	if *firstPayload.Data.ExpiresAt <= time.Now().UnixMilli() {
 		t.Fatalf("expiresAt 应晚于当前时间，got %d", *firstPayload.Data.ExpiresAt)
@@ -268,10 +302,10 @@ func TestPurchaseVIPHandlerRequiresIdempotencyKeyAndReplaysSameResult(t *testing
 	if replay.Code != http.StatusOK {
 		t.Fatalf("expected replay 200, got %d body=%s", replay.Code, replay.Body.String())
 	}
-	replayPayload, _ := decodePurchaseVIPPayload(t, replay)
-	if !replayPayload.Success || *replayPayload.Data.NewBalance != 0 ||
+	replayPayload, replayBody := decodePurchaseVIPPayload(t, replay)
+	if !replayPayload.Success || replayPayload.Data.NewBalance == nil || *replayPayload.Data.NewBalance != 0 ||
 		replayPayload.Data.ExpiresAt == nil || *replayPayload.Data.ExpiresAt != *firstPayload.Data.ExpiresAt {
-		t.Fatalf("replay 应回放原结果: %+v", replayPayload)
+		t.Fatalf("replay 应回放原结果，响应体=%s", replayBody)
 	}
 
 	var balance, purchaseCount, ledgerCount int64
@@ -294,8 +328,8 @@ func TestPurchaseVIPHandlerRequiresIdempotencyKeyAndReplaysSameResult(t *testing
 	var overviewPayload walletOverviewPayload
 	overviewBody := decodeWalletHTTPJSON(t, overview, &overviewPayload)
 	if !overviewPayload.Data.VIP.Active || overviewPayload.Data.VIP.ExpiresAt == nil ||
-		overviewPayload.Data.FeePercent == nil || *overviewPayload.Data.FeePercent != 50 ||
-		overviewPayload.Data.DailyWithdraw.Limit == nil || *overviewPayload.Data.DailyWithdraw.Limit != 8 {
+		overviewPayload.Data.FeePercent == nil || *overviewPayload.Data.FeePercent != walletHTTPVIPWithdrawFeePercent ||
+		overviewPayload.Data.DailyWithdraw.Limit == nil || *overviewPayload.Data.DailyWithdraw.Limit != walletHTTPVIPDailyWithdrawLimit {
 		t.Fatalf("购买后概览未反映 VIP，响应体=%s", overviewBody)
 	}
 }
@@ -308,7 +342,9 @@ func TestPurchaseVIPHandlerRejectsCrossSiteOrigin(t *testing.T) {
 	userID := int64(99931 + time.Now().UnixNano()%1_000_000_000)
 	cleanupWalletHTTPUser(t, ctx, db, userID)
 	defer cleanupWalletHTTPUser(t, ctx, db, userID)
-	seedWalletHTTPUser(t, ctx, db, userID, 3000)
+	seedWalletHTTPConfig(t, ctx, db)
+	// 余额刻意给足：403 必须来自 CSRF 守卫，而不是「反正也买不起」
+	seedWalletHTTPUser(t, ctx, db, userID, walletHTTPVIPPricePoints)
 
 	handler := New(walletHTTPDependencies(db, nil, config.Config{SessionSecret: testSessionSecret}))
 
@@ -353,11 +389,13 @@ func TestWithdrawHandlerReturnsDailyLimitFields(t *testing.T) {
 	userID := int64(99941 + time.Now().UnixNano()%1_000_000_000)
 	cleanupWalletHTTPUser(t, ctx, db, userID)
 	defer cleanupWalletHTTPUser(t, ctx, db, userID)
+	seedWalletHTTPConfig(t, ctx, db)
 	seedWalletHTTPUser(t, ctx, db, userID, 5000)
+	// 今日次数刚好用满，下一次提现必被限次拒绝
 	if _, err := db.Exec(ctx,
 		`INSERT INTO wallet_daily_withdrawals (user_id, withdraw_date, used_count)
-		 VALUES ($1, $2, 4)`,
-		userID, time.Now().UTC().Add(8*time.Hour).Format("2006-01-02"),
+		 VALUES ($1, $2, $3)`,
+		userID, time.Now().UTC().Add(8*time.Hour).Format("2006-01-02"), walletHTTPDailyWithdrawLimit,
 	); err != nil {
 		t.Fatalf("seed daily withdrawals failed: %v", err)
 	}
@@ -391,7 +429,8 @@ func TestWithdrawHandlerReturnsDailyLimitFields(t *testing.T) {
 	if payload.Data.DailyWithdrawUsed == nil || payload.Data.DailyWithdrawLimit == nil {
 		t.Fatalf("withdraw 响应缺少限次字段，响应体=%s", withdrawBody)
 	}
-	if *payload.Data.DailyWithdrawUsed != 4 || *payload.Data.DailyWithdrawLimit != 4 {
+	if *payload.Data.DailyWithdrawUsed != walletHTTPDailyWithdrawLimit ||
+		*payload.Data.DailyWithdrawLimit != walletHTTPDailyWithdrawLimit {
 		t.Fatalf("unexpected withdraw limit fields: used=%d limit=%d",
 			*payload.Data.DailyWithdrawUsed, *payload.Data.DailyWithdrawLimit)
 	}
@@ -539,6 +578,52 @@ func seedWalletHTTPUser(t *testing.T, ctx context.Context, db *pgxpool.Pool, use
 	}
 	if _, err := db.Exec(ctx, `INSERT INTO point_accounts (user_id, balance) VALUES ($1, $2)`, userID, balance); err != nil {
 		t.Fatalf("seed point account failed: %v", err)
+	}
+}
+
+// 本文件的值断言依赖的 system_config 取值。写成常量而不是散落的字面量，
+// 让 seedWalletHTTPConfig 与断言共用同一个来源。
+const (
+	walletHTTPDailyWithdrawLimit    = int64(4)
+	walletHTTPVIPDailyWithdrawLimit = int64(8)
+	walletHTTPVIPPricePoints        = int64(3000)
+	walletHTTPVIPDurationDays       = int64(30)
+	walletHTTPVIPWithdrawFeePercent = int64(50)
+	walletHTTPVIPDailyLotterySpins  = int64(2)
+	walletHTTPVIPMaxTotalDays       = int64(365)
+)
+
+// seedWalletHTTPConfig 显式写入本文件断言依赖的 system_config 取值。
+//
+// 不靠迁移默认值：app_test 是共享测试库，任何先行或并发的测试改了 system_config
+// 这一行，钱包用例就会以「值不对」的形式变红，看起来像本任务的回归。
+// 写入的值与迁移默认值一致，所以这个 seed 顺带还能把被改脏的行治回来。
+func seedWalletHTTPConfig(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
+	t.Helper()
+	if _, err := db.Exec(ctx,
+		`INSERT INTO system_config (
+		   id, daily_points_limit, daily_withdraw_limit, vip_daily_withdraw_limit,
+		   vip_price_points, vip_duration_days, vip_withdraw_fee_percent,
+		   vip_daily_lottery_spins, vip_max_total_days, updated_at_ms
+		 ) VALUES ('system', 5000, $1, $2, $3, $4, $5, $6, $7, 1)
+		 ON CONFLICT (id) DO UPDATE SET
+		   daily_withdraw_limit     = excluded.daily_withdraw_limit,
+		   vip_daily_withdraw_limit = excluded.vip_daily_withdraw_limit,
+		   vip_price_points         = excluded.vip_price_points,
+		   vip_duration_days        = excluded.vip_duration_days,
+		   vip_withdraw_fee_percent = excluded.vip_withdraw_fee_percent,
+		   vip_daily_lottery_spins  = excluded.vip_daily_lottery_spins,
+		   vip_max_total_days       = excluded.vip_max_total_days,
+		   updated_at               = now()`,
+		walletHTTPDailyWithdrawLimit,
+		walletHTTPVIPDailyWithdrawLimit,
+		walletHTTPVIPPricePoints,
+		walletHTTPVIPDurationDays,
+		walletHTTPVIPWithdrawFeePercent,
+		walletHTTPVIPDailyLotterySpins,
+		walletHTTPVIPMaxTotalDays,
+	); err != nil {
+		t.Fatalf("seed system config failed: %v", err)
 	}
 }
 
