@@ -85,6 +85,8 @@ type PagePayload struct {
 	CanSpin            bool       `json:"canSpin"`
 	HasSpunToday       bool       `json:"hasSpunToday"`
 	ExtraSpins         int64      `json:"extraSpins"`
+	FreeSpinLimit      int64      `json:"freeSpinLimit"`     // 今日免费总额度 = 1 + VIP 赠送数
+	FreeSpinRemaining  int64      `json:"freeSpinRemaining"` // 今日剩余免费次数
 	DailySpinLimit     int64      `json:"dailySpinLimit"`
 	DailySpinUsed      int64      `json:"dailySpinUsed"`
 	DailySpinRemaining int64      `json:"dailySpinRemaining"`

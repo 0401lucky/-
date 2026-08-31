@@ -59,8 +59,8 @@ func TestServiceBuildsPageAndAdminSnapshot(t *testing.T) {
 		t.Fatalf("seed user assets failed: %v", err)
 	}
 	if _, err := db.Exec(ctx,
-		`INSERT INTO lottery_daily_spins (user_id, spin_date, used_count, daily_free_claimed)
-		 VALUES ($1, $2, 1, true)`,
+		`INSERT INTO lottery_daily_spins (user_id, spin_date, used_count, daily_free_claimed, free_used_count)
+		 VALUES ($1, $2, 1, true, 1)`,
 		userID, todayChina().Format("2006-01-02"),
 	); err != nil {
 		t.Fatalf("seed daily spin failed: %v", err)
@@ -87,6 +87,9 @@ func TestServiceBuildsPageAndAdminSnapshot(t *testing.T) {
 	}
 	if !payload.HasSpunToday || payload.ExtraSpins != 2 || payload.DailySpinUsed != 1 || payload.DailySpinRemaining != 9 || !payload.CanSpin {
 		t.Fatalf("unexpected page spin state: %+v", payload)
+	}
+	if payload.FreeSpinLimit != 1 || payload.FreeSpinRemaining != 0 {
+		t.Fatalf("unexpected free spin state: %+v", payload)
 	}
 	if len(payload.Tiers) != 7 || payload.Tiers[0].ID != "pts_200" {
 		t.Fatalf("unexpected default tiers: %+v", payload.Tiers)
@@ -862,5 +865,258 @@ func TestServiceSpinPointsBatchRejectsNonPointsMode(t *testing.T) {
 	balance, recordCount := lotteryBalanceAndRecordCount(t, ctx, db, userID)
 	if balance != 0 || recordCount != 0 {
 		t.Fatalf("non-points mode must not write, balance=%d records=%d", balance, recordCount)
+	}
+}
+
+// ---------- 每日免费次数计数化 ----------
+
+func TestSpinPointsConsumesVIPFreeSpins(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL 未设置，跳过彩票集成测试")
+	}
+
+	db, err := dbpostgres.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open postgres failed: %v", err)
+	}
+	defer db.Close()
+	if _, err := pgmigration.NewRunner(db, "../../migrations").Apply(ctx, false); err != nil {
+		t.Fatalf("apply migrations failed: %v", err)
+	}
+	resetLotteryIntegrationConfig(t, ctx, db)
+
+	userID := int64(99801 + time.Now().UnixNano()%1_000_000_000)
+	recordID := "lottery_vip_" + strconv.FormatInt(userID, 10)
+	cleanupLotteryIntegrationUser(t, ctx, db, userID, recordID)
+	defer cleanupLotteryIntegrationUser(t, ctx, db, userID, recordID)
+	defer func() {
+		_, _ = db.Exec(context.Background(), `DELETE FROM vip_memberships WHERE user_id = $1`, userID)
+	}()
+
+	if _, err := db.Exec(ctx,
+		`INSERT INTO users (id, username, display_name, first_seen_at, updated_at)
+		 VALUES ($1, 'lottery_vip', 'Lottery VIP', now(), now())`,
+		userID,
+	); err != nil {
+		t.Fatalf("seed user failed: %v", err)
+	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO point_accounts (user_id, balance) VALUES ($1, 0)`, userID,
+	); err != nil {
+		t.Fatalf("seed point account failed: %v", err)
+	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO user_assets (user_id, extra_spins, card_draws, makeup_cards)
+		 VALUES ($1, 0, 0, 0)`, userID,
+	); err != nil {
+		t.Fatalf("seed user assets failed: %v", err)
+	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO vip_memberships (user_id, expires_at, created_at, updated_at)
+		 VALUES ($1, now() + (30 * INTERVAL '1 day'), now(), now())`,
+		userID,
+	); err != nil {
+		t.Fatalf("seed vip membership failed: %v", err)
+	}
+
+	service := NewService(db)
+	user := auth.User{ID: userID, Username: "lottery_vip", DisplayName: "Lottery VIP"}
+
+	// VIP 默认额度 = 1 + 2 = 3 次
+	payload, err := service.PagePayload(ctx, user, 20)
+	if err != nil {
+		t.Fatalf("page payload failed: %v", err)
+	}
+	if payload.FreeSpinLimit != 3 || payload.FreeSpinRemaining != 3 {
+		t.Fatalf("vip free spins = %d/%d, want 3/3", payload.FreeSpinRemaining, payload.FreeSpinLimit)
+	}
+
+	for index := 0; index < 3; index++ {
+		if _, err := service.SpinPoints(ctx, user); err != nil {
+			t.Fatalf("spin %d failed: %v", index, err)
+		}
+	}
+
+	if _, err := service.SpinPoints(ctx, user); !errors.Is(err, ErrNoSpinChance) {
+		t.Fatalf("fourth spin should exhaust free quota, got %v", err)
+	}
+
+	after, err := service.PagePayload(ctx, user, 20)
+	if err != nil {
+		t.Fatalf("page payload failed: %v", err)
+	}
+	if after.FreeSpinRemaining != 0 || after.FreeSpinLimit != 3 {
+		t.Fatalf("after exhaustion = %d/%d, want 0/3", after.FreeSpinRemaining, after.FreeSpinLimit)
+	}
+	// HasSpunToday 语义保持为 free_used_count > 0
+	if !after.HasSpunToday {
+		t.Fatalf("hasSpunToday should stay true after using free spins: %+v", after)
+	}
+
+	// 旧列必须同步写入，既有对账口径不能断
+	var freeUsed int64
+	var claimed bool
+	if err := db.QueryRow(ctx,
+		`SELECT free_used_count, daily_free_claimed FROM lottery_daily_spins
+		  WHERE user_id = $1 AND spin_date = $2`,
+		userID, todayChina().Format("2006-01-02"),
+	).Scan(&freeUsed, &claimed); err != nil {
+		t.Fatalf("query daily spins failed: %v", err)
+	}
+	if freeUsed != 3 || !claimed {
+		t.Fatalf("free_used_count=%d daily_free_claimed=%v, want 3/true", freeUsed, claimed)
+	}
+}
+
+func TestSpinPointsNonVIPKeepsSingleFreeSpin(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL 未设置，跳过彩票集成测试")
+	}
+
+	db, err := dbpostgres.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open postgres failed: %v", err)
+	}
+	defer db.Close()
+	if _, err := pgmigration.NewRunner(db, "../../migrations").Apply(ctx, false); err != nil {
+		t.Fatalf("apply migrations failed: %v", err)
+	}
+	resetLotteryIntegrationConfig(t, ctx, db)
+
+	userID := int64(99901 + time.Now().UnixNano()%1_000_000_000)
+	recordID := "lottery_free_" + strconv.FormatInt(userID, 10)
+	cleanupLotteryIntegrationUser(t, ctx, db, userID, recordID)
+	defer cleanupLotteryIntegrationUser(t, ctx, db, userID, recordID)
+
+	if _, err := db.Exec(ctx,
+		`INSERT INTO users (id, username, display_name, first_seen_at, updated_at)
+		 VALUES ($1, 'lottery_free', 'Lottery Free', now(), now())`,
+		userID,
+	); err != nil {
+		t.Fatalf("seed user failed: %v", err)
+	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO point_accounts (user_id, balance) VALUES ($1, 0)`, userID,
+	); err != nil {
+		t.Fatalf("seed point account failed: %v", err)
+	}
+	// 2 次额外次数：必须先于免费次数被消耗
+	if _, err := db.Exec(ctx,
+		`INSERT INTO user_assets (user_id, extra_spins, card_draws, makeup_cards)
+		 VALUES ($1, 2, 0, 0)`, userID,
+	); err != nil {
+		t.Fatalf("seed user assets failed: %v", err)
+	}
+
+	service := NewService(db)
+	user := auth.User{ID: userID, Username: "lottery_free", DisplayName: "Lottery Free"}
+
+	payload, err := service.PagePayload(ctx, user, 20)
+	if err != nil {
+		t.Fatalf("page payload failed: %v", err)
+	}
+	if payload.FreeSpinLimit != 1 || payload.FreeSpinRemaining != 1 {
+		t.Fatalf("non-vip free spins = %d/%d, want 1/1", payload.FreeSpinRemaining, payload.FreeSpinLimit)
+	}
+
+	// 前两次消耗 extra_spins，免费次数不动
+	for index := 0; index < 2; index++ {
+		if _, err := service.SpinPoints(ctx, user); err != nil {
+			t.Fatalf("spin %d failed: %v", index, err)
+		}
+	}
+	mid, err := service.PagePayload(ctx, user, 20)
+	if err != nil {
+		t.Fatalf("page payload failed: %v", err)
+	}
+	if mid.ExtraSpins != 0 || mid.FreeSpinRemaining != 1 {
+		t.Fatalf("extra spins must be consumed first: extra=%d freeRemaining=%d", mid.ExtraSpins, mid.FreeSpinRemaining)
+	}
+
+	// 第三次才消耗免费次数
+	if _, err := service.SpinPoints(ctx, user); err != nil {
+		t.Fatalf("third spin failed: %v", err)
+	}
+	if _, err := service.SpinPoints(ctx, user); !errors.Is(err, ErrNoSpinChance) {
+		t.Fatalf("fourth spin should have no chance left, got %v", err)
+	}
+}
+
+func TestSpinPointsBatchConsumesFreeQuotaWithinOneTx(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL 未设置，跳过彩票集成测试")
+	}
+
+	db, err := dbpostgres.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open postgres failed: %v", err)
+	}
+	defer db.Close()
+	if _, err := pgmigration.NewRunner(db, "../../migrations").Apply(ctx, false); err != nil {
+		t.Fatalf("apply migrations failed: %v", err)
+	}
+	resetLotteryIntegrationConfig(t, ctx, db)
+
+	userID := int64(99951 + time.Now().UnixNano()%1_000_000_000)
+	recordID := "lottery_batch_" + strconv.FormatInt(userID, 10)
+	cleanupLotteryIntegrationUser(t, ctx, db, userID, recordID)
+	defer cleanupLotteryIntegrationUser(t, ctx, db, userID, recordID)
+	defer func() {
+		_, _ = db.Exec(context.Background(), `DELETE FROM vip_memberships WHERE user_id = $1`, userID)
+	}()
+
+	if _, err := db.Exec(ctx,
+		`INSERT INTO users (id, username, display_name, first_seen_at, updated_at)
+		 VALUES ($1, 'lottery_batch', 'Lottery Batch', now(), now())`,
+		userID,
+	); err != nil {
+		t.Fatalf("seed user failed: %v", err)
+	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO point_accounts (user_id, balance) VALUES ($1, 0)`, userID,
+	); err != nil {
+		t.Fatalf("seed point account failed: %v", err)
+	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO user_assets (user_id, extra_spins, card_draws, makeup_cards)
+		 VALUES ($1, 0, 0, 0)`, userID,
+	); err != nil {
+		t.Fatalf("seed user assets failed: %v", err)
+	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO vip_memberships (user_id, expires_at, created_at, updated_at)
+		 VALUES ($1, now() + (30 * INTERVAL '1 day'), now(), now())`,
+		userID,
+	); err != nil {
+		t.Fatalf("seed vip membership failed: %v", err)
+	}
+
+	service := NewService(db)
+	user := auth.User{ID: userID, Username: "lottery_batch", DisplayName: "Lottery Batch"}
+
+	// 五连抽在同一事务内循环消耗：额度只有 3 次，应抽满 3 次并提交已完成的部分
+	results, err := service.SpinPointsBatch(ctx, user, 5)
+	if err != nil {
+		t.Fatalf("batch spin failed: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("batch produced %d results, want 3", len(results))
+	}
+
+	var freeUsed int64
+	if err := db.QueryRow(ctx,
+		`SELECT free_used_count FROM lottery_daily_spins WHERE user_id = $1 AND spin_date = $2`,
+		userID, todayChina().Format("2006-01-02"),
+	).Scan(&freeUsed); err != nil {
+		t.Fatalf("query daily spins failed: %v", err)
+	}
+	if freeUsed != 3 {
+		t.Fatalf("free_used_count = %d, want 3", freeUsed)
 	}
 }

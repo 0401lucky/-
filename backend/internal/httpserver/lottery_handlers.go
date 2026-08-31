@@ -42,6 +42,8 @@ func (handlers lotteryHandlers) page(writer http.ResponseWriter, request *http.R
 	response["tiers"] = payload.Tiers
 	response["canSpin"] = payload.CanSpin
 	response["hasSpunToday"] = payload.HasSpunToday
+	response["freeSpinLimit"] = payload.FreeSpinLimit
+	response["freeSpinRemaining"] = payload.FreeSpinRemaining
 	response["extraSpins"] = payload.ExtraSpins
 	response["dailySpinLimit"] = payload.DailySpinLimit
 	response["dailySpinUsed"] = payload.DailySpinUsed

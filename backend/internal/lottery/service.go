@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"redemption/backend/internal/auth"
+	"redemption/backend/internal/systemconfig"
+	"redemption/backend/internal/vip"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -196,9 +198,14 @@ func (service *Service) spinPointsTimes(ctx context.Context, user auth.User, tim
 		return nil, ErrModeNotMigrated
 	}
 
+	freeSpinQuota, err := freeSpinQuotaInTx(ctx, tx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+
 	results := make([]SpinResult, 0, times)
 	for range times {
-		result, err := spinPointsOnceInTx(ctx, tx, user, config)
+		result, err := spinPointsOnceInTx(ctx, tx, user, config, freeSpinQuota)
 		if err != nil {
 			// 次数耗尽：保留已抽出的结果并提交；一次都没抽成才向上报错。
 			if errors.Is(err, ErrDailyLimitReached) || errors.Is(err, ErrNoSpinChance) {
@@ -217,7 +224,7 @@ func (service *Service) spinPointsTimes(ctx context.Context, user auth.User, tim
 	return results, nil
 }
 
-func spinPointsOnceInTx(ctx context.Context, tx pgx.Tx, user auth.User, config Config) (SpinResult, error) {
+func spinPointsOnceInTx(ctx context.Context, tx pgx.Tx, user auth.User, config Config, freeSpinQuota int64) (SpinResult, error) {
 	activeTiers := activePointTiers(config.Tiers)
 	selectedTier, err := weightedRandomTier(activeTiers)
 	if err != nil {
@@ -225,7 +232,7 @@ func spinPointsOnceInTx(ctx context.Context, tx pgx.Tx, user auth.User, config C
 	}
 
 	if !user.IsAdmin {
-		if err := consumeSpinCount(ctx, tx, user.ID, config.DailySpinLimit); err != nil {
+		if err := consumeSpinCount(ctx, tx, user.ID, config.DailySpinLimit, freeSpinQuota); err != nil {
 			return SpinResult{}, err
 		}
 	}
@@ -279,7 +286,7 @@ func (service *Service) PagePayload(ctx context.Context, user auth.User, records
 	if err != nil {
 		return PagePayload{}, err
 	}
-	dailySpinUsed, dailyFreeClaimed, err := service.dailySpinUsage(ctx, user.ID, todayChina())
+	dailySpinUsed, dailyFreeClaimed, dailyFreeUsed, err := service.dailySpinUsage(ctx, user.ID, todayChina())
 	if err != nil {
 		return PagePayload{}, err
 	}
@@ -325,14 +332,25 @@ func (service *Service) PagePayload(ctx context.Context, user auth.User, records
 		canSpinByMode = activeCount > 0
 	}
 
+	freeSpinQuota, err := service.freeSpinQuota(ctx, user.ID)
+	if err != nil {
+		return PagePayload{}, err
+	}
+	freeSpinRemaining := freeSpinQuota - dailyFreeUsed
+	if freeSpinRemaining < 0 {
+		freeSpinRemaining = 0
+	}
+
 	bypassSpinLimit := user.IsAdmin
 	remaining := config.DailySpinLimit - dailySpinUsed
 	if remaining < 0 {
 		remaining = 0
 	}
 	hasQuota := remaining > 0 || bypassSpinLimit
+	// HasSpunToday 语义保持为「今日已用过免费次数」，供既有前端与对账继续使用
 	hasSpunToday := dailyFreeClaimed
-	canSpin := config.Enabled && canSpinByMode && hasQuota && (bypassSpinLimit || !hasSpunToday || extraSpins > 0)
+	canSpin := config.Enabled && canSpinByMode && hasQuota &&
+		(bypassSpinLimit || freeSpinRemaining > 0 || extraSpins > 0)
 	if bypassSpinLimit {
 		remaining = config.DailySpinLimit
 	}
@@ -344,6 +362,8 @@ func (service *Service) PagePayload(ctx context.Context, user auth.User, records
 		CanSpin:            canSpin,
 		HasSpunToday:       hasSpunToday,
 		ExtraSpins:         extraSpins,
+		FreeSpinLimit:      freeSpinQuota,
+		FreeSpinRemaining:  freeSpinRemaining,
 		DailySpinLimit:     config.DailySpinLimit,
 		DailySpinUsed:      dailySpinUsed,
 		DailySpinRemaining: remaining,
@@ -586,19 +606,52 @@ func (service *Service) extraSpins(ctx context.Context, userID int64) (int64, er
 	return count, err
 }
 
-func (service *Service) dailySpinUsage(ctx context.Context, userID int64, date time.Time) (int64, bool, error) {
+func (service *Service) dailySpinUsage(ctx context.Context, userID int64, date time.Time) (int64, bool, int64, error) {
 	var used int64
 	var claimed bool
+	var freeUsed int64
 	err := service.db.QueryRow(ctx,
-		`SELECT used_count, daily_free_claimed
+		`SELECT used_count, daily_free_claimed, free_used_count
 		   FROM lottery_daily_spins
 		  WHERE user_id = $1 AND spin_date = $2`,
 		userID, date.Format("2006-01-02"),
-	).Scan(&used, &claimed)
+	).Scan(&used, &claimed, &freeUsed)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, false, nil
+		return 0, false, 0, nil
 	}
-	return used, claimed, err
+	return used, claimed, freeUsed, err
+}
+
+// freeSpinQuotaInTx 返回今日免费次数总额度：基础 1 次 + VIP 赠送数。
+func freeSpinQuotaInTx(ctx context.Context, tx pgx.Tx, userID int64) (int64, error) {
+	sysConfig, err := systemconfig.Get(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	status, err := vip.Get(ctx, tx, userID)
+	if err != nil {
+		return 0, err
+	}
+	if status.Active {
+		return 1 + sysConfig.VIPDailyLotterySpins, nil
+	}
+	return 1, nil
+}
+
+// freeSpinQuota 是 freeSpinQuotaInTx 的连接池版本，供只读的 PagePayload 使用。
+func (service *Service) freeSpinQuota(ctx context.Context, userID int64) (int64, error) {
+	sysConfig, err := systemconfig.Get(ctx, service.db)
+	if err != nil {
+		return 0, err
+	}
+	status, err := vip.Get(ctx, service.db, userID)
+	if err != nil {
+		return 0, err
+	}
+	if status.Active {
+		return 1 + sysConfig.VIPDailyLotterySpins, nil
+	}
+	return 1, nil
 }
 
 func defaultConfig() Config {
@@ -805,14 +858,21 @@ func weightedRandomTier(tiers []Tier) (Tier, error) {
 	return tiers[len(tiers)-1], nil
 }
 
-func consumeSpinCount(ctx context.Context, tx pgx.Tx, userID int64, dailySpinLimit int64) error {
+// consumeSpinCount 消耗一次抽奖机会。
+//
+// freeSpinQuota 是今日免费次数总额度（1 + VIP 赠送数）。
+// 消耗顺序保持既有语义：先判每日总上限，再优先消耗 extra_spins，最后才用免费次数。
+func consumeSpinCount(ctx context.Context, tx pgx.Tx, userID int64, dailySpinLimit int64, freeSpinQuota int64) error {
 	if dailySpinLimit < 1 {
 		dailySpinLimit = 1
 	}
+	if freeSpinQuota < 0 {
+		freeSpinQuota = 0
+	}
 	spinDate := todayChina().Format("2006-01-02")
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO lottery_daily_spins (user_id, spin_date, used_count, daily_free_claimed, updated_at)
-		 VALUES ($1, $2, 0, false, now())
+		`INSERT INTO lottery_daily_spins (user_id, spin_date, used_count, daily_free_claimed, free_used_count, updated_at)
+		 VALUES ($1, $2, 0, false, 0, now())
 		 ON CONFLICT (user_id, spin_date) DO NOTHING`,
 		userID, spinDate,
 	); err != nil {
@@ -820,14 +880,14 @@ func consumeSpinCount(ctx context.Context, tx pgx.Tx, userID int64, dailySpinLim
 	}
 
 	var usedCount int64
-	var dailyFreeClaimed bool
+	var freeUsedCount int64
 	if err := tx.QueryRow(ctx,
-		`SELECT used_count, daily_free_claimed
+		`SELECT used_count, free_used_count
 		   FROM lottery_daily_spins
 		  WHERE user_id = $1 AND spin_date = $2
 		  FOR UPDATE`,
 		userID, spinDate,
-	).Scan(&usedCount, &dailyFreeClaimed); err != nil {
+	).Scan(&usedCount, &freeUsedCount); err != nil {
 		return err
 	}
 	if usedCount >= dailySpinLimit {
@@ -852,19 +912,23 @@ func consumeSpinCount(ctx context.Context, tx pgx.Tx, userID int64, dailySpinLim
 		); err != nil {
 			return err
 		}
-	} else if !dailyFreeClaimed {
-		dailyFreeClaimed = true
+	} else if freeUsedCount < freeSpinQuota {
+		freeUsedCount++
 	} else {
 		return ErrNoSpinChance
 	}
 
+	// daily_free_claimed 是被 free_used_count 取代的旧列，这里刻意继续同步写入：
+	// 既有集成测试与对账口径仍在读它。这不是遗留死代码，删除前需先迁移那些读取方。
+	// $3 显式标注 bigint：不加的话 `$3 > 0` 会把参数推断成 integer，与赋值处的 bigint 冲突。
 	_, err := tx.Exec(ctx,
 		`UPDATE lottery_daily_spins
 		    SET used_count = used_count + 1,
-		        daily_free_claimed = $3,
+		        free_used_count = $3::bigint,
+		        daily_free_claimed = ($3::bigint > 0),
 		        updated_at = now()
 		  WHERE user_id = $1 AND spin_date = $2`,
-		userID, spinDate, dailyFreeClaimed,
+		userID, spinDate, freeUsedCount,
 	)
 	return err
 }
