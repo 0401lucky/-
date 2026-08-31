@@ -57,7 +57,7 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), walletOperationFinishTimeout)
 	defer cancel()
 
-	preview := PreviewWithdraw(points)
+	preview := PreviewWithdraw(points, 100)
 	if !preview.OK {
 		return WithdrawResult{Success: false, Message: fallbackWalletMessage(preview.Message, "参数无效")}, nil
 	}

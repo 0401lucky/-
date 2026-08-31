@@ -52,8 +52,12 @@ export interface WithdrawPreview {
  * 计算提现的预览（不修改任何状态）
  * - points 必须为正整数
  * - 手续费向上取整，避免给系统留零头损失
+ * - feePercent 是手续费按原阶梯费率收取的百分比：100 = 原价，50 = 五折，0 = 免手续费
+ *
+ * 乘法顺序与 / 100 的位置必须与 backend/internal/economy/wallet.go 的
+ * PreviewWithdraw 逐字一致，否则浮点结合律差异会造成 ±1 积分的预览偏差。
  */
-export function previewWithdraw(points: number): WithdrawPreview {
+export function previewWithdraw(points: number, feePercent = 100): WithdrawPreview {
   const empty: WithdrawPreview = {
     ok: false,
     deducted: 0,
@@ -71,7 +75,7 @@ export function previewWithdraw(points: number): WithdrawPreview {
   }
 
   const feeRate = getWithdrawFeeRate(points);
-  const feePoints = Math.ceil(points * feeRate);
+  const feePoints = Math.ceil((points * feeRate * feePercent) / 100);
   const netPoints = Math.max(0, points - feePoints);
   // 美元值精确到 0.01，避免浮点误差
   const dollars = Math.round((netPoints / POINTS_PER_DOLLAR) * 100) / 100;

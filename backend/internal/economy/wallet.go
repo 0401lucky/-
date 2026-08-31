@@ -120,7 +120,14 @@ func GetWithdrawFeeRate(points int64) float64 {
 	return 0
 }
 
-func PreviewWithdraw(points int64) WithdrawPreview {
+// PreviewWithdraw 计算提现预览（不修改任何状态）。
+//
+// feePercent 是手续费按原阶梯费率收取的百分比：100 = 原价，50 = 五折，0 = 免手续费。
+// 调用方保证它落在 [0, 100]，由 system_config 的 CHECK 与 systemconfig 校验共同保证。
+//
+// 乘法顺序与 / 100 的位置必须与 src/lib/wallet-rules.ts 的 previewWithdraw 逐字一致，
+// 否则浮点结合律差异会在边界值上造成 ±1 积分的预览偏差。
+func PreviewWithdraw(points int64, feePercent int64) WithdrawPreview {
 	if points <= 0 {
 		return WithdrawPreview{Message: "积分数量必须为正整数"}
 	}
@@ -129,7 +136,7 @@ func PreviewWithdraw(points int64) WithdrawPreview {
 	}
 
 	feeRate := GetWithdrawFeeRate(points)
-	feePoints := int64(math.Ceil(float64(points) * feeRate))
+	feePoints := int64(math.Ceil(float64(points) * feeRate * float64(feePercent) / 100))
 	netPoints := maxInt64(0, points-feePoints)
 	dollars := math.Round((float64(netPoints)/float64(PointsPerDollar))*100) / 100
 
