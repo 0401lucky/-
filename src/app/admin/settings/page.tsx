@@ -4,6 +4,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 interface SystemConfig {
   dailyPointsLimit: number;
+  dailyWithdrawLimit: number;
+  vipDailyWithdrawLimit: number;
+  vipPricePoints: number;
+  vipDurationDays: number;
+  vipWithdrawFeePercent: number;
+  vipDailyLotterySpins: number;
+  vipMaxTotalDays: number;
   updatedAt?: number;
   updatedBy?: string;
 }
@@ -18,6 +25,13 @@ export default function AdminSettingsPage() {
 
   // 表单状态
   const [dailyPointsLimit, setDailyPointsLimit] = useState('');
+  const [dailyWithdrawLimit, setDailyWithdrawLimit] = useState('');
+  const [vipDailyWithdrawLimit, setVipDailyWithdrawLimit] = useState('');
+  const [vipPricePoints, setVipPricePoints] = useState('');
+  const [vipDurationDays, setVipDurationDays] = useState('');
+  const [vipWithdrawFeePercent, setVipWithdrawFeePercent] = useState('');
+  const [vipDailyLotterySpins, setVipDailyLotterySpins] = useState('');
+  const [vipMaxTotalDays, setVipMaxTotalDays] = useState('');
 
   const scheduleSuccessClear = useCallback(() => {
     if (successTimeoutRef.current) {
@@ -49,6 +63,13 @@ export default function AdminSettingsPage() {
       if (systemData.success) {
         setConfig(systemData.config);
         setDailyPointsLimit(String(systemData.config.dailyPointsLimit));
+        setDailyWithdrawLimit(String(systemData.config.dailyWithdrawLimit));
+        setVipDailyWithdrawLimit(String(systemData.config.vipDailyWithdrawLimit));
+        setVipPricePoints(String(systemData.config.vipPricePoints));
+        setVipDurationDays(String(systemData.config.vipDurationDays));
+        setVipWithdrawFeePercent(String(systemData.config.vipWithdrawFeePercent));
+        setVipDailyLotterySpins(String(systemData.config.vipDailyLotterySpins));
+        setVipMaxTotalDays(String(systemData.config.vipMaxTotalDays));
       } else {
         setError(systemData.error || '获取系统配置失败');
       }
@@ -69,8 +90,16 @@ export default function AdminSettingsPage() {
       const res = await fetch('/api/admin/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
+        // 后端的 nil 语义是「重置为默认值」，必须全量提交 8 个字段
         body: JSON.stringify({
           dailyPointsLimit: Number(dailyPointsLimit),
+          dailyWithdrawLimit: Number(dailyWithdrawLimit),
+          vipDailyWithdrawLimit: Number(vipDailyWithdrawLimit),
+          vipPricePoints: Number(vipPricePoints),
+          vipDurationDays: Number(vipDurationDays),
+          vipWithdrawFeePercent: Number(vipWithdrawFeePercent),
+          vipDailyLotterySpins: Number(vipDailyLotterySpins),
+          vipMaxTotalDays: Number(vipMaxTotalDays),
         }),
       });
 
@@ -154,6 +183,162 @@ export default function AdminSettingsPage() {
             >
               {saving ? '保存中...' : '保存配置'}
             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 钱包与 VIP 配置 */}
+      <div className="glass-card rounded-[2rem] shadow-sm border border-white/60 overflow-hidden mt-8">
+        <div className="p-8 border-b border-stone-100 bg-white/40">
+          <h2 className="text-lg font-black text-stone-800">钱包与 VIP 配置</h2>
+        </div>
+
+        <div className="p-8 space-y-8">
+          {/* 普通用户每日提现次数 */}
+          <div>
+            <label className="block text-sm font-bold text-stone-500 uppercase tracking-widest mb-3">
+              普通用户每日提现次数
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="number"
+                value={dailyWithdrawLimit}
+                onChange={(e) => setDailyWithdrawLimit(e.target.value)}
+                min="1"
+                max="100"
+                className="w-48 px-5 py-3 border-2 border-stone-100 bg-stone-50/50 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none font-black text-lg transition-all"
+              />
+              <span className="text-stone-400 font-bold">次/天</span>
+            </div>
+            <p className="mt-3 text-sm text-stone-400 font-medium leading-relaxed">
+              每天 0 点（中国时区）重置。管理员同样受限。
+            </p>
+          </div>
+
+          {/* VIP 每日提现次数 */}
+          <div>
+            <label className="block text-sm font-bold text-stone-500 uppercase tracking-widest mb-3">
+              VIP 每日提现次数
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="number"
+                value={vipDailyWithdrawLimit}
+                onChange={(e) => setVipDailyWithdrawLimit(e.target.value)}
+                min="1"
+                max="100"
+                className="w-48 px-5 py-3 border-2 border-stone-100 bg-stone-50/50 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none font-black text-lg transition-all"
+              />
+              <span className="text-stone-400 font-bold">次/天</span>
+            </div>
+            <p className="mt-3 text-sm text-stone-400 font-medium leading-relaxed">
+              VIP 用户享受的提现次数上限。
+            </p>
+          </div>
+
+          {/* 月卡价格 */}
+          <div>
+            <label className="block text-sm font-bold text-stone-500 uppercase tracking-widest mb-3">
+              月卡价格
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="number"
+                value={vipPricePoints}
+                onChange={(e) => setVipPricePoints(e.target.value)}
+                min="1"
+                max="1000000"
+                className="w-48 px-5 py-3 border-2 border-stone-100 bg-stone-50/50 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none font-black text-lg transition-all"
+              />
+              <span className="text-stone-400 font-bold">积分</span>
+            </div>
+            <p className="mt-3 text-sm text-stone-400 font-medium leading-relaxed">
+              购买一次 VIP 所需积分。
+            </p>
+          </div>
+
+          {/* 月卡时长 */}
+          <div>
+            <label className="block text-sm font-bold text-stone-500 uppercase tracking-widest mb-3">
+              月卡时长
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="number"
+                value={vipDurationDays}
+                onChange={(e) => setVipDurationDays(e.target.value)}
+                min="1"
+                max="365"
+                className="w-48 px-5 py-3 border-2 border-stone-100 bg-stone-50/50 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none font-black text-lg transition-all"
+              />
+              <span className="text-stone-400 font-bold">天</span>
+            </div>
+            <p className="mt-3 text-sm text-stone-400 font-medium leading-relaxed">
+              每次购买增加的天数，重复购买时长累加。
+            </p>
+          </div>
+
+          {/* VIP 手续费百分比 */}
+          <div>
+            <label className="block text-sm font-bold text-stone-500 uppercase tracking-widest mb-3">
+              VIP 手续费百分比
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="number"
+                value={vipWithdrawFeePercent}
+                onChange={(e) => setVipWithdrawFeePercent(e.target.value)}
+                min="0"
+                max="100"
+                className="w-48 px-5 py-3 border-2 border-stone-100 bg-stone-50/50 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none font-black text-lg transition-all"
+              />
+              <span className="text-stone-400 font-bold">%</span>
+            </div>
+            <p className="mt-3 text-sm text-stone-400 font-medium leading-relaxed">
+              按原阶梯费率的百分比收取，50 即五折，0 为免手续费。
+            </p>
+          </div>
+
+          {/* VIP 每日赠送抽奖次数 */}
+          <div>
+            <label className="block text-sm font-bold text-stone-500 uppercase tracking-widest mb-3">
+              VIP 每日赠送抽奖次数
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="number"
+                value={vipDailyLotterySpins}
+                onChange={(e) => setVipDailyLotterySpins(e.target.value)}
+                min="0"
+                max="50"
+                className="w-48 px-5 py-3 border-2 border-stone-100 bg-stone-50/50 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none font-black text-lg transition-all"
+              />
+              <span className="text-stone-400 font-bold">次/天</span>
+            </div>
+            <p className="mt-3 text-sm text-stone-400 font-medium leading-relaxed">
+              在每日 1 次免费抽奖的基础上额外赠送。
+            </p>
+          </div>
+
+          {/* VIP 累计时长上限 */}
+          <div>
+            <label className="block text-sm font-bold text-stone-500 uppercase tracking-widest mb-3">
+              VIP 累计时长上限
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="number"
+                value={vipMaxTotalDays}
+                onChange={(e) => setVipMaxTotalDays(e.target.value)}
+                min="1"
+                max="3650"
+                className="w-48 px-5 py-3 border-2 border-stone-100 bg-stone-50/50 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none font-black text-lg transition-all"
+              />
+              <span className="text-stone-400 font-bold">天</span>
+            </div>
+            <p className="mt-3 text-sm text-stone-400 font-medium leading-relaxed">
+              用户剩余 VIP 时长的上限，<strong className="font-black text-stone-500">必须不小于月卡时长</strong>，否则用户第一次购买就会被拒。
+            </p>
           </div>
         </div>
       </div>
