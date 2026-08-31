@@ -368,6 +368,16 @@
 	handle /api/store/withdraw {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
+	# 钱包页与站内 VIP 已完成 Go 迁移，逐条精确切流，禁止通配。
+	handle /api/wallet {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/wallet/transactions {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/vip/purchase {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
 	# handle /api/games/eco* {
 	# 	reverse_proxy api:8080
 	# }
