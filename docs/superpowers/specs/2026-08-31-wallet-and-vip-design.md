@@ -247,6 +247,8 @@ ALTER TABLE lottery_daily_spins DROP COLUMN IF EXISTS free_used_count;
 
 **旧列 `daily_free_claimed` 保留并继续同步写入** `(free_used_count > 0)`。理由：`backend/internal/lottery/service_integration_test.go` 有多处断言该列，且它是既有对账口径。这不是死代码遗留，是刻意的兼容层，需在代码里注释说明。
 
+> **增补**：本轮之后又追加了第 5 条迁移 `0036_system_config_withdraw_balance_cap.sql`（账户额度提现封顶），不在上面 4 条之内，详见 14.1。
+
 ---
 
 ## 5. 后端设计
@@ -482,6 +484,7 @@ func ValidVIPDurationAgainstMaxTotal(durationDays int64, maxTotalDays int64) boo
     "minWithdrawPoints": 10,
     "minTopupDollars": 1,
     "feePercent": 50,                    // 当前用户适用的手续费百分比，非 VIP 为 100
+    "withdrawBalanceCapDollars": 10000,  // 增补字段，见 14.1
     "dailyWithdraw": {
       "used": 1,
       "limit": 8,
@@ -641,6 +644,8 @@ VIP 状态条
 - 「累计时长上限」输入框下方标注它必须 ≥「月卡时长」，保存失败时展示后端返回的中文提示
 - `handleSave` **必须全量提交 8 个字段**（见 5.7 的 nil 语义陷阱）
 
+> **增补**：新增「账户额度提现上限」后，配置项变为 9 项，`handleSave` 需全量提交 9 个字段。详见 14.1。
+
 ### 7.5 `src/lib/wallet-rules.ts` 参数化
 
 `previewWithdraw(points, feePercent = 100)`，表达式与 Go 逐字对齐。默认值 `100` 保证任何未传参的既有调用点行为不变。
@@ -680,6 +685,7 @@ handle /api/vip/purchase {
 | VIP 手续费百分比 | `vip_withdraw_fee_percent` | 50（五折） | 0 - 100 |
 | VIP 每日赠送抽奖次数 | `vip_daily_lottery_spins` | 2 | 0 - 50 |
 | VIP 累计时长上限 | `vip_max_total_days` | 365 天 | 1 - 3650，且 ≥ 月卡时长 |
+| 账户额度提现上限（增补，见 14.1） | `withdraw_balance_cap_dollars` | 10000 美元 | 1 - 1000000000000 |
 
 ---
 
@@ -798,3 +804,106 @@ node scripts/audit-gateway-allowed-cutovers.mjs   # 必须 ok: true
 12. 全量验证（10.3 的四条命令）
 
 前 6 步是纯后端与共享库，可独立验证；7-10 是前端；11-12 收尾。步骤 4 与 9 是本轮风险最高的两处（分别触碰资金流程与抽奖并发逻辑）。
+
+---
+
+## 14. 后续增补
+
+本节记录 §1-§13 那一轮之后追加的能力。刻意不并入前文，以免把后来的东西读成原始范围；但前文中会因此读起来过期的契约处，都已插入指向本节的交叉引用。
+
+### 14.1 账户额度提现封顶（2026-09-01）
+
+**目的**：用户在 new-api 的账户额度余额达到后台可配的美元上限后，禁止继续把积分提现成额度。此前提现只有最低门槛（`MinWithdrawPoints = 10`）与每日次数限制，没有任何余额封顶——任何用户都能把余额无限堆到 new-api，站方的成本敞口没有上界。
+
+#### 数据模型 `0036_system_config_withdraw_balance_cap.sql`
+
+```sql
+-- +goose Up
+ALTER TABLE system_config ADD COLUMN IF NOT EXISTS withdraw_balance_cap_dollars BIGINT NOT NULL DEFAULT 10000;
+
+ALTER TABLE system_config ADD CONSTRAINT system_config_withdraw_balance_cap_dollars_check
+  CHECK (withdraw_balance_cap_dollars BETWEEN 1 AND 1000000000000);
+
+-- +goose Down
+ALTER TABLE system_config DROP CONSTRAINT IF EXISTS system_config_withdraw_balance_cap_dollars_check;
+ALTER TABLE system_config DROP COLUMN IF EXISTS withdraw_balance_cap_dollars;
+```
+
+**上界为什么留到 1e12**：把上限调到远高于任何真实余额，即等价于关闭本限制。有了这个逃生口，就不必再引入一个 `enabled` 布尔字段——少一个字段就少一处「开关与阈值不一致」的状态组合。
+
+#### `systemconfig` 扩展
+
+第 9 个配置项，完全沿用 5.7 的既有范式：`Config.WithdrawBalanceCapDollars`、`UpdateInput.WithdrawBalanceCapDollars`、常量三件套（`Default` 10000 / `Min` 1 / `Max` 1e12）、`ValidWithdrawBalanceCapDollars`，以及 `Update` 与 `Get` 的 SQL 列、`defaultConfig()`、脏数据越界时的回落分支。
+
+**nil 语义陷阱同样适用**：`UpdateInput` 该字段为 nil 时会被重置为默认值。后台 handler 的 `parseAdminConfigField` 因此对它照旧「漏传即 400」，前端必须全量提交 9 个字段。
+
+#### 闸门位置与顺序
+
+`economy/wallet_service.go` 的 `executeWithdrawInner` 中，闸门插在**所有本地校验之后、`BeginWalletTransaction` 之前**：
+
+| 顺序 | 校验 | 代价 |
+|---:|---|---|
+| 1 | 今日提现次数（`usedCount >= dailyLimit`） | 本地一次 SELECT |
+| 2 | `PreviewWithdraw` 参数合法性 | 纯函数 |
+| 3 | 积分余额是否足够 | 本地查询 |
+| 4 | **账户额度封顶** | 一次 new-api 调用 |
+
+两条约束共同决定了这个位置：
+
+- **必须在 `BeginWalletTransaction` 之前**，否则拒绝路径会留下交易行。现在被拒时既不扣分、不调 `CreditQuota`、不建交易行，也**不消耗当日提现次数**——闸门不是惩罚。
+- **必须在 1-3 之后**，因为它是唯一需要走网络的校验。本地能拒的先拒，不白跑一次 new-api 调用。这一点还顺带保住了 `TestWithdrawHandlerReturnsDailyLimitFields` 的前提：那个用例把 new-api 指向死地址 `127.0.0.1:1`，靠限次分支早于任何 new-api 调用返回才能跑通。
+
+#### 两个语义决策
+
+**比较用整数美元，不用浮点。** 取 `QuotaBalance.BalanceWholeDollars`（即 `QuotaToWholeDollars`，`quota / QuotaPerDollar` 的 floor 值），而不是 `BalanceDollars`。后者经过两位四舍五入，`$9999.996` 会被抬成 `10000.00`，误拦还没到顶的用户。判定式是 `balanceWholeDollars >= capDollars`：`$9999.99` → 9999 放行，`$10000.00` → 10000 拦截。
+
+**余额查不到时 fail-closed。** `GetQuotaBalance` 返回错误时按拒绝处理，下发 `WITHDRAW_BALANCE_UNKNOWN`。理由有两层：校验不了闸门却放行，等于闸门形同虚设；而且这不比现状更差——new-api 不可达时后面的 `CreditQuota` 本来也会失败并触发退款，提前拒绝反而省掉「扣分 → 入账失败 → 退款」这一轮副作用。
+
+**VIP 与管理员均不豁免**，与 5.2 每日次数限制同一立场：提现是资金操作，从严。
+
+#### 错误码
+
+| Code | 含义 | HTTP |
+|---|---|---|
+| `WITHDRAW_BALANCE_CAP` | 账户额度余额已达上限 | 400 |
+| `WITHDRAW_BALANCE_UNKNOWN` | 余额查不到，无法校验上限 | 400 |
+
+两者都经既有的 `withdrawWallet` handler 原样下发（该 handler 早已转发 `result.Code`），无需改动响应信封。
+
+#### 接口与前端
+
+`GET /api/wallet` 增加 `withdrawBalanceCapDollars`。**只下发阈值，不下发余额本身**——维持 3.2 定下的「该接口刻意不查询 new-api」约定，余额仍由前端懒加载 `GET /api/store/topup` 后自行比较。
+
+钱包页余额到顶时禁用提现按钮并说明原因。两处细节：
+
+- 余额是懒加载的，拿到之前**不预判**，否则首屏那一小段时间会把按钮误禁；该窗口内由后端兜底拦截，不构成绕过。
+- **提现成功后补一次账户额度刷新**。提现会推高 new-api 余额，而闸门就是拿这个余额判的；不刷新会让按钮停在旧状态，用户越线后还能点、再被后端拒一次。
+
+`/admin/settings` 的「钱包与 VIP 配置」区块新增「账户额度提现上限」输入框（单位美元）。
+
+#### 测试
+
+- 纯函数 `checkWithdrawBalanceCap`：覆盖 9999（放行）/ 10000（拦截）两侧边界与远超顶的情形
+- `TestWithdrawRejectsWhenBalanceCapReachedWithoutSideEffects`：断言零副作用——积分不变、`creditCalls` 为空、交易行数不变、当日次数不增
+- `TestWithdrawRejectsWhenQuotaBalanceLookupFails`：`fakeWalletQuotaClient.balanceErr` 驱动，锁住 fail-closed
+- 既有的后台配置 handler 单测、跨字段用例与两个 HTTP 集成测试的请求体一并补齐第 9 个字段，否则「全量提交」契约会让它们 400
+
+#### 上线注意
+
+迁移的 `DEFAULT 10000` 意味着**跑完 migrate 即刻生效**，余额已超 $10000 的存量账号会立即无法提现。若不希望立即生效，先在后台把上限调高。
+
+### 14.2 拟人卡册奖励上调（2026-09-01）
+
+`persona-s1` 全册奖励 150 → 1200，档位奖励同倍数（×8）上调为 40 / 70 / 120 / 180 / 350（普通 9 张 / 稀有 7 张 / 史诗 5 张 / 传说 3 张 / 传说稀有 2 张），单册可得 1960 积分。动物一季、动物二季、塔罗三册未动。
+
+**同一个值存在三处，必须同改**，否则展示与实际发放会互相矛盾：
+
+| 位置 | 作用 |
+|---|---|
+| `cards/catalog.go` `albumRewardPoints` / `albumTierRewardPoints` | `RewardPoints()` 的取值来源，**实际发放**走这里 |
+| `cards/admin.go` `adminAlbumDefinitions[].Reward` | 后台奖励配置页展示的默认值 |
+| `src/lib/cards/config.ts` `ALBUMS[].reward` / `.tierRewards` | 卡册页展示 |
+
+`cards/admin.go` 的 `adminDefaultTierRewards` 是全局的、不分卡册、也不参与发放，未动。
+
+**一处既有的不一致（本次未修，仅记录）**：后台可写入 `card_album_rewards` 表覆盖全册奖励，但 `RewardPoints()` 只读代码里的 `albumRewardPoints`，不读该表。因此后台改这个值不会影响实际发放，只改变后台自己的回显。
