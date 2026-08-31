@@ -166,11 +166,11 @@ var albumTierRewardPoints = map[string]map[RewardType]int64{
 		RewardType(RarityLegendaryRare): 85,
 	},
 	"persona-s1": {
-		RewardType(RarityCommon):        5,
-		RewardType(RarityRare):          9,
-		RewardType(RarityEpic):          15,
-		RewardType(RarityLegendary):     23,
-		RewardType(RarityLegendaryRare): 43,
+		RewardType(RarityCommon):        40,
+		RewardType(RarityRare):          70,
+		RewardType(RarityEpic):          120,
+		RewardType(RarityLegendary):     180,
+		RewardType(RarityLegendaryRare): 350,
 	},
 }
 

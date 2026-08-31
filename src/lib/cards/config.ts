@@ -56,11 +56,11 @@ export const ALBUMS: CardAlbum[] = [
     reward: 1200,
     season: "拟人篇",
     tierRewards: {
-      common: 5,
-      rare: 9,
-      epic: 15,
-      legendary: 23,
-      legendary_rare: 43,
+      common: 40,
+      rare: 70,
+      epic: 120,
+      legendary: 180,
+      legendary_rare: 350,
     },
   },
 ];
