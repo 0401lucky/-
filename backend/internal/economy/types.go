@@ -10,6 +10,7 @@ const (
 	SourceExchangeTopup    = "exchange_topup"
 	SourceExchangeWithdraw = "exchange_withdraw"
 	SourceRaffleWin        = "raffle_win"
+	SourceVIPPurchase      = "vip_purchase"
 
 	ItemTypeLotterySpin = "lottery_spin"
 	ItemTypeQuotaDirect = "quota_direct"
