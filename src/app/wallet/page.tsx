@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowDownLeft,
@@ -140,6 +140,11 @@ export default function WalletPage() {
   const [transactionTotal, setTransactionTotal] = useState(0);
   const [transactionOffset, setTransactionOffset] = useState(0);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
+
+  // 一次「购买意图」对应一把幂等键：只有后端给出确定性响应后才作废。
+  // 若每次点击都现场生成新键，键就只满足了后端的非空校验而没有幂等语义 ——
+  // 请求已扣分、响应在回程丢失时，用户重试会带上新键，后端视为全新请求再扣一次。
+  const purchaseKeyRef = useRef<string | null>(null);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -323,6 +328,9 @@ export default function WalletPage() {
         detail: '网络错误',
         details: [],
       });
+      // 请求可能已在后端生效，只是响应丢在回程 —— 拉一次真实余额与流水
+      void loadOverview();
+      void loadTransactions(0);
     } finally {
       setWithdrawing(false);
     }
@@ -376,6 +384,10 @@ export default function WalletPage() {
         detail: '网络错误',
         details: [],
       });
+      // 同提现：请求可能已生效，积分、流水与账户额度三处都拉一次真实状态
+      void loadOverview();
+      void loadTransactions(0);
+      void loadNewApiBalance();
     } finally {
       setTopping(false);
     }
@@ -385,16 +397,27 @@ export default function WalletPage() {
     if (purchasing || !overview || Boolean(vipBlockedReason)) return;
     setPurchasing(true);
     try {
+      // 上一次因网络失败而未确定结果时，这里会复用同一把键，让后端去重
+      if (!purchaseKeyRef.current) {
+        purchaseKeyRef.current = `vip-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      }
       const res = await fetch('/api/vip/purchase', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           // 后端强制要求非空幂等键，缺失直接 400 IDEMPOTENCY_KEY_REQUIRED
-          'Idempotency-Key': `vip-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+          'Idempotency-Key': purchaseKeyRef.current,
         },
         body: JSON.stringify({}),
       });
       const data = await res.json();
+      // 拿到后端自己的响应信封（success 明确为布尔）才算「结果已确定」：
+      // 后端已处理完这次意图，下次点击是新意图，键可以作废。
+      // 网关 502 一类的非信封响应会让 res.json() 抛错或缺 success 字段，
+      // 那时请求到底有没有到后端是不可知的，键必须留着给重试去重。
+      if (typeof data?.success === 'boolean') {
+        purchaseKeyRef.current = null;
+      }
       if (data.success) {
         // 只有成功响应才带 expiresAt / daysAdded / pointsSpent；
         // 失败响应的 data 只有 newBalance，套用它会把已开通的 VIP 显示成未开通
@@ -437,13 +460,17 @@ export default function WalletPage() {
         });
       }
     } catch {
+      // 键刻意不清空：请求到底有没有到后端不可知，重试必须复用同一把键
       setResult({
         kind: 'error',
         kicker: '站内 VIP',
         title: '开通失败',
-        detail: '网络错误',
+        detail: '网络错误，请重试；若已扣分本次重试不会重复扣除',
         details: [],
       });
+      // 后端可能已扣分成功，只是响应丢在回程 —— 拉一次真实状态，别停在旧值
+      void loadOverview();
+      void loadTransactions(0);
     } finally {
       setPurchasing(false);
     }
@@ -528,7 +555,7 @@ export default function WalletPage() {
             <div>
               <div className="wallet-summary-label">积分余额</div>
               <div className="wallet-summary-value">
-                {loading && !overview ? '···' : formatNumber(balance)}
+                {!overview ? '···' : formatNumber(balance)}
                 <span className="wallet-summary-unit">积分</span>
               </div>
             </div>
@@ -658,7 +685,8 @@ export default function WalletPage() {
 
             <div className="wallet-meta-row">
               <span className="wallet-meta-chip">
-                今日剩余 {dailyRemaining}/{dailyLimit} 次
+                {/* overview 未读到时不写 0/0，否则和「确实已用完」在视觉上无从区分 */}
+                {overview ? `今日剩余 ${dailyRemaining}/${dailyLimit} 次` : '今日剩余 ···'}
               </span>
               {overview && overview.feePercent < 100 && (
                 <span className="wallet-vip-flag">VIP {overview.feePercent}% 手续费</span>
