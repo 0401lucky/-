@@ -98,6 +98,8 @@ interface LotteryApiPayload {
   canSpin: boolean;
   hasSpunToday: boolean;
   extraSpins: number;
+  freeSpinLimit: number;
+  freeSpinRemaining: number;
   dailySpinLimit: number;
   dailySpinUsed: number;
   dailySpinRemaining: number;
@@ -165,8 +167,9 @@ export default function LotteryPage() {
   const [myProfile, setMyProfile] = useState<MyProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [canSpin, setCanSpin] = useState(false);
-  const [hasSpunToday, setHasSpunToday] = useState(false);
   const [extraSpins, setExtraSpins] = useState(0);
+  const [freeSpinLimit, setFreeSpinLimit] = useState(1);
+  const [freeSpinRemaining, setFreeSpinRemaining] = useState(0);
   const [dailySpinLimit, setDailySpinLimit] = useState(10);
   const [dailySpinRemaining, setDailySpinRemaining] = useState(0);
   const [spinning, setSpinning] = useState(false);
@@ -237,8 +240,9 @@ export default function LotteryPage() {
 
       setUser(data.user);
       setCanSpin(Boolean(data.canSpin));
-      setHasSpunToday(Boolean(data.hasSpunToday));
       setExtraSpins(typeof data.extraSpins === 'number' ? data.extraSpins : 0);
+      setFreeSpinLimit(typeof data.freeSpinLimit === 'number' ? data.freeSpinLimit : 1);
+      setFreeSpinRemaining(typeof data.freeSpinRemaining === 'number' ? data.freeSpinRemaining : 0);
       setDailySpinLimit(typeof data.dailySpinLimit === 'number' ? data.dailySpinLimit : 10);
       setDailySpinRemaining(typeof data.dailySpinRemaining === 'number' ? data.dailySpinRemaining : 0);
       setMode(typeof data.mode === 'string' ? data.mode : '');
@@ -407,14 +411,15 @@ export default function LotteryPage() {
         if (user?.isAdmin) {
           setCanSpin(true);
         } else if (extraSpins > 0) {
+          // 额外次数优先消耗，免费次数不动（与后端 consumeSpinCount 的顺序一致）
           setExtraSpins((prev) => Math.max(0, prev - 1));
           setDailySpinRemaining((prev) => Math.max(0, prev - 1));
-          setCanSpin(dailySpinRemaining > 1);
-          setHasSpunToday(true);
+          setCanSpin(dailySpinRemaining > 1 && (extraSpins - 1 > 0 || freeSpinRemaining > 0));
         } else {
-          setHasSpunToday(true);
+          const nextFreeRemaining = Math.max(0, freeSpinRemaining - 1);
+          setFreeSpinRemaining(nextFreeRemaining);
           setDailySpinRemaining((prev) => Math.max(0, prev - 1));
-          setCanSpin(false);
+          setCanSpin(dailySpinRemaining > 1 && nextFreeRemaining > 0);
         }
 
         void fetchData();
@@ -465,7 +470,7 @@ export default function LotteryPage() {
       setError('抽奖请求失败，请稍后重试');
       setSpinning(false);
     }
-  }, [canSpin, spinning, fetchData, extraSpins, user?.isAdmin, dailySpinRemaining]);
+  }, [canSpin, spinning, fetchData, extraSpins, user?.isAdmin, dailySpinRemaining, freeSpinRemaining]);
 
   // ---------- 五连抽 ----------
   // 转盘先减速停在最后一抽的扇区，动画结束后统一展示全部结果。
@@ -538,6 +543,10 @@ export default function LotteryPage() {
         : dailySpinRemaining <= 0
           ? `今日已达 ${dailySpinLimit} 次上限`
         : '今日机会已耗尽 · 请签到获取更多次数';
+
+  // 展示口径取小：freeSpinRemaining 只按「免费额度 - 已用免费数」算，不受每日总上限约束。
+  // 若 VIP 赠送次数配得 ≥ 每日总上限，直接显示会出现「免费还剩很多」但按钮已禁用的矛盾。
+  const freeSpinRemainingDisplay = Math.min(freeSpinRemaining, dailySpinRemaining);
 
   // ---------- 派生 ----------
   const conicGradient = useMemo(() => {
@@ -755,12 +764,12 @@ export default function LotteryPage() {
 
             {/* 抽奖次数 */}
             <div className="chance-row">
-              <div className={`chance-pill daily ${hasSpunToday ? 'is-empty' : ''}`}>
+              <div className={`chance-pill daily ${freeSpinRemainingDisplay > 0 ? '' : 'is-empty'}`}>
                 <span className="ico">
                   <Check />
                 </span>
                 <span className="label">每日:</span>
-                <span className="num">{loading ? '—' : hasSpunToday ? '0' : '1'}</span>
+                <span className="num">{loading ? '—' : `${freeSpinRemainingDisplay}/${freeSpinLimit}`}</span>
               </div>
               <div className={`chance-pill extra ${extraSpins > 0 ? '' : 'is-empty'}`}>
                 <span className="ico">
