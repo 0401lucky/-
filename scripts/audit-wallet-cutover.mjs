@@ -74,6 +74,7 @@ const requiredWalletSmokeSnippets = [
 
 const frontendRoots = [
   path.join(repoRoot, 'src', 'app', 'store'),
+  path.join(repoRoot, 'src', 'app', 'wallet'),
   path.join(repoRoot, 'src', 'components'),
 ];
 
