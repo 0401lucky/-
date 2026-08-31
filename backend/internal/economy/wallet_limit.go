@@ -15,6 +15,9 @@ import (
 // CodeWithdrawDailyLimit 标识「今日提现次数已用完」。
 const CodeWithdrawDailyLimit = "WITHDRAW_DAILY_LIMIT"
 
+// 计数只是一条本地 UPSERT，不该共用提现主流程那份可能已被 new-api 耗尽的预算。
+const withdrawCountTimeout = 5 * time.Second
+
 // WithdrawDailyUsage 描述用户今日的提现次数配额，供钱包页展示。
 type WithdrawDailyUsage struct {
 	Used      int64 `json:"used"`
@@ -85,10 +88,21 @@ func (service *Service) bumpWithdrawUsedToday(ctx context.Context, userID int64,
 //
 // 写入失败只告警不回滚：资金操作已经完成，为一次计数失败而回滚会造成更严重的
 // 不一致。代价是极端情况下用户当日可能多提现一次，可接受。
-func (service *Service) markWithdrawUsed(ctx context.Context, userID int64, withdrawDate string, fallback int64) int64 {
-	used, err := service.bumpWithdrawUsedToday(ctx, userID, withdrawDate)
+//
+// 计数用自己的 context：提现主流程那份 55s 预算可能已被 new-api 入账耗尽，
+// 复用它会让计数在「入账慢」这一最需要计数的场景下必然失败。
+func (service *Service) markWithdrawUsed(ctx context.Context, userID int64, withdrawDate string, transactionID string, fallback int64) int64 {
+	countCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), withdrawCountTimeout)
+	defer cancel()
+
+	used, err := service.bumpWithdrawUsedToday(countCtx, userID, withdrawDate)
 	if err != nil {
-		slog.Warn("提现每日次数计数写入失败", "userId", userID, "withdrawDate", withdrawDate, "error", err)
+		slog.Warn("提现每日次数计数写入失败",
+			"userId", userID,
+			"withdrawDate", withdrawDate,
+			"walletTransactionId", transactionID,
+			"error", err,
+		)
 		return fallback + 1
 	}
 	return used

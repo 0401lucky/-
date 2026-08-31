@@ -38,6 +38,7 @@ func TestWithdrawRejectsAfterDailyLimitWithoutSideEffects(t *testing.T) {
 		t.Fatalf("read balance failed: %v", err)
 	}
 	creditCallsBefore := len(quotaClient.creditCalls)
+	transactionsBefore := countWalletTransactionsForTest(t, ctx, service, user.ID)
 
 	result, err := service.ExecuteWithdraw(ctx, user, 100)
 	if err != nil {
@@ -57,6 +58,12 @@ func TestWithdrawRejectsAfterDailyLimitWithoutSideEffects(t *testing.T) {
 	}
 	if len(quotaClient.creditCalls) != creditCallsBefore {
 		t.Fatalf("rejected withdraw must not call new-api, calls %d -> %d", creditCallsBefore, len(quotaClient.creditCalls))
+	}
+	// 连交易行都不该建：锁住「限次检查必须早于任何副作用」，
+	// 光靠余额与 new-api 调用数抓不到「检查被挪到 BeginWalletTransaction 之后」这种回归。
+	transactionsAfter := countWalletTransactionsForTest(t, ctx, service, user.ID)
+	if transactionsAfter != transactionsBefore {
+		t.Fatalf("rejected withdraw must not create a wallet transaction, rows %d -> %d", transactionsBefore, transactionsAfter)
 	}
 }
 
@@ -155,6 +162,20 @@ func TestWithdrawAppliesVIPFeeDiscount(t *testing.T) {
 	if result.DailyWithdrawLimit != 8 {
 		t.Fatalf("vip daily limit = %d, want 8", result.DailyWithdrawLimit)
 	}
+}
+
+// countWalletTransactionsForTest 数该用户的提现交易行数，用于断言超限拒绝没有建交易。
+func countWalletTransactionsForTest(t *testing.T, ctx context.Context, service *Service, userID int64) int64 {
+	t.Helper()
+
+	var count int64
+	if err := service.db.QueryRow(ctx,
+		`SELECT count(*) FROM wallet_transactions WHERE user_id = $1 AND operation = $2`,
+		userID, WalletOperationWithdraw,
+	).Scan(&count); err != nil {
+		t.Fatalf("count wallet transactions failed: %v", err)
+	}
+	return count
 }
 
 // grantVIPForTest 直接写会籍表，绕开购买流程，供限次与折扣测试构造 VIP 用户。

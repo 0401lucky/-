@@ -176,6 +176,8 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 	}
 
 	if creditResult.Success {
+		// 计数早于审计更新：额度已经到账，审计更新失败不得让当日次数漏计。
+		nextUsed := service.markWithdrawUsed(ctx, user.ID, withdrawDate, transaction.ID, usedCount)
 		if _, err := service.UpdateWalletTransaction(ctx, walletTransactionQuotaUpdate(
 			transaction.ID,
 			WalletStatusSuccess,
@@ -184,7 +186,6 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 		)); err != nil {
 			return WithdrawResult{}, err
 		}
-		nextUsed := service.markWithdrawUsed(ctx, user.ID, withdrawDate, usedCount)
 		return WithdrawResult{
 			Success:            true,
 			Message:            fmt.Sprintf("已成功提现 %d 积分至账户额度，到账 $%s", preview.Deducted, formatWalletDollars(preview.Dollars)),
@@ -197,6 +198,8 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 	}
 
 	if creditResult.Uncertain {
+		// 同成功分支：额度可能已到账，先落计数再写审计。
+		nextUsed := service.markWithdrawUsed(ctx, user.ID, withdrawDate, transaction.ID, usedCount)
 		if _, err := service.UpdateWalletTransaction(ctx, walletTransactionQuotaUpdate(
 			transaction.ID,
 			WalletStatusUncertain,
@@ -205,7 +208,6 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 		)); err != nil {
 			return WithdrawResult{}, err
 		}
-		nextUsed := service.markWithdrawUsed(ctx, user.ID, withdrawDate, usedCount)
 		return WithdrawResult{
 			Success:            false,
 			Message:            strings.TrimSpace("提现请求已受理，但额度入账结果暂不确定，请稍后查看新 API 余额。" + creditResult.Message),
@@ -226,8 +228,12 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 	})
 	if refundErr != nil || !refund.Success {
 		message := "账户额度入账失败，且积分回滚失败"
+		var nextUsed int64
 		if refundErr == nil {
 			message = "账户额度入账失败，且积分回滚失败：" + fallbackWalletMessage(refund.Message, "未知错误")
+			// 同上：先落计数再写审计。refundErr != nil 时不计数 —— 该路径以 error 返回，
+			// 额度确定未发放，用户是净亏积分，不存在绕过上限的套利。
+			nextUsed = service.markWithdrawUsed(ctx, user.ID, withdrawDate, transaction.ID, usedCount)
 		}
 		if _, err := service.UpdateWalletTransaction(ctx, walletTransactionQuotaUpdate(
 			transaction.ID,
@@ -240,7 +246,6 @@ func (service *Service) executeWithdrawInner(ctx context.Context, user auth.User
 		if refundErr != nil {
 			return WithdrawResult{}, refundErr
 		}
-		nextUsed := service.markWithdrawUsed(ctx, user.ID, withdrawDate, usedCount)
 		return WithdrawResult{
 			Success:            false,
 			Message:            message,
