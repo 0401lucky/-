@@ -3,8 +3,10 @@ package httpserver
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"redemption/backend/internal/auth"
@@ -283,13 +285,156 @@ func (handlers economyHandlers) withdrawWallet(writer http.ResponseWriter, reque
 	writeJSON(writer, status, map[string]any{
 		"success":   success,
 		"message":   result.Message,
+		"code":      result.Code,
 		"uncertain": result.Uncertain,
 		"data": map[string]any{
-			"newBalance": balance,
-			"dollars":    result.Dollars,
-			"feePoints":  result.FeePoints,
+			"newBalance":         balance,
+			"dollars":            result.Dollars,
+			"feePoints":          result.FeePoints,
+			"dailyWithdrawUsed":  result.DailyWithdrawUsed,
+			"dailyWithdrawLimit": result.DailyWithdrawLimit,
 		},
 	})
+}
+
+func (handlers economyHandlers) getWallet(writer http.ResponseWriter, request *http.Request) {
+	user, ok := handlers.requireUser(writer, request)
+	if !ok {
+		return
+	}
+
+	overview, err := handlers.service.GetWalletOverview(request.Context(), user.ID)
+	if err != nil {
+		handlers.deps.Logger.Error("查询钱包概览失败", "error", err)
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "服务器错误",
+		})
+		return
+	}
+
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"success": true,
+		"data":    overview,
+	})
+}
+
+func (handlers economyHandlers) listWalletTransactions(writer http.ResponseWriter, request *http.Request) {
+	user, ok := handlers.requireUser(writer, request)
+	if !ok {
+		return
+	}
+
+	limit := parsePositiveQueryInt(request, "limit", 20, 100)
+	offset := parsePositiveQueryInt(request, "offset", 0, math.MaxInt32)
+
+	transactions, total, err := handlers.service.ListWalletTransactions(request.Context(), user.ID, limit, offset)
+	if err != nil {
+		handlers.deps.Logger.Error("查询钱包流水失败", "error", err)
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "服务器错误",
+		})
+		return
+	}
+
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"success": true,
+		"data": map[string]any{
+			"transactions": transactions,
+			"total":        total,
+			"limit":        limit,
+			"offset":       offset,
+			"hasMore":      int64(offset+len(transactions)) < total,
+		},
+	})
+}
+
+func (handlers economyHandlers) purchaseVIP(writer http.ResponseWriter, request *http.Request) {
+	if handlers.rejectUntrustedUnsafeRequest(writer, request) {
+		return
+	}
+	user, ok := handlers.requireUser(writer, request)
+	if !ok {
+		return
+	}
+	if handlers.rejectRateLimited(writer, request, *user, storeExchangeRateLimit) {
+		return
+	}
+
+	var payload struct {
+		IdempotencyKey string `json:"idempotencyKey"`
+	}
+	// 空请求体也视为合法：幂等键可以只走请求头
+	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "请求体格式无效",
+		})
+		return
+	}
+
+	// 三重取值顺序与 exchangeItem 保持一致
+	idempotencyKey := strings.TrimSpace(request.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" {
+		idempotencyKey = strings.TrimSpace(request.Header.Get("X-Idempotency-Key"))
+	}
+	if idempotencyKey == "" {
+		idempotencyKey = strings.TrimSpace(payload.IdempotencyKey)
+	}
+	// 幂等键必须由客户端提供：beginIdempotency 在 key 为空时直接放行（不做去重），
+	// 一次网络重试就会重复扣掉一个周期的 VIP 积分。handler 自己补一个也没用 ——
+	// 重试会带上新的 key，幂等性照样失效。因此这里拒绝请求而不是兜底生成。
+	if idempotencyKey == "" {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"code":    "IDEMPOTENCY_KEY_REQUIRED",
+			"message": "缺少幂等键，请重试",
+		})
+		return
+	}
+
+	result, err := handlers.service.PurchaseVIP(request.Context(), *user, idempotencyKey)
+	if err != nil {
+		handlers.deps.Logger.Error("购买 VIP 失败", "error", err)
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "服务器错误",
+		})
+		return
+	}
+
+	status := http.StatusOK
+	if !result.Success {
+		status = http.StatusBadRequest
+	}
+	writeJSON(writer, status, map[string]any{
+		"success": result.Success,
+		"message": result.Message,
+		"code":    result.Code,
+		"data": map[string]any{
+			"newBalance":  result.Balance,
+			"expiresAt":   result.ExpiresAt,
+			"daysAdded":   result.DaysAdded,
+			"pointsSpent": result.PointsSpent,
+		},
+	})
+}
+
+// parsePositiveQueryInt 解析非负整数查询参数，缺失或非法时回落到 fallback，并夹到 max。
+func parsePositiveQueryInt(request *http.Request, name string, fallback int, max int) int {
+	raw := strings.TrimSpace(request.URL.Query().Get(name))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		return fallback
+	}
+	if value > max {
+		return max
+	}
+	return value
 }
 
 func (handlers economyHandlers) requireUser(writer http.ResponseWriter, request *http.Request) (*auth.User, bool) {

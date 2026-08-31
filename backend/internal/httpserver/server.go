@@ -207,6 +207,9 @@ func New(deps Dependencies) http.Handler {
 		api.Patch("/store/admin", economyHandlers.saveStoreAdminCategory)
 		api.Delete("/store/admin", economyHandlers.deleteStoreAdminItem)
 		api.Post("/admin/store/reset", economyHandlers.adminStoreResetDisabled)
+		api.Get("/wallet", economyHandlers.getWallet)
+		api.Get("/wallet/transactions", economyHandlers.listWalletTransactions)
+		api.Post("/vip/purchase", economyHandlers.purchaseVIP)
 		api.Route("/games/eco", func(ecoRouter chi.Router) {
 			ecoRouter.Get("/status", ecoHandlers.getStatus)
 			ecoRouter.Post("/black-market-sell", ecoHandlers.blackMarketSellPrize)
