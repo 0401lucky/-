@@ -35,6 +35,7 @@ const allowedApiCutovers = [
   '/api/admin/announcements/*',
   '/api/lottery',
   '/api/lottery/spin',
+  '/api/lottery/spin/batch',
   '/api/lottery/records',
   '/api/lottery/ranking',
   '/api/lottery/number-bomb',

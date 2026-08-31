@@ -125,6 +125,7 @@ func New(deps Dependencies) http.Handler {
 		api.Delete("/admin/announcements/{id}", announcementHandlers.archiveAdmin)
 		api.Get("/lottery", lotteryHandlers.page)
 		api.Post("/lottery/spin", lotteryHandlers.spin)
+		api.Post("/lottery/spin/batch", lotteryHandlers.spinBatch)
 		api.Get("/lottery/records", lotteryHandlers.records)
 		api.Get("/lottery/ranking", lotteryHandlers.dailyRanking)
 		api.Get("/lottery/number-bomb", lotteryHandlers.numberBombState)

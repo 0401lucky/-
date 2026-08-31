@@ -118,6 +118,9 @@
 	handle /api/lottery/spin {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
+	handle /api/lottery/spin/batch {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
 	handle /api/lottery/records {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}

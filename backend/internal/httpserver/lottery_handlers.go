@@ -3,6 +3,7 @@ package httpserver
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"redemption/backend/internal/lottery"
@@ -80,6 +81,46 @@ func (handlers lotteryHandlers) spin(writer http.ResponseWriter, request *http.R
 		"success": true,
 		"message": result.Message,
 		"record":  result.Record,
+	})
+}
+
+func (handlers lotteryHandlers) spinBatch(writer http.ResponseWriter, request *http.Request) {
+	shared := economyHandlers{deps: handlers.deps}
+	if shared.rejectUntrustedUnsafeRequest(writer, request) {
+		return
+	}
+	user, ok := shared.requireUser(writer, request)
+	if !ok {
+		return
+	}
+	if shared.rejectRateLimited(writer, request, *user, lotterySpinRateLimit) {
+		return
+	}
+	if handlers.deps.DB == nil {
+		writeJSON(writer, http.StatusServiceUnavailable, map[string]any{"success": false, "message": "抽奖数据库未配置"})
+		return
+	}
+	results, err := handlers.service.SpinPointsBatch(request.Context(), *user, lottery.MaxBatchSpinTimes)
+	if err != nil {
+		if message, ok := lotteryUserErrorMessage(err); ok {
+			writeJSON(writer, http.StatusBadRequest, map[string]any{"success": false, "message": message})
+			return
+		}
+		handlers.writeServiceError(writer, "执行转盘连抽失败", err, "抽奖失败，请重试")
+		return
+	}
+	records := make([]lottery.Record, 0, len(results))
+	var totalPoints int64
+	for _, result := range results {
+		records = append(records, result.Record)
+		totalPoints += result.Record.TierValue
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"success":     true,
+		"message":     fmt.Sprintf("%d 连抽完成，共获得 %d 积分", len(records), totalPoints),
+		"records":     records,
+		"times":       len(records),
+		"totalPoints": totalPoints,
 	})
 }
 

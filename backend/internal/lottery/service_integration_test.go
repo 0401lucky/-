@@ -686,3 +686,181 @@ func seedNumberBombSettlementUser(t *testing.T, ctx context.Context, db *pgxpool
 		t.Fatalf("seed user assets %d failed: %v", userID, err)
 	}
 }
+
+// ---------- 五连抽 ----------
+
+func openLotteryBatchTestDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
+	t.Helper()
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL 未设置，跳过彩票集成测试")
+	}
+	db, err := dbpostgres.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open postgres failed: %v", err)
+	}
+	t.Cleanup(db.Close)
+	if _, err := pgmigration.NewRunner(db, "../../migrations").Apply(ctx, false); err != nil {
+		t.Fatalf("apply migrations failed: %v", err)
+	}
+	return db
+}
+
+// seedBatchSpinUser 建好用户、积分账户和额外抽奖次数，返回可直接抽奖的 auth.User。
+func seedBatchSpinUser(t *testing.T, ctx context.Context, db *pgxpool.Pool, userID int64, username string, extraSpins int64) auth.User {
+	t.Helper()
+	if _, err := db.Exec(ctx,
+		`INSERT INTO users (id, username, display_name, first_seen_at, updated_at)
+		 VALUES ($1, $2, $2, now(), now())`,
+		userID, username,
+	); err != nil {
+		t.Fatalf("seed user failed: %v", err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO point_accounts (user_id, balance) VALUES ($1, 0)`, userID); err != nil {
+		t.Fatalf("seed point account failed: %v", err)
+	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO user_assets (user_id, extra_spins, card_draws, makeup_cards)
+		 VALUES ($1, $2, 0, 0)`,
+		userID, extraSpins,
+	); err != nil {
+		t.Fatalf("seed user assets failed: %v", err)
+	}
+	return auth.User{ID: userID, Username: username, DisplayName: username}
+}
+
+func lotteryBalanceAndRecordCount(t *testing.T, ctx context.Context, db *pgxpool.Pool, userID int64) (int64, int64) {
+	t.Helper()
+	var balance, recordCount int64
+	if err := db.QueryRow(ctx,
+		`SELECT p.balance,
+		        (SELECT COUNT(*) FROM lottery_records WHERE user_id = $1)
+		   FROM point_accounts p
+		  WHERE p.user_id = $1`,
+		userID,
+	).Scan(&balance, &recordCount); err != nil {
+		t.Fatalf("query batch spin facts failed: %v", err)
+	}
+	return balance, recordCount
+}
+
+func TestServiceSpinPointsBatchConsumesFullFiveSpins(t *testing.T) {
+	ctx := context.Background()
+	db := openLotteryBatchTestDB(t, ctx)
+
+	resetLotteryIntegrationConfig(t, ctx, db)
+	defer resetLotteryIntegrationConfig(t, ctx, db)
+	// 每日上限 5，额外次数 4：1 次免费 + 4 次额外，恰好够五连抽。
+	seedLotteryIntegrationConfig(t, ctx, db, "pts_30", "小狗 30积分", 30, 5)
+
+	userID := int64(99811 + time.Now().UnixNano()%1_000_000_000)
+	cleanupLotteryIntegrationUser(t, ctx, db, userID, "")
+	defer cleanupLotteryIntegrationUser(t, ctx, db, userID, "")
+	user := seedBatchSpinUser(t, ctx, db, userID, "lottery_batch_full", 4)
+
+	results, err := NewService(db).SpinPointsBatch(ctx, user, MaxBatchSpinTimes)
+	if err != nil {
+		t.Fatalf("batch spin failed: %v", err)
+	}
+	if len(results) != MaxBatchSpinTimes {
+		t.Fatalf("expected %d results, got %d", MaxBatchSpinTimes, len(results))
+	}
+
+	seen := make(map[string]struct{}, len(results))
+	for _, result := range results {
+		if result.Record.TierValue != 30 {
+			t.Fatalf("unexpected tier value: %+v", result.Record)
+		}
+		if _, duplicated := seen[result.Record.ID]; duplicated {
+			t.Fatalf("duplicated record id: %s", result.Record.ID)
+		}
+		seen[result.Record.ID] = struct{}{}
+	}
+
+	balance, recordCount := lotteryBalanceAndRecordCount(t, ctx, db, userID)
+	if balance != 150 || recordCount != 5 {
+		t.Fatalf("unexpected batch facts balance=%d records=%d", balance, recordCount)
+	}
+}
+
+func TestServiceSpinPointsBatchCommitsPartialWhenChancesRunOut(t *testing.T) {
+	ctx := context.Background()
+	db := openLotteryBatchTestDB(t, ctx)
+
+	resetLotteryIntegrationConfig(t, ctx, db)
+	defer resetLotteryIntegrationConfig(t, ctx, db)
+	// 每日上限 3，额外次数 2：只剩 3 次，五连抽应抽满剩余并提交。
+	seedLotteryIntegrationConfig(t, ctx, db, "pts_30", "小狗 30积分", 30, 3)
+
+	userID := int64(99821 + time.Now().UnixNano()%1_000_000_000)
+	cleanupLotteryIntegrationUser(t, ctx, db, userID, "")
+	defer cleanupLotteryIntegrationUser(t, ctx, db, userID, "")
+	user := seedBatchSpinUser(t, ctx, db, userID, "lottery_batch_partial", 2)
+
+	results, err := NewService(db).SpinPointsBatch(ctx, user, MaxBatchSpinTimes)
+	if err != nil {
+		t.Fatalf("partial batch spin failed: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results when only 3 chances remain, got %d", len(results))
+	}
+
+	balance, recordCount := lotteryBalanceAndRecordCount(t, ctx, db, userID)
+	if balance != 90 || recordCount != 3 {
+		t.Fatalf("unexpected partial batch facts balance=%d records=%d", balance, recordCount)
+	}
+}
+
+func TestServiceSpinPointsBatchFailsWhenNoChanceLeft(t *testing.T) {
+	ctx := context.Background()
+	db := openLotteryBatchTestDB(t, ctx)
+
+	resetLotteryIntegrationConfig(t, ctx, db)
+	defer resetLotteryIntegrationConfig(t, ctx, db)
+	seedLotteryIntegrationConfig(t, ctx, db, "pts_30", "小狗 30积分", 30, 1)
+
+	userID := int64(99831 + time.Now().UnixNano()%1_000_000_000)
+	cleanupLotteryIntegrationUser(t, ctx, db, userID, "")
+	defer cleanupLotteryIntegrationUser(t, ctx, db, userID, "")
+	user := seedBatchSpinUser(t, ctx, db, userID, "lottery_batch_empty", 0)
+
+	service := NewService(db)
+	if _, err := service.SpinPoints(ctx, user); err != nil {
+		t.Fatalf("warm-up spin failed: %v", err)
+	}
+
+	if _, err := service.SpinPointsBatch(ctx, user, MaxBatchSpinTimes); !errors.Is(err, ErrDailyLimitReached) {
+		t.Fatalf("expected ErrDailyLimitReached, got %v", err)
+	}
+
+	balance, recordCount := lotteryBalanceAndRecordCount(t, ctx, db, userID)
+	if balance != 30 || recordCount != 1 {
+		t.Fatalf("batch spin must not write anything when no chance left, balance=%d records=%d", balance, recordCount)
+	}
+}
+
+func TestServiceSpinPointsBatchRejectsNonPointsMode(t *testing.T) {
+	ctx := context.Background()
+	db := openLotteryBatchTestDB(t, ctx)
+
+	resetLotteryIntegrationConfig(t, ctx, db)
+	defer resetLotteryIntegrationConfig(t, ctx, db)
+	seedLotteryIntegrationConfig(t, ctx, db, "pts_30", "小狗 30积分", 30, 5)
+	if _, err := db.Exec(ctx, `UPDATE lottery_configs SET mode = 'code' WHERE id = $1`, defaultConfigID); err != nil {
+		t.Fatalf("switch mode failed: %v", err)
+	}
+
+	userID := int64(99841 + time.Now().UnixNano()%1_000_000_000)
+	cleanupLotteryIntegrationUser(t, ctx, db, userID, "")
+	defer cleanupLotteryIntegrationUser(t, ctx, db, userID, "")
+	user := seedBatchSpinUser(t, ctx, db, userID, "lottery_batch_mode", 4)
+
+	if _, err := NewService(db).SpinPointsBatch(ctx, user, MaxBatchSpinTimes); !errors.Is(err, ErrModeNotMigrated) {
+		t.Fatalf("expected ErrModeNotMigrated, got %v", err)
+	}
+
+	balance, recordCount := lotteryBalanceAndRecordCount(t, ctx, db, userID)
+	if balance != 0 || recordCount != 0 {
+		t.Fatalf("non-points mode must not write, balance=%d records=%d", balance, recordCount)
+	}
+}

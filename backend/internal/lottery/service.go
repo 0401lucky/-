@@ -29,6 +29,9 @@ const defaultConfigID = "default"
 const pointLedgerSourceLotteryWin = "lottery_win"
 const lotteryGameType = "lottery"
 
+// MaxBatchSpinTimes 单次批量抽奖的上限（五连抽）。
+const MaxBatchSpinTimes = 5
+
 var defaultTiers = []Tier{
 	{ID: "pts_200", Name: "橙子 200积分", Value: 200, Probability: 8, Color: "#fb923c", CodesCount: 0, UsedCount: 0, Enabled: true},
 	{ID: "pts_150", Name: "钻石 150积分", Value: 150, Probability: 6, Color: "#8b5cf6", CodesCount: 0, UsedCount: 0, Enabled: true},
@@ -148,30 +151,73 @@ func (service *Service) UpdateConfig(ctx context.Context, input ConfigUpdateInpu
 }
 
 func (service *Service) SpinPoints(ctx context.Context, user auth.User) (SpinResult, error) {
+	results, err := service.spinPointsTimes(ctx, user, 1)
+	if err != nil {
+		return SpinResult{}, err
+	}
+	return results[0], nil
+}
+
+// SpinPointsBatch 连续抽取 times 次。次数不足时抽满剩余次数并提交已完成的部分，
+// 一次都抽不成才返回错误。
+func (service *Service) SpinPointsBatch(ctx context.Context, user auth.User, times int) ([]SpinResult, error) {
+	if times < 1 {
+		times = 1
+	}
+	if times > MaxBatchSpinTimes {
+		times = MaxBatchSpinTimes
+	}
+	return service.spinPointsTimes(ctx, user, times)
+}
+
+func (service *Service) spinPointsTimes(ctx context.Context, user auth.User, times int) ([]SpinResult, error) {
 	if service.db == nil {
-		return SpinResult{}, ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	tx, err := service.db.Begin(ctx)
 	if err != nil {
-		return SpinResult{}, err
+		return nil, err
 	}
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
 
 	if err := ensureUser(ctx, tx, user); err != nil {
-		return SpinResult{}, err
+		return nil, err
 	}
 	config, err := configInTx(ctx, tx)
 	if err != nil {
-		return SpinResult{}, err
+		return nil, err
 	}
 	if !config.Enabled {
-		return SpinResult{}, ErrDisabled
+		return nil, ErrDisabled
 	}
 	if config.Mode != ModePoints {
-		return SpinResult{}, ErrModeNotMigrated
+		return nil, ErrModeNotMigrated
 	}
+
+	results := make([]SpinResult, 0, times)
+	for range times {
+		result, err := spinPointsOnceInTx(ctx, tx, user, config)
+		if err != nil {
+			// 次数耗尽：保留已抽出的结果并提交；一次都没抽成才向上报错。
+			if errors.Is(err, ErrDailyLimitReached) || errors.Is(err, ErrNoSpinChance) {
+				if len(results) > 0 {
+					break
+				}
+			}
+			return nil, err
+		}
+		results = append(results, result)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+func spinPointsOnceInTx(ctx context.Context, tx pgx.Tx, user auth.User, config Config) (SpinResult, error) {
 	activeTiers := activePointTiers(config.Tiers)
 	selectedTier, err := weightedRandomTier(activeTiers)
 	if err != nil {
@@ -214,9 +260,6 @@ func (service *Service) SpinPoints(ctx context.Context, user auth.User) (SpinRes
 		return SpinResult{}, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return SpinResult{}, err
-	}
 	message := "谢谢惠顾，下次再来试试手气"
 	if selectedTier.Value > 0 {
 		message = "恭喜获得 " + selectedTier.Name + "！"

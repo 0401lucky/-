@@ -63,6 +63,8 @@ const PRIZES_WITH_ANGLES = calculateAngles();
 const SPIN_DECELERATION_MS = 4500;
 // 减速阶段额外旋转圈数（保证视觉冲击力）
 const SPIN_EXTRA_ROUNDS = 5;
+// 五连抽次数，与后端 lottery.MaxBatchSpinTimes 保持一致
+const BATCH_SPIN_TIMES = 5;
 // 数字炸弹倍率显示标签
 const NUMBER_BOMB_MULTIPLIER_LABELS: Record<number, string> = {
   1: '不加倍',
@@ -99,12 +101,21 @@ interface LotteryApiPayload {
   dailySpinLimit: number;
   dailySpinUsed: number;
   dailySpinRemaining: number;
+  mode?: string;
 }
 
 interface LotterySpinResponse {
   success: boolean;
   message?: string;
   record?: LotteryRecord;
+}
+
+interface LotteryBatchSpinResponse {
+  success: boolean;
+  message?: string;
+  records?: LotteryRecord[];
+  times?: number;
+  totalPoints?: number;
 }
 
 interface MyProfile {
@@ -173,6 +184,12 @@ export default function LotteryPage() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ----- 五连抽状态（仅 points 模式支持）-----
+  const [mode, setMode] = useState<string>('');
+  const [batchSpinning, setBatchSpinning] = useState(false);
+  const [batchRecords, setBatchRecords] = useState<LotteryRecord[] | null>(null);
+  const [showBatchModal, setShowBatchModal] = useState(false);
+
   // ----- 数字炸弹状态 -----
   const [bombState, setBombState] = useState<NumberBombState | null>(null);
   const [bombLoading, setBombLoading] = useState(true);
@@ -224,6 +241,7 @@ export default function LotteryPage() {
       setExtraSpins(typeof data.extraSpins === 'number' ? data.extraSpins : 0);
       setDailySpinLimit(typeof data.dailySpinLimit === 'number' ? data.dailySpinLimit : 10);
       setDailySpinRemaining(typeof data.dailySpinRemaining === 'number' ? data.dailySpinRemaining : 0);
+      setMode(typeof data.mode === 'string' ? data.mode : '');
       setError(null);
 
       if (profileRes && profileRes.ok) {
@@ -449,6 +467,55 @@ export default function LotteryPage() {
     }
   }, [canSpin, spinning, fetchData, extraSpins, user?.isAdmin, dailySpinRemaining]);
 
+  // ---------- 五连抽 ----------
+  // 转盘先减速停在最后一抽的扇区，动画结束后统一展示全部结果。
+  const handleBatchSpin = useCallback(async () => {
+    if (!canSpin || spinning || batchSpinning) return;
+
+    setBatchSpinning(true);
+    setError(null);
+
+    try {
+      const res = await fetch('/api/lottery/spin/batch', { method: 'POST' });
+      const data: LotteryBatchSpinResponse = await res.json();
+
+      if (!data.success || !data.records || data.records.length === 0) {
+        setError(data.message || '连抽失败');
+        setBatchSpinning(false);
+        return;
+      }
+
+      const records = data.records;
+      const lastRecord = records[records.length - 1];
+      const prize = PRIZES_WITH_ANGLES.find((p) => p.value === Number(lastRecord.tierValue));
+
+      if (prize) {
+        const normalize = (deg: number) => ((deg % 360) + 360) % 360;
+        const centerAngle = (prize.startAngle + prize.endAngle) / 2;
+        const targetAngle = normalize(360 - centerAngle);
+        setSpinTransition(`transform ${SPIN_DECELERATION_MS}ms cubic-bezier(0.17, 0.67, 0.16, 1)`);
+        setRotation((prev) => {
+          const current = normalize(prev);
+          const delta = normalize(targetAngle - current);
+          return prev + 360 * SPIN_EXTRA_ROUNDS + delta;
+        });
+      }
+
+      if (spinTimeoutRef.current) clearTimeout(spinTimeoutRef.current);
+      spinTimeoutRef.current = setTimeout(() => {
+        spinTimeoutRef.current = null;
+        setBatchSpinning(false);
+        setBatchRecords(records);
+        setShowBatchModal(true);
+        void fetchData();
+      }, prize ? SPIN_DECELERATION_MS : 0);
+    } catch (err) {
+      console.error(err);
+      setError('连抽请求失败，请稍后重试');
+      setBatchSpinning(false);
+    }
+  }, [canSpin, spinning, batchSpinning, fetchData]);
+
   // ---------- 复制 ----------
   const handleCopy = () => {
     if (result?.code) {
@@ -459,7 +526,9 @@ export default function LotteryPage() {
     }
   };
 
-  const spinDisabled = loading || !user || !canSpin || spinning;
+  const spinDisabled = loading || !user || !canSpin || spinning || batchSpinning;
+  /** 五连抽只在积分模式开放：其余模式后端尚未迁移，点了必然报错 */
+  const showBatchSpin = mode === 'points';
   const spinHintText = loading
     ? '正在同步今日抽奖资格'
     : error && !user
@@ -743,6 +812,27 @@ export default function LotteryPage() {
                 <span>{error && !user ? '稍后重试' : '明日再来'}</span>
               )}
             </button>
+
+            {showBatchSpin && (
+              <button
+                type="button"
+                className={`go-btn go-btn-batch ${spinDisabled ? 'is-disabled' : ''}`}
+                onClick={handleBatchSpin}
+                disabled={spinDisabled}
+              >
+                {batchSpinning ? (
+                  <>
+                    <Loader2 className="go-spin" />
+                    <span>连抽中...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles strokeWidth={2.4} />
+                    <span>五连抽</span>
+                  </>
+                )}
+              </button>
+            )}
 
             <div className="go-tip">{spinHintText}</div>
           </div>
@@ -1093,6 +1183,62 @@ export default function LotteryPage() {
             <button type="button" className="modal-btn" onClick={() => setShowResultModal(false)}>
               <Check />
               {result.pointsAwarded === 0 ? '我知道了' : '收入囊中'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 五连抽结果弹窗 */}
+      {showBatchModal && batchRecords && batchRecords.length > 0 && (
+        <div className="modal-mask show" role="dialog" aria-modal="true" aria-label="连抽结果">
+          <div className="modal-backdrop" onClick={() => setShowBatchModal(false)} />
+          <div className="modal-card">
+            <button
+              type="button"
+              className="modal-close"
+              onClick={() => setShowBatchModal(false)}
+              aria-label="关闭"
+            >
+              <X />
+            </button>
+
+            <div className="modal-emoji" aria-hidden>🎰</div>
+            <div className="modal-title">{batchRecords.length} 连抽结果</div>
+            <div className="modal-desc">
+              {batchRecords.length < BATCH_SPIN_TIMES
+                ? `今日机会仅剩 ${batchRecords.length} 次，已全部抽出`
+                : '积分已直接发放到您的账户'}
+            </div>
+
+            <ul className="batch-list">
+              {batchRecords.map((record, index) => {
+                const points = typeof record.pointsAwarded === 'number' ? record.pointsAwarded : record.tierValue;
+                return (
+                  <li key={record.id} className={`batch-item ${points > 0 ? '' : 'miss'}`}>
+                    <span className="batch-index">{index + 1}</span>
+                    <span className="batch-name">{record.tierName}</span>
+                    <span className="batch-points">{points > 0 ? `+${points}` : '未中奖'}</span>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className="modal-credit">
+              <span className="money-bag" aria-hidden>✨</span>
+              <div>
+                <div className="modal-credit-label">合计到账</div>
+                <div className="modal-credit-value">
+                  +{batchRecords.reduce(
+                    (sum, record) => sum + (typeof record.pointsAwarded === 'number' ? record.pointsAwarded : record.tierValue),
+                    0,
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <button type="button" className="modal-btn" onClick={() => setShowBatchModal(false)}>
+              <Check />
+              收入囊中
             </button>
           </div>
         </div>
@@ -2156,6 +2302,78 @@ export default function LotteryPage() {
         }
         .lucky-lottery .go-btn.is-disabled::before { display: none; }
         .lucky-lottery .go-spin { animation: lkSpin 1s linear infinite; }
+
+        /* 五连抽：次级按钮，与主按钮拉开层级 */
+        .lucky-lottery .go-btn-batch {
+          margin-top: 12px;
+          padding: 13px 28px;
+          font-size: 17px;
+          border-radius: 18px;
+          background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #ea580c 100%);
+          box-shadow: 0 12px 26px rgba(245, 158, 11, 0.38),
+            inset 0 -3px 10px rgba(0, 0, 0, 0.12),
+            inset 0 2px 4px rgba(255, 255, 255, 0.3);
+        }
+        .lucky-lottery .go-btn-batch:hover:not(:disabled) {
+          box-shadow: 0 16px 32px rgba(245, 158, 11, 0.5),
+            inset 0 -3px 10px rgba(0, 0, 0, 0.12),
+            inset 0 2px 4px rgba(255, 255, 255, 0.3);
+        }
+        .lucky-lottery .go-btn-batch svg { width: 18px; height: 18px; }
+
+        .lucky-lottery .batch-list {
+          list-style: none;
+          margin: 0 0 18px;
+          padding: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          text-align: left;
+        }
+        .lucky-lottery .batch-item {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 11px 16px;
+          border-radius: 14px;
+          background: rgba(16, 185, 129, 0.07);
+          border: 1px solid rgba(16, 185, 129, 0.22);
+        }
+        .lucky-lottery .batch-item.miss {
+          background: rgba(148, 163, 184, 0.1);
+          border-color: rgba(148, 163, 184, 0.28);
+        }
+        .lucky-lottery .batch-index {
+          flex: none;
+          width: 22px;
+          height: 22px;
+          border-radius: 11px;
+          background: rgba(15, 23, 42, 0.08);
+          font-size: 12px;
+          font-weight: 800;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .lucky-lottery .batch-name {
+          flex: 1;
+          min-width: 0;
+          font-size: 14px;
+          font-weight: 700;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .lucky-lottery .batch-points {
+          flex: none;
+          font-size: 15px;
+          font-weight: 900;
+          color: #059669;
+        }
+        .lucky-lottery .batch-item.miss .batch-points {
+          color: #94a3b8;
+          font-size: 13px;
+        }
 
         .lucky-lottery .go-tip {
           font-size: 13px;
