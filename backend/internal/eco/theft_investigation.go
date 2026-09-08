@@ -104,11 +104,11 @@ func (service *Service) processOneTheftInvestigation(ctx context.Context, nowMs 
 		return "escaped", tx.Commit(ctx)
 	}
 
-	caughtProbability, err := theftCaughtProbability(ctx, tx, record, nowMs)
+	caughtProbability, err := theftCaughtProbability(ctx, tx, record)
 	if err != nil {
 		return "", err
 	}
-	if ecoTheftInvestigationRollFloat() >= caughtProbability {
+	if caughtProbability <= 0 || ecoTheftInvestigationRollFloat() >= caughtProbability {
 		if err := rescheduleTheftInvestigation(ctx, tx, record.ID); err != nil {
 			return "", err
 		}
@@ -122,7 +122,7 @@ func (service *Service) processOneTheftInvestigation(ctx context.Context, nowMs 
 	return outcome, tx.Commit(ctx)
 }
 
-func theftCaughtProbability(ctx context.Context, tx pgx.Tx, record dueTheftRecord, nowMs int64) (float64, error) {
+func theftCaughtProbability(ctx context.Context, tx pgx.Tx, record dueTheftRecord) (float64, error) {
 	var previousThefts int64
 	if err := tx.QueryRow(ctx,
 		`SELECT COUNT(*)
@@ -135,17 +135,30 @@ func theftCaughtProbability(ctx context.Context, tx pgx.Tx, record dueTheftRecor
 		return 0, err
 	}
 
-	hours := (nowMs - record.StolenAtMs) / int64(60*60*1000)
+	// Delayed workers must evaluate each scheduled check at its original time.
+	return theftCheckCaughtProbability(record.NextCheckAtMs-record.StolenAtMs, previousThefts), nil
+}
+
+func theftCheckCaughtProbability(elapsedMs int64, previousThefts int64) float64 {
+	current := cumulativeTheftCaughtProbability(elapsedMs, previousThefts)
+	previous := cumulativeTheftCaughtProbability(elapsedMs-theftCheckIntervalMS, previousThefts)
+	if previous >= 1 {
+		return 1
+	}
+	// Conditional risk among surviving thefts keeps the entire pursuit on the
+	// cumulative curve instead of compounding that curve every 20 minutes.
+	return (current - previous) / (1 - previous)
+}
+
+func cumulativeTheftCaughtProbability(elapsedMs int64, previousThefts int64) float64 {
+	if elapsedMs < theftCheckIntervalMS {
+		return 0
+	}
+	hours := elapsedMs / int64(60*60*1000)
 	probability := theftBaseCatchRate -
 		float64(maxInt64(0, previousThefts))*theftRepeatCatchPenalty +
-		float64(maxInt64(0, hours))*theftHourlyCatchRateStep
-	if probability < 0 {
-		return 0, nil
-	}
-	if probability > 1 {
-		return 1, nil
-	}
-	return probability, nil
+		float64(hours)*theftHourlyCatchRateStep
+	return min(1.0, max(0.0, probability))
 }
 
 func findDueTheftRecordForUpdate(ctx context.Context, tx pgx.Tx, nowMs int64) (dueTheftRecord, bool, error) {

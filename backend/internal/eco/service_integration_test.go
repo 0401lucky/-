@@ -579,8 +579,8 @@ func TestProcessTheftInvestigationsRepeatTheftLowersInitialCatchRate(t *testing.
 	cleanupEcoTheftInvestigationFixtures(t, ctx, db)
 	defer cleanupEcoTheftInvestigationFixtures(t, ctx, db)
 	nowMs := testChinaDateMs(2026, 6, 23) + int64(2*time.Hour/time.Millisecond)
-	stolenAtMs := nowMs - int64(10*time.Minute/time.Millisecond)
-	nextCheckAtMs := nowMs - int64(time.Minute/time.Millisecond)
+	stolenAtMs := nowMs - theftCheckIntervalMS
+	nextCheckAtMs := nowMs
 	blackMarketAtMs := nowMs + int64(10*time.Hour/time.Millisecond)
 
 	previousRoll := ecoTheftInvestigationRollFloat
@@ -595,7 +595,7 @@ func TestProcessTheftInvestigationsRepeatTheftLowersInitialCatchRate(t *testing.
 		   black_market_available_at_ms, message, resolved_at_ms, outcome
 		 ) VALUES (
 		   'theft-99651-old', 'coin', $1, $2, 'public-99651',
-		   'owner-lot-old', 'thief-lot-old', $3 - 3600000, $3 - 1800000,
+		   'owner-lot-old', 'thief-lot-old', $3::bigint - 3600000, $3::bigint - 1800000,
 		   $5, 'old message', $3 - 1200000, 'caught'
 		 ), (
 		   'theft-99651', 'coin', $1, $2, 'public-99651',
@@ -680,7 +680,7 @@ func TestEcoPublicBoardProtectsPrizeAfterCaughtTheft(t *testing.T) {
 		   black_market_available_at_ms, message, resolved_at_ms, outcome
 		 ) VALUES (
 		   'theft-99661', 'coin', $1, $2, 'public-99661',
-		   'old-owner-lot', 'old-thief-lot', $3 - 3600000, $3 - 1800000,
+		   'old-owner-lot', 'old-thief-lot', $3::bigint - 3600000, $3::bigint - 1800000,
 		   $3 + 86400000, 'message', $3, 'caught'
 		 )`,
 		ownerID,
@@ -773,7 +773,7 @@ func TestProcessTheftInvestigationsCatchesAndRestoresPrize(t *testing.T) {
 		ownerID,
 		thiefID,
 		stolenAtMs,
-		nowMs-int64(time.Minute/time.Millisecond),
+		nowMs,
 		blackMarketAtMs,
 	); err != nil {
 		t.Fatalf("seed caught theft failed: %v", err)
