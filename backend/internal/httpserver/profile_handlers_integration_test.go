@@ -289,6 +289,15 @@ func TestProfileOverviewHTTPReturnsMigratedSummary(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed user assets failed: %v", err)
 	}
+	if _, err := db.Exec(ctx, `INSERT INTO card_user_states (user_id, draws_available) VALUES ($1, 2)`, userID); err != nil {
+		t.Fatalf("seed card state failed: %v", err)
+	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO farm_states (user_id, state_json, updated_at_ms)
+		 SELECT $1, jsonb_build_object('lands', jsonb_agg(jsonb_build_object('index', n, 'status', 'empty'))), $2
+		 FROM generate_series(1, 8) n`, userID, nowMs); err != nil {
+		t.Fatalf("seed farm state failed: %v", err)
+	}
 	if _, err := db.Exec(ctx,
 		`INSERT INTO game_records (id, user_id, session_id, game_type, score, points_earned, payload, created_at)
 		 VALUES ($1, $2, 'overview-http-session', 'lottery', 0, 0, '{}'::jsonb, now())`,
@@ -336,6 +345,17 @@ func TestProfileOverviewHTTPReturnsMigratedSummary(t *testing.T) {
 	if len(payload.Data.Achievements.Items) == 0 || !profileOverviewAchievementUnlocked(payload.Data.Achievements.Items, "lottery_player") {
 		t.Fatalf("overview achievements should include unlocked lottery_player: %+v", payload.Data.Achievements)
 	}
+	if payload.Data.AchievementStats.FarmUnlockedLands != 8 || !profileOverviewAchievementUnlocked(payload.Data.Achievements.Items, "farm_owner") {
+		t.Fatalf("eight lands must grant farm_owner through the overview API: %+v", payload.Data)
+	}
+	equipRequest := httptest.NewRequest(http.MethodPut, "/api/profile/achievements/equip", bytes.NewBufferString(`{"achievementId":"farm_owner"}`))
+	equipRequest.Host = "example.com"
+	equipRequest.Header.Set("Origin", "https://example.com")
+	equipRequest.AddCookie(testSessionCookieFor(userID, "profile_overview_http", "Profile Overview HTTP"))
+	equipped := performRequest(handler, equipRequest)
+	if equipped.Code != http.StatusOK {
+		t.Fatalf("backfilled farm achievement should be equippable: status=%d body=%s", equipped.Code, equipped.Body.String())
+	}
 }
 
 func profileOverviewAchievementUnlocked(items []profile.AchievementItem, id string) bool {
@@ -350,6 +370,8 @@ func profileOverviewAchievementUnlocked(items []profile.AchievementItem, id stri
 func cleanupHTTPTestProfileUser(t *testing.T, ctx context.Context, db *pgxpool.Pool, userID int64) {
 	t.Helper()
 	statements := []string{
+		`DELETE FROM farm_states WHERE user_id = $1`,
+		`DELETE FROM card_user_states WHERE user_id = $1`,
 		`DELETE FROM notifications WHERE user_id = $1`,
 		`DELETE FROM eco_prize_inventory WHERE user_id = $1`,
 		`DELETE FROM eco_states WHERE user_id = $1`,

@@ -202,11 +202,14 @@ func (service *Service) EquipAchievement(ctx context.Context, userID int64, achi
 	var forcedID sql.NullString
 	var forcedUntil sql.NullInt64
 	err = tx.QueryRow(ctx,
-		`SELECT achievement_id, until_ms
-		   FROM user_forced_achievements
-		  WHERE user_id = $1
-		    AND until_ms > $2
-		  FOR UPDATE`,
+		`SELECT f.achievement_id, f.until_ms
+		   FROM user_forced_achievements f
+		   JOIN user_achievement_grants g
+		     ON g.user_id = f.user_id AND g.achievement_id = f.achievement_id
+		    AND (g.expires_at_ms IS NULL OR g.expires_at_ms > $2)
+		  WHERE f.user_id = $1
+		    AND f.until_ms > $2
+		  FOR UPDATE OF f`,
 		userID,
 		nowMs,
 	).Scan(&forcedID, &forcedUntil)

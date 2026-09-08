@@ -338,8 +338,9 @@ func TestEquipAchievementRejectsLockedAndForcedAchievement(t *testing.T) {
 	}
 
 	if _, err := db.Exec(ctx,
-		`INSERT INTO user_achievement_grants (user_id, achievement_id, source, granted_at_ms, reason)
-		 VALUES ($1, 'beginner', 'auto', $2, 'seed')`,
+		`INSERT INTO user_achievement_grants (user_id, achievement_id, source, granted_at_ms, expires_at_ms, reason)
+		 VALUES ($1, 'beginner', 'auto', $2, NULL, 'seed'),
+		        ($1, 'thief', 'auto', $2, $2 + 60000, 'seed')`,
 		userID,
 		nowMs,
 	); err != nil {
@@ -420,10 +421,13 @@ func TestGetOverviewAggregatesMigratedProfileData(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed user assets failed: %v", err)
 	}
+	if _, err := db.Exec(ctx, `INSERT INTO card_user_states (user_id, draws_available) VALUES ($1, 3)`, userID); err != nil {
+		t.Fatalf("seed card state failed: %v", err)
+	}
 	if _, err := db.Exec(ctx,
 		`INSERT INTO game_records (id, user_id, session_id, game_type, score, points_earned, payload, created_at)
 		 VALUES ($1, $5, 's1', 'match3', 1500, 30, '{"completed":true}'::jsonb, now() - interval '4 minutes'),
-		        ($2, $5, 's2', 'whack_mole', 350, 20, '{"won":true}'::jsonb, now() - interval '3 minutes'),
+		        ($2, $5, 's2', 'whack_mole', 1200, 20, '{}'::jsonb, now() - interval '3 minutes'),
 		        ($3, $5, 's3', 'minesweeper', 100, 10, '{"won":true}'::jsonb, now() - interval '2 minutes'),
 		        ($4, $5, 's4', 'lottery', 0, 0, '{}'::jsonb, now() - interval '1 minute')`,
 		"overview-game-1-"+time.Now().Format("150405.000000000"),
@@ -485,7 +489,7 @@ func TestGetOverviewAggregatesMigratedProfileData(t *testing.T) {
 	if overview.Points.Balance != 12000 || len(overview.Points.RecentLogs) != 2 || overview.Points.RecentLogs[0].Source != "eco" {
 		t.Fatalf("unexpected overview points: %+v", overview.Points)
 	}
-	if overview.Cards.DrawsAvailable != 3 || len(overview.Cards.Albums) != 0 {
+	if overview.Cards.DrawsAvailable != 3 || len(overview.Cards.Albums) != 4 || overview.Cards.Total != 163 {
 		t.Fatalf("unexpected overview cards: %+v", overview.Cards)
 	}
 	if len(overview.Gameplay.RecentRecords) != 4 || overview.AchievementStats.GameWinRate != 1 {
@@ -524,6 +528,10 @@ func achievementUnlocked(items []AchievementItem, id string) bool {
 func cleanupProfileIntegrationUser(t *testing.T, ctx context.Context, db *pgxpool.Pool, userID int64) {
 	t.Helper()
 	statements := []string{
+		`DELETE FROM farm_states WHERE user_id = $1`,
+		`DELETE FROM checkin_records WHERE user_id = $1`,
+		`DELETE FROM card_user_states WHERE user_id = $1`,
+		`DELETE FROM lottery_records WHERE user_id = $1`,
 		`DELETE FROM notifications WHERE user_id = $1`,
 		`DELETE FROM eco_prize_inventory WHERE user_id = $1`,
 		`DELETE FROM eco_states WHERE user_id = $1`,

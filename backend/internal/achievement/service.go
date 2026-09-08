@@ -55,7 +55,11 @@ func GrantAndForceEquip(ctx context.Context, tx pgx.Tx, userID int64, achievemen
 		 VALUES ($1, $2, $3, $4, now())
 		 ON CONFLICT (user_id) DO UPDATE SET
 		   achievement_id = excluded.achievement_id,
-		   until_ms = GREATEST(user_forced_achievements.until_ms, excluded.until_ms),
+		   until_ms = CASE
+		     WHEN user_forced_achievements.achievement_id = excluded.achievement_id
+		     THEN GREATEST(user_forced_achievements.until_ms, excluded.until_ms)
+		     ELSE excluded.until_ms
+		   END,
 		   updated_at_ms = excluded.updated_at_ms,
 		   updated_at = now()`,
 		userID,

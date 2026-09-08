@@ -96,9 +96,12 @@ type OverviewNotification struct {
 }
 
 type OverviewAchievementStats struct {
+	PeakPointsBalance      int64   `json:"peakPointsBalance"`
+	CheckinMaxStreak       int64   `json:"checkinMaxStreak"`
 	GameWinRate            float64 `json:"gameWinRate"`
 	GameWinPlays           int64   `json:"gameWinPlays"`
 	FarmUnlockedLands      int64   `json:"farmUnlockedLands"`
+	LotteryPlays           int64   `json:"lotteryPlays"`
 	LotteryOrangeCount     int64   `json:"lotteryOrangeCount"`
 	LotteryHeartCount      int64   `json:"lotteryHeartCount"`
 	EcoLifetimeCleared     int64   `json:"ecoLifetimeCleared"`

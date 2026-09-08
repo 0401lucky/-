@@ -3,9 +3,11 @@ package profile
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"time"
+
+	"redemption/backend/internal/cards"
+	"redemption/backend/internal/gamesummary"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -62,7 +64,7 @@ func (service *Service) GetOverview(ctx context.Context, userID int64, username 
 	if err != nil {
 		return OverviewData{}, err
 	}
-	gameplay, gameStats, err := service.overviewGameplay(ctx, userID)
+	gameplay, gameStats, err := service.overviewGameplay(ctx, userID, nowMs)
 	if err != nil {
 		return OverviewData{}, err
 	}
@@ -70,17 +72,13 @@ func (service *Service) GetOverview(ctx context.Context, userID int64, username 
 	if err != nil {
 		return OverviewData{}, err
 	}
-	ecoStats, err := service.overviewEcoStats(ctx, userID)
+	stats, err := service.overviewAchievementStats(ctx, userID)
 	if err != nil {
 		return OverviewData{}, err
 	}
-	stats := OverviewAchievementStats{
-		GameWinRate:            gameStats.GameWinRate,
-		GameWinPlays:           gameStats.GameWinPlays,
-		EcoLifetimeCleared:     ecoStats.EcoLifetimeCleared,
-		EcoLifetimePrizeClaims: ecoStats.EcoLifetimePrizeClaims,
-		EcoLifetimePhotoClaims: ecoStats.EcoLifetimePhotoClaims,
-	}
+	stats.GameWinRate = gameStats.GameWinRate
+	stats.GameWinPlays = gameStats.GameWinPlays
+	stats.CheckinMaxStreak = gameStats.CheckinMaxStreak
 
 	overview := OverviewData{
 		User: OverviewUser{
@@ -141,27 +139,43 @@ func (service *Service) overviewPoints(ctx context.Context, userID int64) (Overv
 }
 
 func (service *Service) overviewCards(ctx context.Context, userID int64) (OverviewCards, error) {
-	cards := OverviewCards{Albums: []OverviewAlbum{}}
-	err := service.db.QueryRow(ctx, `SELECT COALESCE(card_draws, 0) FROM user_assets WHERE user_id = $1`, userID).Scan(&cards.DrawsAvailable)
-	if errorsIsNoRows(err) {
-		return cards, nil
+	state, err := cards.NewStore(service.db).GetUserState(ctx, userID)
+	if err != nil {
+		return OverviewCards{}, err
 	}
-	return cards, err
+	return summarizeCards(state, cards.AllCards()), nil
 }
 
 type overviewGameStats struct {
-	GameWinRate  float64
-	GameWinPlays int64
+	GameWinRate      float64
+	GameWinPlays     int64
+	CheckinMaxStreak int64
 }
 
-func (service *Service) overviewGameplay(ctx context.Context, userID int64) (OverviewGameplay, overviewGameStats, error) {
+func (service *Service) overviewGameplay(ctx context.Context, userID int64, nowMs int64) (OverviewGameplay, overviewGameStats, error) {
 	gameplay := OverviewGameplay{RecentRecords: []OverviewRecentRecord{}}
+	checkins, err := service.overviewCheckins(ctx, userID, nowMs)
+	if err != nil {
+		return gameplay, overviewGameStats{}, err
+	}
+	gameplay.CheckinStreak = checkins.CurrentStreak
+	gameplay.TotalCheckinDays = checkins.TotalDays
+	wins, err := gamesummary.NewService(service.db).GetWinStats(ctx, userID)
+	if err != nil {
+		return gameplay, overviewGameStats{}, err
+	}
+	stats := overviewGameStats{
+		GameWinRate:      wins.Rate,
+		GameWinPlays:     wins.Plays,
+		CheckinMaxStreak: checkins.MaxStreak,
+	}
 	rows, err := service.db.Query(ctx,
-		`SELECT game_type, score, points_earned, payload, created_at
+		`SELECT game_type, score, points_earned, created_at
 		   FROM game_records
 		  WHERE user_id = $1
+		    AND (payload->>'pending') IS DISTINCT FROM 'true'
 		  ORDER BY created_at DESC, id DESC
-		  LIMIT 200`,
+		  LIMIT 10`,
 		userID,
 	)
 	if err != nil {
@@ -169,32 +183,17 @@ func (service *Service) overviewGameplay(ctx context.Context, userID int64) (Ove
 	}
 	defer rows.Close()
 
-	var plays int64
-	var wins int64
 	for rows.Next() {
 		var record OverviewRecentRecord
-		var payload []byte
 		var createdAt time.Time
-		if err := rows.Scan(&record.GameType, &record.Score, &record.PointsEarned, &payload, &createdAt); err != nil {
+		if err := rows.Scan(&record.GameType, &record.Score, &record.PointsEarned, &createdAt); err != nil {
 			return gameplay, overviewGameStats{}, err
 		}
 		record.CreatedAt = millis(createdAt)
-		if len(gameplay.RecentRecords) < 10 {
-			gameplay.RecentRecords = append(gameplay.RecentRecords, record)
-		}
-		if record.GameType != "lottery" {
-			plays++
-			if overviewRecordWon(record.GameType, record.Score, payload) {
-				wins++
-			}
-		}
+		gameplay.RecentRecords = append(gameplay.RecentRecords, record)
 	}
 	if err := rows.Err(); err != nil {
 		return gameplay, overviewGameStats{}, err
-	}
-	stats := overviewGameStats{GameWinPlays: plays}
-	if plays > 0 {
-		stats.GameWinRate = float64(wins) / float64(plays)
 	}
 	return gameplay, stats, nil
 }
@@ -360,13 +359,27 @@ func (service *Service) listAchievementGrants(ctx context.Context, userID int64)
 
 func automaticAchievementIDs(overview OverviewData) map[string]bool {
 	ids := map[string]bool{"beginner": true}
-	if overview.Points.Balance >= 1000 {
+	streak := max(overview.Gameplay.CheckinStreak, overview.AchievementStats.CheckinMaxStreak)
+	if overview.Gameplay.TotalCheckinDays >= 1 {
+		ids["first_checkin"] = true
+	}
+	if streak >= 3 {
+		ids["checkin_3"] = true
+	}
+	if streak >= 7 {
+		ids["checkin_7"] = true
+	}
+	if streak >= 30 {
+		ids["checkin_30"] = true
+	}
+	balance := max(overview.Points.Balance, overview.AchievementStats.PeakPointsBalance)
+	if balance >= 1000 {
 		ids["first_pot"] = true
 	}
-	if overview.Points.Balance >= 5000 {
+	if balance >= 5000 {
 		ids["small_success"] = true
 	}
-	if overview.Points.Balance >= 10000 {
+	if balance >= 10000 {
 		ids["tycoon"] = true
 	}
 	if overview.Cards.Owned >= 10 {
@@ -378,11 +391,8 @@ func automaticAchievementIDs(overview OverviewData) map[string]bool {
 	if overview.Cards.CompletionRate >= 100 {
 		ids["collection_master"] = true
 	}
-	for _, record := range overview.Gameplay.RecentRecords {
-		if record.GameType == "lottery" {
-			ids["lottery_player"] = true
-			break
-		}
+	if overview.AchievementStats.LotteryPlays > 0 {
+		ids["lottery_player"] = true
 	}
 	if overview.AchievementStats.GameWinPlays > 0 && overview.AchievementStats.GameWinRate >= 0.75 {
 		ids["game_king"] = true
@@ -406,24 +416,6 @@ func automaticAchievementIDs(overview OverviewData) map[string]bool {
 		ids["xiaoc_fan"] = true
 	}
 	return ids
-}
-
-func overviewRecordWon(gameType string, score int64, payload []byte) bool {
-	var data map[string]any
-	_ = json.Unmarshal(payload, &data)
-	for _, key := range []string{"completed", "won", "escaped"} {
-		if value, ok := data[key].(bool); ok && value {
-			return true
-		}
-	}
-	switch gameType {
-	case "match3":
-		return score >= 1200
-	case "whack_mole":
-		return score >= 300
-	default:
-		return false
-	}
 }
 
 func errorsIsNoRows(err error) bool {

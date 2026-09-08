@@ -61,6 +61,15 @@ func AlbumExists(albumID string) bool {
 	return len(CardsByAlbum(strings.TrimSpace(albumID))) > 0
 }
 
+func AlbumName(albumID string) string {
+	for _, album := range adminAlbumDefinitions {
+		if album.ID == albumID {
+			return album.Name
+		}
+	}
+	return albumID
+}
+
 func RewardPoints(albumID string, rewardType RewardType) (int64, bool) {
 	albumID = strings.TrimSpace(albumID)
 	if rewardType == RewardFullSet {

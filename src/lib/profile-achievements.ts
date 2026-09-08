@@ -65,6 +65,9 @@ export interface AchievementDef extends PublicAchievement {
 }
 
 export interface ProfileAchievementStats {
+  peakPointsBalance?: number;
+  checkinMaxStreak?: number;
+  lotteryPlays?: number;
   gameWinRate: number;
   gameWinPlays: number;
   farmUnlockedLands: number;
@@ -309,15 +312,15 @@ function buildGrantMap(grants: UserAchievementGrant[] = [], now = Date.now()): M
 }
 
 export function getAutomaticAchievementIds(d: ProfileAchievementOverviewData): AchievementId[] {
-  const balance = d.points.balance;
+  const balance = Math.max(d.points.balance, d.achievementStats?.peakPointsBalance ?? 0);
   const owned = d.cards.owned;
   const completion = d.cards.completionRate;
-  const streak = d.gameplay.checkinStreak;
+  const streak = Math.max(d.gameplay.checkinStreak, d.achievementStats?.checkinMaxStreak ?? 0);
   const totalDays = d.gameplay.totalCheckinDays;
   const records = d.gameplay.recentRecords;
   const stats = d.achievementStats;
 
-  const hasLottery = records.some((r) => r.gameType === 'lottery');
+  const hasLottery = (stats?.lotteryPlays ?? 0) > 0 || records.some((r) => r.gameType === 'lottery');
   const gameWinRate = stats?.gameWinRate ?? 0;
   const gameWinPlays = stats?.gameWinPlays ?? 0;
   const farmUnlockedLands = stats?.farmUnlockedLands ?? 0;
