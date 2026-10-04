@@ -34,6 +34,7 @@ var supportedGames = []string{
 	"lucky_td",
 	"piano_tiles",
 	"watermelon",
+	"sudoku",
 }
 
 type Service struct {
@@ -186,7 +187,7 @@ func (service *Service) listRecentGameRows(ctx context.Context, userID int64) (m
 		          ROW_NUMBER() OVER (PARTITION BY game_type ORDER BY created_at DESC, id DESC) AS rn
 		     FROM game_records
 		    WHERE user_id = $1
-		      AND game_type IN ('roguelite', 'minesweeper', 'whack_mole', 'memory', 'match3', 'linkgame', 'game_2048', 'lucky_td', 'piano_tiles', 'watermelon')
+		      AND game_type IN ('roguelite', 'minesweeper', 'whack_mole', 'memory', 'match3', 'linkgame', 'game_2048', 'lucky_td', 'piano_tiles', 'watermelon', 'sudoku')
 		      AND COALESCE((payload->>'pending')::boolean, false) = false
 		 )
 		 SELECT game_type, difficulty, score, points_earned, payload
@@ -240,6 +241,8 @@ func rowWon(row gameRecordRow, gameType string) bool {
 	switch gameType {
 	case "memory", "linkgame":
 		return boolField(data, "completed")
+	case "sudoku":
+		return boolField(data, "completed") || boolField(data, "won")
 	case "minesweeper", "roguelite", "watermelon":
 		return boolField(data, "won")
 	case "game_2048":

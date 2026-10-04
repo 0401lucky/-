@@ -20,6 +20,15 @@ func TestSupportedGamesIncludesLuckyTD(t *testing.T) {
 	t.Fatal("supportedGames should include lucky_td")
 }
 
+func TestSupportedGamesIncludesSudoku(t *testing.T) {
+	for _, game := range supportedGames {
+		if game.dbName == "sudoku" && game.apiName == "sudoku" {
+			return
+		}
+	}
+	t.Fatal("supportedGames should include sudoku")
+}
+
 func TestSupportedGamesIncludesPianoTilesModeAndStarBoards(t *testing.T) {
 	game := gameDefinition{dbName: "piano_tiles", apiName: "piano-tiles"}
 	found := false

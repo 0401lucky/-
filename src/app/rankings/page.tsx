@@ -7,6 +7,7 @@ import {
   BarChart3,
   BookOpen,
   Bomb,
+  Brain,
   CalendarDays,
   Clock,
   Crown,
@@ -30,7 +31,7 @@ type SimplePeriod = 'all' | 'monthly';
 type LotteryPeriod = 'daily' | 'weekly' | 'monthly';
 type EcoPeriod = 'daily' | 'weekly' | 'monthly';
 
-type SupportedGame = 'linkgame' | 'match3' | 'memory' | 'whack_mole' | 'roguelite' | 'minesweeper' | 'game_2048' | 'lucky_td' | 'piano-tiles' | 'watermelon';
+type SupportedGame = 'linkgame' | 'match3' | 'memory' | 'whack_mole' | 'roguelite' | 'minesweeper' | 'game_2048' | 'lucky_td' | 'piano-tiles' | 'watermelon' | 'sudoku';
 
 interface GameOverallEntry {
   rank: number;
@@ -196,6 +197,7 @@ const GAME_LABEL: Record<SupportedGame, string> = {
   lucky_td: '幸运塔防',
   'piano-tiles': '钢琴块',
   watermelon: '软软西瓜',
+  sudoku: '数独',
 };
 
 const GAME_CAPTION: Record<SupportedGame, string> = {
@@ -209,6 +211,7 @@ const GAME_CAPTION: Record<SupportedGame, string> = {
   lucky_td: 'LUCKY TOWER DEFENSE',
   'piano-tiles': 'PIANO TILES',
   watermelon: 'MELON MELT',
+  sudoku: 'SUDOKU',
 };
 
 const GAME_THEME: Record<SupportedGame, string> = {
@@ -222,6 +225,7 @@ const GAME_THEME: Record<SupportedGame, string> = {
   lucky_td: 't-lucky-td',
   'piano-tiles': 't-piano-tiles',
   watermelon: 't-link',
+  sudoku: 't-sudoku',
 };
 
 const GAME_METRIC_LABEL: Record<SupportedGame, string> = {
@@ -235,6 +239,7 @@ const GAME_METRIC_LABEL: Record<SupportedGame, string> = {
   lucky_td: '最佳单局',
   'piano-tiles': '标准表现',
   watermelon: '最佳单局',
+  sudoku: '最佳单局',
 };
 
 const GAME_UNIT: Record<SupportedGame, string> = {
@@ -248,6 +253,7 @@ const GAME_UNIT: Record<SupportedGame, string> = {
   lucky_td: '分',
   'piano-tiles': '分',
   watermelon: '分',
+  sudoku: '分',
 };
 
 const AVATAR_VARIANT_COUNT = 5;
@@ -3472,6 +3478,7 @@ export default function RankingsPage() {
         .rk-page .game-card.t-2048::before { background: rgba(16, 185, 129, 0.4); }
         .rk-page .game-card.t-lucky-td::before { background: rgba(249, 115, 22, 0.4); }
         .rk-page .game-card.t-piano-tiles::before { background: rgba(99, 102, 241, 0.4); }
+        .rk-page .game-card.t-sudoku::before { background: rgba(13, 148, 136, 0.4); }
 
         .rk-page .game-card:hover {
           transform: translateY(-4px);
@@ -3513,6 +3520,7 @@ export default function RankingsPage() {
         .rk-page .game-card.t-2048 .gc-icon { color: #059669; box-shadow: 0 10px 20px rgba(16, 185, 129, 0.22); }
         .rk-page .game-card.t-lucky-td .gc-icon { color: #ea580c; box-shadow: 0 10px 20px rgba(249, 115, 22, 0.22); }
         .rk-page .game-card.t-piano-tiles .gc-icon { color: #4f46e5; box-shadow: 0 10px 20px rgba(99, 102, 241, 0.22); }
+        .rk-page .game-card.t-sudoku .gc-icon { color: #0f766e; box-shadow: 0 10px 20px rgba(13, 148, 136, 0.22); }
 
         .rk-page .gc-title-wrap { flex: 1; min-width: 0; }
 
@@ -3592,6 +3600,7 @@ export default function RankingsPage() {
         .rk-page .game-card.t-2048 .gc-metric-tag { background: rgba(16, 185, 129, 0.1); color: #059669; }
         .rk-page .game-card.t-lucky-td .gc-metric-tag { background: rgba(249, 115, 22, 0.1); color: #c2410c; }
         .rk-page .game-card.t-piano-tiles .gc-metric-tag { background: rgba(99, 102, 241, 0.1); color: #4f46e5; }
+        .rk-page .game-card.t-sudoku .gc-metric-tag { background: rgba(13, 148, 136, 0.1); color: #0f766e; }
 
         .rk-page .gc-top5 {
           display: flex;
@@ -5328,5 +5337,6 @@ function GameIcon({ gameType }: { gameType: SupportedGame }) {
   if (gameType === 'game_2048') return <Grid3X3 />;
   if (gameType === 'lucky_td') return <Shield />;
   if (gameType === 'piano-tiles') return <Music />;
+  if (gameType === 'sudoku') return <Brain />;
   return <Sparkles />;
 }

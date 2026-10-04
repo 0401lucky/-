@@ -1,7 +1,60 @@
 // src/lib/types/game.ts
 
 /** 游戏类型 */
-export type GameType = 'memory' | 'match3' | 'linkgame' | 'farm' | 'whack_mole' | 'roguelite' | 'minesweeper' | 'game_2048' | 'watermelon';
+export type GameType = 'memory' | 'match3' | 'linkgame' | 'farm' | 'whack_mole' | 'roguelite' | 'minesweeper' | 'game_2048' | 'watermelon' | 'sudoku';
+
+/** 数独难度 */
+export type SudokuDifficulty = 'easy' | 'normal' | 'hard';
+
+/** 数独服务端动作 */
+export type SudokuActionType = 'set' | 'erase' | 'note';
+
+export interface SudokuAction {
+  type: SudokuActionType;
+  index: number;
+  value?: number;
+}
+
+export interface SudokuCellView {
+  index: number;
+  value: number;
+  given: boolean;
+  notes?: number[];
+  error?: boolean;
+  conflict?: boolean;
+}
+
+export interface SudokuDifficultyConfig {
+  id: SudokuDifficulty;
+  label: string;
+  clues: number;
+  baseScore: number;
+  timeLimitSeconds: number;
+  mistakePenalty: number;
+}
+
+export interface SudokuSessionView {
+  sessionId: string;
+  difficulty: SudokuDifficulty;
+  startedAt: number;
+  expiresAt: number;
+  state: {
+    difficulty: SudokuDifficulty;
+    cells: SudokuCellView[];
+    status: 'playing' | 'won';
+    moves: number;
+    mistakes: number;
+    endedAt?: number;
+  };
+  scorePreview?: {
+    difficultyBase: number;
+    timeBonus: number;
+    mistakePenalty: number;
+    perfectBonus: number;
+    total: number;
+  };
+  pointRewardPreview?: number;
+}
 
 /** 连连看难度 */
 export type LinkGameDifficulty = 'easy' | 'normal' | 'hard';

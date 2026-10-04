@@ -242,6 +242,7 @@ const GAME_LABELS: Record<string, string> = {
   minesweeper: '扫雷',
   game_2048: '2048',
   watermelon: '软软西瓜',
+  sudoku: '数独',
   lottery: '幸运抽奖',
 };
 

@@ -16,11 +16,12 @@ var supportedGames = []gameDefinition{
 	{dbName: "lucky_td", apiName: "lucky_td"},
 	{dbName: "piano_tiles", apiName: "piano-tiles"},
 	{dbName: "watermelon", apiName: "watermelon"},
+	{dbName: "sudoku", apiName: "sudoku"},
 }
 
 func difficultyOptions(game gameDefinition) []GameDifficultyOption {
 	switch game.dbName {
-	case "linkgame", "memory", "whack_mole", "minesweeper":
+	case "linkgame", "memory", "whack_mole", "minesweeper", "sudoku":
 		return []GameDifficultyOption{
 			{Value: "easy", Label: "简单"},
 			{Value: "normal", Label: "普通"},

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"redemption/backend/internal/config"
+	"redemption/backend/internal/sudoku"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -42,6 +43,7 @@ func New(deps Dependencies) http.Handler {
 	match3Handlers := newMatch3Handlers(deps)
 	whackMoleHandlers := newWhackMoleHandlers(deps)
 	minesweeperHandlers := newMinesweeperHandlers(deps)
+	sudokuHandlers := newSudokuHandlers(deps)
 	pianoTilesHandlers := newPianoTilesHandlers(deps)
 	linkgameHandlers := newLinkgameHandlers(deps)
 	rogueliteHandlers := newRogueliteHandlers(deps)
@@ -257,6 +259,15 @@ func New(deps Dependencies) http.Handler {
 			minesweeperRouter.Post("/cancel", minesweeperHandlers.cancel)
 			minesweeperRouter.HandleFunc("/*", notMigratedHandler("minesweeper"))
 			minesweeperRouter.HandleFunc("/", notMigratedHandler("minesweeper"))
+		})
+		api.Route("/games/sudoku", func(sudokuRouter chi.Router) {
+			sudokuRouter.Get("/status", sudokuHandlers.status)
+			sudokuRouter.Post("/start", sudokuHandlers.start)
+			sudokuRouter.Post("/step", sudokuHandlers.step)
+			sudokuRouter.Post("/submit", sudokuHandlers.submit)
+			sudokuRouter.Post("/cancel", sudokuHandlers.cancel)
+			sudokuRouter.HandleFunc("/*", notMigratedHandler(sudoku.GameType))
+			sudokuRouter.HandleFunc("/", notMigratedHandler(sudoku.GameType))
 		})
 		api.Route("/games/piano-tiles", func(pianoRouter chi.Router) {
 			pianoRouter.Get("/status", pianoTilesHandlers.status)

@@ -51,6 +51,15 @@ func TestSummarizeGameRowsMatchesWinRules(t *testing.T) {
 		t.Fatalf("unexpected 2048 score summary: %+v", game2048Progress)
 	}
 
+	sudokuWin, _ := json.Marshal(map[string]any{"completed": true, "won": true})
+	sudokuProgress := summarizeGameRows([]gameRecordRow{
+		{Score: 3200, PointsEarned: 320, Payload: sudokuWin},
+		{Score: 1000, PointsEarned: 100, Payload: []byte(`{"completed":false,"won":false}`)},
+	}, "sudoku")
+	if sudokuProgress.Wins != 1 || sudokuProgress.BestScore != 3200 || sudokuProgress.TotalPlays != 2 {
+		t.Fatalf("unexpected sudoku progress: %+v", sudokuProgress)
+	}
+
 	luckyWin, _ := json.Marshal(map[string]any{"won": true, "status": 1, "wavesCleared": 30})
 	luckyLegacyWin, _ := json.Marshal(map[string]any{"status": 1, "wavesCleared": 30})
 	luckyLoss, _ := json.Marshal(map[string]any{"won": false, "status": 2, "wavesCleared": 29})

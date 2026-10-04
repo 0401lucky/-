@@ -21,6 +21,7 @@ import {
   Target,
   Home,
   Hash,
+  Brain,
   Music,
   type LucideIcon,
 } from 'lucide-react';
@@ -30,7 +31,7 @@ import type { PublicAchievement } from '@/lib/profile-achievements';
 // Game metadata
 // ──────────────────────────────────────────────────
 
-type GameKey = 'roguelite' | 'minesweeper' | 'whack-mole' | 'memory' | 'match3' | 'linkgame' | '2048' | 'lucky-td' | 'piano-tiles' | 'watermelon';
+type GameKey = 'roguelite' | 'minesweeper' | 'sudoku' | 'whack-mole' | 'memory' | 'match3' | 'linkgame' | '2048' | 'lucky-td' | 'piano-tiles' | 'watermelon';
 
 interface GameMeta {
   key: GameKey;
@@ -73,6 +74,15 @@ const GAMES: readonly GameMeta[] = [
     image: `${GAME_CARD_IMAGE_BASE}/covers/minesweeper.webp`,
     mascot: `${GAME_CARD_IMAGE_BASE}/mascots/minesweeper.webp`,
     href: '/games/minesweeper',
+  },
+  {
+    key: 'sudoku',
+    name: '数独',
+    description: '安静的九宫推理，少一点错误，多一点积分。',
+    Icon: Brain,
+    image: `${GAME_CARD_IMAGE_BASE}/covers/sudoku.webp`,
+    mascot: `${GAME_CARD_IMAGE_BASE}/mascots/sudoku.webp`,
+    href: '/games/sudoku',
   },
   {
     key: 'whack-mole',
