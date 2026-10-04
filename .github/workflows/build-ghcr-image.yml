@@ -26,6 +26,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify Gateway routes
+        run: |
+          node scripts/audit-gateway-allowed-cutovers.mjs
+          node scripts/audit-gateway-cutover-guard.mjs
+          node scripts/audit-gateway-upstreams.mjs
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

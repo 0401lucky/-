@@ -355,6 +355,22 @@
 	handle /api/games/linkgame/cancel {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
+	# 数独已覆盖前端实际调用的 status/start/step/submit/cancel，由 Go 验证落子与结算。
+	handle /api/games/sudoku/status {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/sudoku/start {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/sudoku/step {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/sudoku/submit {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/sudoku/cancel {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
 	# 星尘迷阵已覆盖前端实际调用的 status/start/step/submit/cancel，step 由 Go 接管权威会话推进。
 	handle /api/games/roguelite/status {
 		reverse_proxy {$API_UPSTREAM:api:8080}
