@@ -30,7 +30,7 @@ type SimplePeriod = 'all' | 'monthly';
 type LotteryPeriod = 'daily' | 'weekly' | 'monthly';
 type EcoPeriod = 'daily' | 'weekly' | 'monthly';
 
-type SupportedGame = 'linkgame' | 'match3' | 'memory' | 'whack_mole' | 'roguelite' | 'minesweeper' | 'game_2048' | 'lucky_td' | 'piano-tiles';
+type SupportedGame = 'linkgame' | 'match3' | 'memory' | 'whack_mole' | 'roguelite' | 'minesweeper' | 'game_2048' | 'lucky_td' | 'piano-tiles' | 'watermelon';
 
 interface GameOverallEntry {
   rank: number;
@@ -195,6 +195,7 @@ const GAME_LABEL: Record<SupportedGame, string> = {
   game_2048: '2048',
   lucky_td: '幸运塔防',
   'piano-tiles': '钢琴块',
+  watermelon: '软软西瓜',
 };
 
 const GAME_CAPTION: Record<SupportedGame, string> = {
@@ -207,6 +208,7 @@ const GAME_CAPTION: Record<SupportedGame, string> = {
   game_2048: '2048',
   lucky_td: 'LUCKY TOWER DEFENSE',
   'piano-tiles': 'PIANO TILES',
+  watermelon: 'MELON MELT',
 };
 
 const GAME_THEME: Record<SupportedGame, string> = {
@@ -219,6 +221,7 @@ const GAME_THEME: Record<SupportedGame, string> = {
   game_2048: 't-2048',
   lucky_td: 't-lucky-td',
   'piano-tiles': 't-piano-tiles',
+  watermelon: 't-link',
 };
 
 const GAME_METRIC_LABEL: Record<SupportedGame, string> = {
@@ -231,6 +234,7 @@ const GAME_METRIC_LABEL: Record<SupportedGame, string> = {
   game_2048: '最佳单局',
   lucky_td: '最佳单局',
   'piano-tiles': '标准表现',
+  watermelon: '最佳单局',
 };
 
 const GAME_UNIT: Record<SupportedGame, string> = {
@@ -243,6 +247,7 @@ const GAME_UNIT: Record<SupportedGame, string> = {
   game_2048: '分',
   lucky_td: '分',
   'piano-tiles': '分',
+  watermelon: '分',
 };
 
 const AVATAR_VARIANT_COUNT = 5;

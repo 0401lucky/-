@@ -241,6 +241,7 @@ const GAME_LABELS: Record<string, string> = {
   roguelite: '肉鸽挑战',
   minesweeper: '扫雷',
   game_2048: '2048',
+  watermelon: '软软西瓜',
   lottery: '幸运抽奖',
 };
 

@@ -30,7 +30,7 @@ import type { PublicAchievement } from '@/lib/profile-achievements';
 // Game metadata
 // ──────────────────────────────────────────────────
 
-type GameKey = 'roguelite' | 'minesweeper' | 'whack-mole' | 'memory' | 'match3' | 'linkgame' | '2048' | 'lucky-td' | 'piano-tiles';
+type GameKey = 'roguelite' | 'minesweeper' | 'whack-mole' | 'memory' | 'match3' | 'linkgame' | '2048' | 'lucky-td' | 'piano-tiles' | 'watermelon';
 
 interface GameMeta {
   key: GameKey;
@@ -47,6 +47,15 @@ interface GameMeta {
 const GAME_CARD_IMAGE_BASE = '/images-optimized/ui/games';
 
 const GAMES: readonly GameMeta[] = [
+  {
+    key: 'watermelon',
+    name: '软软西瓜',
+    description: '软弹水果，碰撞合成大西瓜，攒下游戏积分。',
+    Icon: Apple,
+    image: '/games/watermelon/cover.webp',
+    mascot: '/games/watermelon/fruits/watermelon.webp',
+    href: '/games/watermelon',
+  },
   {
     key: 'roguelite',
     name: '星尘迷阵',

@@ -311,6 +311,22 @@
 	handle /api/games/piano-tiles/status {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
+	# 软软西瓜：分段回放校验、积分结算与恢复。
+	handle /api/games/watermelon/status {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/watermelon/start {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/watermelon/checkpoint {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/watermelon/submit {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/games/watermelon/cancel {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
 	handle /api/games/piano-tiles/personal-bests {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}

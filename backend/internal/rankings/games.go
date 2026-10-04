@@ -15,6 +15,7 @@ var supportedGames = []gameDefinition{
 	{dbName: "game_2048", apiName: "game_2048"},
 	{dbName: "lucky_td", apiName: "lucky_td"},
 	{dbName: "piano_tiles", apiName: "piano-tiles"},
+	{dbName: "watermelon", apiName: "watermelon"},
 }
 
 func difficultyOptions(game gameDefinition) []GameDifficultyOption {
