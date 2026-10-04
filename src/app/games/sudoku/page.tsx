@@ -119,6 +119,7 @@ export default function SudokuPage() {
   const [showRules, setShowRules] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
+  const [cooldownEndsAt, setCooldownEndsAt] = useState(0);
   const [result, setResult] = useState<SudokuRecord | null>(null);
   const [historySize, setHistorySize] = useState(0);
   const historyRef = useRef<SudokuCellView[][]>([]);
@@ -142,6 +143,8 @@ export default function SudokuPage() {
     ? Math.max(0, Math.ceil((session.expiresAt - clock) / 1000))
     : 0;
   const selectedValue = selectedCell?.value ?? 0;
+  const cooldownRemaining = Math.max(0, Math.ceil((cooldownEndsAt - clock) / 1000));
+  const inCooldown = cooldownRemaining > 0;
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -151,6 +154,9 @@ export default function SudokuPage() {
         throw new Error(payload?.message ?? (response.status === 401 ? '请先登录后开始游戏' : '加载数独状态失败'));
       }
       setStatus(payload.data);
+      const now = Date.now();
+      setClock(now);
+      setCooldownEndsAt(payload.data.inCooldown ? now + payload.data.cooldownRemaining * 1000 : 0);
       if (payload.data.activeSession) {
         setSession(payload.data.activeSession);
         setSelectedDifficulty(payload.data.activeSession.difficulty);
@@ -170,11 +176,18 @@ export default function SudokuPage() {
   }, [fetchStatus]);
 
   useEffect(() => {
-    if (phase !== 'playing' && phase !== 'submitting') return;
-    setClock(Date.now());
-    const timer = window.setInterval(() => setClock(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [phase]);
+    if (phase !== 'playing' && phase !== 'submitting' && !inCooldown) return;
+    const updateClock = () => setClock(Date.now());
+    updateClock();
+    const timer = window.setInterval(updateClock, 1000);
+    window.addEventListener('focus', updateClock);
+    document.addEventListener('visibilitychange', updateClock);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', updateClock);
+      document.removeEventListener('visibilitychange', updateClock);
+    };
+  }, [phase, inCooldown]);
 
   const settleGame = useCallback(async (sessionId: string) => {
     if (settleBusyRef.current) return;
@@ -447,7 +460,7 @@ export default function SudokuPage() {
                     type="button"
                     className={`sudoku-difficulty-card ${DIFFICULTY_TONE[difficulty.id]} ${selectedDifficulty === difficulty.id ? 'is-selected' : ''}`}
                     onClick={() => setSelectedDifficulty(difficulty.id)}
-                    disabled={loading || status?.inCooldown}
+                    disabled={loading || inCooldown}
                   >
                     <span className="sudoku-difficulty-number">{difficulty.clues}</span>
                     <span className="sudoku-difficulty-copy">
@@ -458,12 +471,12 @@ export default function SudokuPage() {
                   </button>
                 ))}
               </div>
-              {status?.inCooldown && <div className="sudoku-cooldown"><Clock3 size={15} /> 冷却中，还需等待 {status.cooldownRemaining} 秒</div>}
+              {inCooldown && <div className="sudoku-cooldown"><Clock3 size={15} /> 冷却中，还需等待 {cooldownRemaining} 秒</div>}
               <button
                 type="button"
                 className="sudoku-primary-button"
                 onClick={() => void startGame(selectedDifficulty)}
-                disabled={loading || status?.inCooldown}
+                disabled={loading || inCooldown}
               >
                 {loading ? <Loader2 size={17} className="spin" /> : <Play size={17} fill="currentColor" />}
                 {loading ? '准备棋盘' : '开始数独'}
@@ -763,6 +776,7 @@ export default function SudokuPage() {
           .sudoku-cell-value { font-size: clamp(16px, 6.3vw, 27px); }
           .sudoku-notes { font-size: clamp(5px, 2vw, 9px); }
           .sudoku-side-column { grid-template-columns: 1fr; }
+          .sudoku-input-panel { grid-row: 1; }
           .sudoku-stats-panel, .sudoku-input-panel, .sudoku-tip-panel { padding: 15px; }
           .sudoku-bottom-note { flex-direction: column; align-items: flex-start; padding-bottom: 15px; }
           .sudoku-result-preview { flex-wrap: wrap; }
