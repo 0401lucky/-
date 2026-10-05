@@ -21,6 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import { CancelConfirmModal } from '../_components/CancelConfirmModal';
+import { PersonalBestTime } from '../_components/PersonalBestTime';
 import { fetchGameRequest, gameRequestErrorMessage } from '../_lib/request';
 import {
   colOf,
@@ -58,6 +59,7 @@ interface SudokuRecord {
 }
 
 interface SudokuStatus {
+  bestTimes?: Partial<Record<SudokuDifficulty, number>>;
   balance: number;
   dailyStats: { gamesPlayed: number; pointsEarned: number };
   inCooldown: boolean;
@@ -466,6 +468,7 @@ export default function SudokuPage() {
                     <span className="sudoku-difficulty-copy">
                       <strong>{difficulty.label}</strong>
                       <small>{DIFFICULTY_NOTE[difficulty.id]}</small>
+                      <small><PersonalBestTime duration={status?.bestTimes?.[difficulty.id]} loaded={!!status?.bestTimes} /></small>
                     </span>
                     <span className="sudoku-difficulty-time"><Clock3 size={13} /> {Math.round(difficulty.timeLimitSeconds / 60)} 分钟</span>
                   </button>

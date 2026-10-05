@@ -59,6 +59,15 @@ describe('数独冷却倒计时', () => {
     return found!;
   }
 
+  it('按难度展示个人最快纪录，未通关的难度显示空状态', async () => {
+    vi.mocked(fetchGameRequest).mockResolvedValueOnce(statusResponse({ bestTimes: { easy: 65001, hard: 125000 } }));
+    await act(async () => root.render(<SudokuPage />));
+    const cards = container.querySelectorAll('.sudoku-difficulty-card');
+    expect(cards[0].textContent).toContain('个人最快：01:06');
+    expect(cards[1].textContent).toContain('个人最快：暂无通关纪录');
+    expect(cards[2].textContent).toContain('个人最快：02:05');
+  });
+
   it('选择页逐秒倒计时，到期后无需刷新即可选择难度并开始', async () => {
     vi.mocked(fetchGameRequest).mockResolvedValueOnce(statusResponse({ inCooldown: true, cooldownRemaining: 5 }));
     await act(async () => root.render(<SudokuPage />));

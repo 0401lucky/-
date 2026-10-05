@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"redemption/backend/internal/auth"
+	"redemption/backend/internal/gamerecords"
 	"redemption/backend/internal/systemconfig"
 
 	"github.com/jackc/pgx/v5"
@@ -121,6 +122,10 @@ func (service *Service) Status(ctx context.Context, user auth.User) (StatusData,
 		if err != nil {
 			return err
 		}
+		bestTimes, err := gamerecords.BestTimes(ctx, tx, user.ID, GameType)
+		if err != nil {
+			return err
+		}
 		active, err := getActiveSessionForUpdate(ctx, tx, user.ID)
 		if err != nil {
 			return err
@@ -142,6 +147,7 @@ func (service *Service) Status(ctx context.Context, user auth.User) (StatusData,
 			DailyLimit:         dailyLimit,
 			PointsLimitReached: false,
 			Records:            records,
+			BestTimes:          bestTimes,
 			Difficulties:       DifficultyList(),
 			ActiveSession:      activeView,
 		}

@@ -130,6 +130,7 @@ type DailyStats struct {
 }
 
 type StatusData struct {
+	BestTimes          map[string]int64   `json:"bestTimes"`
 	Balance            int64              `json:"balance"`
 	DailyStats         DailyStats         `json:"dailyStats"`
 	InCooldown         bool               `json:"inCooldown"`

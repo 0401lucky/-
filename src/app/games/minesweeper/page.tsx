@@ -32,6 +32,7 @@ import {
 } from '@/lib/minesweeper-engine';
 import type { MinesweeperGameRecord, MinesweeperSessionView } from '@/lib/minesweeper-types';
 import { CancelConfirmModal } from '../_components/CancelConfirmModal';
+import { PersonalBestTime } from '../_components/PersonalBestTime';
 import { usePausedGameClock } from '../_hooks/usePausedGameClock';
 import { fetchGameRequest, gameRequestErrorMessage } from '../_lib/request';
 
@@ -39,6 +40,7 @@ type Phase = 'ready' | 'playing' | 'finished';
 type ToolMode = 'reveal' | 'flag';
 
 interface MinesweeperStatus {
+  bestTimes?: Partial<Record<MinesweeperDifficulty, number>>;
   balance: number;
   dailyStats: { gamesPlayed: number; pointsEarned: number } | null;
   inCooldown: boolean;
@@ -657,6 +659,9 @@ export default function MinesweeperPage() {
                           </div>
 
                           <div className="space-y-2 border-t border-slate-100 pt-4 transition-colors group-hover:border-white/20">
+                            <div className="text-sm font-bold text-slate-500 transition-colors group-hover:text-white/90">
+                              <PersonalBestTime duration={status?.bestTimes?.[config.id]} loaded={!!status?.bestTimes} />
+                            </div>
                             <div className="flex justify-between text-sm">
                               <span className="font-bold text-slate-400 transition-colors group-hover:text-white/70">
                                 雷数
