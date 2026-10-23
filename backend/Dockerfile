@@ -1,4 +1,4 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:1.27.3-alpine AS builder
 WORKDIR /src
 
 COPY go.mod go.sum ./
@@ -10,7 +10,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o
 	&& CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate \
 	&& CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/migrate-d1 ./cmd/migrate-d1
 
-FROM alpine:3.20
+FROM alpine:3.24
 WORKDIR /app
 
 RUN adduser -D -H appuser

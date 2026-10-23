@@ -37,6 +37,9 @@
   ],
   "exclude": [
     "node_modules",
+    ".claude",
+    ".tmp",
+    "backups",
     ".next/dev/types"
   ]
 }

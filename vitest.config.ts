@@ -11,6 +11,8 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    // Long replay suites compete for CPU and exceed their timeouts with the default worker count.
+    maxWorkers: 2,
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],

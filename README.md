@@ -41,21 +41,19 @@
 
 ## 技术栈
 
-- **框架**：Next.js 16（App Router）
-- **语言**：TypeScript
-- **UI**：React 19 + Tailwind CSS 4
-- **运行时**：Cloudflare Workers（通过 `@opennextjs/cloudflare`）
-- **数据层**：Cloudflare D1（主） / `@vercel/kv` 兼容回退（辅）
-- **对象存储**：Cloudflare R2
-  - OpenNext 增量缓存 Bucket
-  - 反馈图片 Bucket
-  - 卡牌图片 Bucket
-- **测试**：Vitest
+- **框架**：Next.js 16.4（App Router）
+- **语言**：TypeScript 5.9 + Go 1.27.3
+- **UI**：React 19.3 + Tailwind CSS 4.3
+- **运行时**：Node.js 24.22.1 LTS + Go API / Worker
+- **数据层**：PostgreSQL 16 + Redis 7
+- **文件存储**：S3 兼容对象存储 / 本地反馈附件数据卷
+- **部署入口**：Docker + Caddy Gateway
+- **测试**：Vitest 4.1 + Go 单元测试与集成测试
 - **代码检查**：ESLint
 
 ---
 
-## 当前部署形态
+## 历史部署形态（Cloudflare）
 
 ### Cloudflare 绑定（以 `wrangler.jsonc` 为准）
 - `KV_DB`：D1 数据库
@@ -75,7 +73,8 @@
 
 ## 环境要求
 
-- Node.js **20 / 22 / 25** 均可，推荐 **LTS**
+- Node.js **24.22.1 LTS**（见 `.nvmrc`，开发与 Docker 使用相同版本）
+- Go **1.27.3**（Go API / Worker，见 `backend/go.mod`）
 - npm 10+
 - Cloudflare 部署需要：
   - Wrangler 4+
@@ -164,7 +163,7 @@ npm run dev
 
 ---
 
-## 部署到 Cloudflare Workers（推荐）
+## 历史 Cloudflare Workers 部署说明
 
 ### 1. 登录 Cloudflare
 

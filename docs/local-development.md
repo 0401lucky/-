@@ -75,7 +75,7 @@ docker compose -f compose.yml down
 
 ## 原生运行
 
-前端要求 Node.js 22 LTS，后端要求 Go 1.23。原生运行还需要自行准备 PostgreSQL、Redis 和 Caddy 路由，因此只建议用于单独调试某个服务；完整联调优先使用 Docker Compose。
+前端使用 Node.js 24.22.1 LTS（版本见 `.nvmrc`，`package.json` 限定 Node.js 24），后端使用 Go 1.27.3。Docker 构建使用相同版本；Go 的自动工具链会按 `backend/go.mod` 下载所需版本。原生运行还需要自行准备 PostgreSQL、Redis 和 Caddy 路由，因此只建议用于单独调试某个服务；完整联调优先使用 Docker Compose。
 
 前端质量检查：
 
@@ -86,6 +86,14 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+Vitest 最多启动 2 个 worker，避免游戏长回放测试因 CPU 争用超时。依赖安全检查使用官方 registry：
+
+```powershell
+npm audit --registry=https://registry.npmjs.org
+```
+
+当前未启用 React Compiler；新版 Hooks 插件的 Compiler 迁移建议以 warning 展示，基础 Hooks 检查继续使用 Next.js 默认规则。
 
 Go 单元测试：
 

@@ -2,6 +2,8 @@
 
 这个目录用于承载 Zeabur 上的 Go API 与 Go Worker。
 
+工具链使用 **Go 1.27.3**，版本由 `go.mod` 和 Docker 构建镜像保持一致；开启 Go 自动工具链时会自动下载所需版本。
+
 当前状态：
 
 - 已实现 `/healthz`

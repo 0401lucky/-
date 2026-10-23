@@ -2,6 +2,9 @@
   "name": "redemption-code-distributor",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
   "scripts": {
     "build": "next build --webpack",
     "dev": "next dev",
@@ -32,32 +35,32 @@
     "migrate:feedback-images:execute": "node scripts/migrate-feedback-images-to-blob.mjs --execute"
   },
   "dependencies": {
-    "@tailwindcss/postcss": "^4.1.18",
-    "@types/node": "^25.0.9",
-    "@types/react": "^19.2.8",
-    "@types/react-dom": "^19.2.3",
-    "autoprefixer": "^10.4.23",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.6.1",
     "canvas-confetti": "^1.9.4",
     "clsx": "^2.1.1",
     "lucide-react": "^0.562.0",
-    "nanoid": "^3.3.11",
-    "next": "^16.1.3",
-    "postcss": "^8.5.6",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
+    "nanoid": "^3.3.20",
+    "next": "^16.4.2",
+    "postcss": "^8.5.31",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "seedrandom": "^3.0.5",
-    "tailwind-merge": "^3.4.0",
-    "tailwindcss": "^4.1.18"
+    "tailwind-merge": "^3.7.0",
+    "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
     "@types/canvas-confetti": "^1.9.0",
     "@types/seedrandom": "^3.0.8",
-    "eslint": "^9.39.2",
-    "eslint-config-next": "^16.1.4",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.4.2",
     "jsdom": "^27.4.0",
     "typescript": "5.9.3",
-    "vite-tsconfig-paths": "^6.0.5",
-    "vitest": "^4.0.18"
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^4.1.12"
   }
 }

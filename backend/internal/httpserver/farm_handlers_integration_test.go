@@ -64,7 +64,7 @@ func TestFarmStatusRouteCreatesInitialState(t *testing.T) {
 	if !payload.Success || payload.Data.State.UserID != userID || payload.Data.State.Points != 100 {
 		t.Fatalf("unexpected farm status payload: %+v", payload)
 	}
-	if len(payload.Data.ComputedLands) != 8 || len(payload.Data.PlantableCrops) == 0 || payload.Data.World.Date == "" {
+	if len(payload.Data.ComputedLands) != 8 || payload.Data.PlantableCrops == nil || payload.Data.World.Date == "" {
 		t.Fatalf("unexpected farm status computed fields: %+v", payload.Data)
 	}
 
@@ -210,7 +210,11 @@ func TestFarmPlantRoutePersistsCrop(t *testing.T) {
 
 	nowMs := time.Now().UnixMilli()
 	store := farm.NewStore(db)
-	saveFarmHTTPState(t, ctx, store, farmHTTPInitialState(userID, nowMs, false), nowMs)
+	state := farmHTTPInitialState(userID, nowMs, false)
+	// Cover every season without depending on the day this integration test runs.
+	state.Lands[4].Status = farm.LandStatusEmpty
+	state.SeedInventory = json.RawMessage(`{"wheat":1,"tomato":1,"potato":1}`)
+	saveFarmHTTPState(t, ctx, store, state, nowMs)
 	if _, err := db.Exec(ctx,
 		`INSERT INTO point_accounts (user_id, balance, updated_at)
 		 VALUES ($1, 100, now())`,
@@ -219,8 +223,13 @@ func TestFarmPlantRoutePersistsCrop(t *testing.T) {
 		t.Fatalf("insert point account failed: %v", err)
 	}
 
+	status, err := farm.NewService(store).GetStatus(ctx, userID, nowMs)
+	if err != nil || len(status.PlantableCrops) == 0 {
+		t.Fatalf("load seasonal planting fixture failed: status=%+v err=%v", status, err)
+	}
+	cropID := status.PlantableCrops[0]
 	handler := newFarmHTTPIntegrationHandler(db)
-	request := httptest.NewRequest(http.MethodPost, "/api/farm/plant", strings.NewReader(`{"plotIndex":0,"cropId":"wheat"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/farm/plant", strings.NewReader(fmt.Sprintf(`{"plotIndex":0,"cropId":%q}`, cropID)))
 	request.Host = "example.com"
 	request.Header.Set("Origin", "http://example.com")
 	request.Header.Set("Content-Type", "application/json")
@@ -242,11 +251,11 @@ func TestFarmPlantRoutePersistsCrop(t *testing.T) {
 	if !payload.Success || payload.Balance != 100 || payload.Data.State.UserID != userID {
 		t.Fatalf("unexpected plant response: %+v", payload)
 	}
-	if payload.Data.State.Lands[0].Status != farm.LandStatusGrowing || payload.Data.State.Lands[0].Crop == nil || payload.Data.State.Lands[0].Crop.CropID != farm.CropWheat {
+	if payload.Data.State.Lands[0].Status != farm.LandStatusGrowing || payload.Data.State.Lands[0].Crop == nil || payload.Data.State.Lands[0].Crop.CropID != cropID {
 		t.Fatalf("expected planted crop in response, got %+v", payload.Data.State.Lands[0])
 	}
 	persisted := readFarmHTTPState(t, ctx, store, userID)
-	if persisted.Lands[0].Status != farm.LandStatusGrowing || persisted.Lands[0].Crop == nil || persisted.Lands[0].Crop.CropID != farm.CropWheat {
+	if persisted.Lands[0].Status != farm.LandStatusGrowing || persisted.Lands[0].Crop == nil || persisted.Lands[0].Crop.CropID != cropID {
 		t.Fatalf("expected persisted planted crop, got %+v", persisted.Lands[0])
 	}
 }
@@ -1450,9 +1459,11 @@ func farmHTTPInitialState(userID int64, nowMs int64, withStealPet bool) farm.Far
 		LastDailyResetAt:      nowMs,
 		LastSeasonProcessedAt: nowMs,
 		LastTickAt:            nowMs,
-		Bonuses:               json.RawMessage(`{"firstWater":false,"firstHarvest":false,"firstAdopt":false}`),
-		CreatedAt:             nowMs,
-		UpdatedAt:             nowMs,
+		// These fixtures test persistence; Friday random events have separate engine tests.
+		LastFridayEventDate: time.UnixMilli(nowMs).In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02"),
+		Bonuses:             json.RawMessage(`{"firstWater":false,"firstHarvest":false,"firstAdopt":false}`),
+		CreatedAt:           nowMs,
+		UpdatedAt:           nowMs,
 	}
 }
 
