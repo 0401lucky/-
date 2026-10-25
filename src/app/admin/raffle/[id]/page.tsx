@@ -8,6 +8,7 @@ import {
   AlertTriangle, RefreshCw, Eye, Pencil, Plus, Trash2, Coins, Save, X
 } from 'lucide-react';
 import { formatChinaDateTime, formatChinaDateTimeInput, parseChinaDateTimeInput } from '@/lib/time';
+import { useAdminFeedback } from '@/components/admin/AdminFeedback';
 
 interface RafflePrize {
   id: string;
@@ -96,6 +97,7 @@ function formatPoints(points: number): string {
 }
 
 export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { notify, confirm } = useAdminFeedback();
   const { id } = use(params);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -182,7 +184,11 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
   }, [searchParams, raffle?.status]);
 
   const handlePublish = async () => {
-    if (!confirm('确定要发布活动吗？发布后将无法修改。')) return;
+    if (!(await confirm({
+      title: '发布抽奖活动？',
+      description: '发布后活动将开放参与，且无法修改。请确认活动配置无误。',
+      confirmLabel: '发布活动',
+    }))) return;
 
     setPublishing(true);
     setError(null);
@@ -204,7 +210,11 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
   };
 
   const handleDraw = async () => {
-    if (!confirm('确定要立即开奖吗？开奖后活动将结束。')) return;
+    if (!(await confirm({
+      title: '立即开奖？',
+      description: '开奖后活动将结束，并按活动规则发放奖励。',
+      confirmLabel: '确认开奖',
+    }))) return;
 
     setDrawing(true);
     setError(null);
@@ -215,7 +225,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
 
       if (data.success) {
         await fetchData();
-        alert(data.message || `开奖成功！共 ${data.winners?.length || 0} 人中奖`);
+        notify(data.message || `开奖成功！共 ${data.winners?.length || 0} 人中奖`);
       } else {
         setError(data.message || '开奖失败');
       }
@@ -227,7 +237,12 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
   };
 
   const handleCancel = async () => {
-    if (!confirm('确定要取消活动吗？此操作不可撤销。')) return;
+    if (!(await confirm({
+      title: '取消抽奖活动？',
+      description: '确定取消活动吗？此操作不可撤销。',
+      confirmLabel: '取消活动',
+      danger: true,
+    }))) return;
 
     setCancelling(true);
     setError(null);
@@ -249,7 +264,11 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
   };
 
   const handleRetryFailedRewards = async () => {
-    if (!confirm('确定要重试发放失败或超时未确认的奖励吗？')) return;
+    if (!(await confirm({
+      title: '重试奖励发放？',
+      description: '将重新处理发放失败或超时未确认的奖励。',
+      confirmLabel: '确认重试',
+    }))) return;
 
     setRetrying(true);
     setError(null);
@@ -260,7 +279,7 @@ export default function AdminRaffleDetailPage({ params }: { params: Promise<{ id
 
       if (data.success) {
         await fetchData();
-        alert(data.message || '重试完成');
+        notify(data.message || '重试完成');
       } else {
         setError(data.message || '重试失败');
       }

@@ -1,608 +1,991 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react';
 import Link from 'next/link';
 import {
-  Plus, Pause, Play, Trash2,
-  Loader2, AlertCircle, Package,
-  X, Check, Gift, Pin,
+  ArrowDownWideNarrow,
+  ArrowUpRight,
+  CalendarClock,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  CirclePlay,
+  FolderOpen,
+  Gift,
+  Loader2,
+  Package,
+  Pause,
+  Pin,
+  Play,
+  Plus,
+  RefreshCw,
+  Search,
+  SlidersHorizontal,
+  Ticket,
+  Trash2,
 } from 'lucide-react';
-import { formatChinaDateTime } from '@/lib/time';
+import {
+  AdminDialog,
+  AdminError,
+  AdminLoading,
+  AdminPageHeader,
+} from '@/components/admin/AdminUI';
+import { useAdminFeedback } from '@/components/admin/AdminFeedback';
+import {
+  getProjectProgress,
+  getProjectRemaining,
+  getProjectRewardKind,
+  selectAdminProjects,
+  type AdminProject,
+  type ProjectRewardKind,
+  type ProjectSort,
+} from '@/lib/admin/projects';
+import { adminRequest } from '@/lib/admin/request';
+import { formatChinaDateTime, parseChinaDateTimeInput } from '@/lib/time';
 
-interface Project {
-  id: string;
-  name: string;
-  description: string;
-  maxClaims: number;
-  claimedCount: number;
-  codesCount: number;
-  status: 'active' | 'paused' | 'exhausted';
-  createdAt: number;
-  createdBy: string;
-  rewardType?: 'code' | 'direct';
-  directPoints?: number;
-  directDollars?: number;
-  newUserOnly?: boolean;
-  pinned?: boolean;
-  pinnedAt?: number;
-  autoPauseAt?: number;
-  autoPausedAt?: number;
+const statusLabels = {
+  active: '进行中',
+  paused: '已暂停',
+  exhausted: '已领完',
+};
+const statusStyles = {
+  active: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  paused: 'border-amber-200 bg-amber-50 text-amber-800',
+  exhausted: 'border-stone-200 bg-stone-100 text-stone-500',
+};
+const rewardLabels = {
+  points: '直充积分',
+  code: '历史兑换码',
+  legacy: '历史额度',
+};
+const emptyDraft = {
+  name: '',
+  description: '',
+  maxClaims: '100',
+  directPoints: '500',
+  autoPauseAt: '',
+  newUserOnly: false,
+};
+
+function StatusBadge({ project }: { project: AdminProject }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-1 text-xs font-medium ${statusStyles[project.status]}`}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      {statusLabels[project.status]}
+    </span>
+  );
+}
+
+function ClaimProgress({ project }: { project: AdminProject }) {
+  const progress = getProjectProgress(project);
+  return (
+    <div className="min-w-28">
+      <div className="mb-2 flex items-center justify-between gap-4 text-xs tabular-nums">
+        <span className="text-stone-600">
+          {project.claimedCount.toLocaleString()}{' '}
+          <span className="text-stone-400">
+            / {project.maxClaims.toLocaleString()}
+          </span>
+        </span>
+        <span className="text-stone-400">{Math.round(progress)}%</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label={`${project.name}领取进度`}
+        aria-valuenow={Math.round(progress)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        className="h-1.5 overflow-hidden rounded-full bg-stone-100"
+      >
+        <div
+          className={`h-full rounded-full ${progress >= 90 ? 'bg-amber-500' : 'bg-orange-600'}`}
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+    </div>
+  );
 }
 
 export default function AdminPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const { notify, confirm } = useAdminFeedback();
+  const [projects, setProjects] = useState<AdminProject[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [query, setQuery] = useState('');
+  const [status, setStatus] = useState<'all' | AdminProject['status']>('all');
+  const [reward, setReward] = useState<'all' | ProjectRewardKind>('all');
+  const [audience, setAudience] = useState<'all' | 'new' | 'everyone'>('all');
+  const [sort, setSort] = useState<ProjectSort>('pinned');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+  const [pendingIds, setPendingIds] = useState(new Set<string>());
+  const pendingRef = useRef(new Set<string>());
+  const fetchController = useRef<AbortController | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [draft, setDraft] = useState(emptyDraft);
+  const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [maxClaims, setMaxClaims] = useState('100');
-  const [directPoints, setDirectPoints] = useState('500');
-  const [autoPauseAt, setAutoPauseAt] = useState('');
-  const [newUserOnly, setNewUserOnly] = useState(false);
-
-  const fetchData = useCallback(async () => {
+  const fetchProjects = useCallback(async () => {
+    fetchController.current?.abort();
+    const controller = new AbortController();
+    fetchController.current = controller;
     try {
-      const projectsRes = await fetch('/api/admin/projects');
-      if (projectsRes.ok) {
-        const data = await projectsRes.json();
-        if (data.success) {
-          setProjects(data.projects);
-        }
-      }
+      const data = await adminRequest<{ projects: AdminProject[] }>(
+        '/api/admin/projects',
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted) return;
+      if (!Array.isArray(data.projects))
+        throw new Error('项目列表数据异常，请重试');
+      setProjects(data.projects);
+      setLoaded(true);
+      setError(null);
     } catch (error) {
-      console.error('Fetch error:', error);
+      if (!controller.signal.aborted)
+        setError(error instanceof Error ? error.message : '获取项目列表失败');
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    void fetchData();
-  }, [fetchData]);
-
-  const scheduleSuccessClear = useCallback(() => {
-    if (successTimeoutRef.current) {
-      clearTimeout(successTimeoutRef.current);
-    }
-    successTimeoutRef.current = setTimeout(() => {
-      setSuccess(null);
-      successTimeoutRef.current = null;
-    }, 5000);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (successTimeoutRef.current) {
-        clearTimeout(successTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  const handleCreateProject = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) {
-      setError('请输入项目名称');
-      return;
-    }
-    const points = Number.parseInt(directPoints, 10);
-    if (!Number.isSafeInteger(points) || points <= 0) {
-      setError('请输入有效的直充积分（正整数）');
-      return;
-    }
-
-    setCreating(true);
+  const refreshProjects = () => {
+    setLoading(true);
     setError(null);
+    void fetchProjects();
+  };
 
+  useEffect(() => {
+    void fetchProjects();
+    return () => fetchController.current?.abort();
+  }, [fetchProjects]);
+
+  const filtered = useMemo(
+    () =>
+      selectAdminProjects(projects, { query, status, reward, audience, sort }),
+    [projects, query, status, reward, audience, sort],
+  );
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const visibleProjects = filtered.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+  const activeFilters = Boolean(
+    query ||
+      status !== 'all' ||
+      reward !== 'all' ||
+      audience !== 'all' ||
+      sort !== 'pinned',
+  );
+  const summary = [
+    {
+      label: '全部项目',
+      value: projects.length,
+      detail: '当前项目总数',
+      Icon: FolderOpen,
+    },
+    {
+      label: '进行中',
+      value: projects.filter((item) => item.status === 'active').length,
+      detail: '正在开放领取',
+      Icon: CirclePlay,
+    },
+    {
+      label: '剩余可领名额',
+      value: projects
+        .filter((item) => item.status === 'active')
+        .reduce((sum, item) => sum + getProjectRemaining(item), 0),
+      detail: '仅统计进行中的项目',
+      Icon: Ticket,
+    },
+    {
+      label: '累计领取',
+      value: projects.reduce((sum, item) => sum + item.claimedCount, 0),
+      detail: '全部项目领取总量',
+      Icon: CheckCircle2,
+    },
+  ];
+
+  const resetFilters = () => {
+    setQuery('');
+    setStatus('all');
+    setReward('all');
+    setAudience('all');
+    setSort('pinned');
+    setPage(1);
+  };
+
+  const mutateProject = async (
+    project: AdminProject,
+    patch: Partial<AdminProject> | null,
+    message: string,
+  ) => {
+    if (pendingRef.current.has(project.id)) return;
+    pendingRef.current.add(project.id);
+    setPendingIds(new Set(pendingRef.current));
+    // 避免操作前发出的刷新响应覆盖已成功的更新。
+    fetchController.current?.abort();
+    setLoading(false);
+    try {
+      await adminRequest(
+        `/api/admin/projects/${encodeURIComponent(project.id)}`,
+        patch
+          ? {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(patch),
+            }
+          : { method: 'DELETE' },
+      );
+      setProjects((current) =>
+        patch
+          ? current.map((item) =>
+              item.id === project.id
+                ? {
+                    ...item,
+                    ...patch,
+                    ...(patch.pinned === true ? { pinnedAt: Date.now() } : {}),
+                  }
+                : item,
+            )
+          : current.filter((item) => item.id !== project.id),
+      );
+      notify(message);
+    } catch (error) {
+      notify(
+        error instanceof Error ? error.message : '操作失败，请重试',
+        'error',
+      );
+    } finally {
+      pendingRef.current.delete(project.id);
+      setPendingIds(new Set(pendingRef.current));
+    }
+  };
+
+  const deleteProject = async (project: AdminProject) => {
+    if (
+      await confirm({
+        title: '删除项目？',
+        description: `确定删除「${project.name}」吗？删除后项目无法恢复，请确认已完成相关记录核对。`,
+        confirmLabel: '删除项目',
+        danger: true,
+      })
+    ) {
+      await mutateProject(project, null, `已删除「${project.name}」`);
+    }
+  };
+
+  const renderActions = (project: AdminProject) => {
+    const busy = pendingIds.has(project.id);
+    const canStart =
+      getProjectRemaining(project) > 0 && project.status !== 'exhausted';
+    return (
+      <div className="flex items-center justify-end gap-1" aria-busy={busy}>
+        <button
+          type="button"
+          className={`admin-icon-button ${project.pinned ? 'bg-orange-50 text-orange-700' : ''}`}
+          disabled={busy}
+          title={project.pinned ? '取消置顶' : '置顶项目'}
+          aria-label={`${project.pinned ? '取消置顶' : '置顶'}「${project.name}」`}
+          onClick={() =>
+            void mutateProject(
+              project,
+              { pinned: !project.pinned },
+              project.pinned ? '已取消置顶' : '项目已置顶',
+            )
+          }
+        >
+          <Pin className={`h-4 w-4 ${project.pinned ? 'fill-current' : ''}`} />
+        </button>
+        <button
+          type="button"
+          className="admin-icon-button"
+          disabled={busy || (project.status !== 'active' && !canStart)}
+          title={
+            project.status === 'active'
+              ? '暂停项目'
+              : canStart
+                ? '恢复项目'
+                : '请在详情中追加名额'
+          }
+          aria-label={`${project.status === 'active' ? '暂停' : '恢复'}「${project.name}」`}
+          onClick={() =>
+            void mutateProject(
+              project,
+              { status: project.status === 'active' ? 'paused' : 'active' },
+              project.status === 'active' ? '项目已暂停' : '项目已恢复',
+            )
+          }
+        >
+          {busy ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : project.status === 'active' ? (
+            <Pause className="h-4 w-4" />
+          ) : (
+            <Play className="h-4 w-4" />
+          )}
+        </button>
+        <button
+          type="button"
+          className="admin-icon-button admin-icon-button-danger"
+          disabled={busy}
+          title="删除项目"
+          aria-label={`删除「${project.name}」`}
+          onClick={() => void deleteProject(project)}
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+        <Link
+          href={`/admin/project/${encodeURIComponent(project.id)}`}
+          className="admin-icon-button"
+          title="查看详情"
+          aria-label={`查看「${project.name}」详情`}
+        >
+          <ArrowUpRight className="h-4 w-4" />
+        </Link>
+      </div>
+    );
+  };
+
+  const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (creatingRef.current) return;
+    const points = Number(draft.directPoints);
+    const count = Number(draft.maxClaims);
+    if (!draft.name.trim()) {
+      setCreateError('请输入项目名称');
+      return;
+    }
+    if (
+      !Number.isSafeInteger(points) ||
+      points <= 0 ||
+      !Number.isSafeInteger(count) ||
+      count <= 0
+    ) {
+      setCreateError('限领人数和每人积分必须是有效的正整数');
+      return;
+    }
+    const pauseAt = draft.autoPauseAt
+      ? parseChinaDateTimeInput(draft.autoPauseAt)
+      : null;
+    if (draft.autoPauseAt && (pauseAt === null || pauseAt <= Date.now())) {
+      setCreateError('请选择有效的未来暂停时间（中国时间）');
+      return;
+    }
+    creatingRef.current = true;
+    setCreating(true);
+    setCreateError(null);
     try {
       const formData = new FormData();
-      formData.append('name', name.trim());
-      formData.append('description', description.trim());
-      formData.append('maxClaims', maxClaims);
-      formData.append('newUserOnly', newUserOnly.toString());
+      formData.append('name', draft.name.trim());
+      formData.append('description', draft.description.trim());
+      formData.append('maxClaims', String(count));
+      formData.append('directPoints', String(points));
+      formData.append('newUserOnly', String(draft.newUserOnly));
       formData.append('rewardType', 'direct');
-      formData.append('directPoints', directPoints);
-      if (autoPauseAt.trim()) {
-        formData.append('autoPauseAt', autoPauseAt.trim());
-      }
-
-      const res = await fetch('/api/admin/projects', {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data = await res.json();
-
-      if (data.success) {
-        const created = data.project as Project | undefined;
-        setSuccess(`项目创建成功！每人直充 ${created?.directPoints ?? points} 积分，共 ${created?.maxClaims ?? maxClaims} 份`);
-        setShowCreateModal(false);
-        setName('');
-        setDescription('');
-        setMaxClaims('100');
-        setDirectPoints('500');
-        setAutoPauseAt('');
-        setNewUserOnly(false);
-        fetchData();
-        scheduleSuccessClear();
+      if (draft.autoPauseAt) formData.append('autoPauseAt', draft.autoPauseAt);
+      const data = await adminRequest<{ project: AdminProject }>(
+        '/api/admin/projects',
+        { method: 'POST', body: formData },
+      );
+      fetchController.current?.abort();
+      setLoading(false);
+      if (data.project?.id && loaded) {
+        setProjects((current) => [data.project, ...current]);
+        setLoaded(true);
       } else {
-        setError(data.message || '创建失败');
+        setLoading(true);
+        void fetchProjects();
       }
-    } catch {
-      setError('请求失败，请稍后重试');
+      setError(null);
+      setCreateOpen(false);
+      setDraft(emptyDraft);
+      resetFilters();
+      notify(
+        `项目已创建，每人 ${points.toLocaleString()} 积分，共 ${count.toLocaleString()} 份`,
+      );
+    } catch (error) {
+      setCreateError(
+        error instanceof Error ? error.message : '创建失败，请重试',
+      );
     } finally {
+      creatingRef.current = false;
       setCreating(false);
     }
   };
 
-  const handleToggleStatus = async (project: Project, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const newStatus = project.status === 'active' ? 'paused' : 'active';
-    try {
-      const res = await fetch(`/api/admin/projects/${project.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      if (res.ok) fetchData();
-    } catch (err) {
-      console.error('Toggle status error:', err);
-    }
-  };
-
-  const handleDelete = async (project: Project, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!confirm(`确定要删除项目 "${project.name}" 吗？`)) return;
-    try {
-      const res = await fetch(`/api/admin/projects/${project.id}`, { method: 'DELETE' });
-      if (res.ok) fetchData();
-    } catch (err) {
-      console.error('Delete error:', err);
-    }
-  };
-
-  const handleTogglePinned = async (project: Project, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    try {
-      const res = await fetch(`/api/admin/projects/${project.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pinned: !project.pinned }),
-      });
-      if (res.ok) fetchData();
-    } catch (err) {
-      console.error('Toggle pinned error:', err);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-32">
-        <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
-      </div>
-    );
-  }
-
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 pb-20">
-      {/* 成功提示 */}
-      {success && (
-        <div className="mb-6 p-4 bg-emerald-50/80 backdrop-blur-sm rounded-2xl border border-emerald-100 flex justify-between items-center animate-fade-in shadow-sm">
-          <div className="flex items-center gap-3 text-emerald-700">
-            <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-              <Check className="w-3.5 h-3.5" />
+    <div className="space-y-6">
+      <AdminPageHeader
+        eyebrow="运营管理 / PROJECTS"
+        title="项目管理"
+        description="管理积分福利与历史项目，跟进领取进度和剩余名额。"
+        actions={
+          <>
+            <button
+              type="button"
+              className="admin-button-secondary"
+              onClick={refreshProjects}
+              disabled={loading || pendingIds.size > 0 || creating}
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              />
+              刷新
+            </button>
+            <button
+              type="button"
+              className="admin-button-primary"
+              onClick={() => {
+                setCreateError(null);
+                setCreateOpen(true);
+              }}
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              新建项目
+            </button>
+          </>
+        }
+      />
+
+      <section
+        aria-label="项目概览"
+        className="grid grid-cols-2 gap-3 xl:grid-cols-4"
+      >
+        {summary.map(({ label, value, detail, Icon }) => (
+          <div key={label} className="admin-panel px-3 py-3 sm:px-5 sm:py-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-stone-500">
+                {label}
+              </span>
+              <Icon className="h-4 w-4 text-stone-400" aria-hidden="true" />
             </div>
-            <span className="font-semibold text-sm">{success}</span>
+            <p className="mt-2 text-xl font-semibold tabular-nums tracking-tight text-stone-900 sm:mt-3 sm:text-2xl">
+              {loaded ? value.toLocaleString() : '—'}
+            </p>
+            <p className="mt-1.5 hidden text-[11px] text-stone-400 sm:block">{detail}</p>
           </div>
-          <button
-            onClick={() => setSuccess(null)}
-            className="p-1 hover:bg-emerald-100 rounded-lg text-emerald-500 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+        ))}
+      </section>
+
+      {error && (
+        <AdminError
+          message={`${error}${loaded ? '，当前保留上次加载的列表。' : ''}`}
+          onRetry={refreshProjects}
+        />
       )}
 
-      {/* 头部 */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 mb-8">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-stone-800 mb-1 tracking-tight">项目列表</h1>
-          <p className="text-stone-500 text-sm">创建和管理站内积分直充福利项目</p>
-        </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3.5 gradient-warm text-white hover:opacity-90 transition-all rounded-2xl font-black shadow-lg shadow-orange-500/30 active:translate-y-0.5 hover:scale-105"
-        >
-          <Plus className="w-5 h-5" />
-          新建项目
-        </button>
-      </div>
-
-      {/* 项目列表容器 */}
-      <div className="space-y-4 min-h-[400px]">
-        {projects.length === 0 ? (
-          <div className="glass rounded-3xl flex flex-col items-center justify-center py-24 px-4 border border-stone-200/60 dashed-border">
-            <div className="w-20 h-20 bg-stone-50 rounded-full flex items-center justify-center mb-6 shadow-inner animate-float">
-              <Package className="w-10 h-10 text-stone-300" />
+      <section className="admin-panel overflow-hidden" aria-label="项目列表">
+        <div className="space-y-3 border-b border-stone-200 p-4 sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="relative w-full sm:max-w-sm">
+              <Search
+                className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-stone-400"
+                aria-hidden="true"
+              />
+              <input
+                className="admin-input pl-9"
+                aria-label="搜索项目"
+                placeholder="搜索项目名称、描述或创建人…"
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setPage(1);
+                }}
+              />
             </div>
-            <h2 className="text-xl font-black text-stone-700 mb-2">暂无项目</h2>
-            <p className="text-stone-400 text-sm font-bold">快去创建你的第一个福利活动吧！</p>
+            <div className="flex items-center gap-2 text-xs text-stone-400">
+              <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>
+                {loaded
+                  ? `共 ${filtered.length.toLocaleString()} 个项目`
+                  : '等待加载'}
+              </span>
+              {activeFilters && (
+                <button
+                  type="button"
+                  className="ml-2 font-medium text-orange-700 hover:underline"
+                  onClick={resetFilters}
+                >
+                  重置筛选
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            <select
+              className="admin-input"
+              aria-label="项目状态"
+              value={status}
+              onChange={(event) => {
+                setStatus(event.target.value as typeof status);
+                setPage(1);
+              }}
+            >
+              <option value="all">全部状态</option>
+              <option value="active">进行中</option>
+              <option value="paused">已暂停</option>
+              <option value="exhausted">已领完</option>
+            </select>
+            <select
+              className="admin-input"
+              aria-label="奖励类型"
+              value={reward}
+              onChange={(event) => {
+                setReward(event.target.value as typeof reward);
+                setPage(1);
+              }}
+            >
+              <option value="all">全部奖励类型</option>
+              <option value="points">直充积分</option>
+              <option value="code">历史兑换码</option>
+              <option value="legacy">历史额度</option>
+            </select>
+            <select
+              className="admin-input"
+              aria-label="领取人群"
+              value={audience}
+              onChange={(event) => {
+                setAudience(event.target.value as typeof audience);
+                setPage(1);
+              }}
+            >
+              <option value="all">全部领取人群</option>
+              <option value="new">仅限新用户</option>
+              <option value="everyone">不限新老用户</option>
+            </select>
+            <div className="relative">
+              <ArrowDownWideNarrow
+                className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-stone-400"
+                aria-hidden="true"
+              />
+              <select
+                className="admin-input pl-9"
+                aria-label="项目排序"
+                value={sort}
+                onChange={(event) => {
+                  setSort(event.target.value as ProjectSort);
+                  setPage(1);
+                }}
+              >
+                <option value="pinned">置顶优先</option>
+                <option value="newest">最近创建</option>
+                <option value="oldest">最早创建</option>
+                <option value="remaining">剩余名额最少</option>
+                <option value="progress">领取进度最高</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {loading && !loaded ? (
+          <AdminLoading label="正在加载项目…" />
+        ) : !loaded && error ? (
+          <div className="py-20 text-center text-sm text-stone-400">
+            项目列表暂时不可用，请重试。
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center px-6 py-20 text-center">
+            <Package
+              className="mb-4 h-9 w-9 text-stone-300"
+              aria-hidden="true"
+            />
+            <h2 className="text-base font-semibold text-stone-700">
+              {activeFilters ? '没有匹配的项目' : '还没有福利项目'}
+            </h2>
+            <p className="mt-2 text-sm text-stone-400">
+              {activeFilters
+                ? '调整关键词或筛选条件，查找其他项目。'
+                : '创建第一个积分福利项目，开始发放奖励。'}
+            </p>
+            <button
+              type="button"
+              className="admin-button-secondary mt-5"
+              onClick={activeFilters ? resetFilters : () => setCreateOpen(true)}
+            >
+              {activeFilters ? '清除筛选' : '新建项目'}
+            </button>
           </div>
         ) : (
           <>
-            {/* Header for desktop */}
-            <div className="hidden lg:grid grid-cols-[2fr_1fr_1.5fr_1fr_1fr_100px] px-8 text-xs font-black text-stone-400 uppercase tracking-widest pl-6">
-              <div>项目名称</div>
-              <div>状态</div>
-              <div>领取进度</div>
-              <div>库存</div>
-              <div>创建时间</div>
-              <div className="text-right">操作</div>
-            </div>
-
-            <div className="space-y-3">
-              {projects.map((project) => (
-                <Link
-                  key={project.id}
-                  href={`/admin/project/${project.id}`}
-                  className="group block"
-                >
-                  <div className="glass-card rounded-2xl border-white/60 hover:border-orange-200 transition-all duration-300 hover:scale-[1.01]">
-                    {/* Desktop View */}
-                    <div className="hidden lg:grid grid-cols-[2fr_1fr_1.5fr_1fr_1fr_100px] px-6 py-4 items-center gap-4">
-                      {/* Name */}
-                      <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border transition-all duration-300 shadow-sm group-hover:rotate-6 ${project.status === 'active'
-                          ? 'bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200'
-                          : 'bg-gradient-to-br from-stone-50 to-stone-100 border-stone-200'
-                          }`}>
-                          <Gift className={`w-6 h-6 ${project.status === 'active' ? 'text-orange-500' : 'text-stone-400'}`} />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-stone-700 text-base group-hover:text-orange-600 transition-colors">{project.name}</span>
-                            {project.pinned && (
-                              <span className="w-5 h-5 bg-orange-100 text-orange-600 rounded-lg flex items-center justify-center text-[10px] shadow-sm transform -rotate-12">📌</span>
-                            )}
-                            {project.newUserOnly && (
-                              <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-600 rounded-md text-[10px] font-black tracking-tighter uppercase border border-emerald-200">New</span>
-                            )}
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={(e) => handleTogglePinned(project, e)}
-                            className={`text-xs ml-auto transition-colors font-bold ${project.pinned ? 'text-orange-500' : 'text-stone-300 hover:text-orange-400 opacity-0 group-hover:opacity-100'
-                              }`}
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full min-w-[900px] text-left text-sm">
+                <thead className="bg-stone-50/80 text-xs text-stone-500">
+                  <tr>
+                    <th scope="col" className="px-5 py-3 font-medium">
+                      项目 / 奖励
+                    </th>
+                    <th scope="col" className="px-4 py-3 font-medium">
+                      状态
+                    </th>
+                    <th scope="col" className="px-4 py-3 font-medium">
+                      领取进度
+                    </th>
+                    <th scope="col" className="px-4 py-3 font-medium">
+                      剩余名额
+                    </th>
+                    <th scope="col" className="px-4 py-3 font-medium">
+                      时间（中国）
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-5 py-3 text-right font-medium"
+                    >
+                      操作
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-stone-100">
+                  {visibleProjects.map((project) => (
+                    <tr
+                      key={project.id}
+                      className="transition-colors hover:bg-stone-50/70"
+                    >
+                      <td className="max-w-72 px-5 py-5">
+                        <div className="flex items-center gap-2">
+                          <Link
+                            href={`/admin/project/${encodeURIComponent(project.id)}`}
+                            className="truncate font-semibold text-stone-800 hover:text-orange-700"
                           >
-                            {project.pinned ? '已置顶' : '置顶项目'}
-                          </button>
-
+                            {project.name}
+                          </Link>
+                          {project.pinned && (
+                            <Pin
+                              className="h-3.5 w-3.5 shrink-0 fill-orange-100 text-orange-700"
+                              aria-label="已置顶"
+                            />
+                          )}
+                          {project.newUserOnly && (
+                            <span className="shrink-0 rounded border border-sky-100 bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700">
+                              新人
+                            </span>
+                          )}
                         </div>
-                      </div>
-
-                      {/* Status */}
-                      <div>
-                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold border shadow-sm ${project.status === 'active'
-                          ? 'bg-gradient-to-r from-emerald-50 to-emerald-100 text-emerald-700 border-emerald-200'
-                          : project.status === 'paused'
-                            ? 'bg-gradient-to-r from-amber-50 to-amber-100 text-amber-700 border-amber-200'
-                            : 'bg-stone-100 text-stone-500 border-stone-200'
-                          }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${project.status === 'active' ? 'bg-emerald-500 animate-pulse' : project.status === 'paused' ? 'bg-amber-500' : 'bg-stone-400'
-                            }`}></span>
-                          {project.status === 'active' ? '进行中' : project.status === 'paused' ? '已暂停' : '已领完'}
+                        <p className="mt-1.5 text-xs text-stone-400">
+                          {rewardLabels[getProjectRewardKind(project)]}
+                          {getProjectRewardKind(project) === 'points' && (
+                            <span className="ml-2 tabular-nums text-stone-500">
+                              {project.directPoints?.toLocaleString()} 积分 / 人
+                            </span>
+                          )}
+                        </p>
+                      </td>
+                      <td className="px-4 py-5">
+                        <StatusBadge project={project} />
+                      </td>
+                      <td className="w-44 px-4 py-5">
+                        <ClaimProgress project={project} />
+                      </td>
+                      <td className="px-4 py-5">
+                        <span
+                          className={`font-semibold tabular-nums ${getProjectRemaining(project) > 0 && getProjectRemaining(project) <= 10 ? 'text-amber-700' : 'text-stone-700'}`}
+                        >
+                          {getProjectRemaining(project).toLocaleString()}
                         </span>
-                      </div>
-
-                      {/* Progress */}
-                      <div className="pr-4">
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Progress</span>
-                          <span className="text-xs font-bold text-stone-600">{Math.round((project.claimedCount / project.maxClaims) * 100)}%</span>
-                        </div>
-                        <div className="h-2.5 bg-stone-100 rounded-full overflow-hidden border border-stone-200/50 shadow-inner">
-                          <div
-                            className="h-full bg-gradient-to-r from-orange-400 to-red-500 rounded-full shadow-[0_0_10px_rgba(249,115,22,0.4)] relative overflow-hidden"
-                            style={{ width: `${Math.min(100, (project.claimedCount / project.maxClaims) * 100)}%` }}
-                          >
-                            <div className="absolute inset-0 bg-white/30 w-full h-full animate-shine-fast"></div>
-                          </div>
-                        </div>
-
-                      </div>
-
-                      {/* Stock */}
-                      <div className="flex flex-col">
-                        <span className="text-xl font-black text-stone-700 leading-none">{project.codesCount - project.claimedCount}</span>
-                        <span className="text-[10px] text-stone-400 font-bold uppercase tracking-wider">Left</span>
-                      </div>
-
-                      {/* Date */}
-                      <div className="flex flex-col">
-                        <span className="text-sm font-bold text-stone-600">{new Date(project.createdAt).toLocaleDateString()}</span>
+                        <span className="ml-1.5 text-xs text-stone-400">
+                          份
+                        </span>
+                      </td>
+                      <td className="px-4 py-5 text-xs">
+                        <p className="whitespace-nowrap text-stone-500">
+                          {formatChinaDateTime(project.createdAt)}
+                        </p>
                         {project.autoPauseAt && (
-                          <span className="text-[10px] text-amber-500 font-bold mt-0.5">
+                          <p className="mt-1.5 whitespace-nowrap text-amber-700">
                             暂停 {formatChinaDateTime(project.autoPauseAt)}
-                          </span>
+                          </p>
                         )}
-                      </div>
-
-                      {/* Actions */}
-                      <div className="flex justify-end gap-2" onClick={(e) => e.preventDefault()}>
-                        <button
-                          onClick={(e) => handleToggleStatus(project, e)}
-                          className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all hover:scale-105 active:scale-95 shadow-sm border ${project.status === 'active'
-                            ? 'bg-white text-amber-500 border-amber-100 hover:bg-amber-50 hover:border-amber-200'
-                            : 'bg-white text-emerald-500 border-emerald-100 hover:bg-emerald-50 hover:border-emerald-200'
-                            }`}
-                          title={project.status === 'active' ? '暂停项目' : '启动项目'}
-                        >
-                          {project.status === 'active' ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
-                        </button>
-                        <button
-                          onClick={(e) => handleDelete(project, e)}
-                          className="w-9 h-9 rounded-xl bg-white text-stone-300 border border-stone-100 hover:text-red-500 hover:border-red-200 hover:bg-red-50 hover:shadow-sm flex items-center justify-center transition-all hover:scale-105 active:scale-95"
-                          title="删除项目"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Mobile Card View (Enhanced) */}
-                    <div className="lg:hidden p-5 flex flex-col gap-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border transition-all duration-300 shadow-sm ${project.status === 'active'
-                            ? 'bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200'
-                            : 'bg-gradient-to-br from-stone-50 to-stone-100 border-stone-200'
-                            }`}>
-                            <Gift className={`w-6 h-6 ${project.status === 'active' ? 'text-orange-500' : 'text-stone-400'}`} />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h3 className="font-bold text-stone-800 text-lg">{project.name}</h3>
-                              {project.pinned && <span className="text-xs">📌</span>}
-                            </div>
-                            <div className="flex items-center gap-2 text-xs font-bold text-stone-400 mt-0.5">
-                              <span>{new Date(project.createdAt).toLocaleDateString()}</span>
-                              {project.autoPauseAt && <span>暂停 {formatChinaDateTime(project.autoPauseAt)}</span>}
-                              {project.newUserOnly && <span className="bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded text-[10px] border border-emerald-200">NEW USER</span>}
-                            </div>
-                          </div>
-                        </div>
-                        <button
-                          onClick={(e) => handleToggleStatus(project, e)}
-                          className={`p-2 rounded-xl transition-all active:scale-95 border ${project.status === 'active'
-                            ? 'bg-amber-50 text-amber-500 border-amber-200'
-                            : 'bg-emerald-50 text-emerald-500 border-emerald-200'
-                            }`}
-                        >
-                          {project.status === 'active' ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current ml-0.5" />}
-                        </button>
-                      </div>
-
-                      <div className="bg-stone-50/80 rounded-2xl p-4 border border-stone-100">
-                        <div className="flex justify-between items-center mb-2">
-                          <span className="text-xs font-black text-stone-400 uppercase">Claims</span>
-                          <div className="text-xs font-bold">
-                            <span className="text-stone-800">{project.claimedCount}</span>
-                            <span className="text-stone-300 mx-1">/</span>
-                            <span className="text-stone-500">{project.maxClaims}</span>
-                          </div>
-                        </div>
-                        <div className="h-3 bg-stone-200/50 rounded-full overflow-hidden border border-stone-200/50">
-                          <div
-                            className="h-full bg-gradient-to-r from-orange-400 to-red-500 rounded-full shadow-sm"
-                            style={{ width: `${Math.min(100, (project.claimedCount / project.maxClaims) * 100)}%` }}
+                      </td>
+                      <td className="px-4 py-5">{renderActions(project)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="divide-y divide-stone-100 md:hidden">
+              {visibleProjects.map((project) => (
+                <article key={project.id} className="space-y-4 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link
+                        href={`/admin/project/${encodeURIComponent(project.id)}`}
+                        className="break-words text-sm font-semibold text-stone-800"
+                      >
+                        {project.name}
+                        {project.pinned && (
+                          <Pin
+                            className="ml-1 inline h-3 w-3 text-orange-700"
+                            aria-label="已置顶"
                           />
-                        </div>
-                        <div className="flex justify-between items-center mt-3 pt-3 border-t border-stone-200/60 dashed-border-t">
-                          <span className="text-xs font-bold text-stone-500">剩余库存</span>
-                          <span className="font-black text-stone-800 text-lg">{project.codesCount - project.claimedCount}</span>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3" onClick={(e) => e.preventDefault()}>
-                        <button
-                          onClick={(e) => handleTogglePinned(project, e)}
-                          className={`py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all active:scale-95 border ${project.pinned
-                            ? 'bg-orange-50 text-orange-600 border-orange-200'
-                            : 'bg-white text-stone-400 border-stone-200 hover:border-orange-200 hover:text-orange-500'
-                            }`}
-                        >
-                          <Pin className="w-4 h-4" />
-                          {project.pinned ? '已置顶' : '置顶'}
-                        </button>
-                        <button
-                          onClick={(e) => handleDelete(project, e)}
-                          className="py-3 rounded-xl bg-white text-stone-400 border border-stone-200 hover:text-red-500 hover:border-red-200 hover:bg-red-50 flex items-center justify-center gap-2 text-sm font-bold transition-all active:scale-95"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                          删除
-                        </button>
-                      </div>
+                        )}
+                      </Link>
+                      <p className="mt-1.5 text-xs text-stone-400">
+                        {rewardLabels[getProjectRewardKind(project)]}
+                        {getProjectRewardKind(project) === 'points'
+                          ? ` · ${project.directPoints?.toLocaleString()} 积分 / 人`
+                          : ''}
+                        {project.newUserOnly ? ' · 仅限新人' : ''}
+                      </p>
                     </div>
+                    <StatusBadge project={project} />
                   </div>
-                </Link>
+                  <ClaimProgress project={project} />
+                  <div className="flex items-center justify-between text-xs text-stone-500">
+                    <span>
+                      剩余{' '}
+                      <strong className="font-semibold text-stone-800">
+                        {getProjectRemaining(project).toLocaleString()}
+                      </strong>{' '}
+                      份
+                    </span>
+                    <span>
+                      {formatChinaDateTime(project.createdAt).slice(0, 10)}
+                    </span>
+                  </div>
+                  {project.autoPauseAt && (
+                    <p className="flex items-center gap-1.5 text-xs text-amber-700">
+                      <CalendarClock
+                        className="h-3.5 w-3.5"
+                        aria-hidden="true"
+                      />
+                      自动暂停 {formatChinaDateTime(project.autoPauseAt)}
+                    </p>
+                  )}
+                  <div className="flex items-center justify-between border-t border-stone-100 pt-3">
+                    <Link
+                      href={`/admin/project/${encodeURIComponent(project.id)}`}
+                      className="text-xs font-medium text-orange-700"
+                    >
+                      查看项目
+                    </Link>
+                    {renderActions(project)}
+                  </div>
+                </article>
               ))}
             </div>
           </>
         )}
-      </div>
-      {/* 创建项目弹窗 */}
-      {showCreateModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
-          {/* Backdrop */}
-          <div
-            className="absolute inset-0 bg-stone-900/40 backdrop-blur-md transition-opacity duration-300"
-            onClick={() => setShowCreateModal(false)}
-          />
 
-          {/* Modal Content - Bouncy Glass */}
-          <div className="relative w-full max-w-md bg-white/90 backdrop-blur-xl rounded-[2rem] shadow-2xl overflow-hidden animate-scale-in ring-1 ring-white/50 max-h-[90vh] my-6 border border-white/60">
-            {/* Header */}
-            <div className="px-8 py-6 border-b border-stone-100 flex justify-between items-center bg-gradient-to-r from-orange-50/50 to-stone-50/50">
-              <h2 className="text-xl font-black text-stone-800 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center shadow-lg shadow-orange-500/30 text-white">
-                  <Plus className="w-5 h-5" />
-                </div>
-                创建新项目
-              </h2>
-              <button
-                onClick={() => setShowCreateModal(false)}
-                className="w-8 h-8 rounded-full bg-stone-100 hover:bg-stone-200 flex items-center justify-center text-stone-400 hover:text-stone-600 transition-colors"
+        {loaded && filtered.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 px-4 py-3 text-xs text-stone-500 sm:px-5">
+            <div className="flex items-center gap-2">
+              <label htmlFor="project-page-size">每页</label>
+              <select
+                id="project-page-size"
+                value={pageSize}
+                onChange={(event) => {
+                  setPageSize(Number(event.target.value));
+                  setPage(1);
+                }}
+                className="rounded-md border border-stone-200 bg-white px-1.5 py-1.5"
               >
-                <X className="w-4 h-4" />
+                <option value={15}>15 条</option>
+                <option value={30}>30 条</option>
+                <option value={50}>50 条</option>
+              </select>
+              <span className="hidden sm:inline">
+                第 {(currentPage - 1) * pageSize + 1}–
+                {Math.min(currentPage * pageSize, filtered.length)} 条
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="tabular-nums">
+                {currentPage} / {totalPages} 页
+              </span>
+              <button
+                type="button"
+                className="admin-icon-button"
+                disabled={currentPage === 1}
+                aria-label="上一页"
+                onClick={() => setPage(currentPage - 1)}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                className="admin-icon-button"
+                disabled={currentPage === totalPages}
+                aria-label="下一页"
+                onClick={() => setPage(currentPage + 1)}
+              >
+                <ChevronRight className="h-4 w-4" />
               </button>
             </div>
-
-            {/* Form */}
-            <form onSubmit={handleCreateProject} className="p-8 overflow-y-auto max-h-[calc(90vh-88px)]">
-              {error && (
-                <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-600 text-sm font-bold animate-pulse">
-                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                  {error}
-                </div>
-              )}
-
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-xs font-black text-stone-400 uppercase tracking-widest mb-2 pl-1">
-                    项目名称 <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="例如: 5刀福利"
-                    className="w-full px-5 py-3.5 bg-stone-50 border-2 border-stone-100 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 transition-all outline-none text-stone-800 placeholder-stone-400 font-bold"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-black text-stone-400 uppercase tracking-widest mb-2 pl-1">
-                    项目描述
-                  </label>
-                  <textarea
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="简要描述活动内容..."
-                    rows={3}
-                    className="w-full px-5 py-3.5 bg-stone-50 border-2 border-stone-100 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 transition-all outline-none text-stone-800 placeholder-stone-400 font-medium resize-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-black text-stone-400 uppercase tracking-widest mb-2 pl-1">
-                    限领人数 <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    value={maxClaims}
-                    onChange={(e) => setMaxClaims(e.target.value)}
-                    min="1"
-                    className="w-full px-5 py-3.5 bg-stone-50 border-2 border-stone-100 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 transition-all outline-none text-stone-800 placeholder-stone-400 font-bold"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-black text-stone-400 uppercase tracking-widest mb-2 pl-1">
-                    奖励方式
-                  </label>
-                  <div className="rounded-2xl border border-orange-100 bg-orange-50/70 px-5 py-4">
-                    <p className="text-sm font-black text-orange-700">直充积分</p>
-                    <p className="mt-1 text-xs font-bold text-orange-500">
-                      新项目统一发放站内积分，兑换码与美元额度只保留历史只读记录。
-                    </p>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-black text-stone-400 uppercase tracking-widest mb-2 pl-1">
-                    每人直充积分 <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    value={directPoints}
-                    onChange={(e) => setDirectPoints(e.target.value)}
-                    min="1"
-                    step="1"
-                    className="w-full px-5 py-3.5 bg-stone-50 border-2 border-stone-100 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 transition-all outline-none text-stone-800 placeholder-stone-400 font-bold"
-                    placeholder="例如：500"
-                  />
-                  <p className="mt-2 text-xs text-stone-400 font-bold pl-1">
-                    用户领取后会直接增加站内积分余额，库存与限领人数一致。
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-black text-stone-400 uppercase tracking-widest mb-2 pl-1">
-                    暂停时间（中国时间，可选）
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={autoPauseAt}
-                    onChange={(e) => setAutoPauseAt(e.target.value)}
-                    className="w-full px-5 py-3.5 bg-stone-50 border-2 border-stone-100 rounded-2xl focus:bg-white focus:border-orange-400 focus:ring-4 focus:ring-orange-100 transition-all outline-none text-stone-800 placeholder-stone-400 font-bold"
-                  />
-                  <p className="mt-2 text-xs text-stone-400 font-bold pl-1">
-                    到点后服务器会自动暂停项目，无需保持后台页面打开。
-                  </p>
-                </div>
-
-                {/* 仅限新用户开关 */}
-                <div className="flex items-center justify-between p-4 bg-emerald-50/50 border border-emerald-100/50 rounded-2xl transition-colors hover:bg-emerald-50">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center shadow-sm">
-                      <span className="text-lg">🆕</span>
-                    </div>
-                    <div>
-                      <p className="font-bold text-stone-800 text-sm">仅限新用户</p>
-                      <p className="text-[10px] text-stone-500 font-bold uppercase tracking-wider mt-0.5">New Users Only</p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setNewUserOnly(!newUserOnly)}
-                    className={`relative w-14 h-8 rounded-full transition-all duration-300 shadow-inner ${newUserOnly ? 'bg-emerald-500' : 'bg-stone-200'
-                      }`}
-                  >
-                    <span className={`absolute top-1 w-6 h-6 bg-white rounded-full shadow-sm transition-all duration-300 ${newUserOnly ? 'left-7' : 'left-1'
-                      }`} />
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex gap-3 mt-8">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="flex-1 py-3.5 bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-2xl font-black transition-colors text-sm"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={creating}
-                  className="flex-1 py-3.5 gradient-warm hover:opacity-90 text-white rounded-2xl font-black shadow-lg shadow-orange-500/30 disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] text-sm"
-                >
-                  {creating && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {creating ? '创建中...' : '创建项目'}
-                </button>
-              </div>
-            </form>
           </div>
-        </div>
-      )}
+        )}
+      </section>
+
+      <AdminDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        busy={creating}
+        wide
+        title="新建福利项目"
+        description="发布站内积分福利，用户领取后积分将直接到账。"
+        footer={
+          <>
+            <button
+              type="button"
+              className="admin-button-secondary"
+              disabled={creating}
+              onClick={() => setCreateOpen(false)}
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              form="create-project-form"
+              className="admin-button-primary"
+              disabled={creating}
+            >
+              {creating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+              {creating ? '创建中…' : '创建项目'}
+            </button>
+          </>
+        }
+      >
+        <form
+          id="create-project-form"
+          onSubmit={(event) => void handleCreate(event)}
+          className="space-y-5"
+        >
+          {createError && <AdminError message={createError} />}
+          <fieldset disabled={creating} className="space-y-5">
+            <div>
+              <label htmlFor="project-name" className="admin-field-label">
+                项目名称 <span className="text-orange-700">*</span>
+              </label>
+              <input
+                id="project-name"
+                className="admin-input"
+                required
+                value={draft.name}
+                onChange={(event) =>
+                  setDraft({ ...draft, name: event.target.value })
+                }
+                placeholder="例如：周末积分福利"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="project-description"
+                className="admin-field-label"
+              >
+                项目描述
+              </label>
+              <textarea
+                id="project-description"
+                className="admin-input resize-y"
+                rows={3}
+                value={draft.description}
+                onChange={(event) =>
+                  setDraft({ ...draft, description: event.target.value })
+                }
+                placeholder="说明活动内容和参与方式…"
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="project-claims" className="admin-field-label">
+                  限领人数 <span className="text-orange-700">*</span>
+                </label>
+                <input
+                  id="project-claims"
+                  type="number"
+                  min={1}
+                  max={Number.MAX_SAFE_INTEGER}
+                  step={1}
+                  required
+                  className="admin-input"
+                  value={draft.maxClaims}
+                  onChange={(event) =>
+                    setDraft({ ...draft, maxClaims: event.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label htmlFor="project-points" className="admin-field-label">
+                  每人积分 <span className="text-orange-700">*</span>
+                </label>
+                <input
+                  id="project-points"
+                  type="number"
+                  min={1}
+                  max={Number.MAX_SAFE_INTEGER}
+                  step={1}
+                  required
+                  className="admin-input"
+                  value={draft.directPoints}
+                  onChange={(event) =>
+                    setDraft({ ...draft, directPoints: event.target.value })
+                  }
+                />
+              </div>
+            </div>
+            <div>
+              <label htmlFor="project-pause" className="admin-field-label">
+                自动暂停时间{' '}
+                <span className="font-normal text-stone-400">
+                  （可选，中国时间）
+                </span>
+              </label>
+              <input
+                id="project-pause"
+                type="datetime-local"
+                className="admin-input"
+                value={draft.autoPauseAt}
+                onChange={(event) =>
+                  setDraft({ ...draft, autoPauseAt: event.target.value })
+                }
+              />
+              <p className="mt-2 text-xs text-stone-400">
+                到点后服务器自动暂停，无需保持后台页面打开。
+              </p>
+            </div>
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-stone-200 p-4">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-orange-700"
+                checked={draft.newUserOnly}
+                onChange={(event) =>
+                  setDraft({ ...draft, newUserOnly: event.target.checked })
+                }
+              />
+              <span>
+                <span className="block text-sm font-medium text-stone-700">
+                  仅限新用户领取
+                </span>
+                <span className="mt-1 block text-xs text-stone-400">
+                  开启后按照站点新人资格规则限制领取。
+                </span>
+              </span>
+            </label>
+            <div className="flex items-start gap-2 rounded-lg border border-orange-100 bg-orange-50 p-3 text-xs leading-5 text-orange-800">
+              <Gift className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <p>
+                新项目统一发放站内积分；历史兑换码与额度项目仍可在列表中查看。
+              </p>
+            </div>
+          </fieldset>
+        </form>
+      </AdminDialog>
     </div>
   );
 }

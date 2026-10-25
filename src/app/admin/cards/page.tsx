@@ -8,6 +8,7 @@ import {
   BookOpen, Save, Edit2, Star
 } from 'lucide-react';
 import { CARDS } from '@/lib/cards/config';
+import { useAdminFeedback } from '@/components/admin/AdminFeedback';
 
 interface UserWithCardStats {
   id: number;
@@ -65,6 +66,7 @@ const rarityLabels: Record<RarityKey, string> = {
 const rarityKeys: RarityKey[] = ['legendary_rare', 'legendary', 'epic', 'rare', 'common'];
 
 export default function AdminCardsPage() {
+  const { notify, confirm } = useAdminFeedback();
   const [users, setUsers] = useState<UserWithCardStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -208,7 +210,13 @@ export default function AdminCardsPage() {
   };
 
   const handleResetProgress = async () => {
-    if (!selectedUser || !confirm(`确定要重置用户 "${selectedUser.username}" 的所有卡牌进度吗？\n此操作不可恢复！\n\n将清空：\n- 所有卡牌库存\n- 所有碎片\n- 抽卡次数重置为 10\n- 保底计数器清零`)) return;
+    if (!selectedUser) return;
+    if (!(await confirm({
+      title: '重置卡牌进度？',
+      description: `将清空用户「${selectedUser.username}」的全部卡牌库存与碎片，抽卡次数重置为 10，保底计数器清零。此操作不可恢复。`,
+      confirmLabel: '重置全部进度',
+      danger: true,
+    }))) return;
 
     setResetting(true);
     try {
@@ -219,15 +227,15 @@ export default function AdminCardsPage() {
       });
       const data = await res.json();
       if (data.success) {
-        alert('重置成功');
+        notify('重置成功');
         setSelectedUser(null);
         fetchData({ resetPage: true, search: searchQuery }); // 刷新列表
       } else {
-        alert(data.message || '重置失败');
+        notify(data.message || '重置失败', 'error');
       }
     } catch (error) {
       console.error('Reset error:', error);
-      alert('重置失败');
+      notify('重置失败', 'error');
     } finally {
       setResetting(false);
     }
@@ -249,13 +257,13 @@ export default function AdminCardsPage() {
         setEditingAlbum(null);
         setEditingTier(null);
         fetchAlbums();
-        alert('奖励更新成功');
+        notify('奖励更新成功');
       } else {
-        alert(data.message || '更新失败');
+        notify(data.message || '更新失败', 'error');
       }
     } catch (error) {
       console.error('Save reward error:', error);
-      alert('更新失败');
+      notify('更新失败', 'error');
     } finally {
       setSavingReward(false);
     }
@@ -316,13 +324,13 @@ export default function AdminCardsPage() {
       const data = await res.json();
       if (data.success) {
         setRules(data.data);
-        alert('卡牌规则保存成功');
+        notify('卡牌规则保存成功');
       } else {
-        alert(data.message || '保存失败');
+        notify(data.message || '保存失败', 'error');
       }
     } catch (error) {
       console.error('Save card rules error:', error);
-      alert('保存失败');
+      notify('保存失败', 'error');
     } finally {
       setSavingRules(false);
     }

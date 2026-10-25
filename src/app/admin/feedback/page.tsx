@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import { useAdminFeedback } from '@/components/admin/AdminFeedback';
 import {
   FEEDBACK_MEDIA_ACCEPT,
   FEEDBACK_MEDIA_MIME_TYPES,
@@ -113,6 +114,7 @@ function fileToDataUrl(file: File): Promise<string> {
 }
 
 export default function AdminFeedbackPage() {
+  const { confirm } = useAdminFeedback();
   const [loading, setLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -127,6 +129,8 @@ export default function AdminFeedbackPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedDetail, setSelectedDetail] =
     useState<FeedbackDetailResponse | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  const detailRequestRef = useRef<AbortController | null>(null);
 
   const [filterStatus, setFilterStatus] = useState<'all' | FeedbackStatus>('all');
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -138,6 +142,19 @@ export default function AdminFeedbackPage() {
   const [success, setSuccess] = useState<string | null>(null);
 
   const router = useRouter();
+
+  const selectFeedback = useCallback((feedbackId: string | null) => {
+    if (selectedIdRef.current === feedbackId) return;
+    selectedIdRef.current = feedbackId;
+    detailRequestRef.current?.abort();
+    setSelectedId(feedbackId);
+    setSelectedDetail(null);
+    setDetailLoading(feedbackId !== null);
+    setReplyContent('');
+    setReplyImages([]);
+    setError(null);
+    setSuccess(null);
+  }, []);
 
   const appendReplyImages = useCallback(
     async (files: File[]) => {
@@ -275,17 +292,17 @@ export default function AdminFeedbackPage() {
             });
             return Array.from(merged.values());
           });
-          setSelectedId((prev) => prev ?? items[0]?.id ?? null);
+          if (!selectedIdRef.current) selectFeedback(items[0]?.id ?? null);
           return;
         }
 
         setFeedbackList(items);
-        setSelectedId((prev) => {
-          if (prev && items.some((item) => item.id === prev)) {
-            return prev;
-          }
-          return items[0]?.id ?? null;
-        });
+        const currentId = selectedIdRef.current;
+        selectFeedback(
+          currentId && items.some((item) => item.id === currentId)
+            ? currentId
+            : items[0]?.id ?? null
+        );
       } catch (fetchError) {
         console.error('Load admin feedback list failed:', fetchError);
         setError('获取反馈列表失败，请稍后重试');
@@ -297,7 +314,7 @@ export default function AdminFeedbackPage() {
         }
       }
     },
-    [filterStatus, includeArchived, router]
+    [filterStatus, includeArchived, router, selectFeedback]
   );
 
   const handleLoadMore = useCallback(async () => {
@@ -308,12 +325,23 @@ export default function AdminFeedbackPage() {
   }, [listHasMore, listLoading, listLoadingMore, listPage, loadFeedbackList]);
 
   const loadFeedbackDetail = useCallback(async (feedbackId: string) => {
+    // 回复或状态更新结束后，可能已切换工单；旧工单的刷新不能抢占当前请求。
+    if (selectedIdRef.current !== feedbackId) return;
+    detailRequestRef.current?.abort();
+    const controller = new AbortController();
+    detailRequestRef.current = controller;
+    const isCurrentRequest = () => !controller.signal.aborted &&
+      detailRequestRef.current === controller && selectedIdRef.current === feedbackId;
     setDetailLoading(true);
+    setError(null);
 
     try {
-      const response = await fetch(`/api/admin/feedback/${feedbackId}`);
+      const response = await fetch(`/api/admin/feedback/${feedbackId}`, {
+        signal: controller.signal,
+      });
       const data = await response.json();
-      if (!response.ok || !data.success) {
+      if (!isCurrentRequest()) return;
+      if (!response.ok || !data.success || data.feedback?.id !== feedbackId) {
         setError(data.message || '获取反馈详情失败');
         setSelectedDetail(null);
         return;
@@ -327,11 +355,12 @@ export default function AdminFeedbackPage() {
       setSelectedDetail(detail);
       setNextStatus(detail.feedback.status);
     } catch (fetchError) {
+      if (!isCurrentRequest()) return;
       console.error('Load admin feedback detail failed:', fetchError);
       setError('获取反馈详情失败，请稍后重试');
       setSelectedDetail(null);
     } finally {
-      setDetailLoading(false);
+      if (isCurrentRequest()) setDetailLoading(false);
     }
   }, []);
 
@@ -348,23 +377,16 @@ export default function AdminFeedbackPage() {
   }, [filterStatus, includeArchived, loadFeedbackList]);
 
   useEffect(() => {
-    if (!selectedId) {
-      setSelectedDetail(null);
-      return;
-    }
-    void loadFeedbackDetail(selectedId);
+    if (selectedId) void loadFeedbackDetail(selectedId);
+    return () => detailRequestRef.current?.abort();
   }, [selectedId, loadFeedbackDetail]);
-
-  useEffect(() => {
-    setReplyContent('');
-    setReplyImages([]);
-  }, [selectedId]);
 
   const handleUpdateStatus = async () => {
     if (!selectedId) {
       setError('请先选择一条反馈');
       return;
     }
+    if (selectedDetail?.feedback.id !== selectedId || detailLoading) return;
 
     if (selectedDetail?.feedback.archivedAt) {
       setError('该反馈已归档，无法再调整状态');
@@ -384,18 +406,18 @@ export default function AdminFeedbackPage() {
 
       const data = await response.json();
       if (!response.ok || !data.success) {
-        setError(data.message || '状态更新失败');
+        if (selectedIdRef.current === selectedId) setError(data.message || '状态更新失败');
         return;
       }
 
-      setSuccess('状态更新成功');
+      if (selectedIdRef.current === selectedId) setSuccess('状态更新成功');
       await Promise.all([
         loadFeedbackList(),
         loadFeedbackDetail(selectedId),
       ]);
     } catch (updateError) {
       console.error('Update feedback status failed:', updateError);
-      setError('状态更新失败，请稍后重试');
+      if (selectedIdRef.current === selectedId) setError('状态更新失败，请稍后重试');
     } finally {
       setStatusSaving(false);
     }
@@ -406,8 +428,14 @@ export default function AdminFeedbackPage() {
       setError('请先选择一条反馈');
       return;
     }
+    if (selectedDetail?.feedback.id !== selectedId || detailLoading) return;
 
-    const confirmed = window.confirm('确定要删除这条反馈吗？删除后不可恢复。');
+    const confirmed = await confirm({
+      title: '删除用户反馈？',
+      description: '确定要删除这条反馈吗？删除后不可恢复。',
+      confirmLabel: '删除反馈',
+      danger: true,
+    });
     if (!confirmed) {
       return;
     }
@@ -424,17 +452,18 @@ export default function AdminFeedbackPage() {
 
       const data = await response.json();
       if (!response.ok || !data.success) {
-        setError(data.message || '删除反馈失败');
+        if (selectedIdRef.current === selectedId) setError(data.message || '删除反馈失败');
         return;
       }
 
-      setSuccess('反馈已删除');
-      setSelectedId(null);
-      setSelectedDetail(null);
+      if (selectedIdRef.current === selectedId) {
+        selectFeedback(null);
+        setSuccess('反馈已删除');
+      }
       await loadFeedbackList({ page: 1, append: false });
     } catch (deleteError) {
       console.error('Delete feedback failed:', deleteError);
-      setError('删除反馈失败，请稍后重试');
+      if (selectedIdRef.current === selectedId) setError('删除反馈失败，请稍后重试');
     } finally {
       setDeleting(false);
     }
@@ -447,6 +476,7 @@ export default function AdminFeedbackPage() {
       setError('请先选择一条反馈');
       return;
     }
+    if (selectedDetail?.feedback.id !== selectedId || detailLoading) return;
 
     if (selectedDetail?.feedback.archivedAt) {
       setError('该反馈已归档，不能继续回复');
@@ -480,20 +510,22 @@ export default function AdminFeedbackPage() {
 
       const data = await response.json();
       if (!response.ok || !data.success) {
-        setError(data.message || '回复失败');
+        if (selectedIdRef.current === selectedId) setError(data.message || '回复失败');
         return;
       }
 
-      setReplyContent('');
-      setReplyImages([]);
-      setSuccess('回复已发送');
+      if (selectedIdRef.current === selectedId) {
+        setReplyContent('');
+        setReplyImages([]);
+        setSuccess('回复已发送');
+      }
       await Promise.all([
         loadFeedbackList(),
         loadFeedbackDetail(selectedId),
       ]);
     } catch (replyError) {
       console.error('Reply feedback failed:', replyError);
-      setError('回复失败，请稍后重试');
+      if (selectedIdRef.current === selectedId) setError('回复失败，请稍后重试');
     } finally {
       setReplying(false);
     }
@@ -507,9 +539,9 @@ export default function AdminFeedbackPage() {
     );
   }
 
-  const isStatusLocked = Boolean(selectedDetail?.feedback.archivedAt);
+  const isStatusLocked = detailLoading || Boolean(selectedDetail?.feedback.archivedAt);
   const isReplyLocked = Boolean(
-    selectedDetail?.feedback.status === 'closed' || selectedDetail?.feedback.archivedAt
+    detailLoading || selectedDetail?.feedback.status === 'closed' || selectedDetail?.feedback.archivedAt
   );
 
   return (
@@ -584,7 +616,10 @@ export default function AdminFeedbackPage() {
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => setSelectedId(item.id)}
+                  onClick={() => {
+                    if (selectedId === item.id) void loadFeedbackDetail(item.id);
+                    else selectFeedback(item.id);
+                  }}
                   className={`w-full text-left p-3 rounded-xl border transition-colors ${
                     selectedId === item.id
                       ? 'bg-orange-50 border-orange-200'
@@ -710,7 +745,7 @@ export default function AdminFeedbackPage() {
                   <button
                     type="button"
                     onClick={handleDeleteFeedback}
-                    disabled={deleting}
+                    disabled={deleting || detailLoading}
                     className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
                   >
                     {deleting ? (

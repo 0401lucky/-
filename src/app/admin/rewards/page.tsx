@@ -56,7 +56,7 @@ export default function AdminRewardsPage() {
   const [listTotal, setListTotal] = useState(0);
   const [listTotalPages, setListTotalPages] = useState(1);
 
-  const fetchBatches = useCallback(async (p = listPage) => {
+  const fetchBatches = useCallback(async (p: number) => {
     setListLoading(true);
     try {
       const res = await fetch(`/api/admin/rewards?page=${p}&limit=10`, { cache: 'no-store' });
@@ -72,7 +72,7 @@ export default function AdminRewardsPage() {
     } finally {
       setListLoading(false);
     }
-  }, [listPage]);
+  }, []);
 
   useEffect(() => {
     void fetchBatches(1);

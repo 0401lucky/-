@@ -8,6 +8,7 @@ import {
   Trash2, Edit
 } from 'lucide-react';
 import { formatChinaDateTime } from '@/lib/time';
+import { useAdminFeedback } from '@/components/admin/AdminFeedback';
 
 interface RafflePrize {
   id: string;
@@ -39,6 +40,7 @@ interface RaffleItem {
 }
 
 export default function AdminRaffleListPage() {
+  const { notify, confirm } = useAdminFeedback();
   const [loading, setLoading] = useState(true);
   const [raffles, setRaffles] = useState<RaffleItem[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -68,7 +70,12 @@ export default function AdminRaffleListPage() {
   }, [fetchRaffles]);
 
   const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除这个活动吗？')) return;
+    if (!(await confirm({
+      title: '删除抽奖活动？',
+      description: '确定删除这个活动吗？删除后无法恢复。',
+      confirmLabel: '删除活动',
+      danger: true,
+    }))) return;
 
     setDeleting(id);
     try {
@@ -77,10 +84,10 @@ export default function AdminRaffleListPage() {
       if (data.success) {
         setRaffles(raffles.filter(r => r.id !== id));
       } else {
-        alert(data.message || '删除失败');
+        notify(data.message || '删除失败', 'error');
       }
     } catch {
-      alert('删除失败');
+      notify('删除失败', 'error');
     } finally {
       setDeleting(null);
     }

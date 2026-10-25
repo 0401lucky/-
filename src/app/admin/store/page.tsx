@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { useAdminFeedback } from '@/components/admin/AdminFeedback';
 import {
   AlertCircle,
   Boxes,
@@ -110,6 +111,7 @@ function getTypeLabel(type: StoreItem['type']) {
 }
 
 export default function AdminStorePage() {
+  const { confirm } = useAdminFeedback();
   const [tab, setTab] = useState<AdminTab>('items');
   const [items, setItems] = useState<StoreItem[]>([]);
   const [categories, setCategories] = useState<StoreCategory[]>([]);
@@ -234,7 +236,12 @@ export default function AdminStorePage() {
   };
 
   const deleteItem = async (item: StoreItem) => {
-    if (!confirm(`确定删除「${item.name}」吗？`)) return;
+    if (!(await confirm({
+      title: '删除商品？',
+      description: `确定删除「${item.name}」吗？删除后无法恢复。`,
+      confirmLabel: '删除商品',
+      danger: true,
+    }))) return;
     setSaving(item.id);
     try {
       const res = await fetch('/api/store/admin', {

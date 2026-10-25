@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Eye, FileText, Plus, Save, Trash2 } from 'lucide-react';
 import MarkdownPreview from '@/components/MarkdownPreview';
+import { useAdminFeedback } from '@/components/admin/AdminFeedback';
 
 type AnnouncementStatus = 'draft' | 'published' | 'archived';
 
@@ -17,6 +18,7 @@ interface AnnouncementItem {
 }
 
 export default function AdminAnnouncementsPage() {
+  const { confirm } = useAdminFeedback();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +112,11 @@ export default function AdminAnnouncementsPage() {
   };
 
   const archiveAnnouncement = async (id: string) => {
-    if (!confirm('确定要归档这条公告吗？')) return;
+    if (!(await confirm({
+      title: '归档公告？',
+      description: '归档后，这条公告将不再展示在前台。',
+      confirmLabel: '确认归档',
+    }))) return;
 
     setError(null);
     setSuccess(null);

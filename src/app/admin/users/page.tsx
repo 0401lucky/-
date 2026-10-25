@@ -29,6 +29,7 @@ import {
   X,
 } from 'lucide-react';
 import type { AchievementId, AchievementUnlockMode } from '@/lib/profile-achievements';
+import { useAdminFeedback } from '@/components/admin/AdminFeedback';
 
 type UserStatusFilter = 'all' | 'new' | 'claimed';
 
@@ -412,6 +413,7 @@ function buildTimelineItems(
 }
 
 export default function UsersPage() {
+  const { notify, confirm } = useAdminFeedback();
   const [users, setUsers] = useState<UserWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchInput, setSearchInput] = useState('');
@@ -575,7 +577,7 @@ export default function UsersPage() {
     if (!selectedUser) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !document.querySelector('dialog[open]')) {
         handleCloseDetail();
       }
     };
@@ -599,7 +601,7 @@ export default function UsersPage() {
 
     const amount = Number(adjustAmount);
     if (!Number.isSafeInteger(amount) || amount === 0) {
-      window.alert('请输入非零整数积分');
+      notify('请输入非零整数积分', 'error');
       return;
     }
 
@@ -635,10 +637,10 @@ export default function UsersPage() {
       setAdjustReason('');
       setPointsPage(1);
       await loadPointsPage(selectedUser.id, 1);
-      window.alert(data.message || '积分调整成功');
+      notify(data.message || '积分调整成功');
     } catch (error) {
       console.error('Adjust points error:', error);
-      window.alert(error instanceof Error ? error.message : '积分调整失败');
+      notify(error instanceof Error ? error.message : '积分调整失败', 'error');
     } finally {
       setAdjusting(false);
     }
@@ -649,7 +651,12 @@ export default function UsersPage() {
 
     const contributor = detail.achievements.find((item) => item.id === 'contributor');
     const shouldRevoke = Boolean(contributor?.unlocked);
-    if (shouldRevoke && !window.confirm('确认撤销该用户的“奉献者”成就吗？')) {
+    if (shouldRevoke && !(await confirm({
+      title: '撤销成就？',
+      description: '确认撤销该用户的“奉献者”成就吗？',
+      confirmLabel: '撤销成就',
+      danger: true,
+    }))) {
       return;
     }
 
@@ -670,10 +677,10 @@ export default function UsersPage() {
       }
 
       setDetail((current) => current ? { ...current, achievements: data.achievements || [] } : current);
-      window.alert(data.message || (shouldRevoke ? '成就已撤销' : '成就已颁发'));
+      notify(data.message || (shouldRevoke ? '成就已撤销' : '成就已颁发'));
     } catch (error) {
       console.error('Update achievement error:', error);
-      window.alert(error instanceof Error ? error.message : '成就操作失败');
+      notify(error instanceof Error ? error.message : '成就操作失败', 'error');
     } finally {
       setAchievementUpdating(false);
     }
