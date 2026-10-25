@@ -300,6 +300,9 @@ func buildComputedLands(state FarmState, now int64) []ComputedLand {
 			BellActive:           bellActive,
 			NetActive:            plot.Crop != nil && plot.Crop.BirdNetUntil != nil && *plot.Crop.BirdNetUntil > now,
 		}
+		if plot.Crop != nil {
+			computed.WitherAt, computed.WitherReason = computeWitherTimeline(*plot.Crop, plot.Status)
+		}
 
 		switch {
 		case plot.Status == LandStatusLocked:
@@ -343,6 +346,32 @@ func buildComputedLands(state FarmState, now int64) []ComputedLand {
 		lands = append(lands, computed)
 	}
 	return lands
+}
+
+// computeWitherTimeline mirrors the server tick rules so the detail timeline
+// never promises a mature+48h wither date for a crop that can wither earlier
+// after its third missed watering.
+func computeWitherTimeline(crop CropInstance, status LandStatus) (int64, string) {
+	if crop.MatureAt <= 0 {
+		return 0, ""
+	}
+	interval := computeActualWaterIntervalMs(crop.CropID, crop.PlantedSeason, crop.WeatherAtPlant)
+	if interval <= 0 {
+		interval = 30 * 60 * 1000
+	}
+	waterWitherAt := int64(0)
+	if crop.WaterMissCount >= 3 {
+		waterWitherAt = crop.NextWaterDueAt - interval
+	} else if crop.NextWaterDueAt > 0 && crop.WaterMissCount <= 2 {
+		waterWitherAt = crop.NextWaterDueAt + (2-crop.WaterMissCount)*interval
+	}
+	if waterWitherAt > 0 && waterWitherAt < crop.MatureAt {
+		return waterWitherAt, "water"
+	}
+	if status == LandStatusWithered || status == LandStatusMature || crop.MatureAt > 0 {
+		return crop.MatureAt + 48*60*60*1000, "overripe"
+	}
+	return 0, ""
 }
 
 func getPlantableCrops(state FarmState, season Season) []CropID {

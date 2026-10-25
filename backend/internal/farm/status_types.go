@@ -128,6 +128,8 @@ type ComputedLand struct {
 	ScarecrowActive      bool          `json:"scarecrowActive"`
 	BellActive           bool          `json:"bellActive"`
 	NetActive            bool          `json:"netActive"`
+	WitherAt             int64         `json:"witherAt,omitempty"`
+	WitherReason         string        `json:"witherReason,omitempty"`
 }
 
 type WorldState struct {

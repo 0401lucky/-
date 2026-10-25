@@ -462,6 +462,7 @@ interface ShopModalProps {
   unlockedLandCount: number;
   scarecrowUntil: number | null;
   bellUntil: number | null;
+  now: number;
   onClose: () => void;
   onBuy: (key: ShopItemKey, qty?: number) => void;
   onBuySeed: (cropId: CropIdV2, qty: number) => void;
@@ -506,17 +507,11 @@ function clampPurchaseQty(value: number, maxQty: number): number {
 
 export function ShopModal({
   open, inventory, learnedSkills, shopDailyPurchases, seedInventory, balance,
-  unlockedLandCount, scarecrowUntil, bellUntil, onClose, onBuy, onBuySeed,
+  unlockedLandCount, scarecrowUntil, bellUntil, now, onClose, onBuy, onBuySeed,
 }: ShopModalProps) {
   const [tab, setTab] = useState<typeof SHOP_TABS[number]['id']>('seeds');
   const [purchaseTarget, setPurchaseTarget] = useState<ShopPurchaseTarget | null>(null);
   const [purchaseQty, setPurchaseQty] = useState(1);
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (!open) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [open]);
   if (!open) return null;
   const items = tab === 'seeds' ? [] : Object.values(SHOP_ITEMS_V2).filter(i => i.category === tab && i.cost > 0);
   const targetIsOneTime = purchaseTarget?.kind === 'item' && ONE_TIME_SHOP_ITEM_KEYS.includes(purchaseTarget.itemKey as (typeof ONE_TIME_SHOP_ITEM_KEYS)[number]);
@@ -1060,18 +1055,13 @@ interface BackpackModalProps {
   seedInventory: Partial<Record<CropIdV2, number>>;
   scarecrowUntil: number | null;
   bellUntil: number | null;
+  now: number;
   onClose: () => void;
   onItemClick: (key: ShopItemKey) => void;
   onSeedClick: (cropId: CropIdV2) => void;
 }
 
-export function BackpackModal({ open, inventory, seedInventory, scarecrowUntil, bellUntil, onClose, onItemClick, onSeedClick }: BackpackModalProps) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (!open) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [open]);
+export function BackpackModal({ open, inventory, seedInventory, scarecrowUntil, bellUntil, now, onClose, onItemClick, onSeedClick }: BackpackModalProps) {
 
   const seedEntries = Object.entries(seedInventory).filter(([, n]) => (n ?? 0) > 0) as Array<[CropIdV2, number]>;
   const itemsByCat = Object.values(SHOP_ITEMS_V2).reduce<Record<string, Array<{ key: ShopItemKey; count: number }>>>((acc, def) => {
@@ -1355,6 +1345,7 @@ export function LandQuickUseModal({ open, mode, land, inventory, onClose, onUse 
 interface LandDetailModalProps {
   open: boolean;
   land: ComputedLand | null;
+  now: number;
   onClose: () => void;
 }
 
@@ -1392,13 +1383,13 @@ interface GrowthTimelineItem {
   tone: GrowthTimelineTone;
 }
 
-function buildGrowthTimeline(land: ComputedLand, crop: NonNullable<ComputedLand['crop']>): GrowthTimelineItem[] {
-  const now = Date.now();
+function buildGrowthTimeline(land: ComputedLand, crop: NonNullable<ComputedLand['crop']>, now: number): GrowthTimelineItem[] {
   const growthMs = Math.max(1, crop.matureAt - crop.plantedAt);
   const sproutAt = crop.plantedAt + Math.round(growthMs * 0.2);
   const growingAt = crop.plantedAt + Math.round(growthMs * 0.5);
   const overripeAt = crop.matureAt + 12 * 60 * 60 * 1000;
-  const witherAt = crop.matureAt + 48 * 60 * 60 * 1000;
+  const witherAt = land.witherAt ?? crop.matureAt + 48 * 60 * 60 * 1000;
+  const witherReason = land.witherReason === 'water' ? '缺水达到 3 次会枯萎' : '成熟后 48 小时腐烂枯萎';
 
   const activeKey = (() => {
     if (land.status === 'withered') return 'wither';
@@ -1416,8 +1407,8 @@ function buildGrowthTimeline(land: ComputedLand, crop: NonNullable<ComputedLand[
     { key: 'growing', label: '生长', at: growingAt, detail: '成长 50%', tone: 'normal' as const },
     { key: 'mature', label: '成熟', at: crop.matureAt, detail: '可以收获', tone: 'normal' as const },
     { key: 'overripe', label: '过熟', at: overripeAt, detail: '收益开始下降', tone: 'warn' as const },
-    { key: 'wither', label: '枯萎', at: witherAt, detail: '超时会枯萎', tone: 'warn' as const },
-  ];
+    { key: 'wither', label: '枯萎', at: witherAt, detail: witherReason, tone: 'warn' as const },
+  ].sort((left, right) => left.at - right.at);
 
   return points.map((point) => ({
     key: point.key,
@@ -1429,7 +1420,7 @@ function buildGrowthTimeline(land: ComputedLand, crop: NonNullable<ComputedLand[
   }));
 }
 
-export function LandDetailModal({ open, land, onClose }: LandDetailModalProps) {
+export function LandDetailModal({ open, land, now, onClose }: LandDetailModalProps) {
   if (!open || !land) return null;
   const crop = land.crop;
   const cropDef = crop ? CROPS_V2[crop.cropId] : null;
@@ -1442,7 +1433,7 @@ export function LandDetailModal({ open, land, onClose }: LandDetailModalProps) {
       : land.nextWaterRemainingMs <= 0
       ? '现在需要浇水'
       : fmtMs(land.nextWaterRemainingMs);
-  const timeline = crop ? buildGrowthTimeline(land, crop) : [];
+  const timeline = crop ? buildGrowthTimeline(land, crop, now) : [];
   const activeTimelineIndex = Math.max(0, timeline.findIndex((item) => item.state === 'active'));
   const timelineProgress = timeline.length > 1
     ? (activeTimelineIndex / (timeline.length - 1)) * 100
@@ -1522,12 +1513,12 @@ export function LandDetailModal({ open, land, onClose }: LandDetailModalProps) {
 }
 
 function fmtExactTime(ts: number): string {
-  const date = new Date(ts);
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hour = String(date.getHours()).padStart(2, '0');
-  const minute = String(date.getMinutes()).padStart(2, '0');
-  return `${month}-${day} ${hour}:${minute}`;
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(ts));
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
+  return `${value('month')}-${value('day')} ${value('hour')}:${value('minute')}`;
 }
 
 // ===================== ItemDetailModal =====================

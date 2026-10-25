@@ -46,6 +46,7 @@ func newInitialState(userID int64, nowMs int64) FarmState {
 }
 
 func normalizeState(state FarmState, nowMs int64) FarmState {
+	normalizeStateTimestamps(&state, nowMs)
 	if state.UserID <= 0 {
 		state.UserID = 0
 	}
@@ -108,6 +109,69 @@ func normalizeState(state FarmState, nowMs int64) FarmState {
 		state.LastTickAt = state.CreatedAt
 	}
 	return state
+}
+
+const minimumMillisecondTimestamp = int64(100_000_000_000)
+
+func normalizeFarmTimestamp(value int64, nowMs int64) int64 {
+	if nowMs >= minimumMillisecondTimestamp && value > 0 && value < minimumMillisecondTimestamp {
+		return value * 1000
+	}
+	return value
+}
+
+// Old farm snapshots imported from early clients could contain Unix seconds.
+// Normalize them once at read time so crops and pet tasks do not expire years
+// before their displayed dates.
+func normalizeStateTimestamps(state *FarmState, nowMs int64) bool {
+	if state == nil || nowMs < minimumMillisecondTimestamp {
+		return false
+	}
+	changed := false
+	stateFields := []*int64{
+		&state.LastDailyResetAt, &state.LastSeasonProcessedAt, &state.LastTickAt,
+		&state.CreatedAt, &state.UpdatedAt,
+	}
+	for _, field := range stateFields {
+		if next := normalizeFarmTimestamp(*field, nowMs); next != *field {
+			*field = next
+			changed = true
+		}
+	}
+	for index := range state.Lands {
+		crop := state.Lands[index].Crop
+		if crop == nil {
+			continue
+		}
+		fields := []*int64{
+			&crop.PlantedAt, &crop.MatureAt, &crop.LastWaterAt, &crop.NextWaterDueAt,
+		}
+		if crop.BirdNetUntil != nil {
+			fields = append(fields, crop.BirdNetUntil)
+		}
+		for _, field := range fields {
+			if next := normalizeFarmTimestamp(*field, nowMs); next != *field {
+				*field = next
+				changed = true
+			}
+		}
+	}
+	if pet, ok := decodePetMap(state.Pet); ok {
+		for _, key := range []string{"taskStartAt", "taskEndAt", "cooldownEndAt", "dailyResetAt"} {
+			if value, exists := pet[key]; exists && value != nil {
+				current := int64(anyNumber(value))
+				next := normalizeFarmTimestamp(current, nowMs)
+				if next != current {
+					pet[key] = float64(next)
+					changed = true
+				}
+			}
+		}
+		if changed {
+			state.Pet = encodeJSONOrDefault(pet, `null`)
+		}
+	}
+	return changed
 }
 
 func isEmptyJSON(value json.RawMessage) bool {

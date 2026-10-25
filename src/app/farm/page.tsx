@@ -153,6 +153,7 @@ export default function FarmPage() {
   const [harvestPopup, setHarvestPopup] = useState<{ results: HarvestResult[]; total: number } | null>(null);
   const [successPopup, setSuccessPopup] = useState<FarmSuccessPopup | null>(null);
   const [now, setNow] = useState(Date.now());
+  const serverClockOffsetRef = useRef(0);
   const { desktopPetVisible, toggleDesktopPetVisible } = useDesktopPetVisiblePreference();
 
   // 加载用户信息（用于 topbar 显示）
@@ -197,9 +198,15 @@ export default function FarmPage() {
   }, []);
 
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
+    const t = setInterval(() => setNow(Date.now() + serverClockOffsetRef.current), 1000);
     return () => clearInterval(t);
   }, []);
+
+  useEffect(() => {
+    if (!game.status?.serverNow) return;
+    serverClockOffsetRef.current = game.status.serverNow - Date.now();
+    setNow(game.status.serverNow);
+  }, [game.status?.serverNow]);
 
   useEffect(() => {
     if (game.status && !game.status.state.pet && !showAdopt) setShowAdopt(true);
@@ -617,6 +624,7 @@ export default function FarmPage() {
         unlockedLandCount={unlockedLandCount}
         scarecrowUntil={state.scarecrowUntil}
         bellUntil={state.bellUntil}
+        now={now}
         onClose={() => setShowShop(false)}
         onBuy={(k, q) => { void showShopPurchaseSuccess(k, q); }}
         onBuySeed={(c, q) => { void showSeedPurchaseSuccess(c, q); }}
@@ -629,6 +637,7 @@ export default function FarmPage() {
         seedInventory={state.seedInventory}
         scarecrowUntil={state.scarecrowUntil}
         bellUntil={state.bellUntil}
+        now={now}
         onClose={() => setShowBackpack(false)}
         onItemClick={(k) => setItemDetail(k)}
         onSeedClick={(c) => setSeedDetail(c)}
@@ -673,6 +682,7 @@ export default function FarmPage() {
       <LandDetailModal
         open={landDetailIndex != null}
         land={landDetailTarget}
+        now={now}
         onClose={() => setLandDetailIndex(null)}
       />
       <PetItemPickerModal

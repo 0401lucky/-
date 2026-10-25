@@ -83,6 +83,9 @@ export interface ComputedLand extends LandPlot {
   scarecrowActive: boolean;
   bellActive: boolean;
   netActive: boolean;
+  /** 服务端计算的枯萎时间；缺水达到 3 次时可能早于成熟时间 */
+  witherAt?: number;
+  witherReason?: 'water' | 'overripe' | 'season' | string;
 }
 
 export interface PetState {
