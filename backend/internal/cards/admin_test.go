@@ -52,7 +52,7 @@ func TestBuildAdminRewardConfigUsesDefaultsAndOverrides(t *testing.T) {
 		},
 	)
 
-	if len(config.Albums) != 4 || config.Albums[0].ID != "animal-s1" {
+	if len(config.Albums) != 5 || config.Albums[0].ID != "animal-s1" {
 		t.Fatalf("unexpected albums: %#v", config.Albums)
 	}
 	if config.Albums[0].DefaultReward != 100 || config.Albums[0].CurrentReward != 123 {
@@ -60,6 +60,9 @@ func TestBuildAdminRewardConfigUsesDefaultsAndOverrides(t *testing.T) {
 	}
 	if config.Albums[1].CurrentReward != config.Albums[1].DefaultReward {
 		t.Fatalf("animal-s2 should use default reward: %+v", config.Albums[1])
+	}
+	if album := config.Albums[4]; album.ID != hokModernAlbumID || album.DefaultReward != 22000 || album.CurrentReward != 22000 {
+		t.Fatalf("unexpected HOK modern reward: %+v", album)
 	}
 
 	if len(config.Tiers) != 5 {

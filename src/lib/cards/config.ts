@@ -1,5 +1,6 @@
 import type { CardConfig, CardAlbum, Rarity } from "./types";
 import { getCardImagePath, getOptimizedImagePath, RARITY_CARD_BACKS, RARITY_PROBABILITIES } from "./constants";
+import { HOK_MODERN_ALBUM_ID, HOK_MODERN_CARD_NAMES } from "./hok-modern";
 
 // Card Albums Definition
 export const ALBUMS: CardAlbum[] = [
@@ -61,6 +62,21 @@ export const ALBUMS: CardAlbum[] = [
       epic: 120,
       legendary: 180,
       legendary_rare: 350,
+    },
+  },
+  {
+    id: HOK_MODERN_ALBUM_ID,
+    name: "王者荣耀现代图鉴",
+    description: "收集 128 位英雄的现代服装卡面，集齐全套赢取 22000 积分",
+    coverImage: getOptimizedImagePath("/images/王者现代/传说稀有/甄姬.png", "thumb"),
+    reward: 22000,
+    season: "王者现代篇",
+    tierRewards: {
+      common: 800,
+      rare: 1400,
+      epic: 2400,
+      legendary: 4000,
+      legendary_rare: 7000,
     },
   },
 ];
@@ -277,7 +293,24 @@ const personaS1Cards: CardConfig[] = [
   ...personaCommonCards.map((name) => createCard(name, "common", personaS1AlbumId, getPersonaImagePath(name, "common"))),
 ];
 
-export const CARDS: CardConfig[] = [...animalS1Cards, ...animalS2Cards, ...tarotAllCards, ...personaS1Cards];
+const hokModernRarityFolders: Record<Rarity, string> = {
+  legendary_rare: "传说稀有",
+  legendary: "传说",
+  epic: "史诗",
+  rare: "稀有",
+  common: "普通",
+};
+
+const hokModernCards: CardConfig[] = (Object.keys(HOK_MODERN_CARD_NAMES) as Rarity[]).flatMap(
+  (rarity) => HOK_MODERN_CARD_NAMES[rarity].map((name) => createCard(
+    name,
+    rarity,
+    HOK_MODERN_ALBUM_ID,
+    `/images/王者现代/${hokModernRarityFolders[rarity]}/${name}.png`,
+  )),
+);
+
+export const CARDS: CardConfig[] = [...animalS1Cards, ...animalS2Cards, ...tarotAllCards, ...personaS1Cards, ...hokModernCards];
 
 // Helper functions
 export function getAlbumById(albumId: string): CardAlbum | undefined {

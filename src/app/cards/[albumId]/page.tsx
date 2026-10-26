@@ -23,6 +23,7 @@ const ALBUM_THEME: Record<string, 's1' | 's2' | 'special'> = {
   'animal-s2': 's2',
   tarot: 'special',
   'persona-s1': 'special',
+  'hok-modern-s1': 'special',
 };
 
 export default function AlbumDetailPage() {

@@ -7,7 +7,6 @@ import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
   BookOpen,
-  Check,
   Crown,
   History,
   Loader2,
@@ -18,21 +17,15 @@ import {
   Zap,
 } from 'lucide-react';
 import { ALBUMS, CARDS } from '@/lib/cards/config';
+import { DrawReveal } from '@/components/cards/DrawReveal';
+import { prepareDrawImages, waitForDrawIntro } from '@/lib/cards/draw-animation';
 import { PITY_THRESHOLDS, RARITY_PROBABILITIES } from '@/lib/cards/constants';
-import type { RecentDraw, UserCards } from '@/lib/cards/draw-types';
+import type { RecentDraw, SingleDrawResult, UserCards } from '@/lib/cards/draw-types';
 import type { CardConfig, Rarity } from '@/lib/cards/types';
-import confetti from 'canvas-confetti';
 
 interface CardRulesConfig {
   rarityProbabilities: Record<Rarity, number>;
   pityThresholds: Record<'rare' | 'epic' | 'legendary' | 'legendary_rare', number>;
-}
-
-// 单次抽卡结果（与 /api/cards/draw 返回结构一致）
-interface SingleDrawResult {
-  card: CardConfig;
-  isDuplicate: boolean;
-  fragmentsAdded?: number;
 }
 
 interface DrawResponse {
@@ -105,24 +98,6 @@ function formatExactTime(ts: number): string {
   return `${target.getFullYear()}-${M}-${D} ${hh}:${mm}`;
 }
 
-// 高稀有度 confetti 触发（沿用旧实现，保持视觉一致）
-function fireConfetti(rarity: string) {
-  const isMythic = rarity === 'legendary_rare';
-  const isLegendary = rarity === 'legendary';
-  const colors = isMythic
-    ? ['#ff9a9e', '#fad0c4', '#ffecd2', '#a18cd1', '#fbc2eb', '#8fd3f4']
-    : isLegendary
-      ? ['#fbbf24', '#fcd34d', '#ffffff']
-      : ['#c084fc', '#e879f9', '#ffffff'];
-  const duration = isMythic ? 3000 : 2000;
-  const end = Date.now() + duration;
-  (function frame() {
-    confetti({ particleCount: isMythic ? 7 : 3, angle: 60, spread: 55, origin: { x: 0 }, colors });
-    confetti({ particleCount: isMythic ? 7 : 3, angle: 120, spread: 55, origin: { x: 1 }, colors });
-    if (Date.now() < end) requestAnimationFrame(frame);
-  })();
-}
-
 export default function DrawPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -132,9 +107,6 @@ export default function DrawPage() {
   // 抽卡结果弹层
   const [revealing, setRevealing] = useState(false);
   const [revealResults, setRevealResults] = useState<SingleDrawResult[]>([]);
-  const [flippedIndices, setFlippedIndices] = useState<number[]>([]);
-  const [controlsShown, setControlsShown] = useState(false);
-  const [hasSSR, setHasSSR] = useState(false);
 
   // 主舞台卡片打出动效（翻转 + 缩放）
   const [stagePulling, setStagePulling] = useState(false);
@@ -152,6 +124,7 @@ export default function DrawPage() {
   const [lastDrawCount, setLastDrawCount] = useState(1);
 
   const drawTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const drawPreparationRef = useRef<AbortController | null>(null);
   const drawCooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const drawCooldownUntilRef = useRef(0);
   const drawInFlightRef = useRef(false);
@@ -234,6 +207,7 @@ export default function DrawPage() {
   }, [router, fetchInventory, fetchRules]);
 
   useEffect(() => () => {
+    drawPreparationRef.current?.abort();
     clearDrawTimeouts();
     clearDrawCooldown();
   }, [clearDrawTimeouts, clearDrawCooldown]);
@@ -289,22 +263,9 @@ export default function DrawPage() {
 
   // ----- 弹层控制 -----
   const closeReveal = useCallback(() => {
+    clearDrawTimeouts();
     setRevealing(false);
-    setHasSSR(false);
-    setFlippedIndices([]);
-    setControlsShown(false);
-  }, []);
-
-  const flipAll = useCallback(() => {
-    if (controlsShown) return;
-    setFlippedIndices(revealResults.map((_, i) => i));
-    revealResults.forEach((r) => {
-      if (['legendary_rare', 'legendary', 'epic'].includes(r.card.rarity)) {
-        fireConfetti(r.card.rarity);
-      }
-    });
-    setControlsShown(true);
-  }, [controlsShown, revealResults]);
+  }, [clearDrawTimeouts]);
 
   // ----- 抽卡 -----
   const handleDraw = useCallback(
@@ -320,17 +281,12 @@ export default function DrawPage() {
       setLastDrawCount(count);
       setStagePulling(true);
       clearDrawTimeouts();
+      const preparation = new AbortController();
+      drawPreparationRef.current = preparation;
+      const introReady = waitForDrawIntro(preparation.signal);
 
       try {
-        // 主舞台卡片打出动效（450ms）
-        await new Promise<void>((resolve) => {
-          const t = setTimeout(() => {
-            drawTimeoutsRef.current = drawTimeoutsRef.current.filter((x) => x !== t);
-            resolve();
-          }, 450);
-          drawTimeoutsRef.current.push(t);
-        });
-
+        // 请求与蓄光同时开始，不把舞台动画串在网络请求前。
         const res = await fetch('/api/cards/draw', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -340,6 +296,7 @@ export default function DrawPage() {
           success: false,
           message: res.ok ? '抽卡响应异常，请稍后重试' : '抽卡服务异常，请稍后重试',
         }));
+        if (preparation.signal.aborted) return;
 
         if (!data.success || !data.data?.success) {
           syncDrawsAvailable(data.data?.drawsAvailable ?? data.drawsAvailable);
@@ -365,37 +322,28 @@ export default function DrawPage() {
         syncDrawsAvailable(data.data.drawsAvailable);
         startDrawCooldown();
 
+        await Promise.all([
+          introReady,
+          prepareDrawImages(results.map((result) => result.card), preparation.signal),
+        ]);
+        if (preparation.signal.aborted) return;
         setRevealResults(results);
-        setFlippedIndices([]);
-        setControlsShown(false);
-        setHasSSR(results.some((r) => r.card.rarity === 'legendary_rare'));
         setRevealing(true);
 
-        // 卡片落定后，依次翻牌
-        const dropDelay = 600 + results.length * 110 + 400;
-        const flipTimer = setTimeout(() => {
-          results.forEach((r, idx) => {
-            const t = setTimeout(() => {
-              setFlippedIndices((prev) => (prev.includes(idx) ? prev : [...prev, idx]));
-              if (['legendary_rare', 'legendary', 'epic'].includes(r.card.rarity)) {
-                fireConfetti(r.card.rarity);
-              }
-            }, idx * 180);
-            drawTimeoutsRef.current.push(t);
-          });
-          const ctrlT = setTimeout(() => setControlsShown(true), results.length * 180 + 800);
-          drawTimeoutsRef.current.push(ctrlT);
-        }, dropDelay);
-        drawTimeoutsRef.current.push(flipTimer);
-
-        await fetchInventory();
+        void fetchInventory();
       } catch (err) {
+        if (preparation.signal.aborted) return;
         console.error('Draw failed', err);
         alert('网络错误，请稍后重试');
       } finally {
+        const cancelled = preparation.signal.aborted;
+        preparation.abort();
+        if (drawPreparationRef.current === preparation) drawPreparationRef.current = null;
         drawInFlightRef.current = false;
-        setDrawing(false);
-        setStagePulling(false);
+        if (!cancelled) {
+          setDrawing(false);
+          setStagePulling(false);
+        }
       }
     },
     [drawing, drawsAvailable, fetchInventory, clearDrawTimeouts, syncDrawsAvailable, startDrawCooldown],
@@ -415,7 +363,7 @@ export default function DrawPage() {
     const t = setTimeout(() => {
       repeatDrawQueuedRef.current = false;
       void handleDraw(lastDrawCount);
-    }, 300);
+    }, 160);
     drawTimeoutsRef.current.push(t);
   }, [drawing, drawCooldownRemaining, drawsAvailable, lastDrawCount, closeReveal, handleDraw]);
 
@@ -426,16 +374,18 @@ export default function DrawPage() {
       if (e.key !== 'Escape') return;
       if (showRules) setShowRules(false);
       else if (showRecords) setShowRecords(false);
-      else if (revealing && controlsShown) closeReveal();
     };
     window.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
+    const rootOverflow = document.documentElement.style.overflow;
     document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
     return () => {
       window.removeEventListener('keydown', onKey);
       document.body.style.overflow = prev;
+      document.documentElement.style.overflow = rootOverflow;
     };
-  }, [revealing, showRecords, showRules, controlsShown, closeReveal]);
+  }, [revealing, showRecords, showRules]);
 
   if (loading) {
     return (
@@ -447,7 +397,7 @@ export default function DrawPage() {
   }
 
   return (
-    <div className="gacha-page">
+    <div className={revealing ? 'gacha-page is-revealing' : 'gacha-page'}>
       {/* 紫色 mesh 背景 */}
       <div className="gacha-mesh-bg" aria-hidden />
       {/* 全屏漂浮粒子 */}
@@ -625,106 +575,13 @@ export default function DrawPage() {
 
       {/* === 抽卡结果弹层 === */}
       {revealing && (
-        <div
-          className={`reveal-overlay show ${hasSSR ? 'has-ssr' : ''}`}
-          role="dialog"
-          aria-modal="true"
-          aria-label="抽卡结果"
-          onClick={(e) => {
-            const target = e.target as HTMLElement;
-            if (target.closest('.r-card') || target.closest('.reveal-controls') || target.closest('.reveal-tip')) return;
-            if (controlsShown) closeReveal();
-            else flipAll();
-          }}
-        >
-          <div className="reveal-burst" />
-          <div className="reveal-cards">
-            {revealResults.map((result, i) => {
-              const meta = RARITY_META[result.card.rarity];
-              const total = revealResults.length;
-              const span = total > 1 ? 18 : 0;
-              const rot = total > 1 ? -span / 2 + (span * i) / (total - 1) : 0;
-              const flipped = flippedIndices.includes(i);
-              // 用 React inline style 直接控制延迟与最终旋转角度，
-              // 不再依赖 --i / --rot CSS 自定义属性，避免传值不一致或单位推断问题
-              const cardStyle: React.CSSProperties = {
-                animationDelay: `${i * 110}ms`,
-              };
-              // 通过 ref 在挂载时把 --rot 写到元素上（CSS keyframe 100% 用 var(--rot,0deg)）
-              const cardRef = (el: HTMLDivElement | null) => {
-                if (el) el.style.setProperty('--rot', `${rot}deg`);
-              };
-              return (
-                <div
-                  key={`${result.card.id}-${i}`}
-                  ref={cardRef}
-                  className={`r-card ${meta.themeClass} ${flipped ? 'flipped' : ''}`}
-                  style={cardStyle}
-                >
-                  <div className="r-card-inner">
-                    <div className="r-card-back">
-                      <div className="back-mark">
-                        <Star size={28} fill="currentColor" strokeWidth={0} />
-                      </div>
-                      <div className="back-rune">LUCKY ✦ POOL</div>
-                    </div>
-                    <div className="r-card-front">
-                      <span className="gleam" />
-                      <div className="rarity-tag">{meta.short}</div>
-                      <div className="r-image">
-                        <Image
-                          src={result.card.thumbnailImage ?? result.card.image}
-                          alt={result.card.name}
-                          fill
-                          sizes="156px"
-                          className="object-cover"
-                          priority
-                        />
-                      </div>
-                      <div className="r-name">{result.card.name}</div>
-                      {result.isDuplicate ? (
-                        <div className="r-tag-bottom dup">
-                          <RefreshCw size={11} strokeWidth={2.6} />+{result.fragmentsAdded ?? 0} 碎片
-                        </div>
-                      ) : (
-                        <div className="r-tag-bottom new">
-                          <Sparkles size={11} fill="currentColor" strokeWidth={0} />
-                          NEW · {meta.stars}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {!controlsShown && (
-            <div className="reveal-tip">
-              <Star size={14} fill="currentColor" strokeWidth={0} />
-              点击屏幕揭晓 / 自动翻牌中…
-            </div>
-          )}
-
-          {controlsShown && (
-            <div className="reveal-controls show">
-              <button
-                type="button"
-                className="reveal-btn again"
-                onClick={handleAgain}
-                disabled={drawing || drawCoolingDown || drawsAvailable < lastDrawCount}
-              >
-                <RefreshCw size={14} strokeWidth={2.6} />
-                {drawCoolingDown ? '冷却中' : '再抽一次'}
-                <span className="cost">{drawCoolingDown ? `${drawCooldownRemaining}s` : `−${lastDrawCount}`}</span>
-              </button>
-              <button type="button" className="reveal-btn confirm" onClick={closeReveal}>
-                <Check size={14} strokeWidth={3} />
-                确定
-              </button>
-            </div>
-          )}
-        </div>
+        <DrawReveal
+          results={revealResults}
+          cooldownRemaining={drawCooldownRemaining}
+          againDisabled={drawing || drawCoolingDown || drawsAvailable < lastDrawCount}
+          onAgain={handleAgain}
+          onClose={closeReveal}
+        />
       )}
 
       {/* === 抽卡规则弹窗 === */}
@@ -1333,9 +1190,8 @@ export default function DrawPage() {
         }
         .gacha-page .gacha-card:disabled { cursor: not-allowed; opacity: 0.85; }
         .gacha-page .gacha-card.pulling {
-          transform: rotateY(180deg) scale(0.85);
-          box-shadow: 0 0 80px rgba(254, 240, 138, 0.7), 0 30px 60px rgba(30, 64, 175, 0.5);
-          transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.45s;
+          transform: translateY(-8px) rotateY(12deg) scale(0.96);
+          transition: transform 280ms cubic-bezier(0.2, 0.75, 0.25, 1);
         }
         .gacha-page .gacha-card::before {
           content: '';
@@ -1552,375 +1408,6 @@ export default function DrawPage() {
           z-index: 2;
         }
 
-        /* === 抽卡结果弹层 === */
-        .reveal-overlay {
-          position: fixed;
-          inset: 0;
-          background: radial-gradient(circle at 50% 50%, rgba(124, 58, 237, 0.4) 0%, rgba(30, 27, 75, 0.85) 40%, rgba(15, 23, 42, 0.97) 100%);
-          backdrop-filter: blur(24px);
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 30px;
-          z-index: 200;
-          overflow: hidden;
-          padding: 24px;
-          animation: gacha-overlay-in 0.4s ease;
-        }
-        @keyframes gacha-overlay-in { from { opacity: 0; } to { opacity: 1; } }
-
-        .reveal-overlay.has-ssr::before {
-          content: '';
-          position: absolute;
-          inset: 0;
-          background: radial-gradient(circle at center, rgba(254, 240, 138, 0.85), rgba(251, 146, 60, 0.4) 30%, transparent 65%);
-          animation: gacha-ssr-flash 1.2s ease-out;
-          pointer-events: none;
-          z-index: 1;
-        }
-        @keyframes gacha-ssr-flash {
-          0% { opacity: 0; transform: scale(0.3); }
-          30% { opacity: 1; transform: scale(1); }
-          100% { opacity: 0; transform: scale(1.4); }
-        }
-
-        .reveal-burst {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          width: 600px;
-          height: 600px;
-          margin: -300px 0 0 -300px;
-          border-radius: 50%;
-          background: radial-gradient(circle, rgba(96, 165, 250, 0.4), transparent 60%);
-          filter: blur(20px);
-          animation: gacha-burst 4s ease-in-out infinite;
-          pointer-events: none;
-          z-index: 1;
-        }
-        @keyframes gacha-burst {
-          0%, 100% { transform: scale(1); opacity: 0.7; }
-          50% { transform: scale(1.2); opacity: 1; }
-        }
-
-        .reveal-cards {
-          position: relative;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          gap: 14px;
-          flex-wrap: wrap;
-          max-width: 95vw;
-          z-index: 3;
-        }
-
-        .r-card {
-          --rot: 0deg;
-          --glow: rgba(96, 165, 250, 0.55);
-          position: relative;
-          width: 156px;
-          aspect-ratio: 5 / 7;
-          perspective: 1200px;
-          transform: rotate(var(--rot, 0deg));
-          animation: gacha-drop-in 0.85s cubic-bezier(0.34, 1.56, 0.64, 1) both;
-        }
-        @keyframes gacha-drop-in {
-          0% { opacity: 0; transform: translateY(-180px) rotate(-30deg) scale(0.6); }
-          55% { opacity: 1; transform: translateY(14px) rotate(8deg) scale(1.04); }
-          80% { transform: translateY(-6px) rotate(-2deg) scale(1); }
-          100% { opacity: 1; transform: translateY(0) rotate(var(--rot, 0deg)) scale(1); }
-        }
-
-        .r-card-inner {
-          position: relative;
-          width: 100%;
-          height: 100%;
-          transform-style: preserve-3d;
-          transition: transform 0.9s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-        .r-card.flipped .r-card-inner { transform: rotateY(180deg); }
-
-        .r-card-back, .r-card-front {
-          position: absolute;
-          inset: 0;
-          border-radius: 18px;
-          backface-visibility: hidden;
-          -webkit-backface-visibility: hidden;
-          overflow: hidden;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
-        }
-
-        .r-card-back {
-          background: linear-gradient(135deg, #0c1e4d 0%, #1e3a8a 35%, #2563eb 70%, #6366f1 100%);
-          border: 1.5px solid rgba(255, 255, 255, 0.18);
-          color: #fde047;
-        }
-        .r-card-back::before {
-          content: '';
-          position: absolute;
-          inset: 0;
-          background-image: radial-gradient(rgba(255, 255, 255, 0.18) 1px, transparent 1px);
-          background-size: 14px 14px;
-          opacity: 0.7;
-        }
-        .r-card-back::after {
-          content: '';
-          position: absolute;
-          top: -25%;
-          left: -25%;
-          width: 70%;
-          height: 70%;
-          border-radius: 50%;
-          background: radial-gradient(circle, rgba(251, 191, 36, 0.4), transparent 60%);
-          filter: blur(30px);
-        }
-        .r-card-back .back-mark {
-          position: relative;
-          width: 56px;
-          height: 56px;
-          border-radius: 50%;
-          background: rgba(255, 255, 255, 0.95);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #1e3a8a;
-          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
-          z-index: 1;
-        }
-        .r-card-back .back-rune {
-          position: relative;
-          margin-top: 14px;
-          font-size: 9px;
-          font-weight: 900;
-          letter-spacing: 3px;
-          color: rgba(253, 224, 71, 0.85);
-          z-index: 1;
-        }
-
-        .r-card-front {
-          transform: rotateY(180deg);
-          justify-content: space-between;
-          padding: 12px 10px;
-          color: #fff;
-        }
-        .r-card-front::before {
-          content: '';
-          position: absolute;
-          inset: 0;
-          background-image: radial-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px);
-          background-size: 12px 12px;
-          pointer-events: none;
-        }
-        .r-card-front::after {
-          content: '';
-          position: absolute;
-          top: -30%;
-          right: -30%;
-          width: 90%;
-          height: 90%;
-          border-radius: 50%;
-          background: radial-gradient(circle, rgba(255, 255, 255, 0.4), transparent 65%);
-          filter: blur(25px);
-          pointer-events: none;
-        }
-
-        .r-card-front .r-image {
-          position: relative;
-          width: 78%;
-          aspect-ratio: 1;
-          border-radius: 14px;
-          overflow: hidden;
-          background: rgba(0, 0, 0, 0.18);
-          border: 2px solid rgba(255, 255, 255, 0.4);
-          box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
-          z-index: 2;
-        }
-
-        /* 五档稀有度配色 */
-        .r-card.r-mythic { --glow: rgba(244, 114, 182, 0.85); }
-        .r-card.r-mythic .r-card-front {
-          background: linear-gradient(160deg, #fbcfe8 0%, #ec4899 50%, #9d174d 100%);
-          border: 1.5px solid rgba(251, 207, 232, 0.7);
-        }
-        .r-card.r-ssr { --glow: rgba(251, 191, 36, 0.85); }
-        .r-card.r-ssr .r-card-front {
-          background: linear-gradient(160deg, #fde047 0%, #f97316 50%, #c2410c 100%);
-          border: 1.5px solid rgba(254, 240, 138, 0.7);
-        }
-        .r-card.r-sr { --glow: rgba(167, 139, 250, 0.7); }
-        .r-card.r-sr .r-card-front {
-          background: linear-gradient(160deg, #c4b5fd 0%, #8b5cf6 50%, #5b21b6 100%);
-          border: 1.5px solid rgba(196, 181, 253, 0.7);
-        }
-        .r-card.r-r { --glow: rgba(96, 165, 250, 0.6); }
-        .r-card.r-r .r-card-front {
-          background: linear-gradient(160deg, #93c5fd 0%, #3b82f6 60%, #1e40af 100%);
-          border: 1.5px solid rgba(147, 197, 253, 0.6);
-        }
-        .r-card.r-n { --glow: rgba(148, 163, 184, 0.4); }
-        .r-card.r-n .r-card-front {
-          background: linear-gradient(160deg, #cbd5e1 0%, #64748b 60%, #334155 100%);
-          border: 1.5px solid rgba(203, 213, 225, 0.5);
-        }
-
-        .r-card.flipped { animation: gacha-card-settle 0.6s ease-out 0.3s both; }
-        @keyframes gacha-card-settle {
-          0% { filter: drop-shadow(0 0 0 transparent); }
-          50% { filter: drop-shadow(0 0 30px var(--glow)) drop-shadow(0 0 60px var(--glow)); }
-          100% { filter: drop-shadow(0 0 18px var(--glow)); }
-        }
-
-        .r-card.r-mythic .r-card-front .gleam,
-        .r-card.r-ssr .r-card-front .gleam,
-        .r-card.r-sr .r-card-front .gleam {
-          position: absolute;
-          inset: 0;
-          background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.55) 50%, transparent 70%);
-          transform: translateX(-110%);
-          pointer-events: none;
-          z-index: 3;
-        }
-        .r-card.flipped.r-mythic .r-card-front .gleam,
-        .r-card.flipped.r-ssr .r-card-front .gleam,
-        .r-card.flipped.r-sr .r-card-front .gleam {
-          animation: gacha-gleam 1.4s ease-out 0.6s;
-        }
-        @keyframes gacha-gleam {
-          0% { transform: translateX(-110%); }
-          100% { transform: translateX(110%); }
-        }
-
-        .r-card.r-mythic::before,
-        .r-card.r-ssr::before {
-          content: '';
-          position: absolute;
-          inset: -10px;
-          border-radius: 22px;
-          background: conic-gradient(from 0deg, transparent, #fde047, transparent 30%, transparent 50%, #fb923c, transparent 80%);
-          opacity: 0;
-          z-index: -1;
-          filter: blur(8px);
-        }
-        .r-card.flipped.r-mythic::before,
-        .r-card.flipped.r-ssr::before {
-          animation: gacha-halo-spin 3s linear infinite, gacha-halo-fade 0.8s ease 0.4s forwards;
-        }
-        @keyframes gacha-halo-spin { to { transform: rotate(360deg); } }
-        @keyframes gacha-halo-fade { to { opacity: 1; } }
-
-        .r-card-front .rarity-tag {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          padding: 3px 10px;
-          border-radius: 999px;
-          background: rgba(0, 0, 0, 0.25);
-          font-size: 11px;
-          font-weight: 900;
-          letter-spacing: 2px;
-          backdrop-filter: blur(6px);
-          position: relative;
-          z-index: 2;
-          color: #fff;
-          border: 1px solid rgba(255, 255, 255, 0.35);
-        }
-        .r-card-front .r-name {
-          font-size: 13px;
-          font-weight: 900;
-          letter-spacing: 1px;
-          text-align: center;
-          position: relative;
-          z-index: 2;
-          text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-          color: #fff;
-          padding: 0 6px;
-          max-width: 100%;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-        .r-card-front .r-tag-bottom {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          padding: 3px 10px;
-          border-radius: 999px;
-          font-size: 10.5px;
-          font-weight: 900;
-          letter-spacing: 1px;
-          position: relative;
-          z-index: 2;
-          color: #fff;
-          backdrop-filter: blur(6px);
-          border: 1px solid rgba(255, 255, 255, 0.3);
-        }
-        .r-card-front .r-tag-bottom.new { background: rgba(0, 0, 0, 0.25); }
-        .r-card-front .r-tag-bottom.dup { background: rgba(255, 255, 255, 0.92); color: #1e293b; }
-
-        .reveal-tip {
-          position: relative;
-          z-index: 3;
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          padding: 10px 22px;
-          background: rgba(255, 255, 255, 0.12);
-          border: 1px solid rgba(255, 255, 255, 0.22);
-          border-radius: 999px;
-          color: #fff;
-          font-size: 13px;
-          font-weight: 700;
-          letter-spacing: 1px;
-          backdrop-filter: blur(10px);
-          animation: gacha-tip-blink 1.6s ease-in-out infinite;
-        }
-        @keyframes gacha-tip-blink { 50% { opacity: 0.55; } }
-
-        .reveal-controls {
-          display: flex;
-          gap: 14px;
-          position: relative;
-          z-index: 3;
-          opacity: 0;
-          transform: translateY(20px);
-          transition: all 0.5s ease;
-        }
-        .reveal-controls.show { opacity: 1; transform: translateY(0); }
-        .reveal-btn {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          padding: 12px 26px;
-          border-radius: 999px;
-          border: none;
-          cursor: pointer;
-          font-family: inherit;
-          font-size: 14px;
-          font-weight: 900;
-          letter-spacing: 1px;
-          transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-        .reveal-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .reveal-btn.again {
-          background: linear-gradient(135deg, #93c5fd, #3b82f6 50%, #1d4ed8);
-          color: #fff;
-          box-shadow: 0 14px 28px rgba(59, 130, 246, 0.45);
-        }
-        .reveal-btn.again:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 18px 36px rgba(59, 130, 246, 0.55); }
-        .reveal-btn.again .cost {
-          padding: 2px 8px;
-          background: rgba(255, 255, 255, 0.22);
-          border-radius: 999px;
-          font-size: 11px;
-          margin-left: 4px;
-        }
-        .reveal-btn.confirm { background: rgba(255, 255, 255, 0.95); color: #1e293b; }
-        .reveal-btn.confirm:hover:not(:disabled) { transform: translateY(-2px); background: #fff; }
 
         /* === 抽卡规则弹窗 === */
         .rules-modal-mask {
@@ -2478,10 +1965,6 @@ export default function DrawPage() {
           .gacha-page .action-bar { flex-direction: column; width: 100%; max-width: 320px; gap: 12px; }
           .gacha-page .draw-btn { width: 100%; min-width: auto; padding: 14px 22px 14px 14px; font-size: 15px; }
 
-          .reveal-cards { gap: 8px; }
-          .r-card { width: 108px; }
-          .r-card-back .back-mark { width: 44px; height: 44px; }
-          .r-card-front .r-name { font-size: 11px; }
         }
 
         @media (max-width: 420px) {
@@ -2496,8 +1979,6 @@ export default function DrawPage() {
           .gacha-page .gacha-card { width: 240px; border-radius: 24px; }
           .gacha-page .card-emblem { width: 130px; height: 130px; }
           .gacha-page .card-tap { font-size: 20px; letter-spacing: 3px; }
-          .r-card { width: 88px; }
-          .reveal-tip { font-size: 11px; padding: 8px 16px; }
         }
 
         /* === 手机端重排 v2：参考排行榜/游戏中心 === */
@@ -2616,17 +2097,6 @@ export default function DrawPage() {
           .gacha-page .draw-btn .ico { width: 36px; height: 36px; }
           .gacha-page .draw-btn .cost { font-size: 11.5px; }
 
-          /* 揭晓卡片：保留 flex wrap，避免破坏 drop-in 动画，仅缩小卡片尺寸 */
-          .reveal-cards {
-            gap: 8px;
-            max-width: 100vw;
-            padding: 0 8px;
-          }
-          .r-card {
-            width: 118px;
-          }
-          .r-card-back .back-mark { width: 40px; height: 40px; }
-          .r-card-front .r-name { font-size: 11px; }
         }
 
         @media (max-width: 480px) {
@@ -2656,9 +2126,29 @@ export default function DrawPage() {
           .gacha-page .draw-btn { padding: 12px 14px; font-size: 13px; }
           .gacha-page .draw-btn .ico { width: 32px; height: 32px; }
 
-          .reveal-cards { gap: 6px; padding: 0 6px; }
-          .r-card { width: 104px; }
-          .reveal-tip { font-size: 11px; padding: 7px 14px; }
+        }
+        .gacha-page.is-revealing .gacha-mesh-bg,
+        .gacha-page.is-revealing .gacha-stardust span,
+        .gacha-page.is-revealing .gacha-card::after,
+        .gacha-page.is-revealing .card-stars span,
+        .gacha-page.is-revealing .card-emblem::before,
+        .gacha-page.is-revealing .card-emblem::after,
+        .gacha-page.is-revealing .emblem-star,
+        .gacha-page.is-revealing .dot,
+        .gacha-page.is-revealing .card-tap,
+        .gacha-page.is-revealing .stage::before,
+        .gacha-page.is-revealing .stage::after { animation-play-state: paused; }
+
+        @media (prefers-reduced-motion: reduce) {
+          .gacha-page .gacha-card, .gacha-page .gacha-card.pulling {
+            transform: none;
+            transition: none;
+          }
+          .gacha-page .gacha-card::after,
+          .gacha-page .card-stars span,
+          .gacha-page .emblem-star,
+          .gacha-page .stage::before,
+          .gacha-page .stage::after { animation: none; }
         }
       `}</style>
     </div>

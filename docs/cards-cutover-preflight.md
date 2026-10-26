@@ -73,7 +73,7 @@ node scripts/audit-cards-cutover.mjs
    - 导入 `cards:rules:config`
    - 保留旧 JSON 字段兼容和坏数据 warning。
 3. 新增 Go `internal/cards`：
-   - 静态卡牌 catalog，已完成，总计 137 张卡，覆盖 `animal-s1`、`animal-s2` 和 `tarot`。
+   - 静态卡牌 catalog，已完成，总计 291 张卡，覆盖 `animal-s1`、`animal-s2`、`tarot`、`persona-s1` 和 `hok-modern-s1`；王者现代篇的角色与积分分配见 `docs/hok-modern-card-pool.md`。
    - 规则读取和默认规则兜底，已完成。
    - 用户卡牌状态读取、缺失状态初始化、状态保存，已完成。
    - 抽卡概率、保底、重复卡转碎片和最近抽卡记录算法，已完成纯函数与单元测试。

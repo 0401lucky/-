@@ -20,7 +20,7 @@ type tarotCardSeed struct {
 }
 
 func AllCards() []Card {
-	cards := make([]Card, 0, 163)
+	cards := make([]Card, 0, 291)
 	cards = append(cards, buildNamedCards("animal-s1", RarityLegendaryRare, animalS1LegendaryRare, "")...)
 	cards = append(cards, buildNamedCards("animal-s1", RarityLegendary, animalS1Legendary, "")...)
 	cards = append(cards, buildNamedCards("animal-s1", RarityEpic, animalS1Epic, "")...)
@@ -44,6 +44,12 @@ func AllCards() []Card {
 	cards = append(cards, buildNamedCards("persona-s1", RarityEpic, personaS1Epic, "/images/拟人卡/史诗")...)
 	cards = append(cards, buildNamedCards("persona-s1", RarityRare, personaS1Rare, "/images/拟人卡/稀有")...)
 	cards = append(cards, buildNamedCards("persona-s1", RarityCommon, personaS1Common, "/images/拟人卡/普通")...)
+
+	cards = append(cards, buildNamedCards(hokModernAlbumID, RarityLegendaryRare, hokModernLegendaryRare, "/images/王者现代/传说稀有")...)
+	cards = append(cards, buildNamedCards(hokModernAlbumID, RarityLegendary, hokModernLegendary, "/images/王者现代/传说")...)
+	cards = append(cards, buildNamedCards(hokModernAlbumID, RarityEpic, hokModernEpic, "/images/王者现代/史诗")...)
+	cards = append(cards, buildNamedCards(hokModernAlbumID, RarityRare, hokModernRare, "/images/王者现代/稀有")...)
+	cards = append(cards, buildNamedCards(hokModernAlbumID, RarityCommon, hokModernCommon, "/images/王者现代/普通")...)
 	return cards
 }
 
@@ -146,10 +152,11 @@ var personaS1Rare = []string{"合数少女", "拆弹员", "节拍手", "牵线�
 var personaS1Common = []string{"循环者", "传讯者", "提醒者", "倾听者", "记录者", "构筑者", "掌钱人", "派活人", "持权者"}
 
 var albumRewardPoints = map[string]int64{
-	"animal-s1":  100,
-	"animal-s2":  200,
-	"tarot":      500,
-	"persona-s1": 1200,
+	"animal-s1":      100,
+	"animal-s2":      200,
+	"tarot":          500,
+	"persona-s1":     1200,
+	hokModernAlbumID: 22000,
 }
 
 var albumTierRewardPoints = map[string]map[RewardType]int64{
@@ -180,6 +187,13 @@ var albumTierRewardPoints = map[string]map[RewardType]int64{
 		RewardType(RarityEpic):          120,
 		RewardType(RarityLegendary):     180,
 		RewardType(RarityLegendaryRare): 350,
+	},
+	hokModernAlbumID: {
+		RewardType(RarityCommon):        800,
+		RewardType(RarityRare):          1400,
+		RewardType(RarityEpic):          2400,
+		RewardType(RarityLegendary):     4000,
+		RewardType(RarityLegendaryRare): 7000,
 	},
 }
 

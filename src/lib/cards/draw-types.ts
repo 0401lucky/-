@@ -1,4 +1,10 @@
-import type { Rarity } from './types';
+import type { CardConfig, Rarity } from './types';
+
+export interface SingleDrawResult {
+  card: CardConfig;
+  isDuplicate: boolean;
+  fragmentsAdded?: number;
+}
 
 export interface RecentDraw {
   cardId: string;

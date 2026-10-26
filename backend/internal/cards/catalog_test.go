@@ -4,7 +4,7 @@ import "testing"
 
 func TestAllCardsMatchesLegacyCatalogCounts(t *testing.T) {
 	catalog := AllCards()
-	if len(catalog) != 163 {
+	if len(catalog) != 291 {
 		t.Fatalf("unexpected total cards: %d", len(catalog))
 	}
 
@@ -14,11 +14,11 @@ func TestAllCardsMatchesLegacyCatalogCounts(t *testing.T) {
 		counts[card.AlbumID] += 1
 		rarityCounts[card.Rarity] += 1
 	}
-	if counts["animal-s1"] != 20 || counts["animal-s2"] != 39 || counts["tarot"] != 78 || counts["persona-s1"] != 26 {
+	if counts["animal-s1"] != 20 || counts["animal-s2"] != 39 || counts["tarot"] != 78 || counts["persona-s1"] != 26 || counts[hokModernAlbumID] != 128 {
 		t.Fatalf("unexpected album counts: %#v", counts)
 	}
-	if rarityCounts[RarityLegendaryRare] != 12 || rarityCounts[RarityLegendary] != 16 ||
-		rarityCounts[RarityEpic] != 30 || rarityCounts[RarityRare] != 49 || rarityCounts[RarityCommon] != 56 {
+	if rarityCounts[RarityLegendaryRare] != 22 || rarityCounts[RarityLegendary] != 34 ||
+		rarityCounts[RarityEpic] != 54 || rarityCounts[RarityRare] != 81 || rarityCounts[RarityCommon] != 100 {
 		t.Fatalf("unexpected rarity counts: %#v", rarityCounts)
 	}
 }
@@ -45,7 +45,8 @@ func TestAllCardsMatchesLegacyCardShape(t *testing.T) {
 		t.Fatalf("unexpected last tarot card: %+v", lastTarot)
 	}
 
-	last := catalog[len(catalog)-1]
+	personaCards := CardsByAlbum("persona-s1")
+	last := personaCards[len(personaCards)-1]
 	if last.ID != "persona-s1-common-持权者" ||
 		last.Image != "/images-optimized/large/拟人卡/普通/持权者.webp" ||
 		last.ThumbnailImage != "/images-optimized/thumb/拟人卡/普通/持权者.webp" ||

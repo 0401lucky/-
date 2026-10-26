@@ -73,6 +73,7 @@ const ALBUM_THEME: Record<string, 's1' | 's2' | 'special'> = {
   'animal-s2': 's2',
   tarot: 'special',
   'persona-s1': 'special',
+  'hok-modern-s1': 'special',
 };
 
 // 各主题在卡册封面上的装饰 emoji（左右两条）

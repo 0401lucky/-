@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { CARDS, ALBUMS, getCardsByAlbum } from "../config";
 import { RARITY_PROBABILITIES, FRAGMENT_VALUES, EXCHANGE_PRICES, PITY_THRESHOLDS, RARITY_CARD_BACKS } from "../constants";
 import type { Rarity } from "../types";
@@ -28,10 +30,19 @@ const ALBUM_PERSONA_COUNTS: Record<Rarity, number> = {
   legendary_rare: 2,
 };
 
+const ALBUM_HOK_MODERN_COUNTS: Record<Rarity, number> = {
+  common: 44,
+  rare: 32,
+  epic: 24,
+  legendary: 18,
+  legendary_rare: 10,
+};
+
 describe("card configuration", () => {
   it("defines cards for all albums", () => {
-    expect(ALBUMS.length).toBe(4);
-    expect(CARDS.length).toBe(163); // 20 (S1) + 39 (S2) + 78 (Tarot) + 26 (Persona S1)
+    expect(ALBUMS.length).toBe(5);
+    expect(CARDS.length).toBe(291); // 20 + 39 + 78 + 26 + 128 (HOK Modern)
+    expect(new Set(CARDS.map(card => card.id)).size).toBe(CARDS.length);
   });
 
   it("assigns the expected number of cards per rarity for each album", () => {
@@ -57,6 +68,37 @@ describe("card configuration", () => {
     personaCards.forEach(card => { personaCounts[card.rarity]++; });
     for (const rarity of Object.keys(ALBUM_PERSONA_COUNTS) as Rarity[]) {
       expect(personaCounts[rarity]).toBe(ALBUM_PERSONA_COUNTS[rarity]);
+    }
+
+    const hokCards = getCardsByAlbum("hok-modern-s1");
+    expect(hokCards).toHaveLength(128);
+    expect(new Set(hokCards.map(card => card.name)).size).toBe(128);
+    for (const rarity of Object.keys(ALBUM_HOK_MODERN_COUNTS) as Rarity[]) {
+      expect(hokCards.filter(card => card.rarity === rarity)).toHaveLength(ALBUM_HOK_MODERN_COUNTS[rarity]);
+    }
+  });
+
+  it("places the ten selected heroes in the highest rarity", () => {
+    const names = getCardsByAlbum("hok-modern-s1")
+      .filter(card => card.rarity === "legendary_rare")
+      .map(card => card.name);
+    expect(names).toEqual(["甄姬", "张良", "西施", "艾琳", "嫦娥", "王维", "朵莉亚", "李白", "少司缘", "杨戬"]);
+  });
+
+  it("defines the HOK full-set and tier rewards", () => {
+    const album = ALBUMS.find(album => album.id === "hok-modern-s1");
+    expect(album?.reward).toBe(22000);
+    expect(album?.tierRewards).toEqual({ common: 800, rare: 1400, epic: 2400, legendary: 4000, legendary_rare: 7000 });
+    expect(album?.coverImage).toBe("/images-optimized/thumb/王者现代/传说稀有/甄姬.webp");
+  });
+
+  it("ships all HOK originals and optimized assets", () => {
+    const publicDirectory = resolve(process.cwd(), "public");
+    for (const card of getCardsByAlbum("hok-modern-s1")) {
+      for (const asset of [card.originalImage, card.image, card.thumbnailImage]) {
+        expect(asset).toBeTruthy();
+        expect(existsSync(join(publicDirectory, asset!.slice(1))), asset).toBe(true);
+      }
     }
   });
 

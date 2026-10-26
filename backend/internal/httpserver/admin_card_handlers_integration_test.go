@@ -161,7 +161,7 @@ func TestAdminCardReadHandlersReturnLegacyShapes(t *testing.T) {
 	if err := json.Unmarshal(albumsResponse.Body.Bytes(), &albumsPayload); err != nil {
 		t.Fatalf("decode albums response failed: %v", err)
 	}
-	if !albumsPayload.Success || len(albumsPayload.Albums) != 4 || albumsPayload.Albums[0].CurrentReward != 123 || albumsPayload.Albums[3].ID != "persona-s1" {
+	if !albumsPayload.Success || len(albumsPayload.Albums) != 5 || albumsPayload.Albums[0].CurrentReward != 123 || albumsPayload.Albums[3].ID != "persona-s1" || albumsPayload.Albums[4].ID != "hok-modern-s1" || albumsPayload.Albums[4].DefaultReward != 22000 {
 		t.Fatalf("unexpected albums payload: %+v", albumsPayload)
 	}
 	if len(albumsPayload.Tiers) != 5 || albumsPayload.Tiers[0].CurrentReward != 5 {

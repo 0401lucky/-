@@ -365,6 +365,13 @@ var adminAlbumDefinitions = []adminAlbumDefinition{
 		Season:      "拟人篇",
 		Reward:      1200,
 	},
+	{
+		ID:          hokModernAlbumID,
+		Name:        "王者荣耀现代图鉴",
+		Description: "收集 128 位英雄的现代服装卡面，集齐全套赢取 22000 积分",
+		Season:      "王者现代篇",
+		Reward:      22000,
+	},
 }
 
 var adminVisibleRewardTiers = []struct {
