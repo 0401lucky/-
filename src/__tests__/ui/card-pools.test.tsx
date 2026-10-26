@@ -6,6 +6,7 @@ import AdminCardsPage from '@/app/admin/cards/page';
 import { ALBUMS, CARDS } from '@/lib/cards/config';
 import { PITY_THRESHOLDS, RARITY_PROBABILITIES } from '@/lib/cards/constants';
 import type { LimitedPoolConfig } from '@/lib/cards/types';
+import type { SingleDrawResult } from '@/lib/cards/draw-types';
 
 const { notify, router } = vi.hoisted(() => ({ notify: vi.fn(), router: { push: vi.fn() } }));
 vi.mock('next/navigation', () => ({ useRouter: () => router }));
@@ -17,8 +18,8 @@ vi.mock('next/image', () => ({
 vi.mock('@/components/admin/AdminFeedback', () => ({ useAdminFeedback: () => ({ notify, confirm: vi.fn() }) }));
 vi.mock('@/lib/cards/draw-animation', () => ({ prepareDrawImages: vi.fn(async () => {}), waitForDrawIntro: vi.fn(async () => {}) }));
 vi.mock('@/components/cards/DrawReveal', () => ({
-  DrawReveal: ({ againDisabled, onAgain, onClose }: { againDisabled: boolean; onAgain: () => void; onClose: () => void }) => (
-    <div role="dialog"><button disabled={againDisabled} onClick={onAgain}>再抽一次</button><button onClick={onClose}>收下卡牌</button></div>
+  DrawReveal: ({ results, drawCost = 1, againDisabled, onAgain, onClose }: { results: SingleDrawResult[]; drawCost?: number; againDisabled: boolean; onAgain: () => void; onClose: () => void }) => (
+    <div role="dialog"><button disabled={againDisabled} onClick={onAgain}>再抽一次 −{results.length * drawCost}</button><button onClick={onClose}>收下卡牌</button></div>
   ),
 }));
 
@@ -123,6 +124,7 @@ describe('限定卡池用户流程', () => {
     await click('五连抽');
     expect(JSON.parse(String(drawCalls()[0][1]?.body))).toMatchObject({ count: 5, poolId: 'limited', rulesUpdatedAt: now });
     expect(drawsAvailable).toBe(1);
+    expect(button('再抽一次')).toHaveTextContent('−10');
     await act(async () => vi.advanceTimersByTimeAsync(5000));
     expect(button('再抽一次')).toBeDisabled();
     await click('再抽一次');

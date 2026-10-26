@@ -6,7 +6,7 @@ describe('抽卡图片准备', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-  it('单抽使用高清图，连抽使用缩略图', () => {
+  it('逐张亮相使用高清图，汇总使用缩略图', () => {
     expect(getDrawImage(CARDS[0], true)).toBe(CARDS[0].image);
     expect(getDrawImage(CARDS[0], false)).toBe(CARDS[0].thumbnailImage);
   });
@@ -24,11 +24,14 @@ describe('抽卡图片准备', () => {
     vi.stubGlobal('Image', FakeImage);
     const done = vi.fn();
     const pending = prepareDrawImages([CARDS[0], CARDS[0]], new AbortController().signal).then(done);
-    expect(images).toHaveLength(1);
-    images[0].onload?.();
+    expect(images.map((image) => image.src)).toEqual([CARDS[0].image, CARDS[0].thumbnailImage]);
+    images.forEach((image) => image.onload?.());
     await Promise.resolve();
     expect(done).not.toHaveBeenCalled();
     decoded[0]();
+    await Promise.resolve();
+    expect(done).not.toHaveBeenCalled();
+    decoded[1]();
     await pending;
     expect(done).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);

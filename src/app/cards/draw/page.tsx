@@ -644,6 +644,7 @@ export default function DrawPage() {
       {revealing && (
         <DrawReveal
           results={revealResults}
+          drawCost={drawCost}
           cooldownRemaining={drawCooldownRemaining}
           againDisabled={drawing || drawCoolingDown || !poolOpen || drawsAvailable < lastDrawCount * drawCost}
           onAgain={handleAgain}

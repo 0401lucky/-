@@ -1,20 +1,33 @@
-import type { CardConfig } from './types';
+import type { CardConfig, Rarity } from './types';
 
 export const DRAW_MOTION = {
   intro: 280,
-  entry: 480,
-  entryStagger: 50,
-  firstFlip: 500,
-  flipStagger: 150,
-  flip: 660,
-  settle: 100,
+  meteor: 1300,
+  impact: 220,
+  materialize: 720,
+  minimumShowcase: 380,
+  celebrationDelay: 260,
+  summary: 480,
+  summaryStagger: 70,
   skip: 120,
   exit: 180,
   imageTimeout: 1600,
 } as const;
 
-export function getDrawImage(card: CardConfig, single: boolean): string {
-  return single ? card.image : card.thumbnailImage ?? card.image;
+const SHOWCASE_DURATION: Record<Rarity, number> = {
+  common: 850,
+  rare: 950,
+  epic: 1300,
+  legendary: 1800,
+  legendary_rare: 2300,
+};
+
+export function getShowcaseDuration(rarity: Rarity): number {
+  return SHOWCASE_DURATION[rarity];
+}
+
+export function getDrawImage(card: CardConfig, showcase: boolean): string {
+  return showcase ? card.image : card.thumbnailImage ?? card.image;
 }
 
 export function waitForDrawIntro(signal: AbortSignal): Promise<void> {
@@ -33,7 +46,10 @@ export function waitForDrawIntro(signal: AbortSignal): Promise<void> {
 /** Decode the same assets used by the reveal, with a bounded wait for slow images. */
 export function prepareDrawImages(cards: CardConfig[], signal: AbortSignal): Promise<void> {
   if (signal.aborted || typeof window === 'undefined') return Promise.resolve();
-  const sources = [...new Set(cards.map((card) => getDrawImage(card, cards.length === 1)))];
+  // Every card gets a large portrait before the multi-draw thumbnail summary.
+  const sources = [...new Set(cards.flatMap((card) => cards.length === 1
+    ? [getDrawImage(card, true)]
+    : [getDrawImage(card, true), getDrawImage(card, false)]))];
   return new Promise((resolve) => {
     const images: HTMLImageElement[] = [];
     let remaining = sources.length;
