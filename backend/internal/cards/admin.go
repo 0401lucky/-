@@ -402,6 +402,7 @@ type AdminRulesUpdateInput struct {
 	CardDrawPrice       *int64
 	FragmentValues      map[Rarity]int64
 	ExchangePrices      map[Rarity]int64
+	LimitedPool         *LimitedPoolSettings
 	NowMs               int64
 }
 
@@ -440,7 +441,12 @@ func (service *AdminService) UpdateRules(ctx context.Context, input AdminRulesUp
 		return Rules{}, ErrUnavailable
 	}
 
-	current, err := service.GetRules(ctx)
+	tx, err := service.db.Begin(ctx)
+	if err != nil {
+		return Rules{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	current, err := readRulesTx(ctx, tx, true)
 	if err != nil {
 		return Rules{}, err
 	}
@@ -473,6 +479,12 @@ func (service *AdminService) UpdateRules(ctx context.Context, input AdminRulesUp
 			next.ExchangePrices[rarity] = value
 		}
 	}
+	if input.LimitedPool != nil {
+		if err := ValidateLimitedPool(*input.LimitedPool); err != nil {
+			return Rules{}, err
+		}
+		next.LimitedPool = *input.LimitedPool
+	}
 	if err := validateAdminRules(next); err != nil {
 		return Rules{}, err
 	}
@@ -497,24 +509,29 @@ func (service *AdminService) UpdateRules(ctx context.Context, input AdminRulesUp
 	if err != nil {
 		return Rules{}, err
 	}
+	limitedPoolJSON, err := json.Marshal(next.LimitedPool)
+	if err != nil {
+		return Rules{}, err
+	}
 	configJSON, err := json.Marshal(map[string]any{
 		"rarityProbabilities": rarityFloatMapToStringMap(next.RarityProbabilities),
 		"pityThresholds":      rarityIntMapToStringMap(next.PityThresholds),
 		"cardDrawPrice":       next.CardDrawPrice,
 		"fragmentValues":      rarityIntMapToStringMap(next.FragmentValues),
 		"exchangePrices":      rarityIntMapToStringMap(next.ExchangePrices),
+		"limitedPool":         next.LimitedPool,
 		"updatedAt":           next.UpdatedAtMs,
 	})
 	if err != nil {
 		return Rules{}, err
 	}
 
-	_, err = service.db.Exec(ctx,
+	_, err = tx.Exec(ctx,
 		`INSERT INTO card_rules (
 		   id, rarity_probabilities, pity_thresholds, card_draw_price,
-		   fragment_values, exchange_prices, config_json, updated_at_ms, updated_at
+		   fragment_values, exchange_prices, config_json, limited_pool, updated_at_ms, updated_at
 		 ) VALUES (
-		   'default', $1::jsonb, $2::jsonb, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, now()
+		   'default', $1::jsonb, $2::jsonb, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8, now()
 		 )
 		 ON CONFLICT (id) DO UPDATE SET
 		   rarity_probabilities = excluded.rarity_probabilities,
@@ -523,6 +540,7 @@ func (service *AdminService) UpdateRules(ctx context.Context, input AdminRulesUp
 		   fragment_values = excluded.fragment_values,
 		   exchange_prices = excluded.exchange_prices,
 		   config_json = excluded.config_json,
+		   limited_pool = excluded.limited_pool,
 		   updated_at_ms = excluded.updated_at_ms,
 		   updated_at = now()`,
 		string(probabilitiesJSON),
@@ -531,9 +549,13 @@ func (service *AdminService) UpdateRules(ctx context.Context, input AdminRulesUp
 		string(fragmentsJSON),
 		string(exchangeJSON),
 		string(configJSON),
+		string(limitedPoolJSON),
 		next.UpdatedAtMs,
 	)
 	if err != nil {
+		return Rules{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return Rules{}, err
 	}
 	return next, nil

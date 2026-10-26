@@ -7,7 +7,9 @@ import {
   ChevronRight, RefreshCw, CreditCard, LayoutGrid, Layers,
   BookOpen, Save, Edit2, Star
 } from 'lucide-react';
-import { CARDS } from '@/lib/cards/config';
+import { ALBUMS, CARDS } from '@/lib/cards/config';
+import { DEFAULT_LIMITED_POOL, fromPoolDateTimeInput, oneMonthLater, toPoolDateTimeInput } from '@/lib/cards/pools';
+import type { LimitedPoolConfig } from '@/lib/cards/types';
 import { useAdminFeedback } from '@/components/admin/AdminFeedback';
 
 interface UserWithCardStats {
@@ -52,6 +54,7 @@ interface CardRulesConfig {
   cardDrawPrice: number;
   fragmentValues: Record<RarityKey, number>;
   exchangePrices: Record<RarityKey, number>;
+  limitedPool: LimitedPoolConfig;
   updatedAt: number;
 }
 
@@ -142,7 +145,7 @@ export default function AdminCardsPage() {
       const res = await fetch('/api/admin/cards/rules');
       if (res.ok) {
         const data = await res.json();
-        if (data.success) setRules(data.data);
+        if (data.success) setRules({ ...data.data, limitedPool: data.data.limitedPool ?? DEFAULT_LIMITED_POOL });
       }
     } catch (error) {
       console.error('Fetch card rules error:', error);
@@ -285,6 +288,18 @@ export default function AdminCardsPage() {
     setRules((current) => current ? { ...current, ...patch } : current);
   };
 
+  const patchLimitedPool = (patch: Partial<LimitedPoolConfig>) => {
+    setRules((current) => current ? {
+      ...current,
+      limitedPool: { ...current.limitedPool, ...patch },
+    } : current);
+  };
+
+  const openLimitedPoolForMonth = () => {
+    const startsAt = Date.now();
+    patchLimitedPool({ enabled: true, startsAt, endsAt: oneMonthLater(startsAt) });
+  };
+
   const patchRarityValue = (
     section: 'rarityProbabilities' | 'fragmentValues' | 'exchangePrices',
     rarity: RarityKey,
@@ -314,6 +329,16 @@ export default function AdminCardsPage() {
 
   const saveRules = async () => {
     if (!rules) return;
+    const pool = rules.limitedPool;
+    if (!Number.isInteger(pool.drawCost) || pool.drawCost < 1 || pool.drawCost > 100) {
+      notify('限定池单抽消耗须为 1～100 次的整数', 'error');
+      return;
+    }
+    if ((pool.enabled || pool.startsAt !== 0 || pool.endsAt !== 0) &&
+        (pool.startsAt <= 0 || pool.endsAt <= pool.startsAt)) {
+      notify('请设置有效的开放时间，结束时间须晚于开始时间', 'error');
+      return;
+    }
     setSavingRules(true);
     try {
       const res = await fetch('/api/admin/cards/rules', {
@@ -712,6 +737,60 @@ export default function AdminCardsPage() {
               </div>
 
               <div className="p-8 space-y-8">
+                <section className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="font-bold text-amber-900">限定卡池</h3>
+                      <p className="mt-1 text-xs leading-relaxed text-amber-800/80">
+                        指定卡册仅在限定池抽取。关闭或到期后暂停抽取，可在此延长开放时间。
+                      </p>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm font-bold text-amber-900">
+                      <input type="checkbox" checked={rules.limitedPool.enabled}
+                        onChange={(event) => patchLimitedPool({ enabled: event.target.checked })}
+                        className="h-4 w-4 accent-amber-600" />
+                      启用限定池
+                    </label>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="text-sm font-bold text-stone-600">
+                      限定卡册
+                      <select value={rules.limitedPool.albumId}
+                        onChange={(event) => patchLimitedPool({ albumId: event.target.value })}
+                        className="mt-2 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-stone-700">
+                        {ALBUMS.map((album) => <option key={album.id} value={album.id}>{album.name}</option>)}
+                      </select>
+                    </label>
+                    <label className="text-sm font-bold text-stone-600">
+                      限定池单抽消耗（抽卡次数）
+                      <input type="number" min={1} max={100} step={1} value={rules.limitedPool.drawCost}
+                        onChange={(event) => patchLimitedPool({ drawCost: Number(event.target.value) })}
+                        className="mt-2 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-stone-700" />
+                    </label>
+                    <label className="text-sm font-bold text-stone-600">
+                      开始时间（北京时间）
+                      <input type="datetime-local" value={toPoolDateTimeInput(rules.limitedPool.startsAt)}
+                        onChange={(event) => patchLimitedPool({ startsAt: fromPoolDateTimeInput(event.target.value) })}
+                        className="mt-2 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-stone-700" />
+                    </label>
+                    <label className="text-sm font-bold text-stone-600">
+                      结束时间（北京时间）
+                      <input type="datetime-local" value={toPoolDateTimeInput(rules.limitedPool.endsAt)}
+                        onChange={(event) => patchLimitedPool({ endsAt: fromPoolDateTimeInput(event.target.value) })}
+                        className="mt-2 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-stone-700" />
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs text-amber-800">
+                      普通池单抽消耗 1 次；限定池五连抽消耗 {rules.limitedPool.drawCost * 5} 次。
+                    </p>
+                    <button type="button" onClick={openLimitedPoolForMonth}
+                      className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-100">
+                      从现在开放一个月
+                    </button>
+                  </div>
+                  <p className="text-xs text-stone-500">调整后点击「保存规则」生效。</p>
+                </section>
                 <div className="grid sm:grid-cols-2 gap-4">
                   <label className="text-sm font-bold text-stone-600">
                     单次抽卡价格

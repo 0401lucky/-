@@ -40,8 +40,9 @@ type DrawResult struct {
 }
 
 type DrawOutcome struct {
-	State   UserState
-	Results []DrawResult
+	State         UserState
+	Results       []DrawResult
+	DrawsConsumed int64
 }
 
 type FragmentExchangeOutcome struct {
@@ -83,8 +84,15 @@ var rarityLevels = map[Rarity]int{
 }
 
 func ApplyDraws(state UserState, rules Rules, catalog []Card, count int, rng RandomSource, now time.Time) (DrawOutcome, error) {
+	return applyDrawsWithCost(state, rules, catalog, count, 1, rng, now)
+}
+
+func applyDrawsWithCost(state UserState, rules Rules, catalog []Card, count int, cost int64, rng RandomSource, now time.Time) (DrawOutcome, error) {
 	if count < 1 || count > 10 {
 		return DrawOutcome{}, ErrInvalidDrawCount
+	}
+	if cost < 1 || cost > MaxPoolDrawCost {
+		return DrawOutcome{}, ErrInvalidDrawPool
 	}
 	if len(catalog) == 0 {
 		return DrawOutcome{}, ErrEmptyCardCatalog
@@ -95,8 +103,9 @@ func ApplyDraws(state UserState, rules Rules, catalog []Card, count int, rng Ran
 
 	next := cloneUserState(state)
 	normalizeUserState(&next)
-	if next.DrawsAvailable < int64(count) {
-		return DrawOutcome{}, fmt.Errorf("%w: need %d, current %d", ErrInsufficientDraws, count, next.DrawsAvailable)
+	consumed := int64(count) * cost
+	if next.DrawsAvailable < consumed {
+		return DrawOutcome{}, fmt.Errorf("%w: need %d, current %d", ErrInsufficientDraws, consumed, next.DrawsAvailable)
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -104,7 +113,7 @@ func ApplyDraws(state UserState, rules Rules, catalog []Card, count int, rng Ran
 
 	results := make([]DrawResult, 0, count)
 	for index := 0; index < count; index += 1 {
-		next.DrawsAvailable -= 1
+		next.DrawsAvailable -= cost
 		incrementPityCounters(&next)
 
 		card := selectCardForDraw(next, rules, catalog, rng)
@@ -112,7 +121,7 @@ func ApplyDraws(state UserState, rules Rules, catalog []Card, count int, rng Ran
 		results = append(results, result)
 	}
 
-	return DrawOutcome{State: next, Results: results}, nil
+	return DrawOutcome{State: next, Results: results, DrawsConsumed: consumed}, nil
 }
 
 func ApplyFragmentExchange(state UserState, rules Rules, catalog []Card, cardID string) (FragmentExchangeOutcome, error) {

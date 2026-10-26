@@ -22,17 +22,20 @@ type Service struct {
 }
 
 type DrawCardsInput struct {
-	UserID      int64
-	Count       int
-	Catalog     []Card
-	DrawGroupID string
-	NowMs       int64
+	UserID         int64
+	Count          int
+	PoolID         string
+	RulesUpdatedAt *int64
+	Catalog        []Card
+	DrawGroupID    string
+	NowMs          int64
 }
 
 type DrawCardsResult struct {
 	Success        bool
 	Results        []DrawResult
 	DrawsAvailable int64
+	DrawsConsumed  int64
 	Message        string
 }
 
@@ -92,10 +95,6 @@ func (service *Service) ExecuteDraws(ctx context.Context, input DrawCardsInput) 
 	if rng == nil {
 		rng = cryptoRandomSource{}
 	}
-	nowMs := input.NowMs
-	if nowMs <= 0 {
-		nowMs = time.Now().UnixMilli()
-	}
 	drawGroupID := strings.TrimSpace(input.DrawGroupID)
 	if drawGroupID == "" {
 		drawGroupID = randomDrawGroupID()
@@ -111,19 +110,32 @@ func (service *Service) ExecuteDraws(ctx context.Context, input DrawCardsInput) 
 	if err != nil {
 		return DrawCardsResult{}, err
 	}
-	if state.DrawsAvailable < int64(input.Count) {
-		return DrawCardsResult{
-			Success:        false,
-			DrawsAvailable: state.DrawsAvailable,
-			Message:        fmt.Sprintf("抽卡次数不足，需要%d次，当前%d次", input.Count, state.DrawsAvailable),
-		}, tx.Commit(ctx)
-	}
-
 	rules, err := getRulesTx(ctx, tx)
 	if err != nil {
 		return DrawCardsResult{}, err
 	}
-	outcome, err := ApplyDraws(state, rules, input.Catalog, input.Count, rng, time.UnixMilli(nowMs).UTC())
+	if input.RulesUpdatedAt != nil && *input.RulesUpdatedAt != rules.UpdatedAtMs {
+		return DrawCardsResult{DrawsAvailable: state.DrawsAvailable, Message: "卡池配置已更新，请刷新后重试"}, nil
+	}
+	// 在取得用户锁后检查开放时间，避免等待锁期间越过活动结束时间。
+	nowMs := input.NowMs
+	if nowMs <= 0 {
+		nowMs = time.Now().UnixMilli()
+	}
+	outcome, err := ApplyPoolDraws(state, rules, input.Catalog, input.PoolID, input.Count, rng, time.UnixMilli(nowMs).UTC())
+	if errors.Is(err, ErrInsufficientDraws) {
+		cost := int64(1)
+		if strings.TrimSpace(input.PoolID) == DrawPoolLimited {
+			cost = rules.LimitedPool.DrawCost
+		}
+		return DrawCardsResult{
+			DrawsAvailable: state.DrawsAvailable,
+			Message:        fmt.Sprintf("抽卡次数不足，需要%d次，当前%d次", int64(input.Count)*cost, state.DrawsAvailable),
+		}, nil
+	}
+	if errors.Is(err, ErrInvalidDrawPool) || errors.Is(err, ErrDrawPoolUnavailable) || errors.Is(err, ErrEmptyCardCatalog) {
+		return DrawCardsResult{DrawsAvailable: state.DrawsAvailable, Message: err.Error()}, nil
+	}
 	if err != nil {
 		return DrawCardsResult{}, err
 	}
@@ -143,6 +155,7 @@ func (service *Service) ExecuteDraws(ctx context.Context, input DrawCardsInput) 
 		Success:        true,
 		Results:        outcome.Results,
 		DrawsAvailable: outcome.State.DrawsAvailable,
+		DrawsConsumed:  outcome.DrawsConsumed,
 	}, nil
 }
 
@@ -477,23 +490,31 @@ func saveUserStateTx(ctx context.Context, tx pgx.Tx, state UserState) error {
 }
 
 func getRulesTx(ctx context.Context, tx pgx.Tx) (Rules, error) {
+	return readRulesTx(ctx, tx, false)
+}
+
+func readRulesTx(ctx context.Context, tx pgx.Tx, forUpdate bool) (Rules, error) {
 	rules := DefaultRules()
 	var probabilitiesRaw []byte
 	var pityRaw []byte
 	var fragmentsRaw []byte
 	var exchangeRaw []byte
-	err := tx.QueryRow(ctx,
-		`SELECT id, rarity_probabilities, pity_thresholds, card_draw_price,
-		        fragment_values, exchange_prices, updated_at_ms
+	var limitedPoolRaw []byte
+	query := `SELECT id, rarity_probabilities, pity_thresholds, card_draw_price,
+		        fragment_values, exchange_prices, limited_pool, updated_at_ms
 		   FROM card_rules
-		  WHERE id = 'default'`,
-	).Scan(
+		  WHERE id = 'default'`
+	if forUpdate {
+		query += " FOR UPDATE"
+	}
+	err := tx.QueryRow(ctx, query).Scan(
 		&rules.ID,
 		&probabilitiesRaw,
 		&pityRaw,
 		&rules.CardDrawPrice,
 		&fragmentsRaw,
 		&exchangeRaw,
+		&limitedPoolRaw,
 		&rules.UpdatedAtMs,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -509,6 +530,7 @@ func getRulesTx(ctx context.Context, tx pgx.Tx) (Rules, error) {
 	rules.PityThresholds = decodeRarityIntMap(pityRaw, DefaultRules().PityThresholds)
 	rules.FragmentValues = decodeRarityIntMap(fragmentsRaw, DefaultRules().FragmentValues)
 	rules.ExchangePrices = decodeRarityIntMap(exchangeRaw, DefaultRules().ExchangePrices)
+	rules.LimitedPool = decodeLimitedPool(limitedPoolRaw)
 	return rules, nil
 }
 

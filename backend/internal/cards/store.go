@@ -164,9 +164,10 @@ func (store *Store) GetRules(ctx context.Context) (Rules, error) {
 	var pityRaw []byte
 	var fragmentsRaw []byte
 	var exchangeRaw []byte
+	var limitedPoolRaw []byte
 	err := store.db.QueryRow(ctx,
 		`SELECT id, rarity_probabilities, pity_thresholds, card_draw_price,
-		        fragment_values, exchange_prices, updated_at_ms
+		        fragment_values, exchange_prices, limited_pool, updated_at_ms
 		   FROM card_rules
 		  WHERE id = 'default'`,
 	).Scan(
@@ -176,6 +177,7 @@ func (store *Store) GetRules(ctx context.Context) (Rules, error) {
 		&rules.CardDrawPrice,
 		&fragmentsRaw,
 		&exchangeRaw,
+		&limitedPoolRaw,
 		&rules.UpdatedAtMs,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -191,6 +193,7 @@ func (store *Store) GetRules(ctx context.Context) (Rules, error) {
 	rules.PityThresholds = decodeRarityIntMap(pityRaw, DefaultRules().PityThresholds)
 	rules.FragmentValues = decodeRarityIntMap(fragmentsRaw, DefaultRules().FragmentValues)
 	rules.ExchangePrices = decodeRarityIntMap(exchangeRaw, DefaultRules().ExchangePrices)
+	rules.LimitedPool = decodeLimitedPool(limitedPoolRaw)
 	return rules, nil
 }
 

@@ -8,6 +8,7 @@ import {
   ArrowLeft,
   BookOpen,
   Crown,
+  Clock3,
   History,
   Loader2,
   RefreshCw,
@@ -20,12 +21,16 @@ import { ALBUMS, CARDS } from '@/lib/cards/config';
 import { DrawReveal } from '@/components/cards/DrawReveal';
 import { prepareDrawImages, waitForDrawIntro } from '@/lib/cards/draw-animation';
 import { PITY_THRESHOLDS, RARITY_PROBABILITIES } from '@/lib/cards/constants';
+import { DEFAULT_LIMITED_POOL, formatPoolRemaining, formatPoolTime, getLimitedPoolStatus } from '@/lib/cards/pools';
 import type { RecentDraw, SingleDrawResult, UserCards } from '@/lib/cards/draw-types';
-import type { CardConfig, Rarity } from '@/lib/cards/types';
+import type { CardConfig, DrawPoolId, LimitedPoolConfig, Rarity } from '@/lib/cards/types';
 
 interface CardRulesConfig {
   rarityProbabilities: Record<Rarity, number>;
   pityThresholds: Record<'rare' | 'epic' | 'legendary' | 'legendary_rare', number>;
+  limitedPool?: LimitedPoolConfig;
+  serverTime?: number;
+  updatedAt?: number;
 }
 
 interface DrawResponse {
@@ -115,6 +120,10 @@ export default function DrawPage() {
   const [showRecords, setShowRecords] = useState(false);
   const [showRules, setShowRules] = useState(false);
   const [cardRules, setCardRules] = useState<CardRulesConfig | null>(null);
+  const [selectedPool, setSelectedPool] = useState<DrawPoolId>('standard');
+  const [poolNow, setPoolNow] = useState(0);
+  const serverTimeOffsetRef = useRef(0);
+  const initialPoolSelectedRef = useRef(false);
   const displayRules: CardRulesConfig = cardRules ?? {
     rarityProbabilities: RARITY_PROBABILITIES,
     pityThresholds: PITY_THRESHOLDS,
@@ -180,7 +189,19 @@ export default function DrawPage() {
       const res = await fetch('/api/cards/rules');
       if (!res.ok) return;
       const data = await res.json();
-      if (data?.success) setCardRules(data.data as CardRulesConfig);
+      if (data?.success) {
+        const config = data.data as CardRulesConfig;
+        setCardRules(config);
+        serverTimeOffsetRef.current = typeof config.serverTime === 'number' ? config.serverTime - Date.now() : 0;
+        setPoolNow(Date.now() + serverTimeOffsetRef.current);
+        if (!initialPoolSelectedRef.current) {
+          const query = new URLSearchParams(window.location.search);
+          if (query.get('pool') === 'limited' || query.get('albumId') === config.limitedPool?.albumId) {
+            setSelectedPool('limited');
+          }
+          initialPoolSelectedRef.current = true;
+        }
+      }
     } catch (err) {
       console.error('Failed to load card rules', err);
     }
@@ -212,9 +233,31 @@ export default function DrawPage() {
     clearDrawCooldown();
   }, [clearDrawTimeouts, clearDrawCooldown]);
 
+  useEffect(() => {
+    if (!cardRules?.limitedPool) return;
+    const timer = setInterval(() => setPoolNow(Date.now() + serverTimeOffsetRef.current), 1000);
+    return () => clearInterval(timer);
+  }, [cardRules]);
+
   // ----- 派生数据（全部基于真实 API/常量） -----
   const drawsAvailable = cardData?.drawsAvailable ?? 0;
   const drawCoolingDown = drawCooldownRemaining > 0;
+  const limitedPool = cardRules?.limitedPool ?? DEFAULT_LIMITED_POOL;
+  const limitedAlbum = ALBUMS.find((album) => album.id === limitedPool.albumId);
+  const limitedStatus = getLimitedPoolStatus(limitedPool, poolNow);
+  const isLimitedPool = selectedPool === 'limited';
+  const drawCost = isLimitedPool ? limitedPool.drawCost : 1;
+  const rulesUpdatedAt = cardRules?.updatedAt;
+  const poolOpen = cardRules !== null && (!isLimitedPool || limitedStatus === 'open');
+  const poolCards = useMemo(() => CARDS.filter((card) =>
+    (card.albumId === limitedPool.albumId) === isLimitedPool), [limitedPool.albumId, isLimitedPool]);
+  const poolName = isLimitedPool ? `${limitedAlbum?.name ?? '指定卡册'}限定池` : 'Lucky 普通卡池';
+  const limitedStatusText = {
+    disabled: '限定池已关闭',
+    upcoming: `距离开放 ${formatPoolRemaining(limitedPool.startsAt - poolNow)}`,
+    open: `距离结束 ${formatPoolRemaining(limitedPool.endsAt - poolNow)}`,
+    expired: '本期限定池已结束',
+  }[limitedStatus];
 
   const syncDrawsAvailable = useCallback((value: unknown) => {
     const next = Number(value);
@@ -246,8 +289,9 @@ export default function DrawPage() {
     ],
   );
 
-  const ownedCount = cardData?.inventory.length ?? 0;
-  const totalCards = CARDS.length;
+  const ownedCount = poolCards.filter((card) => cardData?.inventory.includes(card.id)).length;
+  const totalCards = poolCards.length;
+  const poolAlbumCount = new Set(poolCards.map((card) => card.albumId)).size;
 
   // 最近抽卡记录（最多 10 条，最新在前）→ 拼接卡牌完整信息
   const recentDrawsView = useMemo(() => {
@@ -273,8 +317,9 @@ export default function DrawPage() {
       if (
         drawInFlightRef.current ||
         drawing ||
+        !poolOpen ||
         drawCooldownUntilRef.current > Date.now() ||
-        drawsAvailable < count
+        drawsAvailable < count * drawCost
       ) return;
       drawInFlightRef.current = true;
       setDrawing(true);
@@ -290,7 +335,7 @@ export default function DrawPage() {
         const res = await fetch('/api/cards/draw', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ count }),
+          body: JSON.stringify({ count, poolId: selectedPool, rulesUpdatedAt }),
         });
         const data: DrawResponse = await res.json().catch(() => ({
           success: false,
@@ -300,6 +345,7 @@ export default function DrawPage() {
 
         if (!data.success || !data.data?.success) {
           syncDrawsAvailable(data.data?.drawsAvailable ?? data.drawsAvailable);
+          void fetchRules();
           alert(data.data?.message || data.message || '抽卡失败，请重试');
           return;
         }
@@ -346,7 +392,8 @@ export default function DrawPage() {
         }
       }
     },
-    [drawing, drawsAvailable, fetchInventory, clearDrawTimeouts, syncDrawsAvailable, startDrawCooldown],
+    [drawing, drawsAvailable, drawCost, poolOpen, selectedPool, rulesUpdatedAt, fetchRules,
+      fetchInventory, clearDrawTimeouts, syncDrawsAvailable, startDrawCooldown],
   );
 
   const handleAgain = useCallback(() => {
@@ -354,9 +401,10 @@ export default function DrawPage() {
       repeatDrawQueuedRef.current ||
       drawInFlightRef.current ||
       drawing ||
+      !poolOpen ||
       drawCooldownUntilRef.current > Date.now() ||
       drawCooldownRemaining > 0 ||
-      drawsAvailable < lastDrawCount
+      drawsAvailable < lastDrawCount * drawCost
     ) return;
     repeatDrawQueuedRef.current = true;
     closeReveal();
@@ -365,7 +413,7 @@ export default function DrawPage() {
       void handleDraw(lastDrawCount);
     }, 160);
     drawTimeoutsRef.current.push(t);
-  }, [drawing, drawCooldownRemaining, drawsAvailable, lastDrawCount, closeReveal, handleDraw]);
+  }, [drawing, drawCooldownRemaining, drawsAvailable, lastDrawCount, drawCost, poolOpen, closeReveal, handleDraw]);
 
   // ESC 关闭弹层 / 抽卡记录 / 抽卡规则弹窗
   useEffect(() => {
@@ -479,6 +527,16 @@ export default function DrawPage() {
       </header>
 
       <main className="gacha-container">
+        <div className="pool-switch" role="group" aria-label="选择卡池">
+          <button type="button" aria-pressed={!isLimitedPool} disabled={drawing || revealing}
+            onClick={() => setSelectedPool('standard')}>
+            <BookOpen size={16} /> 普通卡池 <span>1 次 / 抽</span>
+          </button>
+          <button type="button" aria-pressed={isLimitedPool} disabled={drawing || revealing}
+            onClick={() => setSelectedPool('limited')}>
+            <Clock3 size={16} /> 限定卡池 <span>{limitedPool.drawCost} 次 / 抽</span>
+          </button>
+        </div>
         {/* 卡池横幅 */}
         <div className="pool-banner">
           <div className="pool-left">
@@ -487,11 +545,11 @@ export default function DrawPage() {
             </div>
             <div className="pool-info">
               <h3>
-                Lucky 综合卡池
-                <span className="hot">HOT</span>
+                {poolName}
+                <span className="hot">{isLimitedPool ? 'LIMITED' : 'HOT'}</span>
               </h3>
               <p>
-                包含 {ALBUMS.length} 套主题卡册 · {totalCards} 张精美卡牌等你收集
+                {isLimitedPool ? '仅包含指定卡册' : `包含 ${poolAlbumCount} 套主题卡册`} · {totalCards} 张卡牌 · 单抽消耗 {drawCost} 次
               </p>
             </div>
           </div>
@@ -500,6 +558,15 @@ export default function DrawPage() {
             已收集 {ownedCount} / {totalCards}
           </div>
         </div>
+        {isLimitedPool && (
+          <div className={`pool-schedule ${limitedStatus === 'open' ? 'is-open' : ''}`}>
+            <strong><Clock3 size={15} /> {limitedStatusText}</strong>
+            {limitedPool.startsAt > 0 && limitedPool.endsAt > 0 && (
+              <span>{formatPoolTime(limitedPool.startsAt)} — {formatPoolTime(limitedPool.endsAt)}（北京时间）</span>
+            )}
+          </div>
+        )}
+        {!cardRules && <p className="pool-load-error">卡池规则加载失败，请刷新页面后重试。</p>}
 
         {/* === 主舞台 === */}
         <div className="stage">
@@ -507,7 +574,7 @@ export default function DrawPage() {
             type="button"
             className={`gacha-card ${stagePulling ? 'pulling' : ''} ${drawing ? 'is-drawing' : ''} ${drawCoolingDown ? 'is-cooling' : ''}`}
             onClick={() => void handleDraw(1)}
-            disabled={drawing || drawCoolingDown || drawsAvailable < 1}
+            disabled={drawing || drawCoolingDown || !poolOpen || drawsAvailable < drawCost}
             aria-label="点击抽一次"
           >
             <div className="card-stars" aria-hidden>
@@ -531,10 +598,10 @@ export default function DrawPage() {
               </div>
               <div className="card-bottom">
                 <div className="card-tap">
-                  {drawing ? 'DRAWING…' : drawCoolingDown ? `COOLDOWN ${drawCooldownRemaining}s` : 'TAP TO OPEN'}
+                  {drawing ? 'DRAWING…' : !poolOpen ? '暂未开放' : drawCoolingDown ? `COOLDOWN ${drawCooldownRemaining}s` : 'TAP TO OPEN'}
                 </div>
                 <div className="card-hint">
-                  {drawCoolingDown ? '卡牌能量正在重置，稍等一下再抽' : '点击或抽卡按钮揭晓你的命运'}
+                  {!poolOpen ? '请查看卡池开放时间' : drawCoolingDown ? '卡牌能量正在重置，稍等一下再抽' : '点击或抽卡按钮揭晓你的命运'}
                 </div>
               </div>
             </div>
@@ -547,27 +614,27 @@ export default function DrawPage() {
             type="button"
             className="draw-btn single"
             onClick={() => void handleDraw(1)}
-            disabled={drawing || drawCoolingDown || drawsAvailable < 1}
+            disabled={drawing || drawCoolingDown || !poolOpen || drawsAvailable < drawCost}
           >
             <span className="shine" />
             <span className="ico">
               <Star size={18} fill="currentColor" strokeWidth={0} />
             </span>
             {drawCoolingDown ? '冷却中' : '单抽'}
-            <span className="cost">{drawCoolingDown ? `${drawCooldownRemaining}s` : '−1'}</span>
+            <span className="cost">{drawCoolingDown ? `${drawCooldownRemaining}s` : `−${drawCost}`}</span>
           </button>
           <button
             type="button"
             className="draw-btn multi"
             onClick={() => void handleDraw(5)}
-            disabled={drawing || drawCoolingDown || drawsAvailable < 5}
+            disabled={drawing || drawCoolingDown || !poolOpen || drawsAvailable < 5 * drawCost}
           >
             <span className="shine" />
             <span className="ico">
               <Zap size={18} fill="currentColor" strokeWidth={0} />
             </span>
             {drawCoolingDown ? '冷却中' : '五连抽'}
-            <span className="cost">{drawCoolingDown ? `${drawCooldownRemaining}s` : '−5'}</span>
+            <span className="cost">{drawCoolingDown ? `${drawCooldownRemaining}s` : `−${5 * drawCost}`}</span>
           </button>
         </div>
 
@@ -578,7 +645,7 @@ export default function DrawPage() {
         <DrawReveal
           results={revealResults}
           cooldownRemaining={drawCooldownRemaining}
-          againDisabled={drawing || drawCoolingDown || drawsAvailable < lastDrawCount}
+          againDisabled={drawing || drawCoolingDown || !poolOpen || drawsAvailable < lastDrawCount * drawCost}
           onAgain={handleAgain}
           onClose={closeReveal}
         />
@@ -617,7 +684,12 @@ export default function DrawPage() {
             <div className="dr-body">
               <section className="dr-card">
                 <h4>抽卡消耗</h4>
-                <p>单抽消耗 1 次抽卡次数，五连抽消耗 5 次。抽卡次数不足时按钮会自动置灰，可通过商店兑换补充次数。</p>
+                <p>普通池单抽消耗 1 次，五连抽消耗 5 次；限定池单抽消耗 {limitedPool.drawCost} 次，五连抽消耗 {limitedPool.drawCost * 5} 次。抽卡次数不足时按钮会自动置灰，可通过商店兑换补充次数。</p>
+              </section>
+
+              <section className="dr-card">
+                <h4>限定卡池</h4>
+                <p>{limitedAlbum?.name ?? '指定卡册'}仅在限定池中抽取。限定池关闭或到期后暂停抽取，开放时间以页面展示为准。</p>
               </section>
 
               <section className="dr-card">
@@ -642,6 +714,7 @@ export default function DrawPage() {
                     {displayRules.pityThresholds.epic} 抽内至少出现史诗，
                     {displayRules.pityThresholds.legendary} 抽内至少出现传说，
                     {displayRules.pityThresholds.legendary_rare} 抽内至少出现传说稀有。
+                    普通池与限定池共用保底，每获得一张卡牌累计一次保底。
                   </p>
                 </div>
                 <div className="dr-card">
@@ -1028,6 +1101,55 @@ export default function DrawPage() {
           flex-direction: column;
           align-items: center;
           gap: 24px;
+        }
+
+        .gacha-page .pool-switch {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          padding: 6px;
+          border-radius: 18px;
+          background: rgba(255, 255, 255, 0.7);
+          border: 1px solid rgba(255, 255, 255, 0.95);
+          box-shadow: 0 12px 28px rgba(30, 64, 175, 0.1);
+        }
+        .gacha-page .pool-switch button {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          padding: 10px 14px;
+          border: 0;
+          border-radius: 12px;
+          background: transparent;
+          color: #475569;
+          font-size: 13px;
+          font-weight: 800;
+          cursor: pointer;
+        }
+        .gacha-page .pool-switch button[aria-pressed="true"] { background: var(--grad-violet); color: #fff; }
+        .gacha-page .pool-switch button:disabled { cursor: not-allowed; opacity: 0.6; }
+        .gacha-page .pool-switch button span { font-size: 11px; opacity: 0.85; white-space: nowrap; }
+        .gacha-page .pool-schedule {
+          width: 100%;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          padding: 12px 18px;
+          border-radius: 16px;
+          background: rgba(255, 255, 255, 0.65);
+          color: #64748b;
+          font-size: 12px;
+        }
+        .gacha-page .pool-schedule strong { display: inline-flex; align-items: center; gap: 6px; }
+        .gacha-page .pool-schedule.is-open { color: #b45309; background: rgba(255, 251, 235, 0.85); }
+        .gacha-page .pool-load-error { color: #b91c1c; font-size: 13px; }
+        @media (max-width: 420px) {
+          .gacha-page .pool-switch { width: 100%; }
+          .gacha-page .pool-switch button { flex: 1; padding: 10px 6px; font-size: 12px; }
+          .gacha-page .pool-switch button span { font-size: 10px; }
         }
 
         /* === 卡池横幅 === */

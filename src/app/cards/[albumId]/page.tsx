@@ -187,6 +187,10 @@ export default function AlbumDetailPage() {
           </span>
           EXIT
         </Link>
+        <Link href={`/cards/draw?albumId=${encodeURIComponent(albumId)}`} className="exit-btn">
+          <span className="arrow"><Sparkles size={14} /></span>
+          前往抽卡
+        </Link>
       </header>
 
       <main className="album-container">

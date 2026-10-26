@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"time"
 
 	"redemption/backend/internal/cards"
 )
@@ -71,19 +72,26 @@ func (handlers cardHandlers) draw(writer http.ResponseWriter, request *http.Requ
 	}
 
 	var payload struct {
-		Count float64 `json:"count"`
+		Count          float64 `json:"count"`
+		PoolID         string  `json:"poolId"`
+		RulesUpdatedAt *int64  `json:"rulesUpdatedAt"`
 	}
 	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-		payload = struct {
-			Count float64 `json:"count"`
-		}{}
+		writeJSON(writer, http.StatusBadRequest, map[string]any{"success": false, "message": "请求体格式无效"})
+		return
+	}
+	if !cards.IsDrawPoolID(payload.PoolID) {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{"success": false, "message": cards.ErrInvalidDrawPool.Error()})
+		return
 	}
 	count := normalizeCardDrawCount(payload.Count)
 
 	result, err := handlers.service.ExecuteDraws(request.Context(), cards.DrawCardsInput{
-		UserID:  user.ID,
-		Count:   count,
-		Catalog: cards.AllCards(),
+		UserID:         user.ID,
+		Count:          count,
+		PoolID:         payload.PoolID,
+		RulesUpdatedAt: payload.RulesUpdatedAt,
+		Catalog:        cards.AllCards(),
 	})
 	if err != nil {
 		handlers.writeServiceError(writer, "卡牌抽卡失败", err)
@@ -103,6 +111,7 @@ func (handlers cardHandlers) draw(writer http.ResponseWriter, request *http.Requ
 		data := drawResultResponse(first)
 		data["success"] = true
 		data["drawsAvailable"] = result.DrawsAvailable
+		data["drawsConsumed"] = result.DrawsConsumed
 		writeJSON(writer, http.StatusOK, map[string]any{
 			"success": true,
 			"data":    data,
@@ -117,6 +126,7 @@ func (handlers cardHandlers) draw(writer http.ResponseWriter, request *http.Requ
 			"cards":          drawResultsResponse(result.Results),
 			"count":          len(result.Results),
 			"drawsAvailable": result.DrawsAvailable,
+			"drawsConsumed":  result.DrawsConsumed,
 		},
 	})
 }
@@ -356,6 +366,8 @@ func cardRulesResponse(rules cards.Rules) map[string]any {
 		"cardDrawPrice":       rules.CardDrawPrice,
 		"fragmentValues":      rules.FragmentValues,
 		"exchangePrices":      rules.ExchangePrices,
+		"limitedPool":         rules.LimitedPool,
+		"serverTime":          time.Now().UnixMilli(),
 		"updatedAt":           rules.UpdatedAtMs,
 	}
 }

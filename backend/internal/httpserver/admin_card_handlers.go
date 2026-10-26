@@ -29,11 +29,12 @@ type adminCardRewardPayload struct {
 }
 
 type adminCardRulesPatchPayload struct {
-	RarityProbabilities map[cards.Rarity]float64 `json:"rarityProbabilities"`
-	PityThresholds      map[cards.Rarity]int64   `json:"pityThresholds"`
-	CardDrawPrice       *int64                   `json:"cardDrawPrice"`
-	FragmentValues      map[cards.Rarity]int64   `json:"fragmentValues"`
-	ExchangePrices      map[cards.Rarity]int64   `json:"exchangePrices"`
+	RarityProbabilities map[cards.Rarity]float64   `json:"rarityProbabilities"`
+	PityThresholds      map[cards.Rarity]int64     `json:"pityThresholds"`
+	CardDrawPrice       *int64                     `json:"cardDrawPrice"`
+	FragmentValues      map[cards.Rarity]int64     `json:"fragmentValues"`
+	ExchangePrices      map[cards.Rarity]int64     `json:"exchangePrices"`
+	LimitedPool         *cards.LimitedPoolSettings `json:"limitedPool"`
 }
 
 func newAdminCardHandlers(deps Dependencies) adminCardHandlers {
@@ -181,12 +182,19 @@ func (handlers adminCardHandlers) updateRules(writer http.ResponseWriter, reques
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"success": false, "message": "请求体格式无效"})
 		return
 	}
+	if payload.LimitedPool != nil {
+		if err := cards.ValidateLimitedPool(*payload.LimitedPool); err != nil {
+			handlers.writeServiceError(writer, "更新后台卡牌规则失败", err)
+			return
+		}
+	}
 	rules, err := handlers.service.UpdateRules(request.Context(), cards.AdminRulesUpdateInput{
 		RarityProbabilities: payload.RarityProbabilities,
 		PityThresholds:      payload.PityThresholds,
 		CardDrawPrice:       payload.CardDrawPrice,
 		FragmentValues:      payload.FragmentValues,
 		ExchangePrices:      payload.ExchangePrices,
+		LimitedPool:         payload.LimitedPool,
 	})
 	if err != nil {
 		handlers.writeServiceError(writer, "更新后台卡牌规则失败", err)

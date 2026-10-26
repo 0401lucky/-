@@ -131,7 +131,7 @@ func TestAdminServiceListsUsersDetailsAndRewardConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get reward config failed: %v", err)
 	}
-	if len(rewards.Albums) != 4 || rewards.Albums[0].ID != "animal-s1" || rewards.Albums[0].CurrentReward != 123 || rewards.Albums[3].ID != "persona-s1" {
+	if len(rewards.Albums) != 5 || rewards.Albums[0].ID != "animal-s1" || rewards.Albums[0].CurrentReward != 123 || rewards.Albums[3].ID != "persona-s1" || rewards.Albums[4].ID != hokModernAlbumID || rewards.Albums[4].CurrentReward != 22000 {
 		t.Fatalf("unexpected album rewards: %#v", rewards.Albums)
 	}
 	if len(rewards.Tiers) != 5 || rewards.Tiers[0].CurrentReward != 5 || rewards.Tiers[4].CurrentReward != 88 {

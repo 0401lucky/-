@@ -58,6 +58,16 @@ func TestCardDrawReturnsUnavailableWithoutDatabase(t *testing.T) {
 	}
 }
 
+func TestCardDrawRejectsInvalidPoolPayload(t *testing.T) {
+	handler := New(testDependencies())
+	for _, body := range []string{`{"poolId":"unknown"}`, `{"poolId":123}`, `{"count":1,`, `{"rulesUpdatedAt":"old"}`} {
+		response := performJSONRequest(handler, http.MethodPost, "/api/cards/draw", body, true)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid pool payload must not fall back to standard draw: status=%d body=%s", response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestCardPurchaseDisabledRequiresLogin(t *testing.T) {
 	handler := New(testDependencies())
 

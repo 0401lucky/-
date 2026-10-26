@@ -50,6 +50,7 @@ type Rules struct {
 	CardDrawPrice       int64
 	FragmentValues      map[Rarity]int64
 	ExchangePrices      map[Rarity]int64
+	LimitedPool         LimitedPoolSettings
 	UpdatedAtMs         int64
 }
 
@@ -100,6 +101,7 @@ func DefaultRules() Rules {
 			RarityLegendary:     500,
 			RarityLegendaryRare: 1000,
 		},
+		LimitedPool: DefaultLimitedPool(),
 		UpdatedAtMs: 0,
 	}
 }

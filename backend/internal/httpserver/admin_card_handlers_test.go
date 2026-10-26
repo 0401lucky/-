@@ -121,6 +121,26 @@ func testDependenciesWithAdmin() Dependencies {
 	return deps
 }
 
+func TestAdminCardRulesRejectInvalidLimitedPool(t *testing.T) {
+	handlers := newAdminCardHandlers(testDependenciesWithAdmin())
+	for _, body := range []string{
+		`{"limitedPool":{"enabled":true,"albumId":"unknown","drawCost":2,"startsAt":1,"endsAt":2}}`,
+		`{"limitedPool":{"enabled":true,"albumId":"hok-modern-s1","drawCost":0,"startsAt":1,"endsAt":2}}`,
+		`{"limitedPool":{"enabled":true,"albumId":"hok-modern-s1","drawCost":2,"startsAt":2,"endsAt":1}}`,
+		`{"limitedPool":{"enabled":true,"albumId":"hok-modern-s1","drawCost":2.5,"startsAt":1,"endsAt":2}}`,
+	} {
+		request := httptest.NewRequest(http.MethodPatch, "/api/admin/cards/rules", strings.NewReader(body))
+		request.Host = "example.com"
+		request.Header.Set("Origin", "http://example.com")
+		request.AddCookie(testSessionCookieFor(1, "admin", "Admin"))
+		response := httptest.NewRecorder()
+		handlers.updateRules(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid limited pool must be rejected: status=%d body=%s", response.Code, response.Body.String())
+		}
+	}
+}
+
 func adminCardRequestWithUserID(request *http.Request, userID string) *http.Request {
 	routeContext := chi.NewRouteContext()
 	routeContext.URLParams.Add("userId", userID)

@@ -1,5 +1,15 @@
 export type Rarity = 'legendary_rare' | 'legendary' | 'epic' | 'rare' | 'common';
 
+export type DrawPoolId = 'standard' | 'limited';
+
+export interface LimitedPoolConfig {
+  enabled: boolean;
+  albumId: string;
+  drawCost: number;
+  startsAt: number;
+  endsAt: number;
+}
+
 export interface CardConfig {
   id: string;
   name: string;
