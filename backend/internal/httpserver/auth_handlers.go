@@ -267,6 +267,7 @@ func (handlers authHandlers) login(writer http.ResponseWriter, request *http.Req
 	}
 
 	setLoginCookies(writer, request, sessionToken, extractSessionCookie(result.Cookies))
+	clearOIDCFlowCookies(writer, request)
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"success": true,
 		"message": "登录成功",
@@ -284,6 +285,7 @@ func (handlers authHandlers) logout(writer http.ResponseWriter, request *http.Re
 	}
 
 	clearSessionCookies(writer, request)
+	clearOIDCFlowCookies(writer, request)
 
 	token := auth.SessionTokenFromRequest(request)
 	if token == "" {
@@ -438,7 +440,13 @@ func upsertAuthenticatedUser(ctx context.Context, db *pgxpool.Pool, user auth.Us
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	if err := upsertAuthenticatedUserTx(ctx, tx, user); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
 
+func upsertAuthenticatedUserTx(ctx context.Context, tx pgx.Tx, user auth.User) error {
 	displayName := strings.TrimSpace(user.DisplayName)
 	if displayName == "" {
 		displayName = user.Username
@@ -470,5 +478,5 @@ func upsertAuthenticatedUser(ctx context.Context, db *pgxpool.Pool, user auth.Us
 	); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return nil
 }

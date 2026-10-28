@@ -160,6 +160,8 @@ const summary = {
     '/api/auth/turnstile-config',
     '/api/auth/me',
     '/api/auth/logout',
+    '/api/auth/oidc/{config,login,callback,complete}',
+    '/api/admin/auth/oidc',
     '/api/checkin{,/makeup}',
     '/api/rankings/{eco,points,games,checkin-streak,history,lottery}',
     '/api/games/overview',

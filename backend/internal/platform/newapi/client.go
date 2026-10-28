@@ -58,6 +58,12 @@ type apiEnvelope struct {
 	Data    map[string]any `json:"data"`
 }
 
+type rawAPIEnvelope struct {
+	Success bool            `json:"success"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data"`
+}
+
 func New(options Options) (*Client, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(options.BaseURL), "/")
 	if baseURL == "" {
@@ -265,21 +271,39 @@ func (client *Client) verifyQuotaUpdated(ctx context.Context, userID int64, expe
 }
 
 func (client *Client) doJSON(request *http.Request) (apiEnvelope, error) {
+	raw, err := client.doRawJSON(request)
+	return decodeAPIEnvelope(raw, err)
+}
+
+func decodeAPIEnvelope(raw rawAPIEnvelope, err error) (apiEnvelope, error) {
+	envelope := apiEnvelope{Success: raw.Success, Message: raw.Message}
+	if err != nil {
+		return envelope, err
+	}
+	if len(raw.Data) > 0 {
+		if err := json.Unmarshal(raw.Data, &envelope.Data); err != nil {
+			return envelope, err
+		}
+	}
+	return envelope, nil
+}
+
+func (client *Client) doRawJSON(request *http.Request) (rawAPIEnvelope, error) {
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return apiEnvelope{}, err
+		return rawAPIEnvelope{}, err
 	}
 	defer response.Body.Close()
 
-	raw, err := io.ReadAll(response.Body)
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return apiEnvelope{}, err
+		return rawAPIEnvelope{}, err
 	}
-	var envelope apiEnvelope
+	var envelope rawAPIEnvelope
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return apiEnvelope{}, err
+		return rawAPIEnvelope{}, err
 	}
-	if isAdminAuthFailure(response.StatusCode, envelope) {
+	if isAdminAuthFailure(response.StatusCode, apiEnvelope{Success: envelope.Success, Message: envelope.Message}) {
 		return envelope, fmt.Errorf("%w: %s", ErrAdminAuthFailed, fallbackMessage(envelope.Message, "new-api 管理端鉴权失败"))
 	}
 	if response.StatusCode >= 500 {
@@ -289,11 +313,16 @@ func (client *Client) doJSON(request *http.Request) (apiEnvelope, error) {
 }
 
 func (client *Client) doJSONWithAdminAuthRetry(request *http.Request) (apiEnvelope, error) {
-	var envelope apiEnvelope
+	raw, err := client.doRawJSONWithAdminAuthRetry(request)
+	return decodeAPIEnvelope(raw, err)
+}
+
+func (client *Client) doRawJSONWithAdminAuthRetry(request *http.Request) (rawAPIEnvelope, error) {
+	var envelope rawAPIEnvelope
 	var err error
 
 	if client.adminAccessToken != "" {
-		envelope, err = client.doJSON(request)
+		envelope, err = client.doRawJSON(request)
 		if !errors.Is(err, ErrAdminAuthFailed) {
 			return envelope, err
 		}
@@ -301,12 +330,12 @@ func (client *Client) doJSONWithAdminAuthRetry(request *http.Request) (apiEnvelo
 		retry := client.cloneRequestForRetry(request)
 		client.setLegacyAuthHeaders(retry)
 
-		retryEnvelope, retryErr := client.doJSON(retry)
+		retryEnvelope, retryErr := client.doRawJSON(retry)
 		if retryErr == nil || !errors.Is(retryErr, ErrAdminAuthFailed) {
 			return retryEnvelope, retryErr
 		}
 	} else {
-		envelope = apiEnvelope{}
+		envelope = rawAPIEnvelope{}
 		err = ErrAdminAuthFailed
 	}
 
@@ -318,7 +347,7 @@ func (client *Client) doJSONWithAdminAuthRetry(request *http.Request) (apiEnvelo
 	if sessionErr != nil {
 		return envelope, sessionErr
 	}
-	sessionEnvelope, sessionRequestErr := client.doJSON(sessionRequest)
+	sessionEnvelope, sessionRequestErr := client.doRawJSON(sessionRequest)
 	if sessionRequestErr == nil || !errors.Is(sessionRequestErr, ErrAdminAuthFailed) {
 		return sessionEnvelope, sessionRequestErr
 	}

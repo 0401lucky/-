@@ -14,6 +14,7 @@ import AdminPage from '@/app/admin/page';
 import AdminSettingsPage from '@/app/admin/settings/page';
 import { AdminFeedbackProvider } from '@/components/admin/AdminFeedback';
 import type { SystemConfig } from '@/lib/admin/settings';
+import type { OIDCConfig } from '@/lib/oidc';
 
 const { push } = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
@@ -33,6 +34,12 @@ const config: SystemConfig = {
   vipDailyLotterySpins: 2,
   vipMaxTotalDays: 365,
   withdrawBalanceCapDollars: 10000,
+};
+const oidcConfig: OIDCConfig = {
+  enabled: true, displayName: 'Casdoor', issuerUrl: 'https://casdoor.example.com',
+  discoveryUrl: '', clientId: 'welfare-client', redirectUrl: 'https://welfare.example.com/api/auth/oidc/callback',
+  scopes: 'openid profile email', tokenAuthMethod: 'client_secret_post', newApiProvider: 'oidc',
+  newApiProviderId: 0, subjectClaim: 'sub', usernameClaim: 'preferred_username', clientSecretConfigured: true,
 };
 const projects = Array.from({ length: 18 }, (_, index) => ({
   id: `project-${index}`,
@@ -98,6 +105,8 @@ describe('后台项目与设置流程', () => {
     request = vi.fn(async (url: string) => {
       if (url === '/api/admin/config')
         return Response.json({ success: true, config });
+      if (url === '/api/admin/auth/oidc')
+        return Response.json({ success: true, config: oidcConfig, newApiReady: true });
       if (url === '/api/admin/projects')
         return Response.json({ success: true, projects });
       return Response.json({ success: true });
@@ -282,7 +291,57 @@ describe('后台项目与设置流程', () => {
     expect(button('预览并保存')).toBeDisabled();
     await input('#vipWithdrawFeePercent', '0');
     expect(button('预览并保存')).toBeEnabled();
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls.filter(([url]) => url === '/api/admin/config')).toHaveLength(1);
+  });
+
+  it('OIDC 保存失败保留草稿，成功后清空密钥输入并解除未保存提醒', async () => {
+    await render(<AdminSettingsPage />);
+    expect(container.querySelector<HTMLInputElement>('#oidc-client-secret')!.value).toBe('');
+    expect(container.querySelector<HTMLInputElement>('#oidc-subject-claim')!.readOnly).toBe(true);
+    await input('#oidc-display-name', '企业统一登录');
+    await input('#oidc-client-secret', 'replacement-secret');
+    const unload = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+    request.mockResolvedValueOnce(Response.json({ success: false, message: '发现文档校验失败' }, { status: 400 }));
+    await click('保存 OIDC 设置');
+    expect(container.textContent).toContain('发现文档校验失败');
+    expect(container.querySelector<HTMLInputElement>('#oidc-display-name')!.value).toBe('企业统一登录');
+    expect(container.querySelector<HTMLInputElement>('#oidc-client-secret')!.value).toBe('replacement-secret');
+    request.mockResolvedValueOnce(Response.json({ success: true, config: { ...oidcConfig, displayName: '企业统一登录' } }));
+    await click('保存 OIDC 设置');
+    const saves = request.mock.calls.filter(([url, options]) => url === '/api/admin/auth/oidc' && options?.method === 'PUT');
+    expect(saves).toHaveLength(2);
+    const payload = JSON.parse(saves[1][1].body);
+    expect(payload).toMatchObject({ displayName: '企业统一登录', clientSecret: 'replacement-secret', newApiProviderId: 0 });
+    expect(payload).not.toHaveProperty('clientSecretConfigured');
+    expect(container.querySelector<HTMLInputElement>('#oidc-client-secret')!.value).toBe('');
+    expect(button('保存 OIDC 设置')).toBeDisabled();
+    expect(container.textContent).toContain('OIDC 配置已保存并生效');
+    const savedUnload = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(savedUnload);
+    expect(savedUnload.defaultPrevented).toBe(false);
+  });
+
+  it('OIDC 自定义提供商提交数字 ID，空密钥保留现有凭据且提交中不能重复保存', async () => {
+    await render(<AdminSettingsPage />);
+    await input('#oidc-new-api-provider', 'custom');
+    await input('#oidc-new-api-provider-id', '4');
+    await input('#oidc-subject-claim', 'id');
+    let complete!: (response: Response) => void;
+    request.mockImplementationOnce(() => new Promise<Response>((resolve) => { complete = resolve; }));
+    const form = container.querySelector<HTMLFormElement>('#admin-oidc-form')!;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    const saves = request.mock.calls.filter(([url, options]) => url === '/api/admin/auth/oidc' && options?.method === 'PUT');
+    expect(saves).toHaveLength(1);
+    const payload = JSON.parse(saves[0][1].body);
+    expect(payload).toMatchObject({ newApiProvider: 'custom', newApiProviderId: 4, subjectClaim: 'id' });
+    expect(payload).not.toHaveProperty('clientSecret');
+    await act(async () => complete(Response.json({ success: true, config: { ...oidcConfig, newApiProvider: 'custom', newApiProviderId: 4, subjectClaim: 'id' } })));
+    expect(button('保存 OIDC 设置')).toBeDisabled();
   });
 
   it('预览配置差异，完整提交九个字段，保存失败不丢修改，提交中不能重复保存', async () => {

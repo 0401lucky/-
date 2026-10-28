@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import TypewriterTitle from '@/components/TypewriterTitle';
 import TurnstileWidget from '@/components/TurnstileWidget';
+import OIDCLogin from '@/components/OIDCLogin';
 import { getSafeRedirectPath } from '@/lib/navigation';
 
 type TurnstileConfigState =
@@ -52,6 +53,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirect = getSafeRedirectPath(searchParams.get('redirect'));
+  const oidcPending = searchParams.get('oidc_pending') === '1';
 
   const handleTurnstileTokenChange = useCallback((token: string | null) => {
     setTurnstileToken(token);
@@ -224,7 +226,9 @@ function LoginForm() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="login-form" noValidate>
+          <OIDCLogin key={`${oidcPending}:${searchParams.get('oidc_error')}`} redirect={redirect} pending={oidcPending} errorCode={searchParams.get('oidc_error')} />
+
+          {!oidcPending && <form onSubmit={handleSubmit} className="login-form" noValidate>
             <label className="field">
               <span className="field-label">用户名</span>
               <span className="field-control">
@@ -318,7 +322,7 @@ function LoginForm() {
                 </>
               )}
             </button>
-          </form>
+          </form>}
 
           <p className="card-footer">
             登录即代表你同意 Lucky 福利站的积分与活动使用规则。

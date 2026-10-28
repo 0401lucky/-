@@ -28,6 +28,11 @@ Zeabur 内网服务名不同的时候，只覆盖变量值，不能借机扩大 
 - `/api/auth/login`
 - `/api/auth/me`
 - `/api/auth/logout`
+- `/api/auth/oidc/config`
+- `/api/auth/oidc/login`
+- `/api/auth/oidc/callback`
+- `/api/auth/oidc/complete`
+- `/api/admin/auth/oidc`（读取与保存自定义 OIDC 配置，见 [配置说明](oidc-login.md)）
 - `/api/checkin`
 - `/api/checkin/makeup`
 - `/api/points`

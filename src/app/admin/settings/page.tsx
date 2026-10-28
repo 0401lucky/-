@@ -35,6 +35,7 @@ import {
 } from '@/lib/admin/settings';
 import { adminRequest } from '@/lib/admin/request';
 import { formatChinaDateTime } from '@/lib/time';
+import OIDCSettings from '@/components/admin/OIDCSettings';
 
 const groups = [
   {
@@ -67,6 +68,7 @@ export default function AdminSettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [oidcDirty, setOIDCDirty] = useState(false);
 
   const loadConfig = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -108,7 +110,7 @@ export default function AdminSettingsPage() {
     [config, draft],
   );
   const dirty = changes.length > 0;
-  useAdminUnsavedChanges(dirty);
+  useAdminUnsavedChanges(dirty || oidcDirty);
   const validation = useMemo(
     () => (draft ? validateConfigDraft(draft) : null),
     [draft],
@@ -198,14 +200,14 @@ export default function AdminSettingsPage() {
         description="集中管理运行规则，修改后可先核对差异，再统一保存。"
         actions={
           <span
-            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs ${dirty ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs ${dirty || oidcDirty ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}
           >
-            {dirty ? (
+            {dirty || oidcDirty ? (
               <Clock3 className="h-3.5 w-3.5" />
             ) : (
               <Check className="h-3.5 w-3.5" />
             )}
-            {dirty ? `${changes.length} 项待保存` : '全部修改已保存'}
+            {dirty ? `${changes.length} 项运行规则待保存` : oidcDirty ? 'OIDC 设置待保存' : '全部修改已保存'}
           </span>
         }
       />
@@ -336,6 +338,7 @@ export default function AdminSettingsPage() {
               快速定位
             </p>
             <nav aria-label="设置分组" className="space-y-1">
+              <a href="#settings-oidc" className="flex items-center gap-2.5 rounded-lg px-2 py-2.5 text-xs text-stone-500 hover:bg-stone-50 hover:text-orange-700"><ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" /><span className="flex-1">自定义 OIDC 登录</span></a>
               {groups.map(({ id, title, Icon }) => (
                 <a
                   key={id}
@@ -387,6 +390,8 @@ export default function AdminSettingsPage() {
         </aside>
       </div>
 
+      <OIDCSettings onDirtyChange={setOIDCDirty} />
+
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-20 px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-4 sm:px-6 lg:left-60 xl:px-8">
         <div className="admin-save-bar pointer-events-auto mx-auto flex max-w-[1436px] flex-wrap items-center justify-between gap-4 rounded-xl border border-stone-200 bg-white px-4 py-4 sm:px-5">
           <div className="flex items-center gap-2 text-xs text-stone-500">
@@ -398,7 +403,7 @@ export default function AdminSettingsPage() {
                 ? `有 ${invalidCount} 项配置需要修正`
                 : dirty
                   ? `已修改 ${changes.length} 项配置，尚未保存`
-                  : '当前配置已同步'}
+                  : oidcDirty ? 'OIDC 设置待保存，请使用 OIDC 区域的保存按钮' : '当前配置已同步'}
               <span className="ml-2 hidden text-stone-400 lg:inline">
                 修改将在确认保存后生效
               </span>

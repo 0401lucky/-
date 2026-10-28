@@ -36,6 +36,22 @@
 	handle /api/auth/logout {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
+	# 自定义 OIDC 的发现、授权回调和后台配置均由 Go 处理。
+	handle /api/auth/oidc/config {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/auth/oidc/login {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/auth/oidc/callback {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/auth/oidc/complete {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /api/admin/auth/oidc {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
 
 	# 签到已完成 Go 迁移；只打开状态、签到和补签实际使用的精确路径。
 	handle /api/checkin {
