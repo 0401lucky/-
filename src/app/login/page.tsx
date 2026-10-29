@@ -526,6 +526,7 @@ function LoginForm() {
         /* === 右侧：登录卡片（玻璃态） === */
         .lucky-login .login-card {
           position: relative;
+          min-width: 0;
           background: var(--card-bg);
           backdrop-filter: blur(30px);
           -webkit-backdrop-filter: blur(30px);
@@ -568,7 +569,7 @@ function LoginForm() {
           display: flex;
           align-items: center;
           gap: 14px;
-          margin-bottom: 22px;
+          margin-bottom: 28px;
           position: relative;
           z-index: 1;
         }
@@ -630,6 +631,110 @@ function LoginForm() {
           20%, 80% { transform: translateX(2px); }
           30%, 50%, 70% { transform: translateX(-3px); }
           40%, 60% { transform: translateX(3px); }
+        }
+
+        /* 统一登录入口：独立描边按钮，与密码登录主按钮区分层级 */
+        .lucky-login .oidc-login {
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+          margin-bottom: 24px;
+          position: relative;
+          z-index: 1;
+        }
+        .lucky-login .oidc-login .login-error {
+          margin-bottom: 0;
+        }
+        .lucky-login .oidc-btn {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          width: 100%;
+          min-height: 64px;
+          padding: 13px 18px;
+          border: 1px solid rgba(249, 115, 22, 0.24);
+          border-radius: 16px;
+          background: rgba(255, 255, 255, 0.82);
+          color: var(--text-main);
+          box-shadow: 0 4px 12px rgba(15, 23, 42, 0.03);
+          transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+        }
+        .lucky-login .oidc-btn:hover {
+          border-color: rgba(249, 115, 22, 0.55);
+          background: #fffaf5;
+          box-shadow: 0 6px 18px rgba(249, 115, 22, 0.08);
+        }
+        .lucky-login .oidc-btn-icon {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          width: 36px;
+          height: 36px;
+          border-radius: 11px;
+          background: linear-gradient(135deg, #fff1e2, #ffe8e9);
+          color: #ea580c;
+        }
+        .lucky-login .oidc-btn-label {
+          flex: 1;
+          min-width: 0;
+          font-size: 14.5px;
+          font-weight: 600;
+          line-height: 1.6;
+          letter-spacing: 0.2px;
+          overflow-wrap: anywhere;
+        }
+        .lucky-login .oidc-btn-arrow {
+          flex-shrink: 0;
+          color: #94a3b8;
+          transition: color 0.2s ease, transform 0.2s ease;
+        }
+        .lucky-login .oidc-btn:hover .oidc-btn-arrow {
+          color: #ea580c;
+          transform: translateX(2px);
+        }
+        .lucky-login .oidc-btn:focus-visible,
+        .lucky-login .login-btn:focus-visible {
+          outline: 3px solid rgba(249, 115, 22, 0.5);
+          outline-offset: 4px;
+        }
+        .lucky-login .oidc-divider {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          color: var(--text-light);
+          font-size: 12px;
+          line-height: 1.5;
+        }
+        .lucky-login .oidc-divider::before,
+        .lucky-login .oidc-divider::after {
+          content: '';
+          flex: 1;
+          height: 1px;
+          background: rgba(148, 163, 184, 0.25);
+        }
+        .lucky-login .oidc-divider span {
+          flex-shrink: 0;
+        }
+        .lucky-login .oidc-hint {
+          margin: 0;
+          color: var(--text-light);
+          font-size: 13px;
+          line-height: 1.8;
+        }
+        .lucky-login .oidc-links {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: space-between;
+          gap: 12px 20px;
+          color: var(--text-light);
+          font-size: 12px;
+          line-height: 1.6;
+        }
+        .lucky-login .oidc-links a:hover {
+          color: #ea580c;
+          text-decoration: underline;
+          text-underline-offset: 3px;
         }
 
         /* 表单 */
@@ -753,7 +858,9 @@ function LoginForm() {
         /* 登录按钮（与首页 brand-icon 同色调橙红渐变） */
         .lucky-login .login-btn {
           margin-top: 6px;
+          width: 100%;
           height: 50px;
+          padding: 0 20px;
           border-radius: 14px;
           border: none;
           color: #fff;
@@ -795,6 +902,9 @@ function LoginForm() {
           opacity: 0.7;
           cursor: not-allowed;
           box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+        }
+        .lucky-login .login-btn > svg {
+          flex-shrink: 0;
         }
         .lucky-login .login-btn .spin {
           animation: login-spin 1s linear infinite;
@@ -900,6 +1010,16 @@ function LoginForm() {
           .lucky-login .login-btn {
             height: 48px;
             font-size: 14.5px;
+          }
+          .lucky-login .oidc-btn {
+            min-height: 58px;
+            padding: 12px 14px;
+            gap: 10px;
+          }
+          .lucky-login .oidc-btn-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 10px;
           }
         }
       `}</style>
